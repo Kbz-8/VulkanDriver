@@ -13,62 +13,49 @@ const implementations = [_]ImplementationDesc{
     },
 };
 
-pub fn build(b: *std.Build) !void {
+pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const libvulkan_mod = b.createModule(.{
+    const common_mod = b.createModule(.{
         .root_source_file = b.path("src/vulkan/lib.zig"),
         .target = target,
         .optimize = optimize,
     });
 
+    const vulkan_headers = b.dependency("vulkan_headers", .{});
+
     const vulkan = b.dependency("vulkan_zig", .{
-        .registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml"),
+        .registry = vulkan_headers.path("registry/vk.xml"),
     }).module("vulkan-zig");
 
-    libvulkan_mod.addImport("vulkan", vulkan);
-
-    const libvulkan = b.addLibrary(.{
-        .name = "vulkan",
-        .root_module = libvulkan_mod,
-        .linkage = .dynamic,
-    });
-
-    b.installArtifact(libvulkan);
+    common_mod.addImport("vulkan", vulkan);
+    common_mod.addSystemIncludePath(vulkan_headers.path("include"));
 
     for (implementations) |impl| {
-        b.installArtifact(try buildImplementation(b, target, optimize, &impl, vulkan));
+        const lib_mod = b.createModule(.{
+            .root_source_file = b.path(impl.root_source_file),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "common", .module = common_mod },
+                .{ .name = "vulkan", .module = vulkan },
+            },
+        });
+
+        lib_mod.addSystemIncludePath(vulkan_headers.path("include"));
+
+        const lib = b.addLibrary(.{
+            .name = b.fmt("vulkan_{s}", .{impl.name}),
+            .root_module = lib_mod,
+            .linkage = .dynamic,
+        });
+        b.installArtifact(lib);
+
+        const lib_tests = b.addTest(.{ .root_module = lib_mod });
+
+        const run_tests = b.addRunArtifact(lib_tests);
+        const test_step = b.step(b.fmt("test-{s}", .{impl.name}), b.fmt("Run lib{s} tests", .{impl.name}));
+        test_step.dependOn(&run_tests.step);
     }
-
-    const libvulkan_tests = b.addTest(.{
-        .root_module = libvulkan_mod,
-    });
-
-    const run_libvulkan_tests = b.addRunArtifact(libvulkan_tests);
-
-    const test_step = b.step("test", "Run tests");
-    test_step.dependOn(&run_libvulkan_tests.step);
-}
-
-fn buildImplementation(
-    b: *std.Build,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    desc: *const ImplementationDesc,
-    vulkan_bindings: *std.Build.Module,
-) !*Step.Compile {
-    const lib_mod = b.createModule(.{
-        .root_source_file = b.path(desc.root_source_file),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    lib_mod.addImport("vulkan", vulkan_bindings);
-
-    return b.addLibrary(.{
-        .name = try std.fmt.allocPrint(b.allocator, "vulkan_{s}", .{desc.name}),
-        .root_module = lib_mod,
-        .linkage = .dynamic,
-    });
 }
