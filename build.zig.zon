@@ -4,7 +4,16 @@
     .fingerprint = 0x52cb73649f1107de,
     .minimum_zig_version = "0.15.1",
 
-    .dependencies = .{},
+    .dependencies = .{
+        .vulkan_headers = .{
+            .url = "git+https://github.com/KhronosGroup/Vulkan-Headers?ref=v1.4.330#ee3b5caaa7e372715873c7b9c390ee1c3ca5db25",
+            .hash = "N-V-__8AAFXYAQKsK51AAGXB9HziPDFjS_DVUq6_QHVxHrBM",
+        },
+        .vulkan_zig = .{
+            .url = "git+https://github.com/catmeow72/vulkan-zig/#8961518db28f88d2cf09ea68e146923de2cfa7f0",
+            .hash = "vulkan-0.0.0-r7Ytx6hBAwD8X_TN32qlkzul4riK6vFvjtK9fZfRvALg",
+        },
+    },
 
     .paths = .{
         "build.zig",
