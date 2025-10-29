@@ -23,15 +23,14 @@ pub const Object = extern struct {
 };
 
 pub inline fn fromHandle(comptime T: type, comptime VkT: type, handle: VkT) !*T {
-    if (handle == .null_handle) {
-        return error.NullHandle;
+    comptime {
+        if (!@hasDecl(T, "object") or !@hasDecl(T, "ObjectType") or @TypeOf(T.ObjectType) != vk.ObjectType) {
+            @compileError("Object type \"" ++ @typeName(T) ++ "\" is malformed.");
+        }
     }
 
-    if (!@hasDecl(T, "object")) {
-        return error.NotAnObject;
-    }
-    if (!@hasDecl(T, "ObjectType") || @TypeOf(T.ObjectType) != vk.ObjectType) {
-        @panic("Object type \"" ++ @typeName(T) ++ "\" is malformed.");
+    if (handle == .null_handle) {
+        return error.NullHandle;
     }
 
     const dispatchable: *T = @ptrFromInt(@intFromEnum(handle));
@@ -39,4 +38,13 @@ pub inline fn fromHandle(comptime T: type, comptime VkT: type, handle: VkT) !*T 
         return error.InvalidObjectType;
     }
     return dispatchable;
+}
+
+pub inline fn toHandle(comptime T: type, handle: *T) usize {
+    comptime {
+        if (!@hasDecl(T, "object") or !@hasDecl(T, "ObjectType") or @TypeOf(T.ObjectType) != vk.ObjectType) {
+            @compileError("Object type \"" ++ @typeName(T) ++ "\" is malformed.");
+        }
+    }
+    return @intFromPtr(handle);
 }
