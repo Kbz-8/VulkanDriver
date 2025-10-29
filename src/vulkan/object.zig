@@ -10,7 +10,7 @@ pub const Object = extern struct {
     kind: vk.ObjectType,
     owner: ?*anyopaque,
     // VK_EXT_debug_utils
-    name: ?[]const u8,
+    name: ?[*]const u8,
 
     pub fn init(owner: ?*anyopaque, kind: vk.ObjectType) Self {
         return .{
@@ -24,7 +24,7 @@ pub const Object = extern struct {
 
 pub inline fn fromHandle(comptime T: type, comptime VkT: type, handle: VkT) !*T {
     comptime {
-        if (!@hasDecl(T, "object") or !@hasDecl(T, "ObjectType") or @TypeOf(T.ObjectType) != vk.ObjectType) {
+        if (!@hasField(T, "object") or !@hasDecl(T, "ObjectType") or @TypeOf(T.ObjectType) != vk.ObjectType) {
             @compileError("Object type \"" ++ @typeName(T) ++ "\" is malformed.");
         }
     }

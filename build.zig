@@ -9,7 +9,7 @@ const ImplementationDesc = struct {
 const implementations = [_]ImplementationDesc{
     .{
         .name = "soft",
-        .root_source_file = "src/soft/lib.zig",
+        .root_source_file = "src/soft/libvulkan.zig",
     },
 };
 
@@ -57,5 +57,24 @@ pub fn build(b: *std.Build) void {
         const run_tests = b.addRunArtifact(lib_tests);
         const test_step = b.step(b.fmt("test-{s}", .{impl.name}), b.fmt("Run lib{s} tests", .{impl.name}));
         test_step.dependOn(&run_tests.step);
+
+        const c_test_exe = b.addExecutable(.{
+            .name = b.fmt("c_test_vulkan_{s}", .{impl.name}),
+            .root_module = b.createModule(.{
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            }),
+        });
+
+        c_test_exe.root_module.addCSourceFile(.{
+            .file = b.path("test/c/main.c"),
+            .flags = &.{b.fmt("-DLIBVK=\"{s}\"", .{lib.name})},
+        });
+
+        const run_c_test = b.addRunArtifact(c_test_exe);
+        const test_c_step = b.step(b.fmt("test-c-{s}", .{impl.name}), b.fmt("Run lib{s} C test", .{impl.name}));
+        test_c_step.dependOn(b.getInstallStep());
+        test_c_step.dependOn(&run_c_test.step);
     }
 }
