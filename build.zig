@@ -9,7 +9,7 @@ const ImplementationDesc = struct {
 const implementations = [_]ImplementationDesc{
     .{
         .name = "soft",
-        .root_source_file = "src/soft/libvulkan.zig",
+        .root_source_file = "src/soft/lib.zig",
     },
 };
 

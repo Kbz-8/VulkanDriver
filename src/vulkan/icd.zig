@@ -7,18 +7,15 @@ const c = @cImport({
 const Instance = @import("Instance.zig").Instance;
 const fromHandle = @import("object.zig").fromHandle;
 
-pub fn getInstanceProcAddr(vk_instance: vk.Instance, name: []const u8) vk.PfnVoidFunction {
-    _ = fromHandle(Instance, vk.Instance, vk_instance) catch .{};
+const global_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
+    .{ "vkGetInstanceProcAddr", @as(vk.PfnVoidFunction, @ptrCast(&getInstanceProcAddr)) },
+    .{ "vkCreateInstance", @as(vk.PfnVoidFunction, @ptrCast(&Instance.vtable.createInstance)) },
+});
 
-    inline for (.{
-        "vkCreateInstance",
-        "vkDestroyInstance",
-        "vkGetInstanceProcAddr",
-    }) |sym| {
-        if (std.mem.eql(u8, name, sym)) {
-            //const f = @field(Instance.vtable, sym);
-            return @ptrFromInt(12);
-        }
+pub fn getInstanceProcAddr(instance: vk.Instance, name: []const u8) vk.PfnVoidFunction {
+    if (global_pfn_map.get(name)) |pfn| {
+        return pfn;
     }
+    if (instance != .null_handle) {}
     return null;
 }
