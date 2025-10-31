@@ -6,19 +6,19 @@ const Object = @import("object.zig").Object;
 pub const Instance = extern struct {
     const Self = @This();
     pub const ObjectType: vk.ObjectType = .instance;
-    pub const vtable: *const VTable = .{};
+    pub const vtable: VTable = .{};
 
     object: Object,
     //physical_devices: std.ArrayList(*PhysicalDevice),
     alloc_callbacks: vk.AllocationCallbacks,
 
     pub const VTable = struct {
-        createInstance: ?vk.PfnCreateInstance,
-        destroyInstance: ?vk.PfnDestroyInstance,
-        enumeratePhysicalDevices: ?vk.PfnEnumeratePhysicalDevices,
-        getInstanceProcAddr: ?vk.PfnGetInstanceProcAddr,
-        enumerateInstanceVersion: ?vk.PfnEnumerateInstanceVersion,
-        //enumerateInstanceLayerProperties: vk.PfnEnumerateInstanceProperties,
-        enumerateInstanceExtensionProperties: ?vk.PfnEnumerateInstanceExtensionProperties,
+        createInstance: ?vk.PfnCreateInstance = null,
+        destroyInstance: ?vk.PfnDestroyInstance = null,
+        enumeratePhysicalDevices: ?vk.PfnEnumeratePhysicalDevices = null,
+        getInstanceProcAddr: ?vk.PfnGetInstanceProcAddr = null,
+        enumerateInstanceVersion: ?vk.PfnEnumerateInstanceVersion = null,
+        //enumerateInstanceLayerProperties: vk.PfnEnumerateInstanceProperties = null,
+        enumerateInstanceExtensionProperties: ?vk.PfnEnumerateInstanceExtensionProperties = null,
     };
 };
