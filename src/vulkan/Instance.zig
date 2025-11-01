@@ -1,24 +1,52 @@
 const std = @import("std");
 const vk = @import("vulkan");
-const PhysicalDevice = @import("PhysicalDevice.zig").PhysicalDevice;
-const Object = @import("object.zig").Object;
+const dispatchable = @import("dispatchable.zig");
 
-pub const Instance = extern struct {
-    const Self = @This();
-    pub const ObjectType: vk.ObjectType = .instance;
-    pub const vtable: VTable = .{};
+const Self = @This();
+pub const ObjectType: vk.ObjectType = .instance;
 
-    object: Object,
-    //physical_devices: std.ArrayList(*PhysicalDevice),
-    alloc_callbacks: vk.AllocationCallbacks,
+alloc_callbacks: vk.AllocationCallbacks,
 
-    pub const VTable = struct {
-        createInstance: ?vk.PfnCreateInstance = null,
-        destroyInstance: ?vk.PfnDestroyInstance = null,
-        enumeratePhysicalDevices: ?vk.PfnEnumeratePhysicalDevices = null,
-        getInstanceProcAddr: ?vk.PfnGetInstanceProcAddr = null,
-        enumerateInstanceVersion: ?vk.PfnEnumerateInstanceVersion = null,
-        //enumerateInstanceLayerProperties: vk.PfnEnumerateInstanceProperties = null,
-        enumerateInstanceExtensionProperties: ?vk.PfnEnumerateInstanceExtensionProperties = null,
+vtable: VTable,
+
+pub fn init(self: *Self, p_infos: ?*const vk.InstanceCreateInfo, callbacks: ?*const vk.AllocationCallbacks) !void {
+    const infos = p_infos orelse return error.NullCreateInfos;
+    if (infos.s_type != .instance_create_info) {
+        return error.InvalidCreateInfos;
+    }
+
+    self.vtable = .{
+        .destroyInstance = null,
+        .enumeratePhysicalDevices = null,
+        .enumerateInstanceVersion = null,
+        //.enumerateInstanceLayerProperties = null,
+        .enumerateInstanceExtensionProperties = null,
     };
+
+    if (callbacks) |c| {
+        self.alloc_callbacks = c.*;
+    }
+}
+
+pub fn getProcAddr(self: *const Self, name: []const u8) vk.PfnVoidFunction {
+    const allocator = std.heap.c_allocator;
+
+    const KV = struct { []const u8, vk.PfnVoidFunction };
+    const pfn_map = std.StaticStringMap(vk.PfnVoidFunction).init([_]KV{
+        .{ "vkDestroyInstance", @ptrCast(self.vtable.destroyInstance) },
+        .{ "vkEnumeratePhysicalDevices", @ptrCast(self.vtable.enumeratePhysicalDevices) },
+        .{ "vkEnumerateInstanceVersion", @ptrCast(self.vtable.enumerateInstanceVersion) },
+        .{ "vkEnumerateInstanceExtensionProperties", @ptrCast(self.vtable.enumerateInstanceExtensionProperties) },
+    }, allocator) catch return null;
+    defer pfn_map.deinit(allocator);
+
+    return if (pfn_map.get(name)) |pfn| pfn else null;
+}
+
+pub const VTable = struct {
+    destroyInstance: ?vk.PfnDestroyInstance,
+    enumeratePhysicalDevices: ?vk.PfnEnumeratePhysicalDevices,
+    enumerateInstanceVersion: ?vk.PfnEnumerateInstanceVersion,
+    //enumerateInstanceLayerProperties: vk.PfnEnumerateInstanceProperties,
+    enumerateInstanceExtensionProperties: ?vk.PfnEnumerateInstanceExtensionProperties,
 };

@@ -21,6 +21,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/vulkan/lib.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
 
     const vulkan_headers = b.dependency("vulkan_headers", .{});
@@ -36,6 +37,7 @@ pub fn build(b: *std.Build) void {
         const lib_mod = b.createModule(.{
             .root_source_file = b.path(impl.root_source_file),
             .target = target,
+            .link_libc = true,
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "common", .module = common_mod },
@@ -71,6 +73,8 @@ pub fn build(b: *std.Build) void {
             .file = b.path("test/c/main.c"),
             .flags = &.{b.fmt("-DLIBVK=\"{s}\"", .{lib.name})},
         });
+
+        b.installArtifact(c_test_exe);
 
         const run_c_test = b.addRunArtifact(c_test_exe);
         const test_c_step = b.step(b.fmt("test-c-{s}", .{impl.name}), b.fmt("Run lib{s} C test", .{impl.name}));

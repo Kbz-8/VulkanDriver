@@ -2,15 +2,23 @@ const std = @import("std");
 const vk = @import("vulkan");
 
 pub const icd = @import("icd.zig");
+pub const dispatchable = @import("dispatchable.zig");
+
 pub const Instance = @import("Instance.zig");
 pub const PhysicalDevice = @import("PhysicalDevice.zig");
 
-pub export fn vkGetInstanceProcAddr(instance: vk.Instance, pName: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
-    if (pName == null) {
-        return null;
-    }
-    const name = std.mem.span(pName.?);
-    return icd.getInstanceProcAddr(instance, name);
+pub const std_options: std.Options = .{
+    .log_level = .info,
+    .logFn = logFn,
+};
+
+pub fn logFn(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), comptime format: []const u8, args: anytype) void {
+    _ = level;
+    _ = scope;
+    std.debug.lockStdErr();
+    defer std.debug.unlockStdErr();
+    const stderr = std.fs.File.stderr().deprecatedWriter();
+    nosuspend stderr.print(format ++ "\n", args) catch return;
 }
 
 test {
