@@ -26,13 +26,21 @@ pub fn build(b: *std.Build) !void {
         .link_libc = true,
     });
 
+    const interface_dependency = b.dependency("interface", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const vulkan_headers = b.dependency("vulkan_headers", .{});
 
     const vulkan = b.dependency("vulkan_zig", .{
         .registry = vulkan_headers.path("registry/vk.xml"),
     }).module("vulkan-zig");
 
+    const interface_mod = interface_dependency.module("interface");
+
     common_mod.addImport("vulkan", vulkan);
+    common_mod.addImport("interface", interface_mod);
     common_mod.addSystemIncludePath(vulkan_headers.path("include"));
 
     for (implementations) |impl| {
@@ -44,6 +52,7 @@ pub fn build(b: *std.Build) !void {
             .imports = &.{
                 .{ .name = "common", .module = common_mod },
                 .{ .name = "vulkan", .module = vulkan },
+                .{ .name = "interface", .module = interface_mod },
             },
         });
 

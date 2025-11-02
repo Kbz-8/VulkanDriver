@@ -3,6 +3,7 @@ const vk = @import("vulkan");
 const Instance = @import("Instance.zig");
 const common = @import("common");
 const root = @import("root");
+const cpuinfo = @import("cpuinfo");
 
 const dispatchable = common.dispatchable;
 
@@ -13,6 +14,8 @@ instance: *const Instance,
 common_physical_device: common.PhysicalDevice,
 
 pub fn init(self: *Self) !void {
+    const allocator = std.heap.c_allocator;
+
     self.common_physical_device.props = .{
         .api_version = @bitCast(root.VULKAN_VERSION),
         .driver_version = @bitCast(root.DRIVER_VERSION),
@@ -24,8 +27,12 @@ pub fn init(self: *Self) !void {
         .limits = undefined,
         .sparse_properties = undefined,
     };
-    var writer = std.io.Writer.fixed(&self.common_physical_device.props.device_name);
-    try writer.print("Software Vulkan Driver", .{});
+
+    const info = try cpuinfo.get(allocator);
+    defer info.deinit(allocator);
+
+    var writer = std.io.Writer.fixed(self.common_physical_device.props.device_name[0 .. vk.MAX_PHYSICAL_DEVICE_NAME_SIZE - 1]);
+    try writer.print("{s} [Soft Vulkan Driver]", .{info.name});
 }
 
 pub fn getProperties(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceProperties) callconv(vk.vulkan_call_conv) void {
