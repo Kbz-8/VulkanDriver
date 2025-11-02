@@ -4,16 +4,18 @@ const Step = std.Build.Step;
 const ImplementationDesc = struct {
     name: []const u8,
     root_source_file: []const u8,
+    custom: ?*const fn (*std.Build, *std.Build.Module) anyerror!void = null,
 };
 
 const implementations = [_]ImplementationDesc{
     .{
         .name = "soft",
         .root_source_file = "src/soft/lib.zig",
+        .custom = customSoft,
     },
 };
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -46,6 +48,10 @@ pub fn build(b: *std.Build) void {
         });
 
         lib_mod.addSystemIncludePath(vulkan_headers.path("include"));
+
+        if (impl.custom) |custom| {
+            try custom(b, lib_mod);
+        }
 
         const lib = b.addLibrary(.{
             .name = b.fmt("vulkan_{s}", .{impl.name}),
@@ -81,4 +87,9 @@ pub fn build(b: *std.Build) void {
         test_c_step.dependOn(b.getInstallStep());
         test_c_step.dependOn(&run_c_test.step);
     }
+}
+
+fn customSoft(b: *std.Build, mod: *std.Build.Module) !void {
+    const cpuinfo = b.lazyDependency("cpuinfo", .{}) orelse return error.UnresolvedDependency;
+    mod.addImport("cpuinfo", cpuinfo.module("cpuinfo"));
 }

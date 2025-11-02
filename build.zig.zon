@@ -13,6 +13,11 @@
             .url = "git+https://github.com/catmeow72/vulkan-zig/#8961518db28f88d2cf09ea68e146923de2cfa7f0",
             .hash = "vulkan-0.0.0-r7Ytx6hBAwD8X_TN32qlkzul4riK6vFvjtK9fZfRvALg",
         },
+        .cpuinfo = .{
+            .url = "git+https://github.com/Kbz-8/cpuinfo-zig#77f82a1248194e7fb706967343c66021f8522766",
+            .hash = "cpuinfo-0.1.0-V7dMLcghAADJuG7dkd3MnwDPZ232pBK_8uGjxY43eP5u",
+            .lazy = true,
+        },
     },
 
     .paths = .{

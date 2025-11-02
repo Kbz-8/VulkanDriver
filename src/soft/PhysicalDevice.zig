@@ -2,6 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const Instance = @import("Instance.zig");
 const common = @import("common");
+const root = @import("root");
 
 const dispatchable = common.dispatchable;
 
@@ -13,10 +14,10 @@ common_physical_device: common.PhysicalDevice,
 
 pub fn init(self: *Self) !void {
     self.common_physical_device.props = .{
-        .api_version = @bitCast(common.DRIVER_VULKAN_VERSION),
-        .driver_version = @bitCast(common.DRIVER_VERSION),
-        .vendor_id = 0x0601,
-        .device_id = 0x060103,
+        .api_version = @bitCast(root.VULKAN_VERSION),
+        .driver_version = @bitCast(root.DRIVER_VERSION),
+        .vendor_id = common.VULKAN_VENDOR_ID,
+        .device_id = root.DEVICE_ID,
         .device_type = .cpu,
         .device_name = [_]u8{0} ** vk.MAX_PHYSICAL_DEVICE_NAME_SIZE,
         .pipeline_cache_uuid = undefined,
