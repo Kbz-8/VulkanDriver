@@ -15,13 +15,7 @@ pub fn init(self: *Self, p_infos: ?*const vk.InstanceCreateInfo, callbacks: ?*co
         return error.InvalidCreateInfos;
     }
 
-    self.vtable = .{
-        .destroyInstance = null,
-        .enumeratePhysicalDevices = null,
-        .enumerateInstanceVersion = null,
-        //.enumerateInstanceLayerProperties = null,
-        .enumerateInstanceExtensionProperties = null,
-    };
+    self.vtable = .{};
 
     if (callbacks) |c| {
         self.alloc_callbacks = c.*;
@@ -37,6 +31,7 @@ pub fn getProcAddr(self: *const Self, name: []const u8) vk.PfnVoidFunction {
         .{ "vkEnumeratePhysicalDevices", @ptrCast(self.vtable.enumeratePhysicalDevices) },
         .{ "vkEnumerateInstanceVersion", @ptrCast(self.vtable.enumerateInstanceVersion) },
         .{ "vkEnumerateInstanceExtensionProperties", @ptrCast(self.vtable.enumerateInstanceExtensionProperties) },
+        .{ "vkGetPhysicalDeviceProperties", @ptrCast(self.vtable.getPhysicalDeviceProperties) },
     }, allocator) catch return null;
     defer pfn_map.deinit(allocator);
 
@@ -44,9 +39,10 @@ pub fn getProcAddr(self: *const Self, name: []const u8) vk.PfnVoidFunction {
 }
 
 pub const VTable = struct {
-    destroyInstance: ?vk.PfnDestroyInstance,
-    enumeratePhysicalDevices: ?vk.PfnEnumeratePhysicalDevices,
-    enumerateInstanceVersion: ?vk.PfnEnumerateInstanceVersion,
-    //enumerateInstanceLayerProperties: vk.PfnEnumerateInstanceProperties,
-    enumerateInstanceExtensionProperties: ?vk.PfnEnumerateInstanceExtensionProperties,
+    destroyInstance: ?vk.PfnDestroyInstance = null,
+    enumeratePhysicalDevices: ?vk.PfnEnumeratePhysicalDevices = null,
+    enumerateInstanceVersion: ?vk.PfnEnumerateInstanceVersion = null,
+    //enumerateInstanceLayerProperties: vk.PfnEnumerateInstanceProperties = null,
+    enumerateInstanceExtensionProperties: ?vk.PfnEnumerateInstanceExtensionProperties = null,
+    getPhysicalDeviceProperties: ?vk.PfnGetPhysicalDeviceProperties = null,
 };

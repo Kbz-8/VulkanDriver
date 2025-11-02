@@ -12,11 +12,11 @@ pub fn Dispatchable(comptime T: type) type {
         object_type: vk.ObjectType,
         object: *T,
 
-        pub fn create(allocator: std.mem.Allocator, object_type: vk.ObjectType) !*Self {
+        pub fn create(allocator: std.mem.Allocator) !*Self {
             const object = try allocator.create(Self);
             object.* = .{
                 .loader_data = .{ .loaderMagic = c.ICD_LOADER_MAGIC },
-                .object_type = object_type,
+                .object_type = T.ObjectType,
                 .object = try allocator.create(T),
             };
             return object;
@@ -25,6 +25,10 @@ pub fn Dispatchable(comptime T: type) type {
         pub fn destroy(self: *Self, allocator: std.mem.Allocator) void {
             allocator.destroy(self.object);
             allocator.destroy(self);
+        }
+
+        pub inline fn toHandle(self: *Self) usize {
+            return @intFromPtr(self);
         }
     };
 }
@@ -40,6 +44,7 @@ pub inline fn fromHandle(comptime T: type, handle: usize) !*Dispatchable(T) {
     return dispatchable;
 }
 
-pub inline fn toHandle(comptime T: type, handle: *Dispatchable(T)) usize {
-    return @intFromPtr(handle);
+pub inline fn fromHandleObject(comptime T: type, handle: usize) !*T {
+    const dispatchable_handle = try fromHandle(T, handle);
+    return dispatchable_handle.object;
 }

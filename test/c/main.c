@@ -39,10 +39,22 @@ int main(void)
 
 	#define VULKAN_INSTANCE_FUNCTION(fn) PFN_##fn fn = (PFN_##fn)vkGetInstanceProcAddr(instance, #fn);
 	VULKAN_INSTANCE_FUNCTION(vkEnumeratePhysicalDevices)
+	VULKAN_INSTANCE_FUNCTION(vkGetPhysicalDeviceProperties)
 	VULKAN_INSTANCE_FUNCTION(vkDestroyInstance)
+
+	uint32_t count;
+	vkEnumeratePhysicalDevices(instance, &count, NULL);
+	printf("VkPhysicalDevice count %d\n", count);
+	VkPhysicalDevice* physical_devices = (VkPhysicalDevice*)calloc(count, sizeof(VkPhysicalDevice));
+	vkEnumeratePhysicalDevices(instance, &count, physical_devices);
+
+	VkPhysicalDeviceProperties props;
+	vkGetPhysicalDeviceProperties(physical_devices[0], &props);
+	printf("VkPhysicalDevice name %s\n", props.deviceName);
 
 	vkDestroyInstance(instance, NULL);
 
+	free(physical_devices);
 	dlclose(lib);
 	return 0;
 }

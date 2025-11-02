@@ -6,21 +6,28 @@ const common = @import("common");
 const dispatchable = common.dispatchable;
 
 const Self = @This();
-const ObjectType: vk.ObjectType = .physical_device;
+pub const ObjectType: vk.ObjectType = .physical_device;
 
 instance: *const Instance,
 common_physical_device: common.PhysicalDevice,
 
 pub fn init(self: *Self) !void {
     self.common_physical_device.props = .{
-			.apiVersion = ,
-			.driverVersion = VKD_DRIVER_VERSION,
-			.vendorID = 0x0601,
-			.deviceID = 0x060103,
-			.deviceType = VK_PHYSICAL_DEVICE_TYPE_CPU,
-			.deviceName = {},
-			.pipelineCacheUUID = {},
-			.limits = {},
-			.sparseProperties = {},
-		};
+        .api_version = @bitCast(common.DRIVER_VULKAN_VERSION),
+        .driver_version = @bitCast(common.DRIVER_VERSION),
+        .vendor_id = 0x0601,
+        .device_id = 0x060103,
+        .device_type = .cpu,
+        .device_name = [_]u8{0} ** vk.MAX_PHYSICAL_DEVICE_NAME_SIZE,
+        .pipeline_cache_uuid = undefined,
+        .limits = undefined,
+        .sparse_properties = undefined,
+    };
+    var writer = std.io.Writer.fixed(&self.common_physical_device.props.device_name);
+    try writer.print("Software Vulkan Driver", .{});
+}
+
+pub fn getProperties(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceProperties) callconv(vk.vulkan_call_conv) void {
+    const physical_device = dispatchable.fromHandleObject(Self, @intFromEnum(p_physical_device)) catch return;
+    properties.* = physical_device.common_physical_device.props;
 }

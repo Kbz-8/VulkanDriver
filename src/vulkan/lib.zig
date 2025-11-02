@@ -7,6 +7,9 @@ pub const dispatchable = @import("dispatchable.zig");
 pub const Instance = @import("Instance.zig");
 pub const PhysicalDevice = @import("PhysicalDevice.zig");
 
+pub const DRIVER_VERSION = vk.makeApiVersion(0, 0, 0, 1);
+pub const DRIVER_VULKAN_VERSION = vk.makeApiVersion(0, 1, 0, 0);
+
 pub const std_options: std.Options = .{
     .log_level = .info,
     .logFn = logFn,
