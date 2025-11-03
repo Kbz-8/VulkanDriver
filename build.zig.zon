@@ -18,10 +18,6 @@
             .hash = "cpuinfo-0.1.0-V7dMLcghAADJuG7dkd3MnwDPZ232pBK_8uGjxY43eP5u",
             .lazy = true,
         },
-        .interface = .{
-            .url = "git+https://github.com/nilslice/zig-interface#19f2c937b77e42b15bc8cacaa2894ce5b783d94d",
-            .hash = "interface-0.0.2-GFlWJ7KOAQAkHikqZU0XV86AhX7R9jCyGza85lTIqcEU",
-        },
     },
 
     .paths = .{

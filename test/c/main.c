@@ -21,8 +21,13 @@
 
 int main(void)
 {
-	puts("openning ./zig-out/lib/lib" LIBVK ".so");
 	void* lib = dlopen("./zig-out/lib/lib" LIBVK ".so", RTLD_NOW | RTLD_LOCAL);
+	if(!lib)
+	{
+		fprintf(stderr, "Could not open driver lib: %s\n", dlerror());
+		exit(EXIT_FAILURE);
+	}
+	puts("openned ./zig-out/lib/lib" LIBVK ".so");
 
 	PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = dlsym(lib, "vkGetInstanceProcAddr");
 

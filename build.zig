@@ -15,20 +15,15 @@ const implementations = [_]ImplementationDesc{
     },
 };
 
-pub fn build(b: *std.Build) !void {
+pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const common_mod = b.createModule(.{
+    const base_mod = b.createModule(.{
         .root_source_file = b.path("src/vulkan/lib.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
-    });
-
-    const interface_dependency = b.dependency("interface", .{
-        .target = target,
-        .optimize = optimize,
     });
 
     const vulkan_headers = b.dependency("vulkan_headers", .{});
@@ -37,11 +32,8 @@ pub fn build(b: *std.Build) !void {
         .registry = vulkan_headers.path("registry/vk.xml"),
     }).module("vulkan-zig");
 
-    const interface_mod = interface_dependency.module("interface");
-
-    common_mod.addImport("vulkan", vulkan);
-    common_mod.addImport("interface", interface_mod);
-    common_mod.addSystemIncludePath(vulkan_headers.path("include"));
+    base_mod.addImport("vulkan", vulkan);
+    base_mod.addSystemIncludePath(vulkan_headers.path("include"));
 
     for (implementations) |impl| {
         const lib_mod = b.createModule(.{
@@ -50,16 +42,15 @@ pub fn build(b: *std.Build) !void {
             .link_libc = true,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "common", .module = common_mod },
+                .{ .name = "base", .module = base_mod },
                 .{ .name = "vulkan", .module = vulkan },
-                .{ .name = "interface", .module = interface_mod },
             },
         });
 
         lib_mod.addSystemIncludePath(vulkan_headers.path("include"));
 
         if (impl.custom) |custom| {
-            try custom(b, lib_mod);
+            custom(b, lib_mod) catch continue;
         }
 
         const lib = b.addLibrary(.{

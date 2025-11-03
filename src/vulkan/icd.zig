@@ -1,5 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
+const root = @import("lib.zig");
 const c = @cImport({
     @cInclude("vulkan/vk_icd.h");
 });
@@ -11,18 +12,20 @@ pub fn getInstanceProcAddr(global_pfn_map: std.StaticStringMap(vk.PfnVoidFunctio
     const allocator = std.heap.c_allocator;
     const get_proc_log = std.log.scoped(.vkGetInstanceProcAddr);
 
-    if (std.process.hasEnvVar(allocator, "DRIVER_LOGS") catch false) {
+    if (std.process.hasEnvVar(allocator, root.DRIVER_LOGS_ENV_NAME) catch false) {
         get_proc_log.info("Loading {s}...", .{name});
     }
 
     if (global_pfn_map.get(name)) |pfn| {
         return pfn;
     }
-    const instance = dispatchable.fromHandle(Instance, @intFromEnum(p_instance)) catch |e| {
-        if (std.process.hasEnvVar(allocator, "DRIVER_LOGS") catch false) {
+
+    // Checks if instance is NULL
+    _ = dispatchable.fromHandle(Instance, @intFromEnum(p_instance)) catch |e| {
+        if (std.process.hasEnvVar(allocator, root.DRIVER_LOGS_ENV_NAME) catch false) {
             get_proc_log.err("{any}", .{e});
         }
         return null;
     };
-    return instance.object.getProcAddr(name);
+    return Instance.getProcAddr(name);
 }

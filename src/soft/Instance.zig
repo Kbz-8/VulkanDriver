@@ -1,55 +1,40 @@
 const std = @import("std");
 const vk = @import("vulkan");
-const common = @import("common");
+const base = @import("base");
 const PhysicalDevice = @import("PhysicalDevice.zig");
 
-const dispatchable = common.dispatchable;
+const dispatchable = base.dispatchable;
+const VulkanAllocator = base.VulkanAllocator;
 
 const Self = @This();
-pub const ObjectType: vk.ObjectType = .instance;
 
-common_instance: common.Instance,
-physical_device: vk.PhysicalDevice, // Software driver only has one physical device (CPU)
+export fn __vkImplInstanceInit(base_instance: *base.Instance, allocator: *const std.mem.Allocator) ?*anyopaque {
+    return realVkImplInstanceInit(base_instance, allocator.*) catch return null;
+}
 
-pub fn create(p_infos: ?*const vk.InstanceCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_instance: *vk.Instance) callconv(vk.vulkan_call_conv) vk.Result {
-    const allocator = std.heap.c_allocator;
-
-    const dispatchable_instance = dispatchable.Dispatchable(Self).create(allocator) catch return .error_out_of_host_memory;
-    const instance = dispatchable_instance.object;
-    common.Instance.init(&instance.common_instance, p_infos, callbacks) catch return .error_initialization_failed;
-
-    instance.common_instance.vtable = .{
-        .destroyInstance = destroy,
-        .enumeratePhysicalDevices = enumeratePhysicalDevices,
+// Pure Zig implementation to leverage `errdefer` and avoid memory leaks or complex resources handling
+fn realVkImplInstanceInit(base_instance: *base.Instance, allocator: std.mem.Allocator) !?*anyopaque {
+    base_instance.dispatch_table = .{
+        .destroyInstance = deinit,
         .enumerateInstanceVersion = null,
         //.enumerateInstanceLayerProperties = null,
         .enumerateInstanceExtensionProperties = null,
-        .getPhysicalDeviceProperties = PhysicalDevice.getProperties,
     };
 
-    const dispatchable_physical_device = dispatchable.Dispatchable(PhysicalDevice).create(allocator) catch return .error_out_of_host_memory;
-    PhysicalDevice.init(dispatchable_physical_device.object) catch return .error_initialization_failed;
-    instance.physical_device = @enumFromInt(dispatchable_physical_device.toHandle());
+    // Software driver only has one physical device (the CPU)
+    const dispatchable_physical_device = try PhysicalDevice.init(base_instance, allocator);
+    errdefer dispatchable_physical_device.destroy(allocator);
 
-    p_instance.* = @enumFromInt(dispatchable_instance.toHandle());
-    return .success;
+    try base_instance.physical_devices.append(allocator, @enumFromInt(dispatchable_physical_device.toHandle()));
+
+    const self = try allocator.create(Self);
+    errdefer allocator.destroy(self);
+    return @ptrCast(self);
 }
 
-pub fn enumeratePhysicalDevices(p_instance: vk.Instance, count: *u32, p_devices: ?[*]vk.PhysicalDevice) callconv(vk.vulkan_call_conv) vk.Result {
-    const instance = dispatchable.fromHandleObject(Self, @intFromEnum(p_instance)) catch return .error_initialization_failed;
-    count.* = 1;
-    if (p_devices) |devices| {
-        devices[0] = instance.physical_device;
+pub fn deinit(base_instance: *const base.Instance, allocator: std.mem.Allocator) !void {
+    for (base_instance.physical_devices.items) |physical_device| {
+        const dispatchable_physical_device = try dispatchable.fromHandle(base.PhysicalDevice, @intFromEnum(physical_device));
+        dispatchable_physical_device.destroy(allocator);
     }
-    return .success;
-}
-
-pub fn destroy(p_instance: vk.Instance, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
-    const allocator = std.heap.c_allocator;
-    _ = callbacks;
-
-    const dispatchable_instance = dispatchable.fromHandle(Self, @intFromEnum(p_instance)) catch return;
-    const dispatchable_physical_device = dispatchable.fromHandle(PhysicalDevice, @intFromEnum(dispatchable_instance.object.physical_device)) catch return;
-    dispatchable_physical_device.destroy(allocator);
-    dispatchable_instance.destroy(allocator);
 }
