@@ -11,9 +11,10 @@ const Self = @This();
 callbacks: ?vk.AllocationCallbacks,
 scope: vk.SystemAllocationScope,
 
-pub fn init(callbacks: ?vk.AllocationCallbacks, scope: vk.SystemAllocationScope) Self {
+pub fn init(callbacks: ?*const vk.AllocationCallbacks, scope: vk.SystemAllocationScope) Self {
+    const deref_callbacks = if (callbacks) |c| c.* else null;
     return .{
-        .callbacks = callbacks,
+        .callbacks = deref_callbacks,
         .scope = scope,
     };
 }
