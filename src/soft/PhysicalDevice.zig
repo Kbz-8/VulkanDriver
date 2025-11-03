@@ -2,7 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const Instance = @import("Instance.zig");
 const base = @import("base");
-const root = @import("root");
+const root = @import("lib.zig");
 const cpuinfo = @import("cpuinfo");
 
 const dispatchable = base.dispatchable;
