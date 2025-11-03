@@ -20,6 +20,20 @@ pub fn init(instance: *const base.Instance, allocator: std.mem.Allocator) !*disp
     base_physical_device.props.device_id = root.DEVICE_ID;
     base_physical_device.props.device_type = .cpu;
 
+    base_physical_device.mem_props.memory_type_count = 1;
+    base_physical_device.mem_props.memory_types[0] = .{
+        .heap_index = 0,
+        .property_flags = .{
+            .host_visible_bit = true,
+            .host_coherent_bit = true,
+        },
+    };
+    base_physical_device.mem_props.memory_heap_count = 1;
+    base_physical_device.mem_props.memory_heaps[0] = .{
+        .size = std.process.totalSystemMemory() catch 0,
+        .flags = .{}, // Host memory
+    };
+
     const info = try cpuinfo.get(allocator);
     defer info.deinit(allocator);
 

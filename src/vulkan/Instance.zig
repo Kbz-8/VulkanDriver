@@ -4,6 +4,7 @@ const root = @import("lib.zig");
 const dispatchable = @import("dispatchable.zig");
 const VulkanAllocator = @import("VulkanAllocator.zig");
 const PhysicalDevice = @import("PhysicalDevice.zig");
+const Dispatchable = dispatchable.Dispatchable;
 
 extern fn __vkImplInstanceInit(*Self, *const std.mem.Allocator) ?*anyopaque;
 
@@ -17,9 +18,6 @@ driver_data: ?*anyopaque,
 
 pub const DispatchTable = struct {
     destroyInstance: ?*const fn (*const Self, std.mem.Allocator) anyerror!void = null,
-    enumerateInstanceVersion: ?vk.PfnEnumerateInstanceVersion = null,
-    //enumerateInstanceLayerProperties: vk.PfnEnumerateInstanceProperties = null,
-    enumerateInstanceExtensionProperties: ?vk.PfnEnumerateInstanceExtensionProperties = null,
 };
 
 pub fn create(p_infos: ?*const vk.InstanceCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_instance: *vk.Instance) callconv(vk.vulkan_call_conv) vk.Result {
@@ -32,7 +30,7 @@ pub fn create(p_infos: ?*const vk.InstanceCreateInfo, callbacks: ?*const vk.Allo
 
     const allocator = VulkanAllocator.init(deref_callbacks, .instance).allocator();
 
-    const dispatchable_instance = dispatchable.Dispatchable(Self).create(allocator) catch return .error_out_of_host_memory;
+    const dispatchable_instance = Dispatchable(Self).create(allocator) catch return .error_out_of_host_memory;
     const self = dispatchable_instance.object;
     self.dispatch_table = .{};
 
@@ -76,7 +74,6 @@ pub fn getProcAddr(name: []const u8) vk.PfnVoidFunction {
     const pfn_map = std.StaticStringMap(vk.PfnVoidFunction).init([_]KV{
         .{ "vkDestroyInstance", @ptrCast(&destroy) },
         .{ "vkEnumeratePhysicalDevices", @ptrCast(&enumeratePhysicalDevices) },
-        //.{ "vkGetPhysicalDeviceProperties", @ptrCast(self.dispatch_table.getPhysicalDeviceProperties) },
     }, allocator) catch return null;
     defer pfn_map.deinit(allocator);
 

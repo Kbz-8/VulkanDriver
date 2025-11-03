@@ -45,6 +45,7 @@ int main(void)
 	#define VULKAN_INSTANCE_FUNCTION(fn) PFN_##fn fn = (PFN_##fn)vkGetInstanceProcAddr(instance, #fn);
 	VULKAN_INSTANCE_FUNCTION(vkEnumeratePhysicalDevices)
 	VULKAN_INSTANCE_FUNCTION(vkGetPhysicalDeviceProperties)
+	VULKAN_INSTANCE_FUNCTION(vkGetPhysicalDeviceMemoryProperties)
 	VULKAN_INSTANCE_FUNCTION(vkDestroyInstance)
 
 	uint32_t count;
