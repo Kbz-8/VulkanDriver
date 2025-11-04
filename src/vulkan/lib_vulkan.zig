@@ -17,10 +17,19 @@ const PhysicalDevice = @import("PhysicalDevice.zig");
 
 extern fn __vkImplCreateInstance(*const std.mem.Allocator, *const vk.InstanceCreateInfo) ?*Instance;
 
-/// This file contains all exported Vulkan entrypoints.
-///
-/// The use of official Vulkan function names is assumed
-/// and is not a concern, given that this driver only implements Vulkan's API.
+// This file contains all exported Vulkan entrypoints.
+//
+// The use of official Vulkan function names is assumed
+// and is not a concern, given that this driver only implements Vulkan's API.
+
+fn functionMapElement(name: []const u8) struct { []const u8, vk.PfnVoidFunction } {
+    if (!std.meta.hasFn(@This(), name)) {
+        std.log.scoped(.vkGetInstanceProcAddr).err("Could not find function {s}", .{name});
+        return .{ name, null };
+    }
+    return .{ name, @as(vk.PfnVoidFunction, @ptrCast(&@field(@This(), name))) };
+}
+
 const icd_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapElement("vk_icdGetInstanceProcAddr"),
     functionMapElement("vk_icdGetPhysicalDeviceProcAddr"),
@@ -42,6 +51,7 @@ const instance_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
 
 const physical_device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapElement("vkCreateDevice"),
+    functionMapElement("vkEnumerateDeviceExtensionProperties"),
     functionMapElement("vkGetPhysicalDeviceFormatProperties"),
     functionMapElement("vkGetPhysicalDeviceFeatures"),
     functionMapElement("vkGetPhysicalDeviceImageFormatProperties"),
@@ -85,14 +95,6 @@ pub export fn vk_icdGetPhysicalDeviceProcAddr(_: vk.Instance, p_name: ?[*:0]cons
 }
 
 // Global functions ==========================================================================================================================================
-
-fn functionMapElement(name: []const u8) struct { []const u8, vk.PfnVoidFunction } {
-    if (!std.meta.hasFn(@This(), name)) {
-        std.log.scoped(.vkGetInstanceProcAddr).err("Could not find function {s}", .{name});
-        return .{ name, null };
-    }
-    return .{ name, @as(vk.PfnVoidFunction, @ptrCast(&@field(@This(), name))) };
-}
 
 pub export fn vkGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
     if (p_name == null) return null;
@@ -185,6 +187,17 @@ pub export fn vkCreateDevice(p_physical_device: vk.PhysicalDevice, p_infos: ?*co
 
     const device = physical_device.createDevice(allocator, infos) catch |err| return toVkResult(err);
     p_device.* = (Dispatchable(Device).wrap(allocator, device) catch |err| return toVkResult(err)).toVkHandle(vk.Device);
+    return .success;
+}
+
+pub export fn vkEnumerateDeviceExtensionProperties(p_physical_device: vk.PhysicalDevice, p_layer_name: ?[*:0]const u8, property_count: *u32, properties: ?*vk.ExtensionProperties) callconv(vk.vulkan_call_conv) vk.Result {
+    var name: ?[]const u8 = null;
+    if (p_layer_name) |layer_name| {
+        name = std.mem.span(layer_name);
+    }
+    _ = p_physical_device;
+    property_count.* = 0;
+    _ = properties;
     return .success;
 }
 
