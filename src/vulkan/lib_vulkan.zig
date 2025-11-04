@@ -17,6 +17,38 @@ const PhysicalDevice = @import("PhysicalDevice.zig");
 
 extern fn __vkImplCreateInstance(*const std.mem.Allocator, *const vk.InstanceCreateInfo) ?*Instance;
 
+/// This file contains all exported Vulkan entrypoints.
+///
+/// The use of official Vulkan function names is assumed
+/// and is not a concern, given that this driver only implements Vulkan's API.
+
+// ICD Interface =============================================================================================================================================
+
+pub export fn vk_icdNegotiateLoaderICDInterfaceVersion(p_version: *u32) callconv(vk.vulkan_call_conv) vk.Result {
+    p_version.* = 7;
+    return .success;
+}
+
+pub export fn vk_icdGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
+    if (p_name == null) {
+        return null;
+    }
+    const name = std.mem.span(p_name.?);
+
+    std.log.scoped(.vk_icdGetInstanceProcAddr).info("Loading {s}...", .{name});
+    logger.indent();
+    defer logger.unindent();
+
+    const icd_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
+        functionMapElement("vk_icdGetInstanceProcAddr"),
+        functionMapElement("vk_icdNegotiateLoaderICDInterfaceVersion"),
+    });
+    if (icd_pfn_map.get(name)) |pfn| return pfn;
+    return vkGetInstanceProcAddr(p_instance, p_name);
+}
+
+// Global functions ==========================================================================================================================================
+
 fn functionMapElement(name: []const u8) struct { []const u8, vk.PfnVoidFunction } {
     if (!std.meta.hasFn(@This(), name)) {
         std.log.scoped(.vkGetInstanceProcAddr).err("Could not find function {s}", .{name});
@@ -25,6 +57,10 @@ fn functionMapElement(name: []const u8) struct { []const u8, vk.PfnVoidFunction 
     return .{ name, @as(vk.PfnVoidFunction, @ptrCast(&@field(@This(), name))) };
 }
 
+const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
+    functionMapElement("vkDestroyDevice"),
+});
+
 pub export fn vkGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
     if (p_name == null) {
         return null;
@@ -32,20 +68,18 @@ pub export fn vkGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]const
     const name = std.mem.span(p_name.?);
 
     const global_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
-        functionMapElement("vkGetInstanceProcAddr"),
         functionMapElement("vkCreateInstance"),
+        functionMapElement("vkGetInstanceProcAddr"),
+        functionMapElement("vkEnumerateInstanceExtensionProperties"),
     });
 
     const instance_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
         functionMapElement("vkCreateDevice"),
         functionMapElement("vkDestroyInstance"),
         functionMapElement("vkEnumeratePhysicalDevices"),
+        functionMapElement("vkGetDeviceProcAddr"),
         functionMapElement("vkGetPhysicalDeviceProperties"),
         functionMapElement("vkGetPhysicalDeviceProperties"),
-    });
-
-    const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
-        functionMapElement("vkDestroyDevice"),
     });
 
     std.log.scoped(.vkGetInstanceProcAddr).info("Loading {s}...", .{name});
@@ -53,9 +87,15 @@ pub export fn vkGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]const
     defer logger.unindent();
 
     if (global_pfn_map.get(name)) |pfn| return pfn;
-    if (p_instance == .null_handle) return null;
+    if (p_instance == .null_handle) {
+        std.log.scoped(.vkGetInstanceProcAddr).err("Could not find global entrypoint {s}", .{name});
+        return null;
+    }
     if (instance_pfn_map.get(name)) |pfn| return pfn;
-    return if (device_pfn_map.get(name)) |pfn| pfn else null;
+    if (device_pfn_map.get(name)) |pfn| return pfn;
+
+    std.log.scoped(.vkGetInstanceProcAddr).err("Could not find entrypoint {s}", .{name});
+    return null;
 }
 
 pub export fn vkCreateInstance(p_infos: ?*const vk.InstanceCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_instance: *vk.Instance) callconv(vk.vulkan_call_conv) vk.Result {
@@ -74,6 +114,17 @@ pub export fn vkCreateInstance(p_infos: ?*const vk.InstanceCreateInfo, callbacks
     p_instance.* = (Dispatchable(Instance).wrap(allocator, instance) catch |err| return toVkResult(err)).toVkHandle(vk.Instance);
     return .success;
 }
+
+pub export fn vkEnumerateInstanceExtensionProperties(p_layer_name: ?[*:0]const u8, property_count: *u32, properties: ?*vk.ExtensionProperties) callconv(vk.vulkan_call_conv) vk.Result {
+    var name: ?[]const u8 = null;
+    if (p_layer_name) |layer_name| {
+        name = std.mem.span(layer_name);
+    }
+    Instance.enumerateExtensionProperties(name, property_count, properties) catch |err| return toVkResult(err);
+    return .success;
+}
+
+// Instance functions ========================================================================================================================================
 
 pub export fn vkDestroyInstance(p_instance: vk.Instance, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
     std.log.scoped(.vkDestroyInstance).info("Destroying VkInstance", .{});
@@ -123,6 +174,8 @@ pub export fn vkCreateDevice(p_physical_device: vk.PhysicalDevice, p_infos: ?*co
     return .success;
 }
 
+// Device functions ==========================================================================================================================================
+
 pub export fn vkDestroyDevice(p_device: vk.Device, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
     const allocator = VulkanAllocator.init(callbacks, .device).allocator();
     const dispatchable = Dispatchable(Device).fromHandle(p_device) catch return;
@@ -132,4 +185,18 @@ pub export fn vkDestroyDevice(p_device: vk.Device, callbacks: ?*const vk.Allocat
 
     dispatchable.object.destroy(allocator) catch return;
     dispatchable.destroy(allocator);
+}
+
+pub export fn vkGetDeviceProcAddr(p_device: vk.Device, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
+    if (p_name == null) {
+        return null;
+    }
+    const name = std.mem.span(p_name.?);
+
+    std.log.scoped(.vkGetDeviceProcAddr).info("Loading {s}...", .{name});
+    logger.indent();
+    defer logger.unindent();
+
+    if (p_device == .null_handle) return null;
+    return if (device_pfn_map.get(name)) |pfn| pfn else null;
 }

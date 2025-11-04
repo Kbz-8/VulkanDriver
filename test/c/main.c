@@ -12,6 +12,9 @@
 	#define LIBVK "vulkan"
 #endif
 
+#define VOLK_IMPLEMENTATION
+#include "volk.h"
+
 #define CheckVk(x) \
 	do { \
 		if((x) != VK_SUCCESS) \
@@ -31,26 +34,32 @@ int main(void)
 	}
 	puts("openned ./zig-out/lib/lib" LIBVK ".so");
 
-	PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = dlsym(lib, "vkGetInstanceProcAddr");
+	volkInitialize();
 
-	#define VULKAN_GLOBAL_FUNCTION(fn) PFN_##fn fn = (PFN_##fn)vkGetInstanceProcAddr(NULL, #fn);
-	VULKAN_GLOBAL_FUNCTION(vkCreateInstance)
+	VkDirectDriverLoadingInfoLUNARG directLoadingInfo = {};
+	directLoadingInfo.sType = VK_STRUCTURE_TYPE_DIRECT_DRIVER_LOADING_INFO_LUNARG;
+	directLoadingInfo.pfnGetInstanceProcAddr = (PFN_vkGetInstanceProcAddrLUNARG)(dlsym(lib, "vk_icdGetInstanceProcAddr"));
 
-	VkInstanceCreateInfo instance_create_info = { 0 };
+	VkDirectDriverLoadingListLUNARG directDriverList = {};
+	directDriverList.sType = VK_STRUCTURE_TYPE_DIRECT_DRIVER_LOADING_LIST_LUNARG;
+	directDriverList.mode = VK_DIRECT_DRIVER_LOADING_MODE_EXCLUSIVE_LUNARG;
+	directDriverList.driverCount = 1;
+	directDriverList.pDrivers = &directLoadingInfo;
+
+	const char* extensions[] = { VK_LUNARG_DIRECT_DRIVER_LOADING_EXTENSION_NAME };
+
+	VkInstanceCreateInfo instance_create_info = {};
 	instance_create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+	instance_create_info.pApplicationInfo = NULL;
+	instance_create_info.enabledExtensionCount = 1;
+	instance_create_info.ppEnabledExtensionNames = extensions;
+	instance_create_info.pNext = &directDriverList;
 
 	VkInstance instance = VK_NULL_HANDLE;
 	CheckVk(vkCreateInstance(&instance_create_info, NULL, &instance));
+	volkLoadInstance(instance);
 
 	printf("VkInstance %p\n", instance);
-
-	#define VULKAN_INSTANCE_FUNCTION(fn) PFN_##fn fn = (PFN_##fn)vkGetInstanceProcAddr(instance, #fn);
-	VULKAN_INSTANCE_FUNCTION(vkEnumeratePhysicalDevices)
-	VULKAN_INSTANCE_FUNCTION(vkGetPhysicalDeviceProperties)
-	VULKAN_INSTANCE_FUNCTION(vkGetPhysicalDeviceMemoryProperties)
-	VULKAN_INSTANCE_FUNCTION(vkDestroyInstance)
-	VULKAN_INSTANCE_FUNCTION(vkCreateDevice)
-	VULKAN_INSTANCE_FUNCTION(vkDestroyDevice)
 
 	uint32_t count;
 	vkEnumeratePhysicalDevices(instance, &count, NULL);
@@ -68,6 +77,8 @@ int main(void)
 	VkDevice device = VK_NULL_HANDLE;
 	CheckVk(vkCreateDevice(physical_devices[0], &device_create_info, NULL, &device));
 	printf("VkDevice %p\n", device);
+
+	volkLoadDevice(device);
 
 	vkDestroyDevice(device, NULL);
 	vkDestroyInstance(instance, NULL);
