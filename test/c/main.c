@@ -19,13 +19,15 @@
 	do { \
 		if((x) != VK_SUCCESS) \
 		{ \
-			fprintf(stderr, "Vulkan call failed\n"); \
+			fprintf(stderr, "Vulkan call failed %d\n", (x)); \
 			abort(); \
 		} \
 	} while(0)
 
 int main(void)
 {
+	volkInitialize();
+
 	void* lib = dlopen("./zig-out/lib/lib" LIBVK ".so", RTLD_NOW | RTLD_LOCAL);
 	if(!lib)
 	{
@@ -34,17 +36,15 @@ int main(void)
 	}
 	puts("openned ./zig-out/lib/lib" LIBVK ".so");
 
-	volkInitialize();
+	VkDirectDriverLoadingInfoLUNARG direct_loading_info = {};
+	direct_loading_info.sType = VK_STRUCTURE_TYPE_DIRECT_DRIVER_LOADING_INFO_LUNARG;
+	direct_loading_info.pfnGetInstanceProcAddr = (PFN_vkGetInstanceProcAddrLUNARG)(dlsym(lib, "vk_icdGetInstanceProcAddr"));
 
-	VkDirectDriverLoadingInfoLUNARG directLoadingInfo = {};
-	directLoadingInfo.sType = VK_STRUCTURE_TYPE_DIRECT_DRIVER_LOADING_INFO_LUNARG;
-	directLoadingInfo.pfnGetInstanceProcAddr = (PFN_vkGetInstanceProcAddrLUNARG)(dlsym(lib, "vk_icdGetInstanceProcAddr"));
-
-	VkDirectDriverLoadingListLUNARG directDriverList = {};
-	directDriverList.sType = VK_STRUCTURE_TYPE_DIRECT_DRIVER_LOADING_LIST_LUNARG;
-	directDriverList.mode = VK_DIRECT_DRIVER_LOADING_MODE_EXCLUSIVE_LUNARG;
-	directDriverList.driverCount = 1;
-	directDriverList.pDrivers = &directLoadingInfo;
+	VkDirectDriverLoadingListLUNARG direct_driver_list = {};
+	direct_driver_list.sType = VK_STRUCTURE_TYPE_DIRECT_DRIVER_LOADING_LIST_LUNARG;
+	direct_driver_list.mode = VK_DIRECT_DRIVER_LOADING_MODE_EXCLUSIVE_LUNARG;
+	direct_driver_list.driverCount = 1;
+	direct_driver_list.pDrivers = &direct_loading_info;
 
 	const char* extensions[] = { VK_LUNARG_DIRECT_DRIVER_LOADING_EXTENSION_NAME };
 
@@ -53,7 +53,7 @@ int main(void)
 	instance_create_info.pApplicationInfo = NULL;
 	instance_create_info.enabledExtensionCount = 1;
 	instance_create_info.ppEnabledExtensionNames = extensions;
-	instance_create_info.pNext = &directDriverList;
+	instance_create_info.pNext = &direct_driver_list;
 
 	VkInstance instance = VK_NULL_HANDLE;
 	CheckVk(vkCreateInstance(&instance_create_info, NULL, &instance));

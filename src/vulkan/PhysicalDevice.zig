@@ -11,6 +11,8 @@ pub const ObjectType: vk.ObjectType = .physical_device;
 
 props: vk.PhysicalDeviceProperties,
 mem_props: vk.PhysicalDeviceMemoryProperties,
+format_props: vk.FormatProperties,
+features: vk.PhysicalDeviceFeatures,
 instance: *const Instance,
 dispatch_table: *const DispatchTable,
 
@@ -39,6 +41,8 @@ pub fn init(allocator: std.mem.Allocator, instance: *const Instance) VkError!Sel
             .memory_heap_count = 0,
             .memory_heaps = undefined,
         },
+        .format_props = .{},
+        .features = .{},
         .instance = instance,
         .dispatch_table = undefined,
     };

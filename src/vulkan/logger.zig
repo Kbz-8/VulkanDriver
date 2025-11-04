@@ -78,7 +78,7 @@ pub fn log(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), 
     out_config.setColor(writer, level_color) catch {};
     writer.print(prefix, .{}) catch return;
 
-    out_config.setColor(writer, .green) catch {};
+    out_config.setColor(writer, if (level == .err) .red else .green) catch {};
     writer.print("{s: >30}", .{scope_prefix}) catch return;
 
     out_config.setColor(writer, .reset) catch {};

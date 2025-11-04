@@ -4,6 +4,14 @@ const VkError = @import("error_set.zig").VkError;
 const Dispatchable = @import("Dispatchable.zig").Dispatchable;
 const PhysicalDevice = @import("PhysicalDevice.zig");
 
+const root = @import("root");
+
+comptime {
+    if (!@hasDecl(root, "VULKAN_VERSION")) {
+        @compileError("Missing VULKAN_VERSION in module root");
+    }
+}
+
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .instance;
 
@@ -39,6 +47,10 @@ pub fn enumerateExtensionProperties(layer_name: ?[]const u8, property_count: *u3
     _ = std.StaticStringMap(vk.ExtensionProperties).initComptime(.{});
 
     property_count.* = 0;
+}
+
+pub fn enumerateVersion(version: *u32) VkError!void {
+    version.* = @bitCast(root.VULKAN_VERSION);
 }
 
 pub fn releasePhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError!void {
