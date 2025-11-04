@@ -47,6 +47,8 @@ int main(void)
 	VULKAN_INSTANCE_FUNCTION(vkGetPhysicalDeviceProperties)
 	VULKAN_INSTANCE_FUNCTION(vkGetPhysicalDeviceMemoryProperties)
 	VULKAN_INSTANCE_FUNCTION(vkDestroyInstance)
+	VULKAN_INSTANCE_FUNCTION(vkCreateDevice)
+	VULKAN_INSTANCE_FUNCTION(vkDestroyDevice)
 
 	uint32_t count;
 	vkEnumeratePhysicalDevices(instance, &count, NULL);
@@ -58,6 +60,14 @@ int main(void)
 	vkGetPhysicalDeviceProperties(physical_devices[0], &props);
 	printf("VkPhysicalDevice name %s\n", props.deviceName);
 
+	VkDeviceCreateInfo device_create_info = {0};
+	device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+	
+	VkDevice device = VK_NULL_HANDLE;
+	CheckVk(vkCreateDevice(physical_devices[0], &device_create_info, NULL, &device));
+	printf("VkDevice %p\n", device);
+
+	vkDestroyDevice(device, NULL);
 	vkDestroyInstance(instance, NULL);
 
 	free(physical_devices);

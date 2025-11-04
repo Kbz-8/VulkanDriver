@@ -11,11 +11,14 @@ const Dispatchable = @import("Dispatchable.zig").Dispatchable;
 const VulkanAllocator = @import("VulkanAllocator.zig");
 
 const Instance = @import("Instance.zig");
+const Device = @import("Device.zig");
 const PhysicalDevice = @import("PhysicalDevice.zig");
+
+extern fn __vkImplCreateInstance(*const std.mem.Allocator, *const vk.InstanceCreateInfo) ?*Instance;
 
 fn functionMapElement(name: []const u8) struct { []const u8, vk.PfnVoidFunction } {
     if (!std.meta.hasFn(@This(), name)) {
-        std.log.scoped(.functionMapElement).err("Could not find function {s}", .{name});
+        std.log.scoped(.vkGetInstanceProcAddr).err("Could not find function {s}", .{name});
         return .{ name, null };
     }
     return .{ name, @as(vk.PfnVoidFunction, @ptrCast(&@field(@This(), name))) };
@@ -28,24 +31,27 @@ pub export fn vkGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]const
     });
 
     const instance_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
+        functionMapElement("vkCreateDevice"),
         functionMapElement("vkDestroyInstance"),
         functionMapElement("vkEnumeratePhysicalDevices"),
         functionMapElement("vkGetPhysicalDeviceProperties"),
         functionMapElement("vkGetPhysicalDeviceProperties"),
     });
 
+    const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
+        functionMapElement("vkDestroyDevice"),
+    });
+
     if (p_name == null) {
         return null;
     }
     const name = std.mem.span(p_name.?);
-
-    if (std.process.hasEnvVarConstant(root.DRIVER_LOGS_ENV_NAME)) {
-        std.log.scoped(.vkGetInstanceProcAddr).info("Loading {s}...", .{name});
-    }
+    std.log.scoped(.vkGetInstanceProcAddr).info("Loading {s}...", .{name});
 
     if (global_pfn_map.get(name)) |pfn| return pfn;
     if (p_instance == .null_handle) return null;
-    return if (instance_pfn_map.get(name)) |pfn| pfn else null;
+    if (instance_pfn_map.get(name)) |pfn| return pfn;
+    return if (device_pfn_map.get(name)) |pfn| pfn else null;
 }
 
 pub export fn vkCreateInstance(p_infos: ?*const vk.InstanceCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_instance: *vk.Instance) callconv(vk.vulkan_call_conv) vk.Result {
@@ -54,20 +60,27 @@ pub export fn vkCreateInstance(p_infos: ?*const vk.InstanceCreateInfo, callbacks
         return .error_initialization_failed;
     }
     const allocator = VulkanAllocator.init(callbacks, .instance).allocator();
-    p_instance.* = (Dispatchable(Instance).create(allocator, .{infos}) catch |err| return toVkResult(err)).toVkHandle(vk.Instance);
+    const handler = __vkImplCreateInstance(&allocator, infos) orelse return .error_initialization_failed;
+    handler.dispatch_table.requestPhysicalDevices(handler, allocator) catch |err| return toVkResult(err);
+
+    p_instance.* = (Dispatchable(Instance).wrap(allocator, handler) catch |err| return toVkResult(err)).toVkHandle(vk.Instance);
     return .success;
 }
 
 pub export fn vkDestroyInstance(p_instance: vk.Instance, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
     const allocator = VulkanAllocator.init(callbacks, .instance).allocator();
-    (Dispatchable(Instance).fromHandle(p_instance) catch return).destroy(allocator);
+    const dispatchable = Dispatchable(Instance).fromHandle(p_instance) catch return;
+    dispatchable.object.deinit(allocator) catch {};
+    dispatchable.destroy(allocator);
 }
 
 pub export fn vkEnumeratePhysicalDevices(p_instance: vk.Instance, count: *u32, p_devices: ?[*]vk.PhysicalDevice) callconv(vk.vulkan_call_conv) vk.Result {
     const self = Dispatchable(Instance).fromHandleObject(p_instance) catch |err| return toVkResult(err);
     count.* = @intCast(self.physical_devices.items.len);
     if (p_devices) |devices| {
-        @memcpy(devices[0..self.physical_devices.items.len], self.physical_devices.items);
+        for (0..count.*) |i| {
+            devices[i] = self.physical_devices.items[i].toVkHandle(vk.PhysicalDevice);
+        }
     }
     return .success;
 }
@@ -80,4 +93,23 @@ pub export fn vkGetPhysicalDeviceProperties(p_physical_device: vk.PhysicalDevice
 pub export fn vkGetPhysicalDeviceMemoryProperties(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceMemoryProperties) callconv(vk.vulkan_call_conv) void {
     const self = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch return;
     properties.* = self.mem_props;
+}
+
+pub export fn vkCreateDevice(p_physical_device: vk.PhysicalDevice, p_infos: ?*const vk.DeviceCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_device: *vk.Device) callconv(vk.vulkan_call_conv) vk.Result {
+    const infos = p_infos orelse return .error_initialization_failed;
+    if (infos.s_type != .device_create_info) {
+        return .error_initialization_failed;
+    }
+    const allocator = VulkanAllocator.init(callbacks, .instance).allocator();
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
+    const device = physical_device.createDevice(allocator, infos) catch |err| return toVkResult(err);
+    p_device.* = (Dispatchable(Device).wrap(allocator, device) catch |err| return toVkResult(err)).toVkHandle(vk.Device);
+    return .success;
+}
+
+pub export fn vkDestroyDevice(p_device: vk.Device, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+    const allocator = VulkanAllocator.init(callbacks, .device).allocator();
+    const dispatchable = Dispatchable(Device).fromHandle(p_device) catch return;
+    dispatchable.object.destroy(allocator) catch return;
+    dispatchable.destroy(allocator);
 }

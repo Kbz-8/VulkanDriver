@@ -1,8 +1,10 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const root = @import("lib.zig");
+
 const Instance = @import("Instance.zig");
 const VkError = @import("error_set.zig").VkError;
+const Device = @import("Device.zig");
 
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .physical_device;
@@ -10,10 +12,12 @@ pub const ObjectType: vk.ObjectType = .physical_device;
 props: vk.PhysicalDeviceProperties,
 mem_props: vk.PhysicalDeviceMemoryProperties,
 instance: *const Instance,
-dispatch_table: DispatchTable,
-driver_data: ?*anyopaque,
+dispatch_table: *const DispatchTable,
 
-pub const DispatchTable = struct {};
+pub const DispatchTable = struct {
+    createDevice: *const fn (*Self, std.mem.Allocator, *const vk.DeviceCreateInfo) VkError!*Device,
+    release: *const fn (*Self, std.mem.Allocator) VkError!void,
+};
 
 pub fn init(allocator: std.mem.Allocator, instance: *const Instance) VkError!Self {
     _ = allocator;
@@ -35,8 +39,15 @@ pub fn init(allocator: std.mem.Allocator, instance: *const Instance) VkError!Sel
             .memory_heap_count = 0,
             .memory_heaps = undefined,
         },
-        .driver_data = null,
         .instance = instance,
-        .dispatch_table = .{},
+        .dispatch_table = undefined,
     };
+}
+
+pub fn createDevice(self: *Self, allocator: std.mem.Allocator, infos: *const vk.DeviceCreateInfo) VkError!*Device {
+    return try self.dispatch_table.createDevice(self, allocator, infos);
+}
+
+pub fn releasePhysicalDevice(self: *Self, allocator: std.mem.Allocator) VkError!void {
+    try self.dispatch_table.release(self, allocator);
 }

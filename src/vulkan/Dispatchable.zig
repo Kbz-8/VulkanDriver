@@ -13,6 +13,7 @@ pub fn Dispatchable(comptime T: type) type {
         loader_data: c.VK_LOADER_DATA,
         object_type: vk.ObjectType,
         object: *T,
+        is_owner: bool = false,
 
         pub fn create(allocator: std.mem.Allocator, args: anytype) VkError!*Self {
             comptime {
@@ -33,7 +34,12 @@ pub fn Dispatchable(comptime T: type) type {
             const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
             const object = allocator.create(T) catch return VkError.OutOfHostMemory;
             object.* = try @call(.auto, T.init, .{allocator} ++ args);
+            self.is_owner = true;
+            return self.wrap(object);
+        }
 
+        pub fn wrap(allocator: std.mem.Allocator, object: *T) VkError!*Self {
+            const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
             self.* = .{
                 .loader_data = .{ .loaderMagic = c.ICD_LOADER_MAGIC },
                 .object_type = T.ObjectType,
@@ -43,10 +49,9 @@ pub fn Dispatchable(comptime T: type) type {
         }
 
         pub fn destroy(self: *Self, allocator: std.mem.Allocator) void {
-            if (std.meta.hasMethod(T, "deinit")) {
-                self.object.deinit(allocator);
+            if (self.is_owner) {
+                allocator.destroy(self.object);
             }
-            allocator.destroy(self.object);
             allocator.destroy(self);
         }
 
