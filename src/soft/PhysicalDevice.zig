@@ -47,7 +47,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
     const info = cpuinfo.get(allocator) catch return VkError.InitializationFailed;
     defer info.deinit(allocator);
 
-    var writer = std.io.Writer.fixed(interface.props.device_name[0 .. vk.MAX_PHYSICAL_DEVICE_NAME_SIZE - 1]);
+    var writer = std.Io.Writer.fixed(interface.props.device_name[0 .. vk.MAX_PHYSICAL_DEVICE_NAME_SIZE - 1]);
     writer.print("{s} [Soft Vulkan Driver]", .{info.name}) catch return VkError.InitializationFailed;
 
     self.* = .{

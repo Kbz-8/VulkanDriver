@@ -2,6 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const root = @import("lib.zig");
 
+const logger = @import("logger.zig");
 const error_set = @import("error_set.zig");
 const VkError = error_set.VkError;
 const toVkResult = error_set.toVkResult;
@@ -25,6 +26,11 @@ fn functionMapElement(name: []const u8) struct { []const u8, vk.PfnVoidFunction 
 }
 
 pub export fn vkGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
+    if (p_name == null) {
+        return null;
+    }
+    const name = std.mem.span(p_name.?);
+
     const global_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
         functionMapElement("vkGetInstanceProcAddr"),
         functionMapElement("vkCreateInstance"),
@@ -42,11 +48,9 @@ pub export fn vkGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]const
         functionMapElement("vkDestroyDevice"),
     });
 
-    if (p_name == null) {
-        return null;
-    }
-    const name = std.mem.span(p_name.?);
     std.log.scoped(.vkGetInstanceProcAddr).info("Loading {s}...", .{name});
+    logger.indent();
+    defer logger.unindent();
 
     if (global_pfn_map.get(name)) |pfn| return pfn;
     if (p_instance == .null_handle) return null;
@@ -59,15 +63,23 @@ pub export fn vkCreateInstance(p_infos: ?*const vk.InstanceCreateInfo, callbacks
     if (infos.s_type != .instance_create_info) {
         return .error_initialization_failed;
     }
-    const allocator = VulkanAllocator.init(callbacks, .instance).allocator();
-    const handler = __vkImplCreateInstance(&allocator, infos) orelse return .error_initialization_failed;
-    handler.dispatch_table.requestPhysicalDevices(handler, allocator) catch |err| return toVkResult(err);
+    std.log.scoped(.vkCreateInstance).info("Creating VkInstance", .{});
+    logger.indent();
+    defer logger.unindent();
 
-    p_instance.* = (Dispatchable(Instance).wrap(allocator, handler) catch |err| return toVkResult(err)).toVkHandle(vk.Instance);
+    const allocator = VulkanAllocator.init(callbacks, .instance).allocator();
+    const instance = __vkImplCreateInstance(&allocator, infos) orelse return .error_initialization_failed;
+    instance.requestPhysicalDevices(allocator) catch |err| return toVkResult(err);
+
+    p_instance.* = (Dispatchable(Instance).wrap(allocator, instance) catch |err| return toVkResult(err)).toVkHandle(vk.Instance);
     return .success;
 }
 
 pub export fn vkDestroyInstance(p_instance: vk.Instance, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+    std.log.scoped(.vkDestroyInstance).info("Destroying VkInstance", .{});
+    logger.indent();
+    defer logger.unindent();
+
     const allocator = VulkanAllocator.init(callbacks, .instance).allocator();
     const dispatchable = Dispatchable(Instance).fromHandle(p_instance) catch return;
     dispatchable.object.deinit(allocator) catch {};
@@ -102,6 +114,10 @@ pub export fn vkCreateDevice(p_physical_device: vk.PhysicalDevice, p_infos: ?*co
     }
     const allocator = VulkanAllocator.init(callbacks, .instance).allocator();
     const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
+    std.log.scoped(.vkCreateDevice).info("Creating VkDevice from {s}", .{physical_device.props.device_name});
+    logger.indent();
+    defer logger.unindent();
+
     const device = physical_device.createDevice(allocator, infos) catch |err| return toVkResult(err);
     p_device.* = (Dispatchable(Device).wrap(allocator, device) catch |err| return toVkResult(err)).toVkHandle(vk.Device);
     return .success;
@@ -110,6 +126,10 @@ pub export fn vkCreateDevice(p_physical_device: vk.PhysicalDevice, p_infos: ?*co
 pub export fn vkDestroyDevice(p_device: vk.Device, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
     const allocator = VulkanAllocator.init(callbacks, .device).allocator();
     const dispatchable = Dispatchable(Device).fromHandle(p_device) catch return;
+    std.log.scoped(.vkDestroyDevice).info("Destroying VkDevice created from {s}", .{dispatchable.object.physical_device.props.device_name});
+    logger.indent();
+    defer logger.unindent();
+
     dispatchable.object.destroy(allocator) catch return;
     dispatchable.destroy(allocator);
 }

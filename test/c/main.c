@@ -4,6 +4,8 @@
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan_core.h>
 
+#include <unistd.h>
+
 #include <dlfcn.h>
 
 #ifndef LIBVK

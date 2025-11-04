@@ -26,12 +26,14 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
 
+    const zdt = b.dependency("zdt", .{}).module("zdt");
     const vulkan_headers = b.dependency("vulkan_headers", .{});
 
     const vulkan = b.dependency("vulkan_zig", .{
         .registry = vulkan_headers.path("registry/vk.xml"),
     }).module("vulkan-zig");
 
+    base_mod.addImport("zdt", zdt);
     base_mod.addImport("vulkan", vulkan);
     base_mod.addSystemIncludePath(vulkan_headers.path("include"));
 

@@ -25,6 +25,21 @@ pub fn init(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) V
     };
 }
 
+pub fn requestPhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError!void {
+    try self.dispatch_table.requestPhysicalDevices(self, allocator);
+    if (self.physical_devices.items.len == 0) {
+        std.log.scoped(.vkCreateInstance).info("No VkPhysicalDevice found", .{});
+        return;
+    }
+    for (self.physical_devices.items) |physical_device| {
+        std.log.scoped(.vkCreateInstance).info("Found VkPhysicalDevice named {s}", .{physical_device.object.props.device_name});
+    }
+}
+
+pub fn releasePhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError!void {
+    try self.dispatch_table.releasePhysicalDevices(self, allocator);
+}
+
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) VkError!void {
     try self.dispatch_table.releasePhysicalDevices(self, allocator);
     try self.dispatch_table.destroyInstance(self, allocator);

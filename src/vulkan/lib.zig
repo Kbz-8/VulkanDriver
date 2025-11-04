@@ -2,7 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 
 pub const lib_vulkan = @import("lib_vulkan.zig");
-pub const logs = @import("logs.zig");
+pub const logger = @import("logger.zig");
 
 pub const Dispatchable = @import("Dispatchable.zig").Dispatchable;
 pub const VkError = @import("error_set.zig").VkError;
@@ -18,7 +18,7 @@ pub const DRIVER_LOGS_ENV_NAME = "DRIVER_LOGS";
 
 pub const std_options: std.Options = .{
     .log_level = .debug,
-    .logFn = logs.logger,
+    .logFn = logger.log,
 };
 
 pub fn retrieveDriverDataAs(handle: anytype, comptime T: type) !*T {
