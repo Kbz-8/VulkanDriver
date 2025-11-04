@@ -13,17 +13,25 @@ const VulkanAllocator = @import("VulkanAllocator.zig");
 const Instance = @import("Instance.zig");
 const PhysicalDevice = @import("PhysicalDevice.zig");
 
+fn functionMapElement(name: []const u8) struct { []const u8, vk.PfnVoidFunction } {
+    if (!std.meta.hasFn(@This(), name)) {
+        std.log.scoped(.functionMapElement).err("Could not find function {s}", .{name});
+        return .{ name, null };
+    }
+    return .{ name, @as(vk.PfnVoidFunction, @ptrCast(&@field(@This(), name))) };
+}
+
 pub export fn vkGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
     const global_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
-        .{ "vkGetInstanceProcAddr", @as(vk.PfnVoidFunction, @ptrCast(&vkGetInstanceProcAddr)) },
-        .{ "vkCreateInstance", @as(vk.PfnVoidFunction, @ptrCast(&vkCreateInstance)) },
+        functionMapElement("vkGetInstanceProcAddr"),
+        functionMapElement("vkCreateInstance"),
     });
 
     const instance_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
-        .{ "vkDestroyInstance", @as(vk.PfnVoidFunction, @ptrCast(&vkDestroyInstance)) },
-        .{ "vkEnumeratePhysicalDevices", @as(vk.PfnVoidFunction, @ptrCast(&vkEnumeratePhysicalDevices)) },
-        .{ "vkGetPhysicalDeviceProperties", @as(vk.PfnVoidFunction, @ptrCast(&vkGetPhysicalDeviceProperties)) },
-        .{ "vkGetPhysicalDeviceProperties", @as(vk.PfnVoidFunction, @ptrCast(&vkGetPhysicalDeviceMemoryProperties)) },
+        functionMapElement("vkDestroyInstance"),
+        functionMapElement("vkEnumeratePhysicalDevices"),
+        functionMapElement("vkGetPhysicalDeviceProperties"),
+        functionMapElement("vkGetPhysicalDeviceProperties"),
     });
 
     if (p_name == null) {
