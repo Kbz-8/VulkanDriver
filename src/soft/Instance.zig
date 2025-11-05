@@ -12,13 +12,8 @@ pub const Interface = base.Instance;
 
 interface: Interface,
 
-export fn __vkImplCreateInstance(allocator: *const std.mem.Allocator, infos: *const vk.InstanceCreateInfo) ?*Interface {
-    return realVkImplInstanceInit(allocator.*, infos) catch return null;
-}
-
-// Pure Zig implementation to leverage `errdefer` and avoid memory leaks or complex resources handling
-fn realVkImplInstanceInit(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) !?*Interface {
-    const self = try allocator.create(Self);
+pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) VkError!*Interface {
+    const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
 
     self.interface = try base.Instance.init(allocator, infos);

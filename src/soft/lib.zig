@@ -2,8 +2,8 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 
+pub const Instance = @import("Instance.zig");
 const Device = @import("Device.zig");
-const Instance = @import("Instance.zig");
 const PhysicalDevice = @import("PhysicalDevice.zig");
 
 pub const DRIVER_LOGS_ENV_NAME = base.DRIVER_LOGS_ENV_NAME;
@@ -17,5 +17,4 @@ pub const std_options = base.std_options;
 
 comptime {
     _ = base;
-    _ = Instance;
 }
