@@ -68,6 +68,8 @@ pub fn build(b: *std.Build) void {
         const test_step = b.step(b.fmt("test-{s}", .{impl.name}), b.fmt("Run lib{s} tests", .{impl.name}));
         test_step.dependOn(&run_tests.step);
 
+        const volk = b.lazyDependency("volk", .{}) orelse continue;
+
         const c_test_exe = b.addExecutable(.{
             .name = b.fmt("c_test_vulkan_{s}", .{impl.name}),
             .root_module = b.createModule(.{
@@ -76,6 +78,8 @@ pub fn build(b: *std.Build) void {
                 .link_libc = true,
             }),
         });
+
+        c_test_exe.root_module.addSystemIncludePath(volk.path(""));
 
         c_test_exe.root_module.addCSourceFile(.{
             .file = b.path("test/c/main.c"),

@@ -13,7 +13,7 @@
 #endif
 
 #define VOLK_IMPLEMENTATION
-#include "volk.h"
+#include <volk.h>
 
 #define CheckVk(x) \
 	do { \

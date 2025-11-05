@@ -22,6 +22,11 @@
             .url = "git+https://github.com/FObersteiner/zdt/?ref=v0.8.1#8b551a0a3e5ae64a32b5bad0e6a93119787b43af",
             .hash = "zdt-0.8.1-xr0_vAxUDwCJRDh9pcAS_mdZBIsvcGTtN-K8JJSWY4I6",
         },
+        .volk = .{
+            .url = "git+https://github.com/zeux/volk/#8f53cc717f50f142db4736f401d0b61956cd78f9",
+            .hash = "N-V-__8AAPn9BwCBHnaxOC_rffCpFI7QRfi5qBCLvov9EYK3",
+            .lazy = true,
+        },
     },
 
     .paths = .{
