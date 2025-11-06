@@ -80,6 +80,7 @@ pub fn build(b: *std.Build) void {
         });
 
         c_test_exe.root_module.addSystemIncludePath(volk.path(""));
+        c_test_exe.root_module.addSystemIncludePath(vulkan_headers.path("include"));
 
         c_test_exe.root_module.addCSourceFile(.{
             .file = b.path("test/c/main.c"),
