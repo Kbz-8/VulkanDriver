@@ -22,6 +22,9 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
 
     interface.dispatch_table = &.{
         .createDevice = createDevice,
+        .getFormatProperties = getFormatProperties,
+        .getImageFormatProperties = getImageFormatProperties,
+        .getSparseImageFormatProperties = getSparseImageFormatProperties,
         .release = destroy,
     };
 
@@ -44,6 +47,35 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
         .flags = .{}, // Host memory
     };
 
+    interface.features = .{
+        .robust_buffer_access = .true,
+        .shader_float_64 = .true,
+        .shader_int_64 = .true,
+        .shader_int_16 = .true,
+    };
+
+    var queue_family_props = [_]vk.QueueFamilyProperties{
+        .{
+            .queue_flags = .{ .graphics_bit = true, .compute_bit = true, .transfer_bit = true },
+            .queue_count = 1,
+            .timestamp_valid_bits = 0,
+            .min_image_transfer_granularity = .{ .width = 1, .height = 1, .depth = 1 },
+        },
+        .{
+            .queue_flags = .{ .graphics_bit = true },
+            .queue_count = 1,
+            .timestamp_valid_bits = 0,
+            .min_image_transfer_granularity = .{ .width = 1, .height = 1, .depth = 1 },
+        },
+        .{
+            .queue_flags = .{ .transfer_bit = true },
+            .queue_count = 1,
+            .timestamp_valid_bits = 0,
+            .min_image_transfer_granularity = .{ .width = 1, .height = 1, .depth = 1 },
+        },
+    };
+    interface.queue_family_props = std.ArrayList(vk.QueueFamilyProperties).fromOwnedSlice(queue_family_props[0..]);
+
     const info = cpuinfo.get(allocator) catch return VkError.InitializationFailed;
     defer info.deinit(allocator);
 
@@ -59,6 +91,48 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
 pub fn createDevice(interface: *Interface, allocator: std.mem.Allocator, infos: *const vk.DeviceCreateInfo) VkError!*Device.Interface {
     const device = try Device.create(interface, allocator, infos);
     return &device.interface;
+}
+
+pub fn getFormatProperties(interface: *Interface, format: vk.Format) VkError!vk.FormatProperties {
+    _ = interface;
+    _ = format;
+    return .{};
+}
+
+pub fn getImageFormatProperties(
+    interface: *Interface,
+    format: vk.Format,
+    image_type: vk.ImageType,
+    tiling: vk.ImageTiling,
+    usage: vk.ImageUsageFlags,
+    flags: vk.ImageCreateFlags,
+) VkError!vk.ImageFormatProperties {
+    _ = interface;
+    _ = format;
+    _ = image_type;
+    _ = tiling;
+    _ = usage;
+    _ = flags;
+    return VkError.FormatNotSupported;
+}
+
+pub fn getSparseImageFormatProperties(
+    interface: *Interface,
+    format: vk.Format,
+    image_type: vk.ImageType,
+    samples: vk.SampleCountFlags,
+    tiling: vk.ImageTiling,
+    usage: vk.ImageUsageFlags,
+    flags: vk.ImageCreateFlags,
+) VkError!vk.SparseImageFormatProperties {
+    _ = interface;
+    _ = format;
+    _ = image_type;
+    _ = samples;
+    _ = tiling;
+    _ = usage;
+    _ = flags;
+    return VkError.FormatNotSupported;
 }
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {

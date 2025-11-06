@@ -14,7 +14,7 @@ To understand Vulkan — not as a humble API mere mortals call upon, but as a la
 It does not seek to produce a performant or production-worthy driver. \
 *The gods are merciful, but not that merciful.*
 
-# Build
+## Build
 
 If thou art truly determined:
 ```
@@ -26,7 +26,7 @@ The precise ritual varies by system — consult the tomes of your operating syst
 
 Use at your own risk. If thy machine shudders, weeps, or attempts to flee — know that it was warned.
 
-# License
+## License
 
 Released unto the world as MIT for study, experimentation, and the occasional horrified whisper.
 Do with it as thou wilt, but accept the consequences as thine own.

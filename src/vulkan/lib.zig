@@ -13,21 +13,28 @@ pub const PhysicalDevice = @import("PhysicalDevice.zig");
 pub const VulkanAllocator = @import("VulkanAllocator.zig");
 
 pub const VULKAN_VENDOR_ID = @typeInfo(vk.VendorId).@"enum".fields[@typeInfo(vk.VendorId).@"enum".fields.len - 1].value + 1;
-pub const DRIVER_LOGS_ENV_NAME = "STROLL_LOGS";
+pub const DRIVER_LOGS_ENV_NAME = "STROLL_LOGS_LEVEL";
 
 pub const std_options: std.Options = .{
     .log_level = .debug,
     .logFn = logger.log,
 };
 
-pub fn retrieveDriverDataAs(handle: anytype, comptime T: type) !*T {
-    comptime {
-        switch (@typeInfo(@TypeOf(handle))) {
-            .pointer => |p| std.debug.assert(@hasField(p.child, "driver_data")),
-            else => @compileError("Invalid type passed to 'retrieveDriverDataAs': " ++ @typeName(@TypeOf(handle))),
-        }
-    }
-    return @ptrCast(@alignCast(@field(handle, "driver_data")));
+pub const LogVerboseLevel = enum {
+    None,
+    Standard,
+    High,
+};
+
+pub inline fn getLogVerboseLevel() LogVerboseLevel {
+    const allocator = std.heap.page_allocator;
+    const level = std.process.getEnvVarOwned(allocator, DRIVER_LOGS_ENV_NAME) catch return .None;
+    return if (std.mem.eql(u8, level, "none"))
+        .None
+    else if (std.mem.eql(u8, level, "all"))
+        .High
+    else
+        .Standard;
 }
 
 comptime {

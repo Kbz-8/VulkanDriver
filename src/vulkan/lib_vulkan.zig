@@ -1,6 +1,7 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const root = @import("root");
+const lib = @import("lib.zig");
 
 const logger = @import("logger.zig");
 const error_set = @import("error_set.zig");
@@ -17,7 +18,12 @@ const PhysicalDevice = @import("PhysicalDevice.zig");
 
 // This file contains all exported Vulkan entrypoints.
 
-fn functionMapElement(comptime name: []const u8) struct { []const u8, vk.PfnVoidFunction } {
+fn entryPointNotFoundErrorLog(comptime scope: @Type(.enum_literal), name: []const u8) void {
+    if (lib.getLogVerboseLevel() != .High) return;
+    std.log.scoped(scope).err("Could not find function {s}", .{name});
+}
+
+fn functionMapEntryPoint(comptime name: []const u8) struct { []const u8, vk.PfnVoidFunction } {
     const stroll_name = std.fmt.comptimePrint("stroll{s}", .{name[2..]});
 
     return if (std.meta.hasFn(@This(), name))
@@ -29,38 +35,38 @@ fn functionMapElement(comptime name: []const u8) struct { []const u8, vk.PfnVoid
 }
 
 const icd_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
-    functionMapElement("vk_icdGetInstanceProcAddr"),
-    functionMapElement("vk_icdGetPhysicalDeviceProcAddr"),
-    functionMapElement("vk_icdNegotiateLoaderICDInterfaceVersion"),
+    functionMapEntryPoint("vk_icdGetInstanceProcAddr"),
+    functionMapEntryPoint("vk_icdGetPhysicalDeviceProcAddr"),
+    functionMapEntryPoint("vk_icdNegotiateLoaderICDInterfaceVersion"),
 });
 
 const global_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
-    functionMapElement("vkCreateInstance"),
-    functionMapElement("vkGetInstanceProcAddr"),
-    functionMapElement("vkEnumerateInstanceExtensionProperties"),
-    functionMapElement("vkEnumerateInstanceVersion"),
+    functionMapEntryPoint("vkCreateInstance"),
+    functionMapEntryPoint("vkGetInstanceProcAddr"),
+    functionMapEntryPoint("vkEnumerateInstanceExtensionProperties"),
+    functionMapEntryPoint("vkEnumerateInstanceVersion"),
 });
 
 const instance_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
-    functionMapElement("vkDestroyInstance"),
-    functionMapElement("vkEnumeratePhysicalDevices"),
-    functionMapElement("vkGetDeviceProcAddr"),
+    functionMapEntryPoint("vkDestroyInstance"),
+    functionMapEntryPoint("vkEnumeratePhysicalDevices"),
+    functionMapEntryPoint("vkGetDeviceProcAddr"),
 });
 
 const physical_device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
-    functionMapElement("vkCreateDevice"),
-    functionMapElement("vkEnumerateDeviceExtensionProperties"),
-    functionMapElement("vkGetPhysicalDeviceFormatProperties"),
-    functionMapElement("vkGetPhysicalDeviceFeatures"),
-    functionMapElement("vkGetPhysicalDeviceImageFormatProperties"),
-    functionMapElement("vkGetPhysicalDeviceProperties"),
-    functionMapElement("vkGetPhysicalDeviceMemoryProperties"),
-    functionMapElement("vkGetPhysicalDeviceQueueFamilyProperties"),
-    functionMapElement("vkGetPhysicalDeviceSparseImageFormatProperties"),
+    functionMapEntryPoint("vkCreateDevice"),
+    functionMapEntryPoint("vkEnumerateDeviceExtensionProperties"),
+    functionMapEntryPoint("vkGetPhysicalDeviceFormatProperties"),
+    functionMapEntryPoint("vkGetPhysicalDeviceFeatures"),
+    functionMapEntryPoint("vkGetPhysicalDeviceImageFormatProperties"),
+    functionMapEntryPoint("vkGetPhysicalDeviceProperties"),
+    functionMapEntryPoint("vkGetPhysicalDeviceMemoryProperties"),
+    functionMapEntryPoint("vkGetPhysicalDeviceQueueFamilyProperties"),
+    functionMapEntryPoint("vkGetPhysicalDeviceSparseImageFormatProperties"),
 });
 
 const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
-    functionMapElement("vkDestroyDevice"),
+    functionMapEntryPoint("vkDestroyDevice"),
 });
 
 // ICD Interface =============================================================================================================================================
@@ -84,7 +90,7 @@ pub export fn stroll_icdGetPhysicalDeviceProcAddr(_: vk.Instance, p_name: ?[*:0]
 
     if (physical_device_pfn_map.get(name)) |pfn| return pfn;
 
-    std.log.scoped(.vk_icdGetPhysicalDeviceProcAddr).err("Could not find function {s}", .{name});
+    entryPointNotFoundErrorLog(.vk_icdGetPhysicalDeviceProcAddr, name);
     return null;
 }
 
@@ -96,14 +102,14 @@ pub export fn vkGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]const
 
     if (global_pfn_map.get(name)) |pfn| return pfn;
     if (p_instance == .null_handle) {
-        std.log.scoped(.vkGetInstanceProcAddr).err("Could not find global entrypoint {s}", .{name});
+        entryPointNotFoundErrorLog(.vkGetInstanceProcAddr, name);
         return null;
     }
     if (instance_pfn_map.get(name)) |pfn| return pfn;
     if (physical_device_pfn_map.get(name)) |pfn| return pfn;
     if (device_pfn_map.get(name)) |pfn| return pfn;
 
-    std.log.scoped(.vkGetInstanceProcAddr).err("Could not find entrypoint {s}", .{name});
+    entryPointNotFoundErrorLog(.vkGetInstanceProcAddr, name);
     return null;
 }
 
@@ -194,9 +200,8 @@ pub export fn strollEnumerateDeviceExtensionProperties(p_physical_device: vk.Phy
 }
 
 pub export fn strollGetPhysicalDeviceFormatProperties(p_physical_device: vk.PhysicalDevice, format: vk.Format, properties: *vk.FormatProperties) callconv(vk.vulkan_call_conv) void {
-    _ = format;
     const self = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch return;
-    properties.* = self.format_props;
+    properties.* = self.getFormatProperties(format) catch return;
 }
 
 pub export fn strollGetPhysicalDeviceFeatures(p_physical_device: vk.PhysicalDevice, features: *vk.PhysicalDeviceFeatures) callconv(vk.vulkan_call_conv) void {
@@ -205,14 +210,9 @@ pub export fn strollGetPhysicalDeviceFeatures(p_physical_device: vk.PhysicalDevi
 }
 
 pub export fn strollGetPhysicalDeviceImageFormatProperties(p_physical_device: vk.PhysicalDevice, format: vk.Format, image_type: vk.ImageType, tiling: vk.ImageTiling, usage: vk.ImageUsageFlags, flags: vk.ImageCreateFlags, properties: *vk.ImageFormatProperties) callconv(vk.vulkan_call_conv) vk.Result {
-    _ = p_physical_device;
-    _ = format;
-    _ = image_type;
-    _ = tiling;
-    _ = usage;
-    _ = flags;
-    _ = properties;
-    return .error_format_not_supported;
+    const self = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
+    properties.* = self.getImageFormatProperties(format, image_type, tiling, usage, flags) catch |err| return toVkResult(err);
+    return .success;
 }
 
 pub export fn strollGetPhysicalDeviceProperties(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceProperties) callconv(vk.vulkan_call_conv) void {
@@ -226,9 +226,11 @@ pub export fn strollGetPhysicalDeviceMemoryProperties(p_physical_device: vk.Phys
 }
 
 pub export fn strollGetPhysicalDeviceQueueFamilyProperties(p_physical_device: vk.PhysicalDevice, count: *u32, properties: ?[*]vk.QueueFamilyProperties) callconv(vk.vulkan_call_conv) void {
-    _ = p_physical_device;
-    _ = properties;
-    count.* = 0;
+    const self = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch return;
+    count.* = @intCast(self.queue_family_props.items.len);
+    if (properties) |props| {
+        @memcpy(props[0..count.*], self.queue_family_props.items[0..count.*]);
+    }
 }
 
 pub export fn strollGetPhysicalDeviceSparseImageFormatProperties(
@@ -241,15 +243,9 @@ pub export fn strollGetPhysicalDeviceSparseImageFormatProperties(
     flags: vk.ImageCreateFlags,
     properties: *vk.SparseImageFormatProperties,
 ) callconv(vk.vulkan_call_conv) vk.Result {
-    _ = p_physical_device;
-    _ = format;
-    _ = image_type;
-    _ = samples;
-    _ = tiling;
-    _ = usage;
-    _ = flags;
-    _ = properties;
-    return .error_format_not_supported;
+    const self = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
+    properties.* = self.getSparseImageFormatProperties(format, image_type, samples, tiling, usage, flags) catch |err| return toVkResult(err);
+    return .success;
 }
 
 // Device functions ==========================================================================================================================================
@@ -272,6 +268,6 @@ pub export fn strollGetDeviceProcAddr(p_device: vk.Device, p_name: ?[*:0]const u
     if (p_device == .null_handle) return null;
     if (device_pfn_map.get(name)) |pfn| return pfn;
 
-    std.log.scoped(.vkGetDeviceProcAddr).err("Could not find entrypoint {s}", .{name});
+    entryPointNotFoundErrorLog(.vkGetDeviceProcAddr, name);
     return null;
 }
