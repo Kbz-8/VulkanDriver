@@ -11,10 +11,9 @@ pub const Instance = @import("Instance.zig");
 pub const Device = @import("Device.zig");
 pub const PhysicalDevice = @import("PhysicalDevice.zig");
 pub const VulkanAllocator = @import("VulkanAllocator.zig");
-//pub const Device = @import("Device.zig");
 
 pub const VULKAN_VENDOR_ID = @typeInfo(vk.VendorId).@"enum".fields[@typeInfo(vk.VendorId).@"enum".fields.len - 1].value + 1;
-pub const DRIVER_LOGS_ENV_NAME = "DRIVER_LOGS";
+pub const DRIVER_LOGS_ENV_NAME = "STROLL_LOGS";
 
 pub const std_options: std.Options = .{
     .log_level = .debug,

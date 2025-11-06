@@ -1,6 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
-const base = @import("base");
+pub const base = @import("base");
 
 pub const Instance = @import("Instance.zig");
 const Device = @import("Device.zig");

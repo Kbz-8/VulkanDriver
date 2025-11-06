@@ -69,7 +69,7 @@ pub fn log(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), 
     const now = zdt.Datetime.now(.{ .tz = &timezone }) catch return;
 
     out_config.setColor(writer, .magenta) catch {};
-    writer.print("[" ++ root.DRIVER_NAME ++ "Driver ", .{}) catch return;
+    writer.print("[" ++ root.DRIVER_NAME ++ " StrollDriver ", .{}) catch return;
     out_config.setColor(writer, .yellow) catch {};
     writer.print("{d:02}:{d:02}:{d:02}.{d:03}", .{ now.hour, now.minute, now.second, @divFloor(now.nanosecond, std.time.ns_per_ms) }) catch return;
     out_config.setColor(writer, .magenta) catch {};

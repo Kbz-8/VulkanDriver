@@ -48,7 +48,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
     defer info.deinit(allocator);
 
     var writer = std.Io.Writer.fixed(interface.props.device_name[0 .. vk.MAX_PHYSICAL_DEVICE_NAME_SIZE - 1]);
-    writer.print("{s} [Soft Vulkan Driver]", .{info.name}) catch return VkError.InitializationFailed;
+    writer.print("{s} [" ++ root.DRIVER_NAME ++ " StrollDriver]", .{info.name}) catch return VkError.InitializationFailed;
 
     self.* = .{
         .interface = interface,

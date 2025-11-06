@@ -16,19 +16,16 @@ const Device = @import("Device.zig");
 const PhysicalDevice = @import("PhysicalDevice.zig");
 
 // This file contains all exported Vulkan entrypoints.
-//
-// The use of official Vulkan function names is assumed
-// and is not a concern, given that this driver only implements Vulkan's API.
 
 fn functionMapElement(comptime name: []const u8) struct { []const u8, vk.PfnVoidFunction } {
     const stroll_name = std.fmt.comptimePrint("stroll{s}", .{name[2..]});
 
-    if (std.meta.hasFn(@This(), name)) {
-        return .{ name, @as(vk.PfnVoidFunction, @ptrCast(&@field(@This(), name))) };
-    } else if (std.meta.hasFn(@This(), stroll_name)) {
-        return .{ name, @as(vk.PfnVoidFunction, @ptrCast(&@field(@This(), stroll_name))) };
-    }
-    return .{ name, null };
+    return if (std.meta.hasFn(@This(), name))
+        .{ name, @as(vk.PfnVoidFunction, @ptrCast(&@field(@This(), name))) }
+    else if (std.meta.hasFn(@This(), stroll_name))
+        .{ name, @as(vk.PfnVoidFunction, @ptrCast(&@field(@This(), stroll_name))) }
+    else
+        .{ name, null };
 }
 
 const icd_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
@@ -59,6 +56,7 @@ const physical_device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComp
     functionMapElement("vkGetPhysicalDeviceProperties"),
     functionMapElement("vkGetPhysicalDeviceMemoryProperties"),
     functionMapElement("vkGetPhysicalDeviceQueueFamilyProperties"),
+    functionMapElement("vkGetPhysicalDeviceSparseImageFormatProperties"),
 });
 
 const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
@@ -76,10 +74,6 @@ pub export fn vk_icdGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]c
     if (p_name == null) return null;
     const name = std.mem.span(p_name.?);
 
-    std.log.scoped(.vk_icdGetInstanceProcAddr).info("Loading {s}...", .{name});
-    logger.indent();
-    defer logger.unindent();
-
     if (icd_pfn_map.get(name)) |pfn| return pfn;
     return vkGetInstanceProcAddr(p_instance, p_name);
 }
@@ -87,10 +81,6 @@ pub export fn vk_icdGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]c
 pub export fn stroll_icdGetPhysicalDeviceProcAddr(_: vk.Instance, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
     if (p_name == null) return null;
     const name = std.mem.span(p_name.?);
-
-    std.log.scoped(.vk_icdGetPhysicalDeviceProcAddr).info("Loading {s}...", .{name});
-    logger.indent();
-    defer logger.unindent();
 
     if (physical_device_pfn_map.get(name)) |pfn| return pfn;
 
@@ -103,10 +93,6 @@ pub export fn stroll_icdGetPhysicalDeviceProcAddr(_: vk.Instance, p_name: ?[*:0]
 pub export fn vkGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
     if (p_name == null) return null;
     const name = std.mem.span(p_name.?);
-
-    std.log.scoped(.vkGetInstanceProcAddr).info("Loading {s}...", .{name});
-    logger.indent();
-    defer logger.unindent();
 
     if (global_pfn_map.get(name)) |pfn| return pfn;
     if (p_instance == .null_handle) {
@@ -245,6 +231,27 @@ pub export fn strollGetPhysicalDeviceQueueFamilyProperties(p_physical_device: vk
     count.* = 0;
 }
 
+pub export fn strollGetPhysicalDeviceSparseImageFormatProperties(
+    p_physical_device: vk.PhysicalDevice,
+    format: vk.Format,
+    image_type: vk.ImageType,
+    samples: vk.SampleCountFlags,
+    tiling: vk.ImageTiling,
+    usage: vk.ImageUsageFlags,
+    flags: vk.ImageCreateFlags,
+    properties: *vk.SparseImageFormatProperties,
+) callconv(vk.vulkan_call_conv) vk.Result {
+    _ = p_physical_device;
+    _ = format;
+    _ = image_type;
+    _ = samples;
+    _ = tiling;
+    _ = usage;
+    _ = flags;
+    _ = properties;
+    return .error_format_not_supported;
+}
+
 // Device functions ==========================================================================================================================================
 
 pub export fn strollDestroyDevice(p_device: vk.Device, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
@@ -261,10 +268,6 @@ pub export fn strollDestroyDevice(p_device: vk.Device, callbacks: ?*const vk.All
 pub export fn strollGetDeviceProcAddr(p_device: vk.Device, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
     if (p_name == null) return null;
     const name = std.mem.span(p_name.?);
-
-    std.log.scoped(.vkGetDeviceProcAddr).info("Loading {s}...", .{name});
-    logger.indent();
-    defer logger.unindent();
 
     if (p_device == .null_handle) return null;
     if (device_pfn_map.get(name)) |pfn| return pfn;
