@@ -1,4 +1,4 @@
-# Stroll Vulkan ICD
+# Stroll Vulkan ICD <a href="https://github.com/Kbz-8/VulkanDriver/actions/workflows/Build.yml"><img src="https://github.com/Kbz-8/VulkanDriver/actions/workflows/Build.yml/badge.svg"></a> <a href="https://github.com/Kbz-8/VulkanDriver/actions/workflows/Test.yml"><img src="https://github.com/Kbz-8/VulkanDriver/actions/workflows/Test.yml/badge.svg"></a>
 
 <img align="right" src="https://matthew.kerwin.net.au/blog_files/kappa"/>
 
