@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const vk = @import("vulkan");
 const VkError = @import("error_set.zig").VkError;
 const Dispatchable = @import("Dispatchable.zig").Dispatchable;
@@ -7,8 +8,10 @@ const PhysicalDevice = @import("PhysicalDevice.zig");
 const root = @import("root");
 
 comptime {
-    if (!@hasDecl(root, "VULKAN_VERSION")) {
-        @compileError("Missing VULKAN_VERSION in module root");
+    if (!builtin.is_test) {
+        if (!@hasDecl(root, "VULKAN_VERSION")) {
+            @compileError("Missing VULKAN_VERSION in module root");
+        }
     }
 }
 
@@ -50,7 +53,11 @@ pub fn enumerateExtensionProperties(layer_name: ?[]const u8, property_count: *u3
 }
 
 pub fn enumerateVersion(version: *u32) VkError!void {
-    version.* = @bitCast(root.VULKAN_VERSION);
+    if (!builtin.is_test) {
+        version.* = @bitCast(root.VULKAN_VERSION);
+    } else {
+        version.* = @bitCast(vk.makeApiVersion(0, 1, 0, 0));
+    }
 }
 
 pub fn releasePhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError!void {

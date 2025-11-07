@@ -40,7 +40,3 @@ pub inline fn getLogVerboseLevel() LogVerboseLevel {
 comptime {
     _ = lib_vulkan;
 }
-
-test {
-    std.testing.refAllDeclsRecursive(@This());
-}

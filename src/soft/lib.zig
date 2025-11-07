@@ -15,6 +15,6 @@ pub const DEVICE_ID = 0x600DCAFE;
 
 pub const std_options = base.std_options;
 
-comptime {
-    _ = base;
+test {
+    std.testing.refAllDeclsRecursive(@This());
 }

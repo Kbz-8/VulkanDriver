@@ -2,6 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const root = @import("root");
 const lib = @import("lib.zig");
+const builtin = @import("builtin");
 
 const logger = @import("logger.zig");
 const error_set = @import("error_set.zig");
@@ -124,8 +125,11 @@ pub export fn strollCreateInstance(p_infos: ?*const vk.InstanceCreateInfo, callb
 
     const allocator = VulkanAllocator.init(callbacks, .instance).allocator();
 
-    // Will call impl instead of interface as root refs the impl module
-    const instance = root.Instance.create(allocator, infos) catch |err| return toVkResult(err);
+    var instance: *lib.Instance = undefined;
+    if (!builtin.is_test) {
+        // Will call impl instead of interface as root refs the impl module
+        instance = root.Instance.create(allocator, infos) catch |err| return toVkResult(err);
+    }
     instance.requestPhysicalDevices(allocator) catch |err| return toVkResult(err);
 
     p_instance.* = (Dispatchable(Instance).wrap(allocator, instance) catch |err| return toVkResult(err)).toVkHandle(vk.Instance);

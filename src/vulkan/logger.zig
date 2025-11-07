@@ -5,11 +5,10 @@ const root = @import("root");
 const lib = @import("lib.zig");
 
 comptime {
-    if (!@hasDecl(root, "DRIVER_NAME")) {
-        @compileError("Missing DRIVER_NAME in module root");
-    }
-    if (!@hasDecl(root, "DRIVER_LOGS_ENV_NAME")) {
-        @compileError("Missing DRIVER_LOGS_ENV_NAME in module root");
+    if (!builtin.is_test) {
+        if (!@hasDecl(root, "DRIVER_NAME")) {
+            @compileError("Missing DRIVER_NAME in module root");
+        }
     }
 }
 
@@ -67,8 +66,10 @@ pub fn log(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), 
 
     out_config.setColor(writer, .magenta) catch {};
     writer.print("[StrollDriver ", .{}) catch return;
-    out_config.setColor(writer, .cyan) catch {};
-    writer.print(root.DRIVER_NAME, .{}) catch return;
+    if (!builtin.is_test) {
+        out_config.setColor(writer, .cyan) catch {};
+        writer.print(root.DRIVER_NAME, .{}) catch return;
+    }
     out_config.setColor(writer, .yellow) catch {};
     writer.print(" {d:02}:{d:02}:{d:02}.{d:03}", .{ now.hour, now.minute, now.second, @divFloor(now.nanosecond, std.time.ns_per_ms) }) catch return;
     out_config.setColor(writer, .magenta) catch {};
