@@ -10,11 +10,13 @@ const VkError = error_set.VkError;
 const toVkResult = error_set.toVkResult;
 
 const Dispatchable = @import("Dispatchable.zig").Dispatchable;
+const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
 
 const VulkanAllocator = @import("VulkanAllocator.zig");
 
 const Instance = @import("Instance.zig");
 const Device = @import("Device.zig");
+const DeviceMemory = @import("DeviceMemory.zig");
 const PhysicalDevice = @import("PhysicalDevice.zig");
 
 // This file contains all exported Vulkan entrypoints.
@@ -32,7 +34,7 @@ fn functionMapEntryPoint(comptime name: []const u8) struct { []const u8, vk.PfnV
     else if (std.meta.hasFn(@This(), stroll_name))
         .{ name, @as(vk.PfnVoidFunction, @ptrCast(&@field(@This(), stroll_name))) }
     else
-        .{ name, null };
+        @compileError("Invalid entry point name");
 }
 
 const icd_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
@@ -67,7 +69,11 @@ const physical_device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComp
 });
 
 const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
+    functionMapEntryPoint("vkAllocateMemory"),
     functionMapEntryPoint("vkDestroyDevice"),
+    functionMapEntryPoint("vkFreeMemory"),
+    functionMapEntryPoint("vkMapMemory"),
+    functionMapEntryPoint("vkUnmapMemory"),
 });
 
 // ICD Interface =============================================================================================================================================
@@ -114,10 +120,10 @@ pub export fn vkGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]const
     return null;
 }
 
-pub export fn strollCreateInstance(p_infos: ?*const vk.InstanceCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_instance: *vk.Instance) callconv(vk.vulkan_call_conv) vk.Result {
-    const infos = p_infos orelse return .error_initialization_failed;
-    if (infos.s_type != .instance_create_info) {
-        return .error_initialization_failed;
+pub export fn strollCreateInstance(p_info: ?*const vk.InstanceCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_instance: *vk.Instance) callconv(vk.vulkan_call_conv) vk.Result {
+    const info = p_info orelse return .error_validation_failed;
+    if (info.s_type != .instance_create_info) {
+        return .error_validation_failed;
     }
     std.log.scoped(.vkCreateInstance).info("Creating VkInstance", .{});
     logger.indent();
@@ -128,7 +134,7 @@ pub export fn strollCreateInstance(p_infos: ?*const vk.InstanceCreateInfo, callb
     var instance: *lib.Instance = undefined;
     if (!builtin.is_test) {
         // Will call impl instead of interface as root refs the impl module
-        instance = root.Instance.create(allocator, infos) catch |err| return toVkResult(err);
+        instance = root.Instance.create(allocator, info) catch |err| return toVkResult(err);
     }
     instance.requestPhysicalDevices(allocator) catch |err| return toVkResult(err);
 
@@ -176,10 +182,10 @@ pub export fn strollEnumeratePhysicalDevices(p_instance: vk.Instance, count: *u3
 
 // Physical Device functions =================================================================================================================================
 
-pub export fn strollCreateDevice(p_physical_device: vk.PhysicalDevice, p_infos: ?*const vk.DeviceCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_device: *vk.Device) callconv(vk.vulkan_call_conv) vk.Result {
-    const infos = p_infos orelse return .error_initialization_failed;
-    if (infos.s_type != .device_create_info) {
-        return .error_initialization_failed;
+pub export fn strollCreateDevice(p_physical_device: vk.PhysicalDevice, p_info: ?*const vk.DeviceCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_device: *vk.Device) callconv(vk.vulkan_call_conv) vk.Result {
+    const info = p_info orelse return .error_validation_failed;
+    if (info.s_type != .device_create_info) {
+        return .error_validation_failed;
     }
     const allocator = VulkanAllocator.init(callbacks, .instance).allocator();
     const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
@@ -187,7 +193,7 @@ pub export fn strollCreateDevice(p_physical_device: vk.PhysicalDevice, p_infos: 
     logger.indent();
     defer logger.unindent();
 
-    const device = physical_device.createDevice(allocator, infos) catch |err| return toVkResult(err);
+    const device = physical_device.createDevice(allocator, info) catch |err| return toVkResult(err);
     p_device.* = (Dispatchable(Device).wrap(allocator, device) catch |err| return toVkResult(err)).toVkHandle(vk.Device);
     return .success;
 }
@@ -254,7 +260,30 @@ pub export fn strollGetPhysicalDeviceSparseImageFormatProperties(
 
 // Device functions ==========================================================================================================================================
 
-pub export fn strollDestroyDevice(p_device: vk.Device, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+pub export fn strollAllocateMemory(p_device: vk.Device, p_info: ?*const vk.MemoryAllocateInfo, callbacks: ?*const vk.AllocationCallbacks, p_memory: *vk.DeviceMemory) callconv(vk.vulkan_call_conv) vk.Result {
+    const info = p_info orelse return .error_validation_failed;
+    if (info.s_type != .memory_allocate_info) {
+        return .error_validation_failed;
+    }
+    const allocator = VulkanAllocator.init(callbacks, .device).allocator();
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const device_memory = device.allocateMemory(allocator, info) catch |err| return toVkResult(err);
+    p_memory.* = (NonDispatchable(DeviceMemory).wrap(allocator, device_memory) catch |err| return toVkResult(err)).toVkHandle(vk.DeviceMemory);
+    return .success;
+}
+
+pub export fn strollCreateFence(p_device: vk.Device, info: ?*const vk.FenceCreateInfo, callbacks: ?*const vk.allocationcallbacks, p_fence: *vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
+    const info = p_info orelse return .error_validation_failed;
+    if (info.s_type != .fence_create_info) {
+        return .error_validation_failed;
+    }
+    const allocator = VulkanAllocator.init(callbacks, .device).allocator();
+    const fence = device.createFence(allocator, info) catch |err| return toVkResult(err);
+    p_fence.* = (NonDispatchable(Fence).wrap(allocator, fence) catch |err| return toVkResult(err)).toVkHandle(vk.Fence);
+    return .success;
+}
+
+pub export fn strollDestroyDevice(p_device: vk.Device, callbacks: ?*const vk.allocationcallbacks) callconv(vk.vulkan_call_conv) void {
     const allocator = VulkanAllocator.init(callbacks, .device).allocator();
     const dispatchable = Dispatchable(Device).fromHandle(p_device) catch return;
     std.log.scoped(.vkDestroyDevice).info("Destroying VkDevice created from {s}", .{dispatchable.object.physical_device.props.device_name});
@@ -263,6 +292,15 @@ pub export fn strollDestroyDevice(p_device: vk.Device, callbacks: ?*const vk.All
 
     dispatchable.object.destroy(allocator) catch return;
     dispatchable.destroy(allocator);
+}
+
+pub export fn strollFreeMemory(p_device: vk.Device, p_memory: vk.DeviceMemory, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+    const allocator = VulkanAllocator.init(callbacks, .device).allocator();
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch return;
+    const non_dispatchable_device_memory = NonDispatchable(DeviceMemory).fromHandle(p_memory) catch return;
+
+    device.freeMemory(allocator, non_dispatchable_device_memory.object) catch return;
+    non_dispatchable_device_memory.destroy(allocator);
 }
 
 pub export fn strollGetDeviceProcAddr(p_device: vk.Device, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
@@ -274,4 +312,17 @@ pub export fn strollGetDeviceProcAddr(p_device: vk.Device, p_name: ?[*:0]const u
 
     entryPointNotFoundErrorLog(.vkGetDeviceProcAddr, name);
     return null;
+}
+
+pub export fn strollMapMemory(p_device: vk.Device, p_memory: vk.DeviceMemory, offset: vk.DeviceSize, size: vk.DeviceSize, _: vk.MemoryMapFlags, pp_data: *?*anyopaque) callconv(vk.vulkan_call_conv) vk.Result {
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const device_memory = NonDispatchable(DeviceMemory).fromHandleObject(p_memory) catch |err| return toVkResult(err);
+    pp_data.* = device.mapMemory(device_memory, offset, size) catch |err| return toVkResult(err);
+    return .success;
+}
+
+pub export fn strollUnmapMemory(p_device: vk.Device, p_memory: vk.DeviceMemory) callconv(vk.vulkan_call_conv) void {
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch return;
+    const device_memory = NonDispatchable(DeviceMemory).fromHandleObject(p_memory) catch return;
+    device.unmapMemory(device_memory);
 }

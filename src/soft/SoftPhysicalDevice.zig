@@ -4,8 +4,7 @@ const base = @import("base");
 const root = @import("lib.zig");
 const cpuinfo = @import("cpuinfo");
 
-const Device = @import("Device.zig");
-const Instance = @import("Instance.zig");
+const SoftDevice = @import("SoftDevice.zig");
 
 const VkError = base.VkError;
 
@@ -90,8 +89,8 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
     return self;
 }
 
-pub fn createDevice(interface: *Interface, allocator: std.mem.Allocator, infos: *const vk.DeviceCreateInfo) VkError!*Device.Interface {
-    const device = try Device.create(interface, allocator, infos);
+pub fn createDevice(interface: *Interface, allocator: std.mem.Allocator, infos: *const vk.DeviceCreateInfo) VkError!*SoftDevice.Interface {
+    const device = try SoftDevice.create(interface, allocator, infos);
     return &device.interface;
 }
 

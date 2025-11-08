@@ -1,11 +1,12 @@
+//! A Zig allocator from VkAllocationCallbacks.
+//! Falls back on c_allocator if callbacks passed are null
+
 const std = @import("std");
 const vk = @import("vulkan");
 
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 
-/// A Zig allocator from VkAllocationCallbacks.
-/// Falls back on c_allocator if callbacks passed are null
 const Self = @This();
 
 callbacks: ?vk.AllocationCallbacks,

@@ -2,9 +2,12 @@ const std = @import("std");
 const vk = @import("vulkan");
 pub const base = @import("base");
 
-pub const Instance = @import("Instance.zig");
-const Device = @import("Device.zig");
-const PhysicalDevice = @import("PhysicalDevice.zig");
+pub const SoftInstance = @import("SoftInstance.zig");
+pub const SoftDevice = @import("SoftDevice.zig");
+pub const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
+pub const SoftPhysicalDevice = @import("SoftPhysicalDevice.zig");
+
+pub const Instance = SoftInstance;
 
 pub const DRIVER_LOGS_ENV_NAME = base.DRIVER_LOGS_ENV_NAME;
 pub const DRIVER_NAME = "Soft";

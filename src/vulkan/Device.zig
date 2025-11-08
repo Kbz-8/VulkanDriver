@@ -3,6 +3,8 @@ const vk = @import("vulkan");
 
 const VkError = @import("error_set.zig").VkError;
 const PhysicalDevice = @import("PhysicalDevice.zig");
+const DeviceMemory = @import("DeviceMemory.zig");
+const Fence = @import("Fence.zig");
 
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .device;
@@ -11,12 +13,19 @@ physical_device: *const PhysicalDevice,
 dispatch_table: *const DispatchTable,
 
 pub const DispatchTable = struct {
+    allocateMemory: *const fn (*Self, std.mem.Allocator, *const vk.MemoryAllocateInfo) VkError!*DeviceMemory,
+    createFence: *const fn (*Self, std.mem.Allocator, *const vk.FenceCreateInfo) VkError!*Fence,
+    destroyFence: *const fn (*Self, std.mem.Allocator, *Fence) VkError!void,
+    freeMemory: *const fn (*Self, std.mem.Allocator, *DeviceMemory) VkError!void,
+    getFenceStatus: *const fn (*Self, *Fence) VkError!void,
     destroy: *const fn (*Self, std.mem.Allocator) VkError!void,
+    resetFences: *const fn (*Self, []*Fence) VkError!void,
+    waitForFences: *const fn (*Self, []*Fence, bool, u64) VkError!void,
 };
 
-pub fn init(allocator: std.mem.Allocator, physical_device: *const PhysicalDevice, infos: *const vk.DeviceCreateInfo) VkError!Self {
+pub fn init(allocator: std.mem.Allocator, physical_device: *const PhysicalDevice, info: *const vk.DeviceCreateInfo) VkError!Self {
     _ = allocator;
-    _ = infos;
+    _ = info;
     return .{
         .physical_device = physical_device,
         .dispatch_table = undefined,
@@ -25,4 +34,49 @@ pub fn init(allocator: std.mem.Allocator, physical_device: *const PhysicalDevice
 
 pub fn destroy(self: *Self, allocator: std.mem.Allocator) VkError!void {
     try self.dispatch_table.destroy(self, allocator);
+}
+
+pub inline fn getFenceStatus(self: *Self, fence: *Fence) VkError!void {
+    try self.dispatch_table.getFenceStatus(fence);
+}
+
+pub inline fn resetFences(_: *Self, fences: []*Fence) VkError!void {
+    for (fences) |fence| {
+        try fence.reset();
+    }
+}
+
+pub inline fn waitForFences(_: *Self, fences: []*Fence, waitForAll: bool, timeout: u64) VkError!void {
+    for (fences) |fence| {
+        try fence.wait(timeout);
+        if (!waitForAll) return;
+    }
+}
+
+// Fence functions ===================================================================================================================================
+
+pub inline fn createFence(self: *Self, allocator: std.mem.Allocator, info: *const vk.FenceCreateInfo) VkError!*Fence {
+    return self.dispatch_table.createFence(self, allocator, info);
+}
+
+pub inline fn destroyFence(self: *Self, allocator: std.mem.Allocator, fence: *Fence) VkError!void {
+    try self.dispatch_table.destroyFence(self, allocator, fence);
+}
+
+// Memory functions ==================================================================================================================================
+
+pub inline fn allocateMemory(self: *Self, allocator: std.mem.Allocator, info: *const vk.MemoryAllocateInfo) VkError!*DeviceMemory {
+    return self.dispatch_table.allocateMemory(self, allocator, info);
+}
+
+pub inline fn freeMemory(self: *Self, allocator: std.mem.Allocator, device_memory: *DeviceMemory) VkError!void {
+    try self.dispatch_table.freeMemory(self, allocator, device_memory);
+}
+
+pub inline fn mapMemory(_: *Self, device_memory: *DeviceMemory, offset: vk.DeviceSize, size: vk.DeviceSize) VkError!?*anyopaque {
+    return device_memory.map(offset, size);
+}
+
+pub inline fn unmapMemory(_: *Self, device_memory: *DeviceMemory) void {
+    return device_memory.unmap();
 }

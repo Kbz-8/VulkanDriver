@@ -15,6 +15,7 @@ is_mapped: bool,
 vtable: *const VTable,
 
 pub const VTable = struct {
+    destroy: *const fn (*Self, std.mem.Allocator) void,
     map: *const fn (*Self, vk.DeviceSize, vk.DeviceSize) VkError!?*anyopaque,
     unmap: *const fn (*Self) void,
 };
@@ -25,7 +26,12 @@ pub fn init(device: *const Device, size: vk.DeviceSize, memory_type_index: u32) 
         .size = size,
         .memory_type_index = memory_type_index,
         .is_mapped = false,
+        .vtable = undefined,
     };
+}
+
+pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
+    self.vtable.destroy(self, allocator);
 }
 
 pub inline fn map(self: *Self, offset: vk.DeviceSize, size: vk.DeviceSize) VkError!?*anyopaque {

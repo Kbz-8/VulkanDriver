@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan_core.h>
@@ -79,6 +80,25 @@ int main(void)
 	printf("VkDevice %p\n", device);
 
 	volkLoadDevice(device);
+
+	VkMemoryAllocateInfo memory_allocate_info = {};
+	memory_allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	memory_allocate_info.allocationSize = 512;
+	memory_allocate_info.memoryTypeIndex = 0;
+
+	VkDeviceMemory memory = VK_NULL_HANDLE;
+	CheckVk(vkAllocateMemory(device, &memory_allocate_info, NULL, &memory));
+	printf("VkDeviceMemory %p\n", memory);
+
+	void* map;
+	CheckVk(vkMapMemory(device, memory, 0, VK_WHOLE_SIZE, 0, &map));
+	const unsigned char data[5] = { 't', 'e', 's', 't', 0x00 };
+	memcpy(map, data, 5);
+	printf("Mapped %p\n", map);
+	printf("Mapped data: %s\n", (char*)map);
+	vkUnmapMemory(device, memory);
+
+	vkFreeMemory(device, memory, NULL);
 
 	vkDestroyDevice(device, NULL);
 	vkDestroyInstance(instance, NULL);
