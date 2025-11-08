@@ -1,8 +1,8 @@
 .{
     .name = .VulkanDriver,
-    .version = "0.0.0",
+    .version = "0.0.1",
     .fingerprint = 0x52cb73649f1107de,
-    .minimum_zig_version = "0.15.1",
+    .minimum_zig_version = "0.15.2",
 
     .dependencies = .{
         .vulkan_headers = .{
@@ -13,11 +13,6 @@
             .url = "git+https://github.com/catmeow72/vulkan-zig/#8961518db28f88d2cf09ea68e146923de2cfa7f0",
             .hash = "vulkan-0.0.0-r7Ytx6hBAwD8X_TN32qlkzul4riK6vFvjtK9fZfRvALg",
         },
-        .cpuinfo = .{
-            .url = "git+https://github.com/Kbz-8/cpuinfo-zig#77f82a1248194e7fb706967343c66021f8522766",
-            .hash = "cpuinfo-0.1.0-V7dMLcghAADJuG7dkd3MnwDPZ232pBK_8uGjxY43eP5u",
-            .lazy = true,
-        },
         .zdt = .{
             .url = "git+https://github.com/FObersteiner/zdt/?ref=v0.8.1#8b551a0a3e5ae64a32b5bad0e6a93119787b43af",
             .hash = "zdt-0.8.1-xr0_vAxUDwCJRDh9pcAS_mdZBIsvcGTtN-K8JJSWY4I6",
@@ -25,6 +20,11 @@
         .volk = .{
             .url = "git+https://github.com/zeux/volk/#8f53cc717f50f142db4736f401d0b61956cd78f9",
             .hash = "N-V-__8AAPn9BwCBHnaxOC_rffCpFI7QRfi5qBCLvov9EYK3",
+            .lazy = true,
+        },
+        .cpuinfo = .{
+            .url = "git+https://github.com/Kbz-8/cpuinfo-zig#77f82a1248194e7fb706967343c66021f8522766",
+            .hash = "cpuinfo-0.1.0-V7dMLcghAADJuG7dkd3MnwDPZ232pBK_8uGjxY43eP5u",
             .lazy = true,
         },
     },

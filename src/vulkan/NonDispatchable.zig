@@ -1,23 +1,18 @@
 const std = @import("std");
 const vk = @import("vulkan");
-const c = @cImport({
-    @cInclude("vulkan/vk_icd.h");
-});
 
 const VkError = @import("error_set.zig").VkError;
 
-pub fn Dispatchable(comptime T: type) type {
-    return extern struct {
+pub fn NonDispatchable(comptime T: type) type {
+    return struct {
         const Self = @This();
 
-        loader_data: c.VK_LOADER_DATA,
         object_type: vk.ObjectType,
         object: *T,
 
         pub fn wrap(allocator: std.mem.Allocator, object: *T) VkError!*Self {
             const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
             self.* = .{
-                .loader_data = .{ .loaderMagic = c.ICD_LOADER_MAGIC },
                 .object_type = T.ObjectType,
                 .object = object,
             };
@@ -41,16 +36,16 @@ pub fn Dispatchable(comptime T: type) type {
             if (handle == 0) {
                 return VkError.Unknown;
             }
-            const dispatchable: *Self = @ptrFromInt(handle);
-            if (dispatchable.object_type != T.ObjectType) {
+            const nondispatchable: *Self = @ptrFromInt(handle);
+            if (nondispatchable.object_type != T.ObjectType) {
                 return VkError.Unknown;
             }
-            return dispatchable;
+            return nondispatchable;
         }
 
         pub inline fn fromHandleObject(handle: anytype) VkError!*T {
-            const dispatchable_handle = try Self.fromHandle(handle);
-            return dispatchable_handle.object;
+            const nondispatchable_handle = try Self.fromHandle(handle);
+            return nondispatchable_handle.object;
         }
     };
 }

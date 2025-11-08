@@ -37,8 +37,10 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
     interface.mem_props.memory_types[0] = .{
         .heap_index = 0,
         .property_flags = .{
+            .device_local_bit = true,
             .host_visible_bit = true,
             .host_coherent_bit = true,
+            .host_cached_bit = true,
         },
     };
     interface.mem_props.memory_heap_count = 1;

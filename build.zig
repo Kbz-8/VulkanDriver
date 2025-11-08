@@ -60,7 +60,7 @@ pub fn build(b: *std.Build) void {
             .root_module = lib_mod,
             .linkage = .dynamic,
         });
-        b.installArtifact(lib);
+        const lib_install_step = b.addInstallArtifact(lib, .{});
 
         const lib_tests = b.addTest(.{ .root_module = lib_mod });
 
@@ -90,8 +90,9 @@ pub fn build(b: *std.Build) void {
         b.installArtifact(c_test_exe);
 
         const run_c_test = b.addRunArtifact(c_test_exe);
+        run_c_test.step.dependOn(&lib_install_step.step);
+
         const test_c_step = b.step(b.fmt("test-c-{s}", .{impl.name}), b.fmt("Run lib{s} C test", .{impl.name}));
-        test_c_step.dependOn(b.getInstallStep());
         test_c_step.dependOn(&run_c_test.step);
     }
 }

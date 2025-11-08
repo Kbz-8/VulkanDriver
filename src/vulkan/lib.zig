@@ -5,6 +5,7 @@ pub const lib_vulkan = @import("lib_vulkan.zig");
 pub const logger = @import("logger.zig");
 
 pub const Dispatchable = @import("Dispatchable.zig").Dispatchable;
+pub const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
 pub const VkError = @import("error_set.zig").VkError;
 
 pub const Instance = @import("Instance.zig");
