@@ -36,23 +36,6 @@ pub fn destroy(self: *Self, allocator: std.mem.Allocator) VkError!void {
     try self.dispatch_table.destroy(self, allocator);
 }
 
-pub inline fn getFenceStatus(self: *Self, fence: *Fence) VkError!void {
-    try self.dispatch_table.getFenceStatus(fence);
-}
-
-pub inline fn resetFences(_: *Self, fences: []*Fence) VkError!void {
-    for (fences) |fence| {
-        try fence.reset();
-    }
-}
-
-pub inline fn waitForFences(_: *Self, fences: []*Fence, waitForAll: bool, timeout: u64) VkError!void {
-    for (fences) |fence| {
-        try fence.wait(timeout);
-        if (!waitForAll) return;
-    }
-}
-
 // Fence functions ===================================================================================================================================
 
 pub inline fn createFence(self: *Self, allocator: std.mem.Allocator, info: *const vk.FenceCreateInfo) VkError!*Fence {
@@ -61,6 +44,18 @@ pub inline fn createFence(self: *Self, allocator: std.mem.Allocator, info: *cons
 
 pub inline fn destroyFence(self: *Self, allocator: std.mem.Allocator, fence: *Fence) VkError!void {
     try self.dispatch_table.destroyFence(self, allocator, fence);
+}
+
+pub inline fn getFenceStatus(self: *Self, fence: *Fence) VkError!void {
+    try self.dispatch_table.getFenceStatus(self, fence);
+}
+
+pub inline fn resetFences(self: *Self, fences: []*Fence) VkError!void {
+    try self.dispatch_table.resetFences(self, fences);
+}
+
+pub inline fn waitForFences(self: *Self, fences: []*Fence, waitForAll: bool, timeout: u64) VkError!void {
+    try self.dispatch_table.waitForFences(self, fences, waitForAll, timeout);
 }
 
 // Memory functions ==================================================================================================================================

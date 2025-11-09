@@ -17,6 +17,7 @@ const VulkanAllocator = @import("VulkanAllocator.zig");
 const Instance = @import("Instance.zig");
 const Device = @import("Device.zig");
 const DeviceMemory = @import("DeviceMemory.zig");
+const Fence = @import("Fence.zig");
 const PhysicalDevice = @import("PhysicalDevice.zig");
 
 // This file contains all exported Vulkan entrypoints.
@@ -70,10 +71,15 @@ const physical_device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComp
 
 const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkAllocateMemory"),
+    functionMapEntryPoint("vkDestroyFence"),
     functionMapEntryPoint("vkDestroyDevice"),
+    functionMapEntryPoint("vkCreateFence"),
     functionMapEntryPoint("vkFreeMemory"),
+    functionMapEntryPoint("vkGetFenceStatus"),
     functionMapEntryPoint("vkMapMemory"),
     functionMapEntryPoint("vkUnmapMemory"),
+    functionMapEntryPoint("vkResetFences"),
+    functionMapEntryPoint("vkWaitForFences"),
 });
 
 // ICD Interface =============================================================================================================================================
@@ -272,18 +278,19 @@ pub export fn strollAllocateMemory(p_device: vk.Device, p_info: ?*const vk.Memor
     return .success;
 }
 
-pub export fn strollCreateFence(p_device: vk.Device, info: ?*const vk.FenceCreateInfo, callbacks: ?*const vk.allocationcallbacks, p_fence: *vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn strollCreateFence(p_device: vk.Device, p_info: ?*const vk.FenceCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_fence: *vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
     const info = p_info orelse return .error_validation_failed;
     if (info.s_type != .fence_create_info) {
         return .error_validation_failed;
     }
     const allocator = VulkanAllocator.init(callbacks, .device).allocator();
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const fence = device.createFence(allocator, info) catch |err| return toVkResult(err);
     p_fence.* = (NonDispatchable(Fence).wrap(allocator, fence) catch |err| return toVkResult(err)).toVkHandle(vk.Fence);
     return .success;
 }
 
-pub export fn strollDestroyDevice(p_device: vk.Device, callbacks: ?*const vk.allocationcallbacks) callconv(vk.vulkan_call_conv) void {
+pub export fn strollDestroyDevice(p_device: vk.Device, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
     const allocator = VulkanAllocator.init(callbacks, .device).allocator();
     const dispatchable = Dispatchable(Device).fromHandle(p_device) catch return;
     std.log.scoped(.vkDestroyDevice).info("Destroying VkDevice created from {s}", .{dispatchable.object.physical_device.props.device_name});
@@ -292,6 +299,15 @@ pub export fn strollDestroyDevice(p_device: vk.Device, callbacks: ?*const vk.all
 
     dispatchable.object.destroy(allocator) catch return;
     dispatchable.destroy(allocator);
+}
+
+pub export fn strollDestroyFence(p_device: vk.Device, p_fence: vk.Fence, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+    const allocator = VulkanAllocator.init(callbacks, .device).allocator();
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch return;
+    const non_dispatchable_fence = NonDispatchable(Fence).fromHandle(p_fence) catch return;
+
+    device.destroyFence(allocator, non_dispatchable_fence.object) catch return;
+    non_dispatchable_fence.destroy(allocator);
 }
 
 pub export fn strollFreeMemory(p_device: vk.Device, p_memory: vk.DeviceMemory, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
@@ -314,6 +330,13 @@ pub export fn strollGetDeviceProcAddr(p_device: vk.Device, p_name: ?[*:0]const u
     return null;
 }
 
+pub export fn strollGetFenceStatus(p_device: vk.Device, p_fence: vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const fence = NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err);
+    device.getFenceStatus(fence) catch |err| return toVkResult(err);
+    return .success;
+}
+
 pub export fn strollMapMemory(p_device: vk.Device, p_memory: vk.DeviceMemory, offset: vk.DeviceSize, size: vk.DeviceSize, _: vk.MemoryMapFlags, pp_data: *?*anyopaque) callconv(vk.vulkan_call_conv) vk.Result {
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const device_memory = NonDispatchable(DeviceMemory).fromHandleObject(p_memory) catch |err| return toVkResult(err);
@@ -325,4 +348,34 @@ pub export fn strollUnmapMemory(p_device: vk.Device, p_memory: vk.DeviceMemory) 
     const device = Dispatchable(Device).fromHandleObject(p_device) catch return;
     const device_memory = NonDispatchable(DeviceMemory).fromHandleObject(p_memory) catch return;
     device.unmapMemory(device_memory);
+}
+
+pub export fn strollResetFences(p_device: vk.Device, count: u32, p_fences: [*]const vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const allocator = std.heap.c_allocator;
+
+    const fences: []*Fence = allocator.alloc(*Fence, count) catch return .error_unknown;
+    defer allocator.free(fences);
+
+    for (p_fences, 0..count) |fence, i| {
+        fences[i] = NonDispatchable(Fence).fromHandleObject(fence) catch |err| return toVkResult(err);
+    }
+
+    device.resetFences(fences) catch |err| return toVkResult(err);
+    return .success;
+}
+
+pub export fn strollWaitForFences(p_device: vk.Device, count: u32, p_fences: [*]const vk.Fence, waitForAll: vk.Bool32, timeout: u64) callconv(vk.vulkan_call_conv) vk.Result {
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const allocator = std.heap.c_allocator;
+
+    const fences: []*Fence = allocator.alloc(*Fence, count) catch return .error_unknown;
+    defer allocator.free(fences);
+
+    for (p_fences, 0..count) |fence, i| {
+        fences[i] = NonDispatchable(Fence).fromHandleObject(fence) catch |err| return toVkResult(err);
+    }
+
+    device.waitForFences(fences, (waitForAll == .true), timeout) catch |err| return toVkResult(err);
+    return .success;
 }

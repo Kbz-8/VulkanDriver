@@ -1,7 +1,9 @@
 const std = @import("std");
 const vk = @import("vulkan");
-const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
 const base = @import("base");
+
+const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
+const SoftFence = @import("SoftFence.zig");
 
 const VkError = base.VkError;
 
@@ -11,16 +13,21 @@ pub const Interface = base.Device;
 interface: Interface,
 device_allocator: std.heap.ThreadSafeAllocator,
 
-pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocator, infos: *const vk.DeviceCreateInfo) VkError!*Self {
+pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
 
-    var interface = try Interface.init(allocator, physical_device, infos);
+    var interface = try Interface.init(allocator, physical_device, info);
 
     interface.dispatch_table = &.{
         .allocateMemory = allocateMemory,
-        .freeMemory = freeMemory,
+        .createFence = createFence,
         .destroy = destroy,
+        .destroyFence = destroyFence,
+        .freeMemory = freeMemory,
+        .getFenceStatus = getFenceStatus,
+        .resetFences = resetFences,
+        .waitForFences = waitForFences,
     };
 
     self.* = .{
@@ -30,15 +37,45 @@ pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocato
     return self;
 }
 
-pub fn allocateMemory(interface: *Interface, allocator: std.mem.Allocator, infos: *const vk.MemoryAllocateInfo) VkError!*base.DeviceMemory {
-    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    const device_memory = try SoftDeviceMemory.create(self, allocator, infos.allocation_size, infos.memory_type_index);
-    return &device_memory.interface;
-}
-
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     allocator.destroy(self);
+}
+
+// Fence functions ===================================================================================================================================
+
+pub fn createFence(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.FenceCreateInfo) VkError!*base.Fence {
+    const fence = try SoftFence.create(interface, allocator, info);
+    return &fence.interface;
+}
+
+pub fn destroyFence(_: *Interface, allocator: std.mem.Allocator, fence: *base.Fence) VkError!void {
+    fence.destroy(allocator);
+}
+
+pub fn getFenceStatus(_: *Interface, fence: *base.Fence) VkError!void {
+    try fence.getStatus();
+}
+
+pub fn resetFences(_: *Interface, fences: []*base.Fence) VkError!void {
+    for (fences) |fence| {
+        try fence.reset();
+    }
+}
+
+pub fn waitForFences(_: *Interface, fences: []*base.Fence, waitForAll: bool, timeout: u64) VkError!void {
+    for (fences) |fence| {
+        try fence.wait(timeout);
+        if (!waitForAll) return;
+    }
+}
+
+// Memory functions ==================================================================================================================================
+
+pub fn allocateMemory(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.MemoryAllocateInfo) VkError!*base.DeviceMemory {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const device_memory = try SoftDeviceMemory.create(self, allocator, info.allocation_size, info.memory_type_index);
+    return &device_memory.interface;
 }
 
 pub fn freeMemory(_: *Interface, allocator: std.mem.Allocator, device_memory: *base.DeviceMemory) VkError!void {

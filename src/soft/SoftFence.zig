@@ -76,8 +76,8 @@ pub fn wait(interface: *Interface, timeout: u64) VkError!void {
     defer self.mutex.unlock();
 
     if (timeout == std.math.maxInt(@TypeOf(timeout))) {
-        self.condition.wait(self.mutex);
+        self.condition.wait(&self.mutex);
     } else {
-        self.condition.timedWait(self.mutex, timeout) catch return VkError.Timeout;
+        self.condition.timedWait(&self.mutex, timeout) catch return VkError.Timeout;
     }
 }
