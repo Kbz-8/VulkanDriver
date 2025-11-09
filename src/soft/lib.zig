@@ -4,8 +4,11 @@ pub const base = @import("base");
 
 pub const SoftInstance = @import("SoftInstance.zig");
 pub const SoftDevice = @import("SoftDevice.zig");
-pub const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
 pub const SoftPhysicalDevice = @import("SoftPhysicalDevice.zig");
+pub const SoftQueue = @import("SoftQueue.zig");
+
+pub const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
+pub const SoftFence = @import("SoftFence.zig");
 
 pub const Instance = SoftInstance;
 

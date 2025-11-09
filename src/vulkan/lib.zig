@@ -7,14 +7,15 @@ pub const logger = @import("logger.zig");
 pub const Dispatchable = @import("Dispatchable.zig").Dispatchable;
 pub const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
 pub const VkError = @import("error_set.zig").VkError;
+pub const VulkanAllocator = @import("VulkanAllocator.zig");
 
 pub const Instance = @import("Instance.zig");
 pub const Device = @import("Device.zig");
-pub const DeviceMemory = @import("DeviceMemory.zig");
-pub const Fence = @import("Fence.zig");
 pub const PhysicalDevice = @import("PhysicalDevice.zig");
 pub const Queue = @import("Queue.zig");
-pub const VulkanAllocator = @import("VulkanAllocator.zig");
+
+pub const DeviceMemory = @import("DeviceMemory.zig");
+pub const Fence = @import("Fence.zig");
 
 pub const VULKAN_VENDOR_ID = @typeInfo(vk.VendorId).@"enum".fields[@typeInfo(vk.VendorId).@"enum".fields.len - 1].value + 1;
 pub const DRIVER_LOGS_ENV_NAME = "STROLL_LOGS_LEVEL";

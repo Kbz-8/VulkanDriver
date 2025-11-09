@@ -60,11 +60,8 @@ int main(void)
 	CheckVk(vkCreateInstance(&instance_create_info, NULL, &instance));
 	volkLoadInstance(instance);
 
-	printf("VkInstance %p\n", instance);
-
 	uint32_t count;
 	vkEnumeratePhysicalDevices(instance, &count, NULL);
-	printf("VkPhysicalDevice count %d\n", count);
 	VkPhysicalDevice* physical_devices = (VkPhysicalDevice*)calloc(count, sizeof(VkPhysicalDevice));
 	vkEnumeratePhysicalDevices(instance, &count, physical_devices);
 
@@ -77,28 +74,17 @@ int main(void)
 	
 	VkDevice device = VK_NULL_HANDLE;
 	CheckVk(vkCreateDevice(physical_devices[0], &device_create_info, NULL, &device));
-	printf("VkDevice %p\n", device);
 
 	volkLoadDevice(device);
 
-	VkMemoryAllocateInfo memory_allocate_info = {};
-	memory_allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-	memory_allocate_info.allocationSize = 512;
-	memory_allocate_info.memoryTypeIndex = 0;
+	VkFenceCreateInfo fence_info = {};
+	fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+	fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+	VkFence fence = VK_NULL_HANDLE;
+	CheckVk(vkCreateFence(device, &fence_info, NULL, &fence));
+	printf("VkFence %p\n", fence);
 
-	VkDeviceMemory memory = VK_NULL_HANDLE;
-	CheckVk(vkAllocateMemory(device, &memory_allocate_info, NULL, &memory));
-	printf("VkDeviceMemory %p\n", memory);
-
-	void* map;
-	CheckVk(vkMapMemory(device, memory, 0, VK_WHOLE_SIZE, 0, &map));
-	const unsigned char data[5] = { 't', 'e', 's', 't', 0x00 };
-	memcpy(map, data, 5);
-	printf("Mapped %p\n", map);
-	printf("Mapped data: %s\n", (char*)map);
-	vkUnmapMemory(device, memory);
-
-	vkFreeMemory(device, memory, NULL);
+	vkDestroyFence(device, fence, NULL);
 
 	vkDestroyDevice(device, NULL);
 	vkDestroyInstance(instance, NULL);

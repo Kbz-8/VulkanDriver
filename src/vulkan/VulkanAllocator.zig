@@ -22,8 +22,12 @@ pub fn init(callbacks: ?*const vk.AllocationCallbacks, scope: vk.SystemAllocatio
 
 pub fn allocator(self: *const Self) Allocator {
     if (self.callbacks == null) {
-        return std.heap.c_allocator; // TODO: fallback on a better allocator
+        return .{
+            .ptr = @constCast(self),
+            .vtable = std.heap.c_allocator.vtable,
+        };
     }
+
     return .{
         .ptr = @constCast(self),
         .vtable = &.{

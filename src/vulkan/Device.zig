@@ -1,6 +1,7 @@
 const std = @import("std");
 const vk = @import("vulkan");
 
+const VulkanAllocator = @import("VulkanAllocator.zig");
 const VkError = @import("error_set.zig").VkError;
 const PhysicalDevice = @import("PhysicalDevice.zig");
 const DeviceMemory = @import("DeviceMemory.zig");
@@ -11,6 +12,7 @@ pub const ObjectType: vk.ObjectType = .device;
 
 physical_device: *const PhysicalDevice,
 dispatch_table: *const DispatchTable,
+host_allocator: VulkanAllocator,
 
 pub const DispatchTable = struct {
     allocateMemory: *const fn (*Self, std.mem.Allocator, *const vk.MemoryAllocateInfo) VkError!*DeviceMemory,
@@ -24,11 +26,12 @@ pub const DispatchTable = struct {
 };
 
 pub fn init(allocator: std.mem.Allocator, physical_device: *const PhysicalDevice, info: *const vk.DeviceCreateInfo) VkError!Self {
-    _ = allocator;
+    const vulkan_allocator: *VulkanAllocator = @ptrCast(@alignCast(allocator.ptr));
     _ = info;
     return .{
         .physical_device = physical_device,
         .dispatch_table = undefined,
+        .host_allocator = vulkan_allocator.*,
     };
 }
 

@@ -193,7 +193,7 @@ pub export fn strollCreateDevice(p_physical_device: vk.PhysicalDevice, p_info: ?
     if (info.s_type != .device_create_info) {
         return .error_validation_failed;
     }
-    const allocator = VulkanAllocator.init(callbacks, .instance).allocator();
+    const allocator = VulkanAllocator.init(callbacks, .device).allocator();
     const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
     std.log.scoped(.vkCreateDevice).info("Creating VkDevice from {s}", .{physical_device.props.device_name});
     logger.indent();
@@ -271,7 +271,7 @@ pub export fn strollAllocateMemory(p_device: vk.Device, p_info: ?*const vk.Memor
     if (info.s_type != .memory_allocate_info) {
         return .error_validation_failed;
     }
-    const allocator = VulkanAllocator.init(callbacks, .device).allocator();
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const device_memory = device.allocateMemory(allocator, info) catch |err| return toVkResult(err);
     p_memory.* = (NonDispatchable(DeviceMemory).wrap(allocator, device_memory) catch |err| return toVkResult(err)).toVkHandle(vk.DeviceMemory);
@@ -283,7 +283,7 @@ pub export fn strollCreateFence(p_device: vk.Device, p_info: ?*const vk.FenceCre
     if (info.s_type != .fence_create_info) {
         return .error_validation_failed;
     }
-    const allocator = VulkanAllocator.init(callbacks, .device).allocator();
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const fence = device.createFence(allocator, info) catch |err| return toVkResult(err);
     p_fence.* = (NonDispatchable(Fence).wrap(allocator, fence) catch |err| return toVkResult(err)).toVkHandle(vk.Fence);
@@ -291,7 +291,7 @@ pub export fn strollCreateFence(p_device: vk.Device, p_info: ?*const vk.FenceCre
 }
 
 pub export fn strollDestroyDevice(p_device: vk.Device, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
-    const allocator = VulkanAllocator.init(callbacks, .device).allocator();
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const dispatchable = Dispatchable(Device).fromHandle(p_device) catch return;
     std.log.scoped(.vkDestroyDevice).info("Destroying VkDevice created from {s}", .{dispatchable.object.physical_device.props.device_name});
     logger.indent();
@@ -302,7 +302,7 @@ pub export fn strollDestroyDevice(p_device: vk.Device, callbacks: ?*const vk.All
 }
 
 pub export fn strollDestroyFence(p_device: vk.Device, p_fence: vk.Fence, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
-    const allocator = VulkanAllocator.init(callbacks, .device).allocator();
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch return;
     const non_dispatchable_fence = NonDispatchable(Fence).fromHandle(p_fence) catch return;
 
@@ -311,7 +311,7 @@ pub export fn strollDestroyFence(p_device: vk.Device, p_fence: vk.Fence, callbac
 }
 
 pub export fn strollFreeMemory(p_device: vk.Device, p_memory: vk.DeviceMemory, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
-    const allocator = VulkanAllocator.init(callbacks, .device).allocator();
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch return;
     const non_dispatchable_device_memory = NonDispatchable(DeviceMemory).fromHandle(p_memory) catch return;
 

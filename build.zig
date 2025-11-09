@@ -60,7 +60,7 @@ pub fn build(b: *std.Build) void {
             .root_module = lib_mod,
             .linkage = .dynamic,
         });
-        const lib_install_step = b.addInstallArtifact(lib, .{});
+        const lib_install = b.addInstallArtifact(lib, .{});
 
         const lib_tests = b.addTest(.{ .root_module = lib_mod });
 
@@ -87,10 +87,11 @@ pub fn build(b: *std.Build) void {
             .flags = &.{b.fmt("-DLIBVK=\"{s}\"", .{lib.name})},
         });
 
-        b.installArtifact(c_test_exe);
+        const c_test_exe_install = b.addInstallArtifact(c_test_exe, .{});
 
         const run_c_test = b.addRunArtifact(c_test_exe);
-        run_c_test.step.dependOn(&lib_install_step.step);
+        run_c_test.step.dependOn(&lib_install.step);
+        run_c_test.step.dependOn(&c_test_exe_install.step);
 
         const test_c_step = b.step(b.fmt("test-c-{s}", .{impl.name}), b.fmt("Run lib{s} C test", .{impl.name}));
         test_c_step.dependOn(&run_c_test.step);

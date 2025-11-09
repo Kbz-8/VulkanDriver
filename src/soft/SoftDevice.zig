@@ -10,8 +10,11 @@ const VkError = base.VkError;
 const Self = @This();
 pub const Interface = base.Device;
 
+const SpawnError = std.Thread.SpawnError;
+
 interface: Interface,
 device_allocator: std.heap.ThreadSafeAllocator,
+workers: std.Thread.Pool,
 
 pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
@@ -32,13 +35,20 @@ pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocato
 
     self.* = .{
         .interface = interface,
-        .device_allocator = .{ .child_allocator = std.heap.c_allocator }, // TODO: better device allocator base
+        .device_allocator = .{ .child_allocator = std.heap.c_allocator }, // TODO: better device allocator
+        .workers = undefined,
+    };
+
+    self.workers.init(.{ .allocator = std.heap.c_allocator }) catch |err| return switch (err) {
+        SpawnError.OutOfMemory, SpawnError.LockedMemoryLimitExceeded => VkError.OutOfDeviceMemory,
+        else => VkError.Unknown,
     };
     return self;
 }
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    self.workers.deinit();
     allocator.destroy(self);
 }
 
