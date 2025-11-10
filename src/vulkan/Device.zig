@@ -15,7 +15,7 @@ pub const ObjectType: vk.ObjectType = .device;
 physical_device: *const PhysicalDevice,
 dispatch_table: *const DispatchTable,
 host_allocator: VulkanAllocator,
-queues: std.AutoArrayHashMapUnmanaged(u32, *Dispatchable(Queue)),
+queues: std.AutoArrayHashMapUnmanaged(u32, std.ArrayListUnmanaged(*Dispatchable(Queue))),
 
 pub const DispatchTable = struct {
     allocateMemory: *const fn (*Self, std.mem.Allocator, *const vk.MemoryAllocateInfo) VkError!*DeviceMemory,
@@ -30,13 +30,35 @@ pub const DispatchTable = struct {
 
 pub fn init(allocator: std.mem.Allocator, physical_device: *const PhysicalDevice, info: *const vk.DeviceCreateInfo) VkError!Self {
     const vulkan_allocator: *VulkanAllocator = @ptrCast(@alignCast(allocator.ptr));
-    _ = info;
-    return .{
+    var self: Self = .{
         .physical_device = physical_device,
         .dispatch_table = undefined,
         .host_allocator = vulkan_allocator.*,
         .queues = .empty,
     };
+    try self.createQueues(allocator, info);
+    return self;
+}
+
+pub fn createQueues(self: *Self, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!void {
+    if (info.queue_create_info_count == 0) {
+        return;
+    } else if (info.p_queue_create_infos == null) {
+        return VkError.ValidationFailed;
+    }
+    var family_sizes: std.AutoHashMap(u32, usize) = .empty;
+    defer family_sizes.deinit(allocator);
+
+    for (0..info.queue_create_info_count) |i| {
+        const queue_info = info.p_queue_create_infos.?[i];
+        const value = family_sizes.getOrPut(allocator, queue_info.queue_family_index) catch return VkError.OutOfHostMemory;
+        value.value_ptr.* += @intCast(queue_info.queue_count);
+    }
+
+    var it = family_sizes.iterator();
+    while (it.next()) |entry| {
+        self.queues.put(allocator, entry.key_ptr.*, std.ArrayListUnmanaged(*Dispatchable(Queue)).initCapacity(allocator, entry.value_ptr.*)) catch return VkError.OutOfHostMemory;
+    }
 }
 
 pub fn destroy(self: *Self, allocator: std.mem.Allocator) VkError!void {
