@@ -29,7 +29,7 @@ fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator) V
     // Software driver only has one physical device (the CPU)
     const physical_device = try SoftPhysicalDevice.create(allocator, interface);
     errdefer physical_device.interface.releasePhysicalDevice(allocator) catch {};
-    interface.physical_devices.append(allocator, try Dispatchable(SoftPhysicalDevice.Interface).wrap(allocator, &physical_device.interface)) catch return VkError.OutOfHostMemory;
+    interface.physical_devices.append(allocator, try Dispatchable(base.PhysicalDevice).wrap(allocator, &physical_device.interface)) catch return VkError.OutOfHostMemory;
 }
 
 fn releasePhysicalDevices(interface: *Interface, allocator: std.mem.Allocator) VkError!void {

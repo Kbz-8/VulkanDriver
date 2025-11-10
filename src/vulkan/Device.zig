@@ -1,11 +1,13 @@
 const std = @import("std");
 const vk = @import("vulkan");
 
+const Dispatchable = @import("Dispatchable.zig").Dispatchable;
 const VulkanAllocator = @import("VulkanAllocator.zig");
 const VkError = @import("error_set.zig").VkError;
 const PhysicalDevice = @import("PhysicalDevice.zig");
 const DeviceMemory = @import("DeviceMemory.zig");
 const Fence = @import("Fence.zig");
+const Queue = @import("Queue.zig");
 
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .device;
@@ -13,6 +15,7 @@ pub const ObjectType: vk.ObjectType = .device;
 physical_device: *const PhysicalDevice,
 dispatch_table: *const DispatchTable,
 host_allocator: VulkanAllocator,
+queues: std.AutoArrayHashMapUnmanaged(u32, *Dispatchable(Queue)),
 
 pub const DispatchTable = struct {
     allocateMemory: *const fn (*Self, std.mem.Allocator, *const vk.MemoryAllocateInfo) VkError!*DeviceMemory,
@@ -32,10 +35,12 @@ pub fn init(allocator: std.mem.Allocator, physical_device: *const PhysicalDevice
         .physical_device = physical_device,
         .dispatch_table = undefined,
         .host_allocator = vulkan_allocator.*,
+        .queues = .empty,
     };
 }
 
 pub fn destroy(self: *Self, allocator: std.mem.Allocator) VkError!void {
+    self.queues.deinit(allocator);
     try self.dispatch_table.destroy(self, allocator);
 }
 

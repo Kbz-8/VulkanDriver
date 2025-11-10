@@ -21,13 +21,13 @@ pub const DispatchTable = struct {
     waitIdle: *const fn (*Self) VkError!void,
 };
 
-pub fn init(allocator: std.mem.Allocator, device: *const Device, index: u32, info: vk.DeviceQueueCreateInfo) VkError!Self {
+pub fn init(allocator: std.mem.Allocator, device: *const Device, index: u32, family_index: u32, flags: vk.DeviceQueueCreateFlags) VkError!Self {
     _ = allocator;
     return .{
         .owner = device,
-        .family_index = info.queueFamilyIndex,
+        .family_index = family_index,
         .index = index,
-        .flags = info.flags,
+        .flags = flags,
         .dispatch_table = undefined,
     };
 }

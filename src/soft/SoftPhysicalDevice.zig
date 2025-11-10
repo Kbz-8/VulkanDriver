@@ -90,7 +90,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
     return self;
 }
 
-pub fn createDevice(interface: *Interface, allocator: std.mem.Allocator, infos: *const vk.DeviceCreateInfo) VkError!*SoftDevice.Interface {
+pub fn createDevice(interface: *Interface, allocator: std.mem.Allocator, infos: *const vk.DeviceCreateInfo) VkError!*base.Device {
     const device = try SoftDevice.create(interface, allocator, infos);
     return &device.interface;
 }

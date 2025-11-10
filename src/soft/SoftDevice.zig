@@ -39,7 +39,7 @@ pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocato
         .workers = undefined,
     };
 
-    self.workers.init(.{ .allocator = std.heap.c_allocator }) catch |err| return switch (err) {
+    self.workers.init(.{ .allocator = self.interface.host_allocator.allocator() }) catch |err| return switch (err) {
         SpawnError.OutOfMemory, SpawnError.LockedMemoryLimitExceeded => VkError.OutOfDeviceMemory,
         else => VkError.Unknown,
     };
