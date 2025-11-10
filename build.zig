@@ -59,6 +59,7 @@ pub fn build(b: *std.Build) void {
             .name = b.fmt("vulkan_{s}", .{impl.name}),
             .root_module = lib_mod,
             .linkage = .dynamic,
+            .use_llvm = true, // Fixes some random bugs happenning with custom backend. Investigations needed
         });
         const lib_install = b.addInstallArtifact(lib, .{});
 

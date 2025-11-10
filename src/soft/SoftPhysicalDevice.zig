@@ -77,6 +77,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
     };
     interface.queue_family_props = std.ArrayList(vk.QueueFamilyProperties).fromOwnedSlice(queue_family_props[0..]);
 
+    // TODO: use Pytorch's cpuinfo someday
     const info = cpuinfo.get(allocator) catch return VkError.InitializationFailed;
     defer info.deinit(allocator);
 
