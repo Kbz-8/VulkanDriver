@@ -11,6 +11,7 @@ const Alignment = std.mem.Alignment;
 
 const Self = @This();
 
+/// Global debug allocator for leaks detection purpose
 pub var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
 callbacks: ?vk.AllocationCallbacks,
@@ -27,7 +28,7 @@ pub fn init(callbacks: ?*const vk.AllocationCallbacks, scope: vk.SystemAllocatio
 pub fn allocator(self: *const Self) Allocator {
     if (self.callbacks != null) {
         return .{
-            .ptr = @constCast(self),
+            .ptr = undefined,
             .vtable = &.{
                 .alloc = alloc,
                 .resize = resize,
@@ -37,10 +38,12 @@ pub fn allocator(self: *const Self) Allocator {
         };
     }
 
-    return if (std.process.hasEnvVarConstant(DRIVER_DEBUG_ALLOCATOR_ENV_NAME) or builtin.mode == std.builtin.OptimizeMode.Debug)
-        debug_allocator.allocator()
-    else
-        std.heap.c_allocator;
+    if (std.process.hasEnvVarConstant(DRIVER_DEBUG_ALLOCATOR_ENV_NAME) or builtin.mode == std.builtin.OptimizeMode.Debug) {
+        @branchHint(.unlikely);
+        return debug_allocator.allocator();
+    } else {
+        return std.heap.c_allocator;
+    }
 }
 
 fn alloc(context: *anyopaque, len: usize, alignment: Alignment, _: usize) ?[*]u8 {
