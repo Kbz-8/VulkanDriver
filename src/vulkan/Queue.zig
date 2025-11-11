@@ -22,6 +22,7 @@ pub const DispatchTable = struct {
 };
 
 pub fn init(allocator: std.mem.Allocator, device: *const Device, index: u32, family_index: u32, flags: vk.DeviceQueueCreateFlags) VkError!Self {
+    std.log.scoped(.vkCreateDevice).info("Creating device queue with family index {d} and index {d}", .{ family_index, index });
     _ = allocator;
     return .{
         .owner = device,

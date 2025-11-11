@@ -69,20 +69,29 @@ int main(void)
 	vkGetPhysicalDeviceProperties(physical_devices[0], &props);
 	printf("VkPhysicalDevice name %s\n", props.deviceName);
 
+	VkDeviceQueueCreateInfo queue_create_infos = {0};
+	queue_create_infos.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+	queue_create_infos.queueFamilyIndex = 1;
+	queue_create_infos.queueCount = 1;
+
 	VkDeviceCreateInfo device_create_info = {0};
 	device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-	
+	device_create_info.queueCreateInfoCount = 1;
+	device_create_info.pQueueCreateInfos = &queue_create_infos;
+
 	VkDevice device = VK_NULL_HANDLE;
 	CheckVk(vkCreateDevice(physical_devices[0], &device_create_info, NULL, &device));
-
 	volkLoadDevice(device);
+
+	VkQueue queue = VK_NULL_HANDLE;
+	vkGetDeviceQueue(device, 1, 0, &queue);
+	printf("VkQueue %p\n", queue);
 
 	VkFenceCreateInfo fence_info = {};
 	fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
 	fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 	VkFence fence = VK_NULL_HANDLE;
 	CheckVk(vkCreateFence(device, &fence_info, NULL, &fence));
-	printf("VkFence %p\n", fence);
 
 	vkDestroyFence(device, fence, NULL);
 

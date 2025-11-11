@@ -45,10 +45,9 @@ pub fn log(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), 
     const prefix = std.fmt.comptimePrint("{s: <8}", .{"[" ++ comptime level.asText() ++ "] "});
 
     const level_color: std.Io.tty.Color = switch (level) {
-        .info => .blue,
+        .info, .debug => .blue,
         .warn => .yellow,
         .err => .red,
-        .debug => .blue,
     };
 
     std.debug.lockStdErr();

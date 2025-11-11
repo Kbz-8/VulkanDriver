@@ -3,11 +3,15 @@
 
 const std = @import("std");
 const vk = @import("vulkan");
+const builtin = @import("builtin");
+const DRIVER_DEBUG_ALLOCATOR_ENV_NAME = @import("lib.zig").DRIVER_DEBUG_ALLOCATOR_ENV_NAME;
 
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 
 const Self = @This();
+
+pub var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
 callbacks: ?vk.AllocationCallbacks,
 scope: vk.SystemAllocationScope,
@@ -21,22 +25,22 @@ pub fn init(callbacks: ?*const vk.AllocationCallbacks, scope: vk.SystemAllocatio
 }
 
 pub fn allocator(self: *const Self) Allocator {
-    if (self.callbacks == null) {
+    if (self.callbacks != null) {
         return .{
             .ptr = @constCast(self),
-            .vtable = std.heap.c_allocator.vtable,
+            .vtable = &.{
+                .alloc = alloc,
+                .resize = resize,
+                .remap = remap,
+                .free = free,
+            },
         };
     }
 
-    return .{
-        .ptr = @constCast(self),
-        .vtable = &.{
-            .alloc = alloc,
-            .resize = resize,
-            .remap = remap,
-            .free = free,
-        },
-    };
+    return if (std.process.hasEnvVarConstant(DRIVER_DEBUG_ALLOCATOR_ENV_NAME) or builtin.mode == std.builtin.OptimizeMode.Debug)
+        debug_allocator.allocator()
+    else
+        std.heap.c_allocator;
 }
 
 fn alloc(context: *anyopaque, len: usize, alignment: Alignment, _: usize) ?[*]u8 {

@@ -20,11 +20,15 @@ pub const ObjectType: vk.ObjectType = .instance;
 
 physical_devices: std.ArrayListUnmanaged(*Dispatchable(PhysicalDevice)),
 dispatch_table: *const DispatchTable,
+vtable: *const VTable,
+
+pub const VTable = struct {
+    releasePhysicalDevices: *const fn (*Self, std.mem.Allocator) VkError!void,
+    requestPhysicalDevices: *const fn (*Self, std.mem.Allocator) VkError!void,
+};
 
 pub const DispatchTable = struct {
     destroyInstance: *const fn (*Self, std.mem.Allocator) VkError!void,
-    releasePhysicalDevices: *const fn (*Self, std.mem.Allocator) VkError!void,
-    requestPhysicalDevices: *const fn (*Self, std.mem.Allocator) VkError!void,
 };
 
 pub fn init(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) VkError!Self {
@@ -33,11 +37,12 @@ pub fn init(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) V
     return .{
         .physical_devices = .empty,
         .dispatch_table = undefined,
+        .vtable = undefined,
     };
 }
 
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) VkError!void {
-    try self.dispatch_table.releasePhysicalDevices(self, allocator);
+    try self.releasePhysicalDevices(allocator);
     try self.dispatch_table.destroyInstance(self, allocator);
 }
 
@@ -61,11 +66,11 @@ pub fn enumerateVersion(version: *u32) VkError!void {
 }
 
 pub fn releasePhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError!void {
-    try self.dispatch_table.releasePhysicalDevices(self, allocator);
+    try self.vtable.releasePhysicalDevices(self, allocator);
 }
 
 pub fn requestPhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError!void {
-    try self.dispatch_table.requestPhysicalDevices(self, allocator);
+    try self.vtable.requestPhysicalDevices(self, allocator);
     if (self.physical_devices.items.len == 0) {
         std.log.scoped(.vkCreateInstance).info("No VkPhysicalDevice found", .{});
         return;

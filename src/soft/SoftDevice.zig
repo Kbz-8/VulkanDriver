@@ -1,9 +1,13 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
+const builtin = @import("builtin");
+
+const Debug = std.builtin.OptimizeMode.Debug;
 
 const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
 const SoftFence = @import("SoftFence.zig");
+const SoftQueue = @import("SoftQueue.zig");
 
 const VkError = base.VkError;
 
@@ -13,7 +17,7 @@ pub const Interface = base.Device;
 const SpawnError = std.Thread.SpawnError;
 
 interface: Interface,
-device_allocator: std.heap.ThreadSafeAllocator,
+device_allocator: if (builtin.mode == Debug) std.heap.DebugAllocator(.{}) else std.heap.ThreadSafeAllocator,
 workers: std.Thread.Pool,
 
 pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!*Self {
@@ -21,6 +25,11 @@ pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocato
     errdefer allocator.destroy(self);
 
     var interface = try Interface.init(allocator, physical_device, info);
+
+    interface.vtable = &.{
+        .createQueue = SoftQueue.create,
+        .destroyQueue = SoftQueue.destroy,
+    };
 
     interface.dispatch_table = &.{
         .allocateMemory = allocateMemory,
@@ -35,20 +44,30 @@ pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocato
 
     self.* = .{
         .interface = interface,
-        .device_allocator = .{ .child_allocator = std.heap.c_allocator }, // TODO: better device allocator
+        .device_allocator = if (builtin.mode == Debug) .init else .{ .child_allocator = std.heap.c_allocator }, // TODO: better device allocator
         .workers = undefined,
     };
 
-    self.workers.init(.{ .allocator = self.interface.host_allocator.allocator() }) catch |err| return switch (err) {
+    self.workers.init(.{ .allocator = self.device_allocator.allocator() }) catch |err| return switch (err) {
         SpawnError.OutOfMemory, SpawnError.LockedMemoryLimitExceeded => VkError.OutOfDeviceMemory,
         else => VkError.Unknown,
     };
+
+    try self.interface.createQueues(allocator, info);
     return self;
 }
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     self.workers.deinit();
+
+    if (builtin.mode == Debug) {
+        // All device memory allocations should've been freed by now
+        if (!self.device_allocator.detectLeaks()) {
+            std.log.scoped(.vkDestroyDevice).debug("No device memory leaks detected", .{});
+        }
+    }
+
     allocator.destroy(self);
 }
 

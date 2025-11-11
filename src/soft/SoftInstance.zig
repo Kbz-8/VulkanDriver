@@ -18,9 +18,11 @@ pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo)
 
     self.interface = try base.Instance.init(allocator, infos);
     self.interface.dispatch_table = &.{
+        .destroyInstance = destroyInstance,
+    };
+    self.interface.vtable = &.{
         .requestPhysicalDevices = requestPhysicalDevices,
         .releasePhysicalDevices = releasePhysicalDevices,
-        .destroyInstance = destroyInstance,
     };
     return &self.interface;
 }

@@ -13,9 +13,15 @@ const Self = @This();
 pub const ObjectType: vk.ObjectType = .device;
 
 physical_device: *const PhysicalDevice,
-dispatch_table: *const DispatchTable,
-host_allocator: VulkanAllocator,
 queues: std.AutoArrayHashMapUnmanaged(u32, std.ArrayListUnmanaged(*Dispatchable(Queue))),
+
+dispatch_table: *const DispatchTable,
+vtable: *const VTable,
+
+pub const VTable = struct {
+    createQueue: *const fn (std.mem.Allocator, *const Self, u32, u32, vk.DeviceQueueCreateFlags) VkError!*Queue,
+    destroyQueue: *const fn (*Queue, std.mem.Allocator) VkError!void,
+};
 
 pub const DispatchTable = struct {
     allocateMemory: *const fn (*Self, std.mem.Allocator, *const vk.MemoryAllocateInfo) VkError!*DeviceMemory,
@@ -29,15 +35,14 @@ pub const DispatchTable = struct {
 };
 
 pub fn init(allocator: std.mem.Allocator, physical_device: *const PhysicalDevice, info: *const vk.DeviceCreateInfo) VkError!Self {
-    const vulkan_allocator: *VulkanAllocator = @ptrCast(@alignCast(allocator.ptr));
-    var self: Self = .{
+    _ = allocator;
+    _ = info;
+    return .{
         .physical_device = physical_device,
-        .dispatch_table = undefined,
-        .host_allocator = vulkan_allocator.*,
         .queues = .empty,
+        .dispatch_table = undefined,
+        .vtable = undefined,
     };
-    try self.createQueues(allocator, info);
-    return self;
 }
 
 pub fn createQueues(self: *Self, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!void {
@@ -46,22 +51,31 @@ pub fn createQueues(self: *Self, allocator: std.mem.Allocator, info: *const vk.D
     } else if (info.p_queue_create_infos == null) {
         return VkError.ValidationFailed;
     }
-    var family_sizes: std.AutoHashMap(u32, usize) = .empty;
-    defer family_sizes.deinit(allocator);
 
     for (0..info.queue_create_info_count) |i| {
         const queue_info = info.p_queue_create_infos.?[i];
-        const value = family_sizes.getOrPut(allocator, queue_info.queue_family_index) catch return VkError.OutOfHostMemory;
-        value.value_ptr.* += @intCast(queue_info.queue_count);
-    }
+        const res = (self.queues.getOrPut(allocator, queue_info.queue_family_index) catch return VkError.OutOfHostMemory);
+        const family_ptr = res.value_ptr;
+        if (!res.found_existing) {
+            family_ptr.* = .empty;
+        }
 
-    var it = family_sizes.iterator();
-    while (it.next()) |entry| {
-        self.queues.put(allocator, entry.key_ptr.*, std.ArrayListUnmanaged(*Dispatchable(Queue)).initCapacity(allocator, entry.value_ptr.*)) catch return VkError.OutOfHostMemory;
+        const queue = try self.vtable.createQueue(allocator, self, queue_info.queue_family_index, @intCast(family_ptr.items.len), queue_info.flags);
+        const dispatchable_queue = try Dispatchable(Queue).wrap(allocator, queue);
+        family_ptr.append(allocator, dispatchable_queue) catch return VkError.OutOfHostMemory;
     }
 }
 
 pub fn destroy(self: *Self, allocator: std.mem.Allocator) VkError!void {
+    var it = self.queues.iterator();
+    while (it.next()) |entry| {
+        const family = entry.value_ptr;
+        for (family.items) |dispatchable_queue| {
+            try self.vtable.destroyQueue(dispatchable_queue.object, allocator);
+            dispatchable_queue.destroy(allocator);
+        }
+        family.deinit(allocator);
+    }
     self.queues.deinit(allocator);
     try self.dispatch_table.destroy(self, allocator);
 }

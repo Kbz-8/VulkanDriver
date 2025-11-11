@@ -13,7 +13,7 @@ pub const Interface = base.Queue;
 interface: Interface,
 mutex: std.Thread.Mutex,
 
-pub fn create(allocator: std.mem.Allocator, device: *const base.Device, index: u32, family_index: u32, flags: vk.DeviceQueueCreateFlags) VkError!*Self {
+pub fn create(allocator: std.mem.Allocator, device: *const base.Device, index: u32, family_index: u32, flags: vk.DeviceQueueCreateFlags) VkError!*Interface {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
 
@@ -29,7 +29,12 @@ pub fn create(allocator: std.mem.Allocator, device: *const base.Device, index: u
         .interface = interface,
         .mutex = .{},
     };
-    return self;
+    return &self.interface;
+}
+
+pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    allocator.destroy(self);
 }
 
 pub fn bindSparse(interface: *Interface, info: []*const vk.BindSparseInfo, fence: ?*base.Fence) VkError!void {

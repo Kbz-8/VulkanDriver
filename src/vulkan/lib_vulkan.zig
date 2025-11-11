@@ -75,6 +75,7 @@ const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkDestroyDevice"),
     functionMapEntryPoint("vkCreateFence"),
     functionMapEntryPoint("vkFreeMemory"),
+    functionMapEntryPoint("vkGetDeviceQueue"),
     functionMapEntryPoint("vkGetFenceStatus"),
     functionMapEntryPoint("vkMapMemory"),
     functionMapEntryPoint("vkUnmapMemory"),
@@ -173,6 +174,13 @@ pub export fn strollDestroyInstance(p_instance: vk.Instance, callbacks: ?*const 
     const dispatchable = Dispatchable(Instance).fromHandle(p_instance) catch return;
     dispatchable.object.deinit(allocator) catch {};
     dispatchable.destroy(allocator);
+
+    if (std.process.hasEnvVarConstant(lib.DRIVER_DEBUG_ALLOCATOR_ENV_NAME) or builtin.mode == std.builtin.OptimizeMode.Debug) {
+        // All host memory allocations should've been freed by now
+        if (!VulkanAllocator.debug_allocator.detectLeaks()) {
+            std.log.scoped(.vkDestroyInstance).debug("No memory leaks detected", .{});
+        }
+    }
 }
 
 pub export fn strollEnumeratePhysicalDevices(p_instance: vk.Instance, count: *u32, p_devices: ?[*]vk.PhysicalDevice) callconv(vk.vulkan_call_conv) vk.Result {
@@ -328,6 +336,22 @@ pub export fn strollGetDeviceProcAddr(p_device: vk.Device, p_name: ?[*:0]const u
 
     entryPointNotFoundErrorLog(.vkGetDeviceProcAddr, name);
     return null;
+}
+
+pub export fn strollGetDeviceQueue(p_device: vk.Device, queue_family_index: u32, queue_index: u32, p_queue: *vk.Queue) callconv(vk.vulkan_call_conv) void {
+    p_queue.* = .null_handle;
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch return;
+    if (device.queues.get(queue_family_index)) |family| {
+        if (queue_index >= family.items.len) return;
+
+        const dispatchable_queue = family.items[queue_index];
+        const queue = dispatchable_queue.object;
+
+        // https://docs.vulkan.org/refpages/latest/refpages/source/vkGetDeviceQueue.html#VUID-vkGetDeviceQueue-flags-01841
+        if (queue.flags != @TypeOf(queue.flags){}) return;
+
+        p_queue.* = dispatchable_queue.toVkHandle(vk.Queue);
+    }
 }
 
 pub export fn strollGetFenceStatus(p_device: vk.Device, p_fence: vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {

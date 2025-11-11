@@ -74,6 +74,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
             .timestamp_valid_bits = 0,
             .min_image_transfer_granularity = .{ .width = 1, .height = 1, .depth = 1 },
         },
+        // TODO: maybe add a compute specialized queue
     };
     interface.queue_family_props = std.ArrayList(vk.QueueFamilyProperties).fromOwnedSlice(queue_family_props[0..]);
 
