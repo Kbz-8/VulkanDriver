@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan_core.h>
@@ -15,6 +14,11 @@
 
 #define VOLK_IMPLEMENTATION
 #include <volk.h>
+
+#define KVF_IMPLEMENTATION
+#define KVF_ENABLE_VALIDATION_LAYERS
+#define KVF_NO_KHR
+#include <kvf.h>
 
 #define CheckVk(x) \
 	do { \
@@ -49,60 +53,25 @@ int main(void)
 
 	const char* extensions[] = { VK_LUNARG_DIRECT_DRIVER_LOADING_EXTENSION_NAME };
 
-	VkInstanceCreateInfo instance_create_info = {};
-	instance_create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-	instance_create_info.pApplicationInfo = NULL;
-	instance_create_info.enabledExtensionCount = 1;
-	instance_create_info.ppEnabledExtensionNames = extensions;
-	instance_create_info.pNext = &direct_driver_list;
-
-	VkInstance instance = VK_NULL_HANDLE;
-	CheckVk(vkCreateInstance(&instance_create_info, NULL, &instance));
+	VkInstance instance = kvfCreateInstanceNext(extensions, 1, &direct_driver_list);
 	volkLoadInstance(instance);
 
-	uint32_t count;
-	vkEnumeratePhysicalDevices(instance, &count, NULL);
-	VkPhysicalDevice* physical_devices = (VkPhysicalDevice*)calloc(count, sizeof(VkPhysicalDevice));
-	vkEnumeratePhysicalDevices(instance, &count, physical_devices);
+	VkPhysicalDevice physical_device = kvfPickGoodPhysicalDevice(instance, VK_NULL_HANDLE, NULL, 0);
 
-	VkPhysicalDeviceProperties props;
-	vkGetPhysicalDeviceProperties(physical_devices[0], &props);
-	printf("VkPhysicalDevice name %s\n", props.deviceName);
-
-	VkDeviceQueueCreateInfo queue_create_infos = {0};
-	queue_create_infos.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-	queue_create_infos.queueFamilyIndex = 1;
-	queue_create_infos.queueCount = 1;
-
-	VkDeviceCreateInfo device_create_info = {0};
-	device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-	device_create_info.queueCreateInfoCount = 1;
-	device_create_info.pQueueCreateInfos = &queue_create_infos;
-
-	VkDevice device = VK_NULL_HANDLE;
-	CheckVk(vkCreateDevice(physical_devices[0], &device_create_info, NULL, &device));
+	VkDevice device = kvfCreateDevice(physical_device, NULL, 0, NULL);
 	volkLoadDevice(device);
 
-	VkQueue queue = VK_NULL_HANDLE;
-	vkGetDeviceQueue(device, 1, 0, &queue);
+	VkQueue queue = kvfGetDeviceQueue(device, KVF_GRAPHICS_QUEUE);
+	VkFence fence = kvfCreateFence(device);
 
-	VkFenceCreateInfo fence_info = {};
-	fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-	fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-	VkFence fence = VK_NULL_HANDLE;
-	CheckVk(vkCreateFence(device, &fence_info, NULL, &fence));
+	kvfSubmitCommandBuffer(device, VK_NULL_HANDLE, KVF_GRAPHICS_QUEUE, VK_NULL_HANDLE, VK_NULL_HANDLE, fence, NULL);
+	kvfWaitForFence(device, fence);
 
-	CheckVk(vkQueueSubmit(queue, 0, NULL, fence));
-	CheckVk(vkQueueSubmit(queue, 0, NULL, fence));
-	CheckVk(vkQueueSubmit(queue, 0, NULL, fence));
-	CheckVk(vkQueueWaitIdle(queue));
+	kvfDestroyFence(device, fence);
 
-	vkDestroyFence(device, fence, NULL);
+	kvfDestroyDevice(device);
+	kvfDestroyInstance(instance);
 
-	vkDestroyDevice(device, NULL);
-	vkDestroyInstance(instance, NULL);
-
-	free(physical_devices);
 	dlclose(lib);
 	return 0;
 }

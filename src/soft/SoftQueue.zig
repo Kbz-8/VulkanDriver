@@ -62,8 +62,6 @@ pub fn submit(interface: *Interface, info: []const vk.SubmitInfo, fence: ?*base.
 
             // TODO: commands executions
 
-            std.log.debug("Queue execution", .{});
-            std.Thread.sleep(1_000_000_000);
             if (p_fence) |fence_obj| {
                 fence_obj.signal() catch {};
             }

@@ -4,10 +4,13 @@ const vk = @import("vulkan");
 const Dispatchable = @import("Dispatchable.zig").Dispatchable;
 const VulkanAllocator = @import("VulkanAllocator.zig");
 const VkError = @import("error_set.zig").VkError;
+
 const PhysicalDevice = @import("PhysicalDevice.zig");
+const Queue = @import("Queue.zig");
+
+const CommandPool = @import("CommandPool.zig");
 const DeviceMemory = @import("DeviceMemory.zig");
 const Fence = @import("Fence.zig");
-const Queue = @import("Queue.zig");
 
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .device;
@@ -25,11 +28,13 @@ pub const VTable = struct {
 
 pub const DispatchTable = struct {
     allocateMemory: *const fn (*Self, std.mem.Allocator, *const vk.MemoryAllocateInfo) VkError!*DeviceMemory,
+    createCommandPool: *const fn (*Self, std.mem.Allocator, *const vk.CommandPoolCreateInfo) VkError!*CommandPool,
     createFence: *const fn (*Self, std.mem.Allocator, *const vk.FenceCreateInfo) VkError!*Fence,
+    destroy: *const fn (*Self, std.mem.Allocator) VkError!void,
+    destroyCommandPool: *const fn (*Self, std.mem.Allocator, *CommandPool) VkError!void,
     destroyFence: *const fn (*Self, std.mem.Allocator, *Fence) VkError!void,
     freeMemory: *const fn (*Self, std.mem.Allocator, *DeviceMemory) VkError!void,
     getFenceStatus: *const fn (*Self, *Fence) VkError!void,
-    destroy: *const fn (*Self, std.mem.Allocator) VkError!void,
     resetFences: *const fn (*Self, []*Fence) VkError!void,
     waitForFences: *const fn (*Self, []*Fence, bool, u64) VkError!void,
 };
@@ -66,7 +71,7 @@ pub fn createQueues(self: *Self, allocator: std.mem.Allocator, info: *const vk.D
     }
 }
 
-pub fn destroy(self: *Self, allocator: std.mem.Allocator) VkError!void {
+pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) VkError!void {
     var it = self.queues.iterator();
     while (it.next()) |entry| {
         const family = entry.value_ptr;
@@ -100,6 +105,16 @@ pub inline fn resetFences(self: *Self, fences: []*Fence) VkError!void {
 
 pub inline fn waitForFences(self: *Self, fences: []*Fence, waitForAll: bool, timeout: u64) VkError!void {
     try self.dispatch_table.waitForFences(self, fences, waitForAll, timeout);
+}
+
+// Command Pool functions ============================================================================================================================
+
+pub inline fn createCommandPool(self: *Self, allocator: std.mem.Allocator, info: *const vk.CommandPoolCreateInfo) VkError!*CommandPool {
+    return self.dispatch_table.createCommandPool(self, allocator, info);
+}
+
+pub inline fn destroyCommandPool(self: *Self, allocator: std.mem.Allocator, pool: *CommandPool) VkError!void {
+    try self.dispatch_table.destroyCommandPool(self, allocator, pool);
 }
 
 // Memory functions ==================================================================================================================================

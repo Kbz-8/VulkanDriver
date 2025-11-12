@@ -73,6 +73,7 @@ pub fn build(b: *std.Build) !void {
         test_step.dependOn(&run_tests.step);
 
         const volk = b.lazyDependency("volk", .{}) orelse continue;
+        const kvf = b.lazyDependency("kvf", .{}) orelse continue;
 
         const c_test_exe = b.addExecutable(.{
             .name = b.fmt("c_test_vulkan_{s}", .{impl.name}),
@@ -84,6 +85,7 @@ pub fn build(b: *std.Build) !void {
         });
 
         c_test_exe.root_module.addSystemIncludePath(volk.path(""));
+        c_test_exe.root_module.addSystemIncludePath(kvf.path(""));
         c_test_exe.root_module.addSystemIncludePath(vulkan_headers.path("include"));
 
         c_test_exe.root_module.addCSourceFile(.{

@@ -35,7 +35,7 @@ pub fn init(allocator: std.mem.Allocator, instance: *const Instance) VkError!Sel
             .device_type = undefined,
             .device_name = [_]u8{0} ** vk.MAX_PHYSICAL_DEVICE_NAME_SIZE,
             .pipeline_cache_uuid = undefined,
-            .limits = undefined,
+            .limits = std.mem.zeroInit(vk.PhysicalDeviceLimits, .{}),
             .sparse_properties = undefined,
         },
         .mem_props = .{

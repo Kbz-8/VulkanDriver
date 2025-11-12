@@ -19,6 +19,7 @@ const Device = @import("Device.zig");
 const PhysicalDevice = @import("PhysicalDevice.zig");
 const Queue = @import("Queue.zig");
 
+const CommandPool = @import("CommandPool.zig");
 const DeviceMemory = @import("DeviceMemory.zig");
 const Fence = @import("Fence.zig");
 
@@ -73,9 +74,11 @@ const physical_device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComp
 
 const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkAllocateMemory"),
+    functionMapEntryPoint("vkCreateCommandPool"),
+    functionMapEntryPoint("vkCreateFence"),
+    functionMapEntryPoint("vkDestroyCommandPool"),
     functionMapEntryPoint("vkDestroyFence"),
     functionMapEntryPoint("vkDestroyDevice"),
-    functionMapEntryPoint("vkCreateFence"),
     functionMapEntryPoint("vkFreeMemory"),
     functionMapEntryPoint("vkGetDeviceQueue"),
     functionMapEntryPoint("vkGetFenceStatus"),
@@ -291,6 +294,18 @@ pub export fn strollAllocateMemory(p_device: vk.Device, p_info: ?*const vk.Memor
     return .success;
 }
 
+pub export fn strollCreateCommandPool(p_device: vk.Device, p_info: ?*const vk.CommandPoolCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_pool: *vk.CommandPool) callconv(vk.vulkan_call_conv) vk.Result {
+    const info = p_info orelse return .error_validation_failed;
+    if (info.s_type != .command_pool_create_info) {
+        return .error_validation_failed;
+    }
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const pool = device.createCommandPool(allocator, info) catch |err| return toVkResult(err);
+    p_pool.* = (NonDispatchable(CommandPool).wrap(allocator, pool) catch |err| return toVkResult(err)).toVkHandle(vk.CommandPool);
+    return .success;
+}
+
 pub export fn strollCreateFence(p_device: vk.Device, p_info: ?*const vk.FenceCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_fence: *vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
     const info = p_info orelse return .error_validation_failed;
     if (info.s_type != .fence_create_info) {
@@ -312,6 +327,15 @@ pub export fn strollDestroyDevice(p_device: vk.Device, callbacks: ?*const vk.All
 
     dispatchable.object.destroy(allocator) catch return;
     dispatchable.destroy(allocator);
+}
+
+pub export fn strollDestroyCommandPool(p_device: vk.Device, p_pool: vk.CommandPool, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch return;
+    const non_dispatchable_pool = NonDispatchable(CommandPool).fromHandle(p_pool) catch return;
+
+    device.destroyCommandPool(allocator, non_dispatchable_pool.object) catch return;
+    non_dispatchable_pool.destroy(allocator);
 }
 
 pub export fn strollDestroyFence(p_device: vk.Device, p_fence: vk.Fence, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {

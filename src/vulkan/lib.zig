@@ -14,6 +14,7 @@ pub const Device = @import("Device.zig");
 pub const PhysicalDevice = @import("PhysicalDevice.zig");
 pub const Queue = @import("Queue.zig");
 
+pub const CommandPool = @import("CommandPool.zig");
 pub const DeviceMemory = @import("DeviceMemory.zig");
 pub const Fence = @import("Fence.zig");
 

@@ -32,6 +32,8 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
     interface.props.device_id = root.DEVICE_ID;
     interface.props.device_type = .cpu;
 
+    interface.props.limits.max_bound_descriptor_sets = 1024; // tmp
+
     interface.mem_props.memory_type_count = 1;
     interface.mem_props.memory_types[0] = .{
         .heap_index = 0,
@@ -76,7 +78,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
         },
         // TODO: maybe add a compute specialized queue
     };
-    interface.queue_family_props = std.ArrayList(vk.QueueFamilyProperties).fromOwnedSlice(queue_family_props[0..]);
+    interface.queue_family_props.appendSlice(allocator, queue_family_props[0..]) catch return VkError.OutOfHostMemory;
 
     // TODO: use Pytorch's cpuinfo someday
     const info = cpuinfo.get(allocator) catch return VkError.InitializationFailed;
@@ -140,5 +142,6 @@ pub fn getSparseImageFormatProperties(
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    interface.queue_family_props.deinit(allocator);
     allocator.destroy(self);
 }

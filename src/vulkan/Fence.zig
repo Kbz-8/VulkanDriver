@@ -7,7 +7,7 @@ const Device = @import("Device.zig");
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .fence;
 
-owner: *const Device,
+owner: *Device,
 flags: vk.FenceCreateFlags,
 
 vtable: *const VTable,
@@ -20,7 +20,8 @@ pub const VTable = struct {
     wait: *const fn (*Self, u64) VkError!void,
 };
 
-pub fn init(device: *const Device, info: *const vk.FenceCreateInfo) VkError!Self {
+pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.FenceCreateInfo) VkError!Self {
+    _ = allocator;
     return .{
         .owner = device,
         .flags = info.flags,

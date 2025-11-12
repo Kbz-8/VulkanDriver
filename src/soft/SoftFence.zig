@@ -13,11 +13,11 @@ mutex: std.Thread.Mutex,
 condition: std.Thread.Condition,
 is_signaled: bool,
 
-pub fn create(device: *const Device, allocator: std.mem.Allocator, info: *const vk.FenceCreateInfo) VkError!*Self {
+pub fn create(device: *Device, allocator: std.mem.Allocator, info: *const vk.FenceCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
 
-    var interface = try Interface.init(device, info);
+    var interface = try Interface.init(device, allocator, info);
 
     interface.vtable = &.{
         .destroy = destroy,

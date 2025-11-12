@@ -5,6 +5,10 @@
     .minimum_zig_version = "0.15.2",
 
     .dependencies = .{
+        .compile_commands = .{
+            .url = "git+https://github.com/the-argus/zig-compile-commands#f74e2d13e43fafab3a71e19557a0e1cfbf0f2e1b",
+            .hash = "zig_compile_commands-0.0.1-OZg5-a3CAACM-h32Kjb1obTMqrKGs9YoDhorVZ8-LGle",
+        },
         .vulkan_headers = .{
             .url = "git+https://github.com/KhronosGroup/Vulkan-Headers?ref=v1.4.330#ee3b5caaa7e372715873c7b9c390ee1c3ca5db25",
             .hash = "N-V-__8AAFXYAQKsK51AAGXB9HziPDFjS_DVUq6_QHVxHrBM",
@@ -17,19 +21,20 @@
             .url = "git+https://github.com/FObersteiner/zdt/?ref=v0.8.1#8b551a0a3e5ae64a32b5bad0e6a93119787b43af",
             .hash = "zdt-0.8.1-xr0_vAxUDwCJRDh9pcAS_mdZBIsvcGTtN-K8JJSWY4I6",
         },
-        .volk = .{
-            .url = "git+https://github.com/zeux/volk/#8f53cc717f50f142db4736f401d0b61956cd78f9",
-            .hash = "N-V-__8AAPn9BwCBHnaxOC_rffCpFI7QRfi5qBCLvov9EYK3",
-            .lazy = true,
-        },
         .cpuinfo = .{
             .url = "git+https://github.com/Kbz-8/cpuinfo-zig#77f82a1248194e7fb706967343c66021f8522766",
             .hash = "cpuinfo-0.1.0-V7dMLcghAADJuG7dkd3MnwDPZ232pBK_8uGjxY43eP5u",
             .lazy = true,
         },
-        .compile_commands = .{
-            .url = "git+https://github.com/the-argus/zig-compile-commands#f74e2d13e43fafab3a71e19557a0e1cfbf0f2e1b",
-            .hash = "zig_compile_commands-0.0.1-OZg5-a3CAACM-h32Kjb1obTMqrKGs9YoDhorVZ8-LGle",
+        .volk = .{
+            .url = "git+https://github.com/zeux/volk/#8f53cc717f50f142db4736f401d0b61956cd78f9",
+            .hash = "N-V-__8AAPn9BwCBHnaxOC_rffCpFI7QRfi5qBCLvov9EYK3",
+            .lazy = true,
+        },
+        .kvf = .{
+            .url = "git+https://github.com/Kbz-8/KVF#492a2f8e08f5aa3f5e9c9869668829af3f483d26",
+            .hash = "N-V-__8AALuHAgC55XjEl7WQZIw2YjKvEwvE04FMHGtzVOH5",
+            .lazy = true,
         },
     },
 
