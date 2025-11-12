@@ -16,9 +16,11 @@ const VulkanAllocator = @import("VulkanAllocator.zig");
 
 const Instance = @import("Instance.zig");
 const Device = @import("Device.zig");
+const PhysicalDevice = @import("PhysicalDevice.zig");
+const Queue = @import("Queue.zig");
+
 const DeviceMemory = @import("DeviceMemory.zig");
 const Fence = @import("Fence.zig");
-const PhysicalDevice = @import("PhysicalDevice.zig");
 
 // This file contains all exported Vulkan entrypoints.
 
@@ -80,6 +82,9 @@ const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkMapMemory"),
     functionMapEntryPoint("vkUnmapMemory"),
     functionMapEntryPoint("vkResetFences"),
+    functionMapEntryPoint("vkQueueBindSparse"),
+    functionMapEntryPoint("vkQueueSubmit"),
+    functionMapEntryPoint("vkQueueWaitIdle"),
     functionMapEntryPoint("vkWaitForFences"),
 });
 
@@ -386,6 +391,26 @@ pub export fn strollResetFences(p_device: vk.Device, count: u32, p_fences: [*]co
     }
 
     device.resetFences(fences) catch |err| return toVkResult(err);
+    return .success;
+}
+
+pub export fn strollQueueBindSparse(p_queue: vk.Queue, count: u32, info: [*]vk.BindSparseInfo, p_fence: vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
+    const queue = Dispatchable(Queue).fromHandleObject(p_queue) catch |err| return toVkResult(err);
+    const fence = if (p_fence != .null_handle) NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err) else null;
+    queue.bindSparse(info[0..count], fence) catch |err| return toVkResult(err);
+    return .success;
+}
+
+pub export fn strollQueueSubmit(p_queue: vk.Queue, count: u32, info: [*]const vk.SubmitInfo, p_fence: vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
+    const queue = Dispatchable(Queue).fromHandleObject(p_queue) catch |err| return toVkResult(err);
+    const fence = if (p_fence != .null_handle) NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err) else null;
+    queue.submit(info[0..count], fence) catch |err| return toVkResult(err);
+    return .success;
+}
+
+pub export fn strollQueueWaitIdle(p_queue: vk.Queue) callconv(vk.vulkan_call_conv) vk.Result {
+    const queue = Dispatchable(Queue).fromHandleObject(p_queue) catch |err| return toVkResult(err);
+    queue.waitIdle() catch |err| return toVkResult(err);
     return .success;
 }
 

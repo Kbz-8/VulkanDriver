@@ -27,6 +27,10 @@
             .hash = "cpuinfo-0.1.0-V7dMLcghAADJuG7dkd3MnwDPZ232pBK_8uGjxY43eP5u",
             .lazy = true,
         },
+        .compile_commands = .{
+            .url = "git+https://github.com/the-argus/zig-compile-commands",
+            .hash = "zig_compile_commands-0.0.1-OZg5-a3CAACM-h32Kjb1obTMqrKGs9YoDhorVZ8-LGle",
+        },
     },
 
     .paths = .{

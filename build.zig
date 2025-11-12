@@ -1,6 +1,8 @@
 const std = @import("std");
 const Step = std.Build.Step;
 
+const zcc = @import("compile_commands");
+
 const ImplementationDesc = struct {
     name: []const u8,
     root_source_file: []const u8,
@@ -15,7 +17,7 @@ const implementations = [_]ImplementationDesc{
     },
 };
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -38,6 +40,8 @@ pub fn build(b: *std.Build) void {
     base_mod.addSystemIncludePath(vulkan_headers.path("include"));
 
     for (implementations) |impl| {
+        var targets = std.ArrayListUnmanaged(*std.Build.Step.Compile){};
+
         const lib_mod = b.createModule(.{
             .root_source_file = b.path(impl.root_source_file),
             .target = target,
@@ -89,6 +93,11 @@ pub fn build(b: *std.Build) void {
         });
 
         const c_test_exe_install = b.addInstallArtifact(c_test_exe, .{});
+
+        try targets.append(b.allocator, lib);
+        try targets.append(b.allocator, c_test_exe);
+
+        _ = zcc.createStep(b, "cdb", try targets.toOwnedSlice(b.allocator));
 
         const run_c_test = b.addRunArtifact(c_test_exe);
         run_c_test.step.dependOn(&lib_install.step);

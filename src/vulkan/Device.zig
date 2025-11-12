@@ -19,7 +19,7 @@ dispatch_table: *const DispatchTable,
 vtable: *const VTable,
 
 pub const VTable = struct {
-    createQueue: *const fn (std.mem.Allocator, *const Self, u32, u32, vk.DeviceQueueCreateFlags) VkError!*Queue,
+    createQueue: *const fn (std.mem.Allocator, *Self, u32, u32, vk.DeviceQueueCreateFlags) VkError!*Queue,
     destroyQueue: *const fn (*Queue, std.mem.Allocator) VkError!void,
 };
 

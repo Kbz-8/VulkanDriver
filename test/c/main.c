@@ -85,13 +85,17 @@ int main(void)
 
 	VkQueue queue = VK_NULL_HANDLE;
 	vkGetDeviceQueue(device, 1, 0, &queue);
-	printf("VkQueue %p\n", queue);
 
 	VkFenceCreateInfo fence_info = {};
 	fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
 	fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 	VkFence fence = VK_NULL_HANDLE;
 	CheckVk(vkCreateFence(device, &fence_info, NULL, &fence));
+
+	CheckVk(vkQueueSubmit(queue, 0, NULL, fence));
+	CheckVk(vkQueueSubmit(queue, 0, NULL, fence));
+	CheckVk(vkQueueSubmit(queue, 0, NULL, fence));
+	CheckVk(vkQueueWaitIdle(queue));
 
 	vkDestroyFence(device, fence, NULL);
 

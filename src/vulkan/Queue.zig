@@ -8,7 +8,7 @@ const Fence = @import("Fence.zig");
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .queue;
 
-owner: *const Device,
+owner: *Device,
 family_index: u32,
 index: u32,
 flags: vk.DeviceQueueCreateFlags,
@@ -16,12 +16,12 @@ flags: vk.DeviceQueueCreateFlags,
 dispatch_table: *const DispatchTable,
 
 pub const DispatchTable = struct {
-    bindSparse: *const fn (*Self, []*const vk.BindSparseInfo, ?*Fence) VkError!void,
-    submit: *const fn (*Self, []*const vk.SubmitInfo, ?*Fence) VkError!void,
+    bindSparse: *const fn (*Self, []const vk.BindSparseInfo, ?*Fence) VkError!void,
+    submit: *const fn (*Self, []const vk.SubmitInfo, ?*Fence) VkError!void,
     waitIdle: *const fn (*Self) VkError!void,
 };
 
-pub fn init(allocator: std.mem.Allocator, device: *const Device, index: u32, family_index: u32, flags: vk.DeviceQueueCreateFlags) VkError!Self {
+pub fn init(allocator: std.mem.Allocator, device: *Device, index: u32, family_index: u32, flags: vk.DeviceQueueCreateFlags) VkError!Self {
     std.log.scoped(.vkCreateDevice).info("Creating device queue with family index {d} and index {d}", .{ family_index, index });
     _ = allocator;
     return .{
@@ -33,11 +33,11 @@ pub fn init(allocator: std.mem.Allocator, device: *const Device, index: u32, fam
     };
 }
 
-pub inline fn bindSparse(self: *Self, info: []*const vk.BindSparseInfo, fence: ?*Fence) VkError!void {
+pub inline fn bindSparse(self: *Self, info: []const vk.BindSparseInfo, fence: ?*Fence) VkError!void {
     try self.dispatch_table.bindSparse(self, info, fence);
 }
 
-pub inline fn submit(self: *Self, info: []*const vk.SubmitInfo, fence: ?*Fence) VkError!void {
+pub inline fn submit(self: *Self, info: []const vk.SubmitInfo, fence: ?*Fence) VkError!void {
     try self.dispatch_table.submit(self, info, fence);
 }
 
