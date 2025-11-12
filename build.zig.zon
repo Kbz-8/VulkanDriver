@@ -28,7 +28,7 @@
             .lazy = true,
         },
         .compile_commands = .{
-            .url = "git+https://github.com/the-argus/zig-compile-commands",
+            .url = "git+https://github.com/the-argus/zig-compile-commands#f74e2d13e43fafab3a71e19557a0e1cfbf0f2e1b",
             .hash = "zig_compile_commands-0.0.1-OZg5-a3CAACM-h32Kjb1obTMqrKGs9YoDhorVZ8-LGle",
         },
     },

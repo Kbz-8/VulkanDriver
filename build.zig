@@ -1,6 +1,5 @@
 const std = @import("std");
 const Step = std.Build.Step;
-
 const zcc = @import("compile_commands");
 
 const ImplementationDesc = struct {
