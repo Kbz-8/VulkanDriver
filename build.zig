@@ -39,7 +39,7 @@ pub fn build(b: *std.Build) !void {
     base_mod.addSystemIncludePath(vulkan_headers.path("include"));
 
     for (implementations) |impl| {
-        var targets = std.ArrayListUnmanaged(*std.Build.Step.Compile){};
+        var targets = std.ArrayList(*std.Build.Step.Compile){};
 
         const lib_mod = b.createModule(.{
             .root_source_file = b.path(impl.root_source_file),

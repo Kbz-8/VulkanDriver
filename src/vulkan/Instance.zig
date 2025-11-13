@@ -18,7 +18,7 @@ comptime {
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .instance;
 
-physical_devices: std.ArrayListUnmanaged(*Dispatchable(PhysicalDevice)),
+physical_devices: std.ArrayList(*Dispatchable(PhysicalDevice)),
 dispatch_table: *const DispatchTable,
 vtable: *const VTable,
 

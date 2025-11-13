@@ -16,7 +16,8 @@ const Self = @This();
 pub const ObjectType: vk.ObjectType = .device;
 
 physical_device: *const PhysicalDevice,
-queues: std.AutoArrayHashMapUnmanaged(u32, std.ArrayListUnmanaged(*Dispatchable(Queue))),
+queues: std.AutoArrayHashMapUnmanaged(u32, std.ArrayList(*Dispatchable(Queue))),
+host_allocator: *VulkanAllocator,
 
 dispatch_table: *const DispatchTable,
 vtable: *const VTable,
@@ -40,11 +41,11 @@ pub const DispatchTable = struct {
 };
 
 pub fn init(allocator: std.mem.Allocator, physical_device: *const PhysicalDevice, info: *const vk.DeviceCreateInfo) VkError!Self {
-    _ = allocator;
     _ = info;
     return .{
         .physical_device = physical_device,
         .queues = .empty,
+        .host_allocator = @ptrCast(@alignCast(allocator.ptr)),
         .dispatch_table = undefined,
         .vtable = undefined,
     };

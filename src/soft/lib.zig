@@ -7,6 +7,7 @@ pub const SoftDevice = @import("SoftDevice.zig");
 pub const SoftPhysicalDevice = @import("SoftPhysicalDevice.zig");
 pub const SoftQueue = @import("SoftQueue.zig");
 
+pub const SoftCommandBuffer = @import("SoftCommandBuffer.zig");
 pub const SoftCommandPool = @import("SoftCommandPool.zig");
 pub const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
 pub const SoftFence = @import("SoftFence.zig");
