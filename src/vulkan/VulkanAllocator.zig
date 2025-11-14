@@ -37,6 +37,22 @@ pub fn allocator(self: *const Self) Allocator {
     };
 }
 
+pub fn from(a: Allocator) *Self {
+    const self: *Self = @ptrCast(@alignCast(a.ptr));
+    return self;
+}
+
+pub fn clone(self: *Self) Self {
+    return self.cloneWithScope(self.scope);
+}
+
+pub fn cloneWithScope(self: *Self, scope: vk.SystemAllocationScope) Self {
+    return .{
+        .callbacks = self.callbacks,
+        .scope = scope,
+    };
+}
+
 fn alloc(context: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize) ?[*]u8 {
     const self: *Self = @ptrCast(@alignCast(context));
     if (self.callbacks.?.pfn_allocation) |pfn_allocation| {

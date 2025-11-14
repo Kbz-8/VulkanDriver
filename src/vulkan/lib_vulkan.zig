@@ -73,6 +73,7 @@ const physical_device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComp
 });
 
 const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
+    functionMapEntryPoint("vkAllocateCommandBuffers"),
     functionMapEntryPoint("vkAllocateMemory"),
     functionMapEntryPoint("vkCreateCommandPool"),
     functionMapEntryPoint("vkCreateFence"),
@@ -281,6 +282,17 @@ pub export fn strollGetPhysicalDeviceSparseImageFormatProperties(
 }
 
 // Device functions ==========================================================================================================================================
+
+pub export fn strollAllocateCommandBuffers(p_device: vk.Device, p_info: ?*const vk.CommandBufferAllocateInfo, p_cmds: [*]vk.CommandBuffer) callconv(vk.vulkan_call_conv) vk.Result {
+    const info = p_info orelse return .error_validation_failed;
+    if (info.s_type != .command_buffer_allocate_info) {
+        return .error_validation_failed;
+    }
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const cmds = device.allocateCommandBuffers(info) catch |err| return toVkResult(err);
+    @memcpy(p_cmds[0..info.command_buffer_count], cmds[0..info.command_buffer_count]);
+    return .success;
+}
 
 pub export fn strollAllocateMemory(p_device: vk.Device, p_info: ?*const vk.MemoryAllocateInfo, callbacks: ?*const vk.AllocationCallbacks, p_memory: *vk.DeviceMemory) callconv(vk.vulkan_call_conv) vk.Result {
     const info = p_info orelse return .error_validation_failed;

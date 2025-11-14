@@ -17,7 +17,7 @@ pub const ObjectType: vk.ObjectType = .device;
 
 physical_device: *const PhysicalDevice,
 queues: std.AutoArrayHashMapUnmanaged(u32, std.ArrayList(*Dispatchable(Queue))),
-host_allocator: *VulkanAllocator,
+host_allocator: VulkanAllocator,
 
 dispatch_table: *const DispatchTable,
 vtable: *const VTable,
@@ -45,7 +45,7 @@ pub fn init(allocator: std.mem.Allocator, physical_device: *const PhysicalDevice
     return .{
         .physical_device = physical_device,
         .queues = .empty,
-        .host_allocator = @ptrCast(@alignCast(allocator.ptr)),
+        .host_allocator = VulkanAllocator.from(allocator).clone(),
         .dispatch_table = undefined,
         .vtable = undefined,
     };
@@ -109,6 +109,10 @@ pub inline fn waitForFences(self: *Self, fences: []*Fence, waitForAll: bool, tim
 }
 
 // Command Pool functions ============================================================================================================================
+
+pub inline fn allocateCommandBuffers(self: *Self, info: *const vk.CommandPoolCreateInfo) VkError![]*CommandBuffer {
+    return self.dispatch_table.createCommandPool(self, allocator, info);
+}
 
 pub inline fn createCommandPool(self: *Self, allocator: std.mem.Allocator, info: *const vk.CommandPoolCreateInfo) VkError!*CommandPool {
     return self.dispatch_table.createCommandPool(self, allocator, info);

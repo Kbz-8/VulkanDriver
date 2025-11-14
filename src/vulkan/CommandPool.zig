@@ -2,6 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 
 const VkError = @import("error_set.zig").VkError;
+const VulkanAllocator = @import("VulkanAllocator.zig");
 const CommandBuffer = @import("CommandBuffer.zig");
 const Device = @import("Device.zig");
 
@@ -15,6 +16,7 @@ flags: vk.CommandPoolCreateFlags,
 queue_family_index: u32,
 buffers: std.ArrayList(*CommandBuffer),
 first_free_buffer_index: usize,
+host_allocator: VulkanAllocator,
 
 vtable: *const VTable,
 
@@ -30,6 +32,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Comma
         .flags = info.flags,
         .queue_family_index = info.queue_family_index,
         .buffers = .initCapacity(allocator, BUFFER_POOL_BASE_CAPACITY) catch return VkError.OutOfHostMemory,
+        .host_allocator = VulkanAllocator.from(allocator).clone(),
         .first_free_buffer_index = 0,
         .vtable = undefined,
     };
