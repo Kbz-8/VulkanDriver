@@ -21,7 +21,7 @@ host_allocator: VulkanAllocator,
 vtable: *const VTable,
 
 pub const VTable = struct {
-    allocateCommandBuffers: *const fn (*Self, vk.CommandBufferAllocateInfo) VkError!*CommandBuffer,
+    allocateCommandBuffers: *const fn (*Self, *const vk.CommandBufferAllocateInfo) VkError![]*CommandBuffer,
     destroy: *const fn (*Self, std.mem.Allocator) void,
     reset: *const fn (*Self, vk.CommandPoolResetFlags) VkError!void,
 };
@@ -31,14 +31,14 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Comma
         .owner = device,
         .flags = info.flags,
         .queue_family_index = info.queue_family_index,
-        .buffers = .initCapacity(allocator, BUFFER_POOL_BASE_CAPACITY) catch return VkError.OutOfHostMemory,
+        .buffers = std.ArrayList(*CommandBuffer).initCapacity(allocator, BUFFER_POOL_BASE_CAPACITY) catch return VkError.OutOfHostMemory,
         .host_allocator = VulkanAllocator.from(allocator).clone(),
         .first_free_buffer_index = 0,
         .vtable = undefined,
     };
 }
 
-pub inline fn allocateCommandBuffers(self: *Self, info: vk.CommandBufferAllocateInfo) VkError!*CommandBuffer {
+pub inline fn allocateCommandBuffers(self: *Self, info: *const vk.CommandBufferAllocateInfo) VkError![]*CommandBuffer {
     return self.vtable.allocateCommandBuffers(self, info);
 }
 

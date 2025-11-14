@@ -8,6 +8,7 @@ const VkError = @import("error_set.zig").VkError;
 const PhysicalDevice = @import("PhysicalDevice.zig");
 const Queue = @import("Queue.zig");
 
+const CommandBuffer = @import("CommandBuffer.zig");
 const CommandPool = @import("CommandPool.zig");
 const DeviceMemory = @import("DeviceMemory.zig");
 const Fence = @import("Fence.zig");
@@ -28,6 +29,7 @@ pub const VTable = struct {
 };
 
 pub const DispatchTable = struct {
+    allocateCommandBuffers: *const fn (*Self, *const vk.CommandBufferAllocateInfo) VkError![]*CommandBuffer,
     allocateMemory: *const fn (*Self, std.mem.Allocator, *const vk.MemoryAllocateInfo) VkError!*DeviceMemory,
     createCommandPool: *const fn (*Self, std.mem.Allocator, *const vk.CommandPoolCreateInfo) VkError!*CommandPool,
     createFence: *const fn (*Self, std.mem.Allocator, *const vk.FenceCreateInfo) VkError!*Fence,
@@ -110,8 +112,8 @@ pub inline fn waitForFences(self: *Self, fences: []*Fence, waitForAll: bool, tim
 
 // Command Pool functions ============================================================================================================================
 
-pub inline fn allocateCommandBuffers(self: *Self, info: *const vk.CommandPoolCreateInfo) VkError![]*CommandBuffer {
-    return self.dispatch_table.createCommandPool(self, allocator, info);
+pub inline fn allocateCommandBuffers(self: *Self, info: *const vk.CommandBufferAllocateInfo) VkError![]*CommandBuffer {
+    return self.dispatch_table.allocateCommandBuffers(self, info);
 }
 
 pub inline fn createCommandPool(self: *Self, allocator: std.mem.Allocator, info: *const vk.CommandPoolCreateInfo) VkError!*CommandPool {

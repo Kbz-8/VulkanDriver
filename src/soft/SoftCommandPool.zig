@@ -17,6 +17,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
     var interface = try Interface.init(device, allocator, info);
 
     interface.vtable = &.{
+        .allocateCommandBuffers = allocateCommandBuffers,
         .destroy = destroy,
         .reset = reset,
     };
@@ -25,6 +26,12 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .interface = interface,
     };
     return self;
+}
+
+pub fn allocateCommandBuffers(interface: *Interface, info: *const vk.CommandBufferAllocateInfo) VkError![]*base.CommandBuffer {
+    _ = interface;
+    _ = info;
+    return VkError.FeatureNotPresent;
 }
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {

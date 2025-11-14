@@ -107,6 +107,20 @@ pub fn build(b: *std.Build) !void {
         const test_c_step = b.step(b.fmt("test-c-{s}", .{impl.name}), b.fmt("Run lib{s} C test", .{impl.name}));
         test_c_step.dependOn(&run_c_test.step);
     }
+
+    const doc_lib = b.addLibrary(.{
+        .name = "doc",
+        .root_module = base_mod,
+    });
+
+    const install_docs = b.addInstallDirectory(.{
+        .source_dir = doc_lib.getEmittedDocs(),
+        .install_dir = .prefix,
+        .install_subdir = "docs",
+    });
+
+    const docs_step = b.step("docs", "Build and install the documentation");
+    docs_step.dependOn(&install_docs.step);
 }
 
 fn customSoft(b: *std.Build, mod: *std.Build.Module) !void {

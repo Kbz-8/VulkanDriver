@@ -41,6 +41,13 @@ pub fn init(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) V
     };
 }
 
+// Dummy for docs creation and stuff
+pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) VkError!*Self {
+    _ = allocator;
+    _ = infos;
+    return VkError.IncompatibleDriver;
+}
+
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) VkError!void {
     try self.releasePhysicalDevices(allocator);
     try self.dispatch_table.destroyInstance(self, allocator);

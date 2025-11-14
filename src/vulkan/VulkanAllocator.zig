@@ -55,38 +55,43 @@ pub fn cloneWithScope(self: *Self, scope: vk.SystemAllocationScope) Self {
 
 fn alloc(context: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize) ?[*]u8 {
     const self: *Self = @ptrCast(@alignCast(context));
-    if (self.callbacks.?.pfn_allocation) |pfn_allocation| {
-        return @ptrCast(pfn_allocation(self.callbacks.?.p_user_data, len, alignment.toByteUnits(), self.scope));
-    } else {
-        return getFallbackAllocator().rawAlloc(len, alignment, ret_addr);
+
+    if (self.callbacks) |callbacks| {
+        if (callbacks.pfn_allocation) |pfn_allocation| {
+            return @ptrCast(pfn_allocation(self.callbacks.?.p_user_data, len, alignment.toByteUnits(), self.scope));
+        }
     }
+
+    return getFallbackAllocator().rawAlloc(len, alignment, ret_addr);
 }
 
 fn resize(context: *anyopaque, ptr: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) bool {
     const self: *Self = @ptrCast(@alignCast(context));
-    if (self.callbacks != null) {
-        return new_len <= ptr.len;
-    } else {
-        return getFallbackAllocator().rawResize(ptr, alignment, new_len, ret_addr);
-    }
+    return if (self.callbacks != null)
+        new_len <= ptr.len
+    else
+        getFallbackAllocator().rawResize(ptr, alignment, new_len, ret_addr);
 }
 
 fn remap(context: *anyopaque, ptr: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
     const self: *Self = @ptrCast(@alignCast(context));
-    if (self.callbacks.?.pfn_reallocation) |pfn_reallocation| {
-        return @ptrCast(pfn_reallocation(self.callbacks.?.p_user_data, ptr.ptr, new_len, alignment.toByteUnits(), self.scope));
-    } else {
-        return getFallbackAllocator().rawRemap(ptr, alignment, new_len, ret_addr);
+    if (self.callbacks) |callbacks| {
+        if (callbacks.pfn_reallocation) |pfn_reallocation| {
+            return @ptrCast(pfn_reallocation(self.callbacks.?.p_user_data, ptr.ptr, new_len, alignment.toByteUnits(), self.scope));
+        }
     }
+    return getFallbackAllocator().rawRemap(ptr, alignment, new_len, ret_addr);
 }
 
 fn free(context: *anyopaque, ptr: []u8, alignment: Alignment, ret_addr: usize) void {
     const self: *Self = @ptrCast(@alignCast(context));
-    if (self.callbacks.?.pfn_free) |pfn_free| {
-        return pfn_free(self.callbacks.?.p_user_data, ptr.ptr);
-    } else {
-        return getFallbackAllocator().rawFree(ptr, alignment, ret_addr);
+    if (self.callbacks) |callbacks| {
+        if (callbacks.pfn_free) |pfn_free| {
+            pfn_free(self.callbacks.?.p_user_data, ptr.ptr);
+        }
     }
+
+    getFallbackAllocator().rawFree(ptr, alignment, ret_addr);
 }
 
 inline fn getFallbackAllocator() std.mem.Allocator {

@@ -12,6 +12,7 @@ const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
 const SoftFence = @import("SoftFence.zig");
 
 const VkError = base.VkError;
+const NonDispatchable = base.NonDispatchable;
 
 const Self = @This();
 pub const Interface = base.Device;
@@ -34,6 +35,7 @@ pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocato
     };
 
     interface.dispatch_table = &.{
+        .allocateCommandBuffers = allocateCommandBuffers,
         .allocateMemory = allocateMemory,
         .createCommandPool = createCommandPool,
         .createFence = createFence,
@@ -104,6 +106,11 @@ pub fn waitForFences(_: *Interface, fences: []*base.Fence, waitForAll: bool, tim
 }
 
 // Command Pool functions ============================================================================================================================
+
+pub fn allocateCommandBuffers(_: *Interface, info: *const vk.CommandBufferAllocateInfo) VkError![]*base.CommandBuffer {
+    const pool = try NonDispatchable(base.CommandPool).fromHandleObject(info.command_pool);
+    return pool.allocateCommandBuffers(info);
+}
 
 pub fn createCommandPool(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.CommandPoolCreateInfo) VkError!*base.CommandPool {
     const pool = try SoftCommandPool.create(interface, allocator, info);

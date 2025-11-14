@@ -1,3 +1,5 @@
+//! This file contains all exported Vulkan entrypoints.
+
 const std = @import("std");
 const vk = @import("vulkan");
 const root = @import("root");
@@ -19,11 +21,10 @@ const Device = @import("Device.zig");
 const PhysicalDevice = @import("PhysicalDevice.zig");
 const Queue = @import("Queue.zig");
 
+const CommandBuffer = @import("CommandBuffer.zig");
 const CommandPool = @import("CommandPool.zig");
 const DeviceMemory = @import("DeviceMemory.zig");
 const Fence = @import("Fence.zig");
-
-// This file contains all exported Vulkan entrypoints.
 
 fn entryPointNotFoundErrorLog(comptime scope: @Type(.enum_literal), name: []const u8) void {
     if (lib.getLogVerboseLevel() != .High) return;
@@ -289,8 +290,13 @@ pub export fn strollAllocateCommandBuffers(p_device: vk.Device, p_info: ?*const 
         return .error_validation_failed;
     }
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const pool = NonDispatchable(CommandPool).fromHandleObject(info.command_pool) catch |err| return toVkResult(err);
+    const allocator = pool.host_allocator.allocator();
+
     const cmds = device.allocateCommandBuffers(info) catch |err| return toVkResult(err);
-    @memcpy(p_cmds[0..info.command_buffer_count], cmds[0..info.command_buffer_count]);
+    for (cmds[0..info.command_buffer_count], 0..) |cmd, i| {
+        p_cmds[i] = (NonDispatchable(CommandBuffer).wrap(allocator, cmd) catch |err| return toVkResult(err)).toVkHandle(vk.CommandBuffer);
+    }
     return .success;
 }
 

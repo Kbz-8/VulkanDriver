@@ -21,6 +21,9 @@ pub const Fence = @import("Fence.zig");
 
 pub const VULKAN_VENDOR_ID = @typeInfo(vk.VendorId).@"enum".fields[@typeInfo(vk.VendorId).@"enum".fields.len - 1].value + 1;
 
+pub const DRIVER_NAME = "VulkanBase";
+pub const VULKAN_VERSION = vk.makeApiVersion(0, 1, 0, 0);
+
 pub const DRIVER_LOGS_ENV_NAME = "STROLL_LOGS_LEVEL";
 pub const DRIVER_DEBUG_ALLOCATOR_ENV_NAME = "STROLL_DEBUG_ALLOCATOR";
 
