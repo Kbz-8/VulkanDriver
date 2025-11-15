@@ -7,6 +7,7 @@ const cpuinfo = @import("cpuinfo");
 const SoftDevice = @import("SoftDevice.zig");
 
 const VkError = base.VkError;
+const VulkanAllocator = base.VulkanAllocator;
 
 const Self = @This();
 pub const Interface = base.PhysicalDevice;
@@ -14,6 +15,8 @@ pub const Interface = base.PhysicalDevice;
 interface: Interface,
 
 pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkError!*Self {
+    const command_allocator = VulkanAllocator.from(allocator).cloneWithScope(.command).allocator();
+
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
 
@@ -81,8 +84,8 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
     interface.queue_family_props.appendSlice(allocator, queue_family_props[0..]) catch return VkError.OutOfHostMemory;
 
     // TODO: use Pytorch's cpuinfo someday
-    const info = cpuinfo.get(allocator) catch return VkError.InitializationFailed;
-    defer info.deinit(allocator);
+    const info = cpuinfo.get(command_allocator) catch return VkError.InitializationFailed;
+    defer info.deinit(command_allocator);
 
     var writer = std.Io.Writer.fixed(interface.props.device_name[0 .. vk.MAX_PHYSICAL_DEVICE_NAME_SIZE - 1]);
     writer.print("{s} [" ++ root.DRIVER_NAME ++ " StrollDriver]", .{info.name}) catch return VkError.InitializationFailed;

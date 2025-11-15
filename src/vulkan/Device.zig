@@ -2,6 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 
 const Dispatchable = @import("Dispatchable.zig").Dispatchable;
+const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
 const VulkanAllocator = @import("VulkanAllocator.zig");
 const VkError = @import("error_set.zig").VkError;
 
@@ -29,7 +30,7 @@ pub const VTable = struct {
 };
 
 pub const DispatchTable = struct {
-    allocateCommandBuffers: *const fn (*Self, *const vk.CommandBufferAllocateInfo) VkError![]*CommandBuffer,
+    allocateCommandBuffers: *const fn (*Self, *const vk.CommandBufferAllocateInfo) VkError![]*NonDispatchable(CommandBuffer),
     allocateMemory: *const fn (*Self, std.mem.Allocator, *const vk.MemoryAllocateInfo) VkError!*DeviceMemory,
     createCommandPool: *const fn (*Self, std.mem.Allocator, *const vk.CommandPoolCreateInfo) VkError!*CommandPool,
     createFence: *const fn (*Self, std.mem.Allocator, *const vk.FenceCreateInfo) VkError!*Fence,
@@ -112,7 +113,7 @@ pub inline fn waitForFences(self: *Self, fences: []*Fence, waitForAll: bool, tim
 
 // Command Pool functions ============================================================================================================================
 
-pub inline fn allocateCommandBuffers(self: *Self, info: *const vk.CommandBufferAllocateInfo) VkError![]*CommandBuffer {
+pub inline fn allocateCommandBuffers(self: *Self, info: *const vk.CommandBufferAllocateInfo) VkError![]*NonDispatchable(CommandBuffer) {
     return self.dispatch_table.allocateCommandBuffers(self, info);
 }
 

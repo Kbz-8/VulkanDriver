@@ -36,16 +36,16 @@ pub fn NonDispatchable(comptime T: type) type {
             if (handle == 0) {
                 return VkError.Unknown;
             }
-            const nondispatchable: *Self = @ptrFromInt(handle);
-            if (nondispatchable.object_type != T.ObjectType) {
+            const non_dispatchable: *Self = @ptrFromInt(handle);
+            if (non_dispatchable.object_type != T.ObjectType) {
                 return VkError.Unknown;
             }
-            return nondispatchable;
+            return non_dispatchable;
         }
 
         pub inline fn fromHandleObject(handle: anytype) VkError!*T {
-            const nondispatchable_handle = try Self.fromHandle(handle);
-            return nondispatchable_handle.object;
+            const non_dispatchable_handle = try Self.fromHandle(handle);
+            return non_dispatchable_handle.object;
         }
     };
 }

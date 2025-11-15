@@ -25,5 +25,6 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Comma
 }
 
 pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
+    std.debug.print("{any}\n", .{self});
     self.vtable.destroy(self, allocator);
 }
