@@ -109,7 +109,7 @@ pub fn build(b: *std.Build) !void {
     }
 
     const autodoc_test = b.addObject(.{
-        .name = "driver",
+        .name = "lib",
         .root_module = base_mod,
     });
 
