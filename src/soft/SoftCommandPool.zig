@@ -20,7 +20,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
     var interface = try Interface.init(device, allocator, info);
 
     interface.vtable = &.{
-        .allocateCommandBuffers = allocateCommandBuffers,
+        .createCommandBuffer = createCommandBuffer,
         .destroy = destroy,
         .reset = reset,
     };
@@ -31,18 +31,9 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
     return self;
 }
 
-pub fn allocateCommandBuffers(interface: *Interface, info: *const vk.CommandBufferAllocateInfo) VkError!void {
-    const allocator = interface.host_allocator.allocator();
-
-    while (interface.buffers.capacity < interface.buffers.items.len + info.command_buffer_count) {
-        interface.buffers.ensureUnusedCapacity(allocator, base.CommandPool.BUFFER_POOL_BASE_CAPACITY) catch return VkError.OutOfHostMemory;
-    }
-
-    for (0..info.command_buffer_count) |_| {
-        const cmd = try SoftCommandBuffer.create(interface.owner, allocator, info);
-        const non_dis_cmd = try NonDispatchable(base.CommandBuffer).wrap(allocator, &cmd.interface);
-        interface.buffers.appendAssumeCapacity(non_dis_cmd);
-    }
+pub fn createCommandBuffer(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.CommandBufferAllocateInfo) VkError!*base.CommandBuffer {
+    const cmd = try SoftCommandBuffer.create(interface.owner, allocator, info);
+    return &cmd.interface;
 }
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {

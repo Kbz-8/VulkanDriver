@@ -11,6 +11,8 @@ const Device = @import("Device.zig");
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .command_pool;
 
+/// Base capacity of the command buffer pool.
+/// Every increase of the capacity will be by this amount.
 pub const BUFFER_POOL_BASE_CAPACITY = 64;
 
 owner: *Device,
@@ -19,16 +21,17 @@ queue_family_index: u32,
 host_allocator: VulkanAllocator,
 
 /// Contiguous dynamic array of command buffers with free ones
-/// grouped at the end and the first free index being storesd in
-/// `first_free_buffer_index`
-/// When freed swaps happen to keep the free buffers at the end
+/// grouped at the end.
+/// When freed swaps happen to keep the free buffers at the end.
 buffers: std.ArrayList(*NonDispatchable(CommandBuffer)),
+
+/// Index of the first free command buffer.
 first_free_buffer_index: usize,
 
 vtable: *const VTable,
 
 pub const VTable = struct {
-    allocateCommandBuffers: *const fn (*Self, *const vk.CommandBufferAllocateInfo) VkError!void,
+    createCommandBuffer: *const fn (*Self, std.mem.Allocator, *const vk.CommandBufferAllocateInfo) VkError!*CommandBuffer,
     destroy: *const fn (*Self, std.mem.Allocator) void,
     reset: *const fn (*Self, vk.CommandPoolResetFlags) VkError!void,
 };
@@ -46,8 +49,17 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Comma
 }
 
 pub fn allocateCommandBuffers(self: *Self, info: *const vk.CommandBufferAllocateInfo) VkError![]*NonDispatchable(CommandBuffer) {
+    const allocator = self.host_allocator.allocator();
+
     if (self.buffers.items.len < info.command_buffer_count or self.first_free_buffer_index + info.command_buffer_count > self.buffers.items.len) {
-        try self.vtable.allocateCommandBuffers(self, info);
+        while (self.buffers.capacity < self.buffers.items.len + info.command_buffer_count) {
+            self.buffers.ensureUnusedCapacity(allocator, BUFFER_POOL_BASE_CAPACITY) catch return VkError.OutOfHostMemory;
+        }
+        for (0..info.command_buffer_count) |_| {
+            const cmd = try self.vtable.createCommandBuffer(self, allocator, info);
+            const non_dis_cmd = try NonDispatchable(CommandBuffer).wrap(allocator, cmd);
+            self.buffers.appendAssumeCapacity(non_dis_cmd);
+        }
     }
 
     const bound_up = self.first_free_buffer_index + info.command_buffer_count;
@@ -56,7 +68,7 @@ pub fn allocateCommandBuffers(self: *Self, info: *const vk.CommandBufferAllocate
     return slice;
 }
 
-pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
+pub fn destroy(self: *Self, allocator: std.mem.Allocator) void {
     for (self.buffers.items) |non_dis_cmd| {
         non_dis_cmd.object.destroy(allocator);
         non_dis_cmd.destroy(allocator);
