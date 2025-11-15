@@ -108,13 +108,13 @@ pub fn build(b: *std.Build) !void {
         test_c_step.dependOn(&run_c_test.step);
     }
 
-    const doc_lib = b.addLibrary(.{
-        .name = "doc",
+    const autodoc_test = b.addObject(.{
+        .name = "driver",
         .root_module = base_mod,
     });
 
     const install_docs = b.addInstallDirectory(.{
-        .source_dir = doc_lib.getEmittedDocs(),
+        .source_dir = autodoc_test.getEmittedDocs(),
         .install_dir = .prefix,
         .install_subdir = "docs",
     });
