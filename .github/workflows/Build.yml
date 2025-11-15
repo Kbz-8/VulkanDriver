@@ -8,12 +8,7 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: "pages"
-  cancel-in-progress: false
+  deployments: write
 
 jobs:
   build:
@@ -31,10 +26,9 @@ jobs:
       run: zig build docs
 
     - name: Publish to Cloudflare Pages
-      uses: cloudflare/pages-action@v1
+      uses: cloudflare/wrangler-action@v3
       with:
         apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        projectName: vulkan-driver-docs
-        directory: zig-out/docs
+        command: pages deploy zig-out/docs --project-name=example
         gitHubToken: ${{ secrets.GITHUB_TOKEN }}
