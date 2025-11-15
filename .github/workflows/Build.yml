@@ -30,14 +30,11 @@ jobs:
     - name: Generating docs
       run: zig build docs
 
-    - name: Setup Pages
-      uses: actions/configure-pages@v5
-
-    - name: Upload artifact
-      uses: actions/upload-pages-artifact@v3
+    - name: Publish to Cloudflare Pages
+      uses: cloudflare/pages-action@v1
       with:
-        path: 'zig-out/docs'
-
-    - name: Deploy to GitHub Pages
-      id: deployment
-      uses: actions/deploy-pages@v4
+        apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        projectName: vulkan-driver-docs
+        directory: zig-out/docs
+        gitHubToken: ${{ secrets.GITHUB_TOKEN }}
