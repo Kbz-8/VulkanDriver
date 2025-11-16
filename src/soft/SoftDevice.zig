@@ -12,6 +12,7 @@ const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
 const SoftFence = @import("SoftFence.zig");
 
 const VkError = base.VkError;
+const Dispatchable = base.Dispatchable;
 const NonDispatchable = base.NonDispatchable;
 
 const Self = @This();
@@ -42,6 +43,7 @@ pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocato
         .destroy = destroy,
         .destroyCommandPool = destroyCommandPool,
         .destroyFence = destroyFence,
+        .freeCommandBuffers = freeCommandBuffers,
         .freeMemory = freeMemory,
         .getFenceStatus = getFenceStatus,
         .resetFences = resetFences,
@@ -107,7 +109,7 @@ pub fn waitForFences(_: *Interface, fences: []*base.Fence, waitForAll: bool, tim
 
 // Command Pool functions ============================================================================================================================
 
-pub fn allocateCommandBuffers(_: *Interface, info: *const vk.CommandBufferAllocateInfo) VkError![]*base.CommandBuffer {
+pub fn allocateCommandBuffers(_: *Interface, info: *const vk.CommandBufferAllocateInfo) VkError![]*Dispatchable(base.CommandBuffer) {
     const pool = try NonDispatchable(base.CommandPool).fromHandleObject(info.command_pool);
     return pool.allocateCommandBuffers(info);
 }
@@ -119,6 +121,10 @@ pub fn createCommandPool(interface: *Interface, allocator: std.mem.Allocator, in
 
 pub fn destroyCommandPool(_: *Interface, allocator: std.mem.Allocator, pool: *base.CommandPool) VkError!void {
     pool.destroy(allocator);
+}
+
+pub fn freeCommandBuffers(_: *Interface, pool: *base.CommandPool, cmds: []*Dispatchable(base.CommandBuffer)) VkError!void {
+    try pool.freeCommandBuffers(cmds);
 }
 
 // Memory functions ==================================================================================================================================

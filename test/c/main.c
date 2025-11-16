@@ -62,8 +62,11 @@ int main(void)
 	volkLoadDevice(device);
 
 	VkQueue queue = kvfGetDeviceQueue(device, KVF_GRAPHICS_QUEUE);
-	VkCommandBuffer cmd = kvfCreateCommandBuffer(device);
 	VkFence fence = kvfCreateFence(device);
+	VkCommandBuffer cmd = kvfCreateCommandBuffer(device);
+
+	kvfBeginCommandBuffer(cmd, 0);
+	kvfEndCommandBuffer(cmd);
 
 	kvfSubmitCommandBuffer(device, cmd, KVF_GRAPHICS_QUEUE, VK_NULL_HANDLE, VK_NULL_HANDLE, fence, NULL);
 	kvfWaitForFence(device, fence);

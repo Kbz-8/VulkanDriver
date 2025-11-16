@@ -76,11 +76,14 @@ const physical_device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComp
 const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkAllocateCommandBuffers"),
     functionMapEntryPoint("vkAllocateMemory"),
+    functionMapEntryPoint("vkBeginCommandBuffer"),
     functionMapEntryPoint("vkCreateCommandPool"),
     functionMapEntryPoint("vkCreateFence"),
     functionMapEntryPoint("vkDestroyCommandPool"),
     functionMapEntryPoint("vkDestroyFence"),
     functionMapEntryPoint("vkDestroyDevice"),
+    functionMapEntryPoint("vkEndCommandBuffer"),
+    functionMapEntryPoint("vkFreeCommandBuffers"),
     functionMapEntryPoint("vkFreeMemory"),
     functionMapEntryPoint("vkGetDeviceQueue"),
     functionMapEntryPoint("vkGetFenceStatus"),
@@ -362,6 +365,13 @@ pub export fn strollDestroyFence(p_device: vk.Device, p_fence: vk.Fence, callbac
     non_dispatchable_fence.destroy(allocator);
 }
 
+pub export fn strollFreeCommandBuffers(p_device: vk.Device, p_pool: vk.CommandPool, count: u32, p_cmds: [*]const vk.CommandBuffer) callconv(vk.vulkan_call_conv) void {
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch return;
+    const pool = NonDispatchable(CommandPool).fromHandleObject(p_pool) catch return;
+    const cmds: [*]*Dispatchable(CommandBuffer) = @ptrCast(@constCast(p_cmds));
+    device.freeCommandBuffers(pool, cmds[0..count]) catch return;
+}
+
 pub export fn strollFreeMemory(p_device: vk.Device, p_memory: vk.DeviceMemory, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch return;
@@ -420,7 +430,7 @@ pub export fn strollUnmapMemory(p_device: vk.Device, p_memory: vk.DeviceMemory) 
 
 pub export fn strollResetFences(p_device: vk.Device, count: u32, p_fences: [*]const vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
-    const allocator = std.heap.c_allocator;
+    const allocator = device.host_allocator.cloneWithScope(.command).allocator();
 
     const fences: []*Fence = allocator.alloc(*Fence, count) catch return .error_unknown;
     defer allocator.free(fences);
@@ -455,7 +465,7 @@ pub export fn strollQueueWaitIdle(p_queue: vk.Queue) callconv(vk.vulkan_call_con
 
 pub export fn strollWaitForFences(p_device: vk.Device, count: u32, p_fences: [*]const vk.Fence, waitForAll: vk.Bool32, timeout: u64) callconv(vk.vulkan_call_conv) vk.Result {
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
-    const allocator = std.heap.c_allocator;
+    const allocator = device.host_allocator.cloneWithScope(.command).allocator();
 
     const fences: []*Fence = allocator.alloc(*Fence, count) catch return .error_unknown;
     defer allocator.free(fences);
@@ -465,5 +475,23 @@ pub export fn strollWaitForFences(p_device: vk.Device, count: u32, p_fences: [*]
     }
 
     device.waitForFences(fences, (waitForAll == .true), timeout) catch |err| return toVkResult(err);
+    return .success;
+}
+
+// Command Buffer functions ===================================================================================================================================
+
+pub export fn strollBeginCommandBuffer(p_cmd: vk.CommandBuffer, p_info: ?*const vk.CommandBufferBeginInfo) callconv(vk.vulkan_call_conv) vk.Result {
+    const info = p_info orelse return .error_validation_failed;
+    if (info.s_type != .command_buffer_begin_info) {
+        return .error_validation_failed;
+    }
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return toVkResult(err);
+    cmd.begin(info) catch |err| return toVkResult(err);
+    return .success;
+}
+
+pub export fn strollEndCommandBuffer(p_cmd: vk.CommandBuffer) callconv(vk.vulkan_call_conv) vk.Result {
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return toVkResult(err);
+    cmd.end() catch |err| return toVkResult(err);
     return .success;
 }

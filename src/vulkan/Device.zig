@@ -30,13 +30,14 @@ pub const VTable = struct {
 };
 
 pub const DispatchTable = struct {
-    allocateCommandBuffers: *const fn (*Self, *const vk.CommandBufferAllocateInfo) VkError![]*NonDispatchable(CommandBuffer),
+    allocateCommandBuffers: *const fn (*Self, *const vk.CommandBufferAllocateInfo) VkError![]*Dispatchable(CommandBuffer),
     allocateMemory: *const fn (*Self, std.mem.Allocator, *const vk.MemoryAllocateInfo) VkError!*DeviceMemory,
     createCommandPool: *const fn (*Self, std.mem.Allocator, *const vk.CommandPoolCreateInfo) VkError!*CommandPool,
     createFence: *const fn (*Self, std.mem.Allocator, *const vk.FenceCreateInfo) VkError!*Fence,
     destroy: *const fn (*Self, std.mem.Allocator) VkError!void,
     destroyCommandPool: *const fn (*Self, std.mem.Allocator, *CommandPool) VkError!void,
     destroyFence: *const fn (*Self, std.mem.Allocator, *Fence) VkError!void,
+    freeCommandBuffers: *const fn (*Self, *CommandPool, []*Dispatchable(CommandBuffer)) VkError!void,
     freeMemory: *const fn (*Self, std.mem.Allocator, *DeviceMemory) VkError!void,
     getFenceStatus: *const fn (*Self, *Fence) VkError!void,
     resetFences: *const fn (*Self, []*Fence) VkError!void,
@@ -113,7 +114,7 @@ pub inline fn waitForFences(self: *Self, fences: []*Fence, waitForAll: bool, tim
 
 // Command Pool functions ============================================================================================================================
 
-pub inline fn allocateCommandBuffers(self: *Self, info: *const vk.CommandBufferAllocateInfo) VkError![]*NonDispatchable(CommandBuffer) {
+pub inline fn allocateCommandBuffers(self: *Self, info: *const vk.CommandBufferAllocateInfo) VkError![]*Dispatchable(CommandBuffer) {
     return self.dispatch_table.allocateCommandBuffers(self, info);
 }
 
@@ -123,6 +124,10 @@ pub inline fn createCommandPool(self: *Self, allocator: std.mem.Allocator, info:
 
 pub inline fn destroyCommandPool(self: *Self, allocator: std.mem.Allocator, pool: *CommandPool) VkError!void {
     try self.dispatch_table.destroyCommandPool(self, allocator, pool);
+}
+
+pub inline fn freeCommandBuffers(self: *Self, pool: *CommandPool, cmds: []*Dispatchable(CommandBuffer)) VkError!void {
+    try self.dispatch_table.freeCommandBuffers(self, pool, cmds);
 }
 
 // Memory functions ==================================================================================================================================

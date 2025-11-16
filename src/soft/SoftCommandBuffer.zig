@@ -20,6 +20,11 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .destroy = destroy,
     };
 
+    interface.dispatch_table = &.{
+        .begin = begin,
+        .end = end,
+    };
+
     self.* = .{
         .interface = interface,
     };
@@ -29,4 +34,13 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     allocator.destroy(self);
+}
+
+pub fn begin(interface: *Interface, info: *const vk.CommandBufferBeginInfo) VkError!void {
+    _ = interface;
+    _ = info;
+}
+
+pub fn end(interface: *Interface) VkError!void {
+    _ = interface;
 }
