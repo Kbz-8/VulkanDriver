@@ -94,18 +94,25 @@ pub fn build(b: *std.Build) !void {
         });
 
         const c_test_exe_install = b.addInstallArtifact(c_test_exe, .{});
+        c_test_exe_install.step.dependOn(&lib_install.step);
 
         try targets.append(b.allocator, lib);
         try targets.append(b.allocator, c_test_exe);
 
         _ = zcc.createStep(b, "cdb", try targets.toOwnedSlice(b.allocator));
 
-        const run_c_test = b.addRunArtifact(c_test_exe);
-        run_c_test.step.dependOn(&lib_install.step);
-        run_c_test.step.dependOn(&c_test_exe_install.step);
+        const run_c_test_exe = b.addRunArtifact(c_test_exe);
+        run_c_test_exe.step.dependOn(&c_test_exe_install.step);
 
-        const test_c_step = b.step(b.fmt("test-c-{s}", .{impl.name}), b.fmt("Run lib{s} C test", .{impl.name}));
-        test_c_step.dependOn(&run_c_test.step);
+        const run_c_test_step = b.step(b.fmt("test-c-{s}", .{impl.name}), b.fmt("Run lib{s} C test", .{impl.name}));
+        run_c_test_step.dependOn(&run_c_test_exe.step);
+
+        const run_c_test_gdb_exe = b.addRunArtifact(c_test_exe);
+        try run_c_test_gdb_exe.argv.insert(b.allocator, 0, .{ .bytes = b.fmt("gdb", .{}) }); // Hacky
+        run_c_test_gdb_exe.step.dependOn(&c_test_exe_install.step);
+
+        const run_c_test_gdb_step = b.step(b.fmt("test-c-{s}-gdb", .{impl.name}), b.fmt("Run lib{s} C test within gdb", .{impl.name}));
+        run_c_test_gdb_step.dependOn(&run_c_test_gdb_exe.step);
     }
 
     const autodoc_test = b.addObject(.{

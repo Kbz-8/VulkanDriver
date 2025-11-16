@@ -51,7 +51,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Comma
 pub fn allocateCommandBuffers(self: *Self, info: *const vk.CommandBufferAllocateInfo) VkError![]*NonDispatchable(CommandBuffer) {
     const allocator = self.host_allocator.allocator();
 
-    if (self.buffers.items.len < info.command_buffer_count or self.first_free_buffer_index + info.command_buffer_count > self.buffers.items.len) {
+    if (self.buffers.items.len < self.first_free_buffer_index + info.command_buffer_count) {
         while (self.buffers.capacity < self.buffers.items.len + info.command_buffer_count) {
             self.buffers.ensureUnusedCapacity(allocator, BUFFER_POOL_BASE_CAPACITY) catch return VkError.OutOfHostMemory;
         }
