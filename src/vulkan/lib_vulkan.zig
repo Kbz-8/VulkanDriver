@@ -89,6 +89,7 @@ const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkGetFenceStatus"),
     functionMapEntryPoint("vkMapMemory"),
     functionMapEntryPoint("vkUnmapMemory"),
+    functionMapEntryPoint("vkResetCommandBuffer"),
     functionMapEntryPoint("vkResetFences"),
     functionMapEntryPoint("vkQueueBindSparse"),
     functionMapEntryPoint("vkQueueSubmit"),
@@ -493,5 +494,11 @@ pub export fn strollBeginCommandBuffer(p_cmd: vk.CommandBuffer, p_info: ?*const 
 pub export fn strollEndCommandBuffer(p_cmd: vk.CommandBuffer) callconv(vk.vulkan_call_conv) vk.Result {
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return toVkResult(err);
     cmd.end() catch |err| return toVkResult(err);
+    return .success;
+}
+
+pub export fn strollResetCommandBuffer(p_cmd: vk.CommandBuffer, flags: vk.CommandBufferResetFlags) callconv(vk.vulkan_call_conv) vk.Result {
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return toVkResult(err);
+    cmd.reset(flags) catch |err| return toVkResult(err);
     return .success;
 }

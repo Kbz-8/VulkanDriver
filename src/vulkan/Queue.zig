@@ -2,7 +2,9 @@ const std = @import("std");
 const vk = @import("vulkan");
 
 const VkError = @import("error_set.zig").VkError;
+const CommandBuffer = @import("CommandBuffer.zig");
 const Device = @import("Device.zig");
+const Dispatchable = @import("Dispatchable.zig").Dispatchable;
 const Fence = @import("Fence.zig");
 
 const Self = @This();
@@ -39,6 +41,14 @@ pub inline fn bindSparse(self: *Self, info: []const vk.BindSparseInfo, fence: ?*
 
 pub inline fn submit(self: *Self, info: []const vk.SubmitInfo, fence: ?*Fence) VkError!void {
     try self.dispatch_table.submit(self, info, fence);
+    for (info) |submit_info| {
+        if (submit_info.p_command_buffers) |p_command_buffers| {
+            for (p_command_buffers[0..submit_info.command_buffer_count]) |p_cmd| {
+                const cmd = try Dispatchable(CommandBuffer).fromHandleObject(p_cmd);
+                try cmd.submit();
+            }
+        }
+    }
 }
 
 pub inline fn waitIdle(self: *Self) VkError!void {

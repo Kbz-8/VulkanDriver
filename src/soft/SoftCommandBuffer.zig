@@ -23,6 +23,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
     interface.dispatch_table = &.{
         .begin = begin,
         .end = end,
+        .reset = reset,
     };
 
     self.* = .{
@@ -43,4 +44,9 @@ pub fn begin(interface: *Interface, info: *const vk.CommandBufferBeginInfo) VkEr
 
 pub fn end(interface: *Interface) VkError!void {
     _ = interface;
+}
+
+pub fn reset(interface: *Interface, flags: vk.CommandBufferResetFlags) VkError!void {
+    _ = interface;
+    _ = flags;
 }

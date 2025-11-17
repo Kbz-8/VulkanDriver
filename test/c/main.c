@@ -20,15 +20,6 @@
 #define KVF_NO_KHR
 #include <kvf.h>
 
-#define CheckVk(x) \
-	do { \
-		if((x) != VK_SUCCESS) \
-		{ \
-			fprintf(stderr, "Vulkan call failed %d\n", (x)); \
-			abort(); \
-		} \
-	} while(0)
-
 int main(void)
 {
 	volkInitialize();
@@ -65,10 +56,12 @@ int main(void)
 	VkFence fence = kvfCreateFence(device);
 	VkCommandBuffer cmd = kvfCreateCommandBuffer(device);
 
+
 	kvfBeginCommandBuffer(cmd, 0);
 	kvfEndCommandBuffer(cmd);
 
 	kvfSubmitCommandBuffer(device, cmd, KVF_GRAPHICS_QUEUE, VK_NULL_HANDLE, VK_NULL_HANDLE, fence, NULL);
+	kvfCheckVk(vkResetCommandBuffer(cmd, 0));
 	kvfWaitForFence(device, fence);
 
 	kvfDestroyFence(device, fence);
