@@ -56,12 +56,12 @@ int main(void)
 	VkFence fence = kvfCreateFence(device);
 	VkCommandBuffer cmd = kvfCreateCommandBuffer(device);
 
+	kvfCheckVk(vkResetCommandBuffer(cmd, 0));
 
 	kvfBeginCommandBuffer(cmd, 0);
 	kvfEndCommandBuffer(cmd);
 
 	kvfSubmitCommandBuffer(device, cmd, KVF_GRAPHICS_QUEUE, VK_NULL_HANDLE, VK_NULL_HANDLE, fence, NULL);
-	kvfCheckVk(vkResetCommandBuffer(cmd, 0));
 	kvfWaitForFence(device, fence);
 
 	kvfDestroyFence(device, fence);

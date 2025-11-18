@@ -47,15 +47,8 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Comma
     };
 }
 
-inline fn transitionState(self: *Self, target: State, from_allowed: std.EnumSet(State)) error{NotAllowed}!void {
-    if (!from_allowed.contains(self.state)) {
-        return error.NotAllowed;
-    }
-    self.state = target;
-}
-
-inline fn transitionStateNotAllowed(self: *Self, target: State, from_not_allowed: std.EnumSet(State)) error{NotAllowed}!void {
-    if (from_not_allowed.contains(self.state)) {
+inline fn transitionState(self: *Self, target: State, from_allowed: []const State) error{NotAllowed}!void {
+    if (!std.EnumSet(State).initMany(from_allowed).contains(self.state)) {
         return error.NotAllowed;
     }
     self.state = target;
@@ -67,16 +60,16 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
 
 pub inline fn begin(self: *Self, info: *const vk.CommandBufferBeginInfo) VkError!void {
     if (!self.pool.flags.reset_command_buffer_bit) {
-        self.transitionState(.Recording, .initOne(.Initial)) catch return VkError.ValidationFailed;
+        self.transitionState(.Recording, &.{.Initial}) catch return VkError.ValidationFailed;
     } else {
-        self.transitionStateNotAllowed(.Recording, .initMany(&.{ .Recording, .Pending })) catch return VkError.ValidationFailed;
+        self.transitionState(.Recording, &.{ .Initial, .Executable, .Invalid }) catch return VkError.ValidationFailed;
     }
     try self.dispatch_table.begin(self, info);
     self.begin_info = info.*;
 }
 
 pub inline fn end(self: *Self) VkError!void {
-    self.transitionState(.Executable, .initOne(.Recording)) catch return VkError.ValidationFailed;
+    self.transitionState(.Executable, &.{.Recording}) catch return VkError.ValidationFailed;
     try self.dispatch_table.end(self);
 }
 
@@ -84,15 +77,15 @@ pub inline fn reset(self: *Self, flags: vk.CommandBufferResetFlags) VkError!void
     if (!self.pool.flags.reset_command_buffer_bit) {
         return VkError.ValidationFailed;
     }
-    self.transitionStateNotAllowed(.Initial, .initOne(.Pending)) catch return VkError.ValidationFailed;
+    self.transitionState(.Initial, &.{ .Initial, .Recording, .Executable, .Invalid }) catch return VkError.ValidationFailed;
     try self.dispatch_table.reset(self, flags);
 }
 
 pub inline fn submit(self: *Self) VkError!void {
-    self.transitionState(.Initial, .initMany(&.{ .Pending, .Executable })) catch return VkError.ValidationFailed;
     if (self.begin_info) |begin_info| {
         if (!begin_info.flags.simultaneous_use_bit) {
-            self.transitionStateNotAllowed(.Initial, .initOne(.Pending)) catch return VkError.ValidationFailed;
+            self.transitionState(.Pending, &.{.Executable}) catch return VkError.ValidationFailed;
         }
     }
+    self.transitionState(.Pending, &.{ .Pending, .Executable }) catch return VkError.ValidationFailed;
 }

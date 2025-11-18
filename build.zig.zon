@@ -32,8 +32,8 @@
             .lazy = true,
         },
         .kvf = .{
-            .url = "git+https://github.com/Kbz-8/KVF#492a2f8e08f5aa3f5e9c9869668829af3f483d26",
-            .hash = "N-V-__8AALuHAgC55XjEl7WQZIw2YjKvEwvE04FMHGtzVOH5",
+            .url = "git+https://github.com/Kbz-8/KVF#e69f907a96b9e636378288a973f23625177356c0",
+            .hash = "N-V-__8AAPaHAgA811W_sWLhxkbbE6uYWqaSQq9l36M_nMdY",
             .lazy = true,
         },
     },

@@ -24,6 +24,11 @@ pub const VULKAN_VENDOR_ID = @typeInfo(vk.VendorId).@"enum".fields[@typeInfo(vk.
 pub const DRIVER_LOGS_ENV_NAME = "STROLL_LOGS_LEVEL";
 pub const DRIVER_DEBUG_ALLOCATOR_ENV_NAME = "STROLL_DEBUG_ALLOCATOR";
 
+/// Default driver name
+pub const DRIVER_NAME = "Unnamed Driver";
+/// Default Vulkan version
+pub const VULKAN_VERSION = vk.makeApiVersion(0, 1, 0, 0);
+
 pub const std_options: std.Options = .{
     .log_level = .debug,
     .logFn = logger.log,
