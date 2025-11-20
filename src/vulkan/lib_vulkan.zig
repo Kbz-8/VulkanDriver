@@ -21,6 +21,7 @@ const Device = @import("Device.zig");
 const PhysicalDevice = @import("PhysicalDevice.zig");
 const Queue = @import("Queue.zig");
 
+const Buffer = @import("Buffer.zig");
 const CommandBuffer = @import("CommandBuffer.zig");
 const CommandPool = @import("CommandPool.zig");
 const DeviceMemory = @import("DeviceMemory.zig");
@@ -77,8 +78,11 @@ const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkAllocateCommandBuffers"),
     functionMapEntryPoint("vkAllocateMemory"),
     functionMapEntryPoint("vkBeginCommandBuffer"),
+    functionMapEntryPoint("vkBindBufferMemory"),
     functionMapEntryPoint("vkCreateCommandPool"),
+    functionMapEntryPoint("vkCreateBuffer"),
     functionMapEntryPoint("vkCreateFence"),
+    functionMapEntryPoint("vkDestroyBuffer"),
     functionMapEntryPoint("vkDestroyCommandPool"),
     functionMapEntryPoint("vkDestroyFence"),
     functionMapEntryPoint("vkDestroyDevice"),
@@ -87,6 +91,7 @@ const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkFreeMemory"),
     functionMapEntryPoint("vkGetDeviceQueue"),
     functionMapEntryPoint("vkGetFenceStatus"),
+    functionMapEntryPoint("vkGetBufferMemoryRequirements"),
     functionMapEntryPoint("vkMapMemory"),
     functionMapEntryPoint("vkUnmapMemory"),
     functionMapEntryPoint("vkResetCommandBuffer"),
@@ -186,7 +191,7 @@ pub export fn strollDestroyInstance(p_instance: vk.Instance, callbacks: ?*const 
 
     const allocator = VulkanAllocator.init(callbacks, .instance).allocator();
     const dispatchable = Dispatchable(Instance).fromHandle(p_instance) catch return;
-    dispatchable.object.deinit(allocator) catch {};
+    dispatchable.object.deinit(allocator) catch return;
     dispatchable.destroy(allocator);
 
     if (std.process.hasEnvVarConstant(lib.DRIVER_DEBUG_ALLOCATOR_ENV_NAME) or builtin.mode == std.builtin.OptimizeMode.Debug) {
@@ -198,11 +203,11 @@ pub export fn strollDestroyInstance(p_instance: vk.Instance, callbacks: ?*const 
 }
 
 pub export fn strollEnumeratePhysicalDevices(p_instance: vk.Instance, count: *u32, p_devices: ?[*]vk.PhysicalDevice) callconv(vk.vulkan_call_conv) vk.Result {
-    const self = Dispatchable(Instance).fromHandleObject(p_instance) catch |err| return toVkResult(err);
-    count.* = @intCast(self.physical_devices.items.len);
+    const instance = Dispatchable(Instance).fromHandleObject(p_instance) catch |err| return toVkResult(err);
+    count.* = @intCast(instance.physical_devices.items.len);
     if (p_devices) |devices| {
         for (0..count.*) |i| {
-            devices[i] = self.physical_devices.items[i].toVkHandle(vk.PhysicalDevice);
+            devices[i] = instance.physical_devices.items[i].toVkHandle(vk.PhysicalDevice);
         }
     }
     return .success;
@@ -238,36 +243,36 @@ pub export fn strollEnumerateDeviceExtensionProperties(p_physical_device: vk.Phy
 }
 
 pub export fn strollGetPhysicalDeviceFormatProperties(p_physical_device: vk.PhysicalDevice, format: vk.Format, properties: *vk.FormatProperties) callconv(vk.vulkan_call_conv) void {
-    const self = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch return;
-    properties.* = self.getFormatProperties(format) catch return;
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch return;
+    properties.* = physical_device.getFormatProperties(format) catch return;
 }
 
 pub export fn strollGetPhysicalDeviceFeatures(p_physical_device: vk.PhysicalDevice, features: *vk.PhysicalDeviceFeatures) callconv(vk.vulkan_call_conv) void {
-    const self = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch return;
-    features.* = self.features;
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch return;
+    features.* = physical_device.features;
 }
 
 pub export fn strollGetPhysicalDeviceImageFormatProperties(p_physical_device: vk.PhysicalDevice, format: vk.Format, image_type: vk.ImageType, tiling: vk.ImageTiling, usage: vk.ImageUsageFlags, flags: vk.ImageCreateFlags, properties: *vk.ImageFormatProperties) callconv(vk.vulkan_call_conv) vk.Result {
-    const self = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
-    properties.* = self.getImageFormatProperties(format, image_type, tiling, usage, flags) catch |err| return toVkResult(err);
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
+    properties.* = physical_device.getImageFormatProperties(format, image_type, tiling, usage, flags) catch |err| return toVkResult(err);
     return .success;
 }
 
 pub export fn strollGetPhysicalDeviceProperties(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceProperties) callconv(vk.vulkan_call_conv) void {
-    const self = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch return;
-    properties.* = self.props;
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch return;
+    properties.* = physical_device.props;
 }
 
 pub export fn strollGetPhysicalDeviceMemoryProperties(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceMemoryProperties) callconv(vk.vulkan_call_conv) void {
-    const self = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch return;
-    properties.* = self.mem_props;
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch return;
+    properties.* = physical_device.mem_props;
 }
 
 pub export fn strollGetPhysicalDeviceQueueFamilyProperties(p_physical_device: vk.PhysicalDevice, count: *u32, properties: ?[*]vk.QueueFamilyProperties) callconv(vk.vulkan_call_conv) void {
-    const self = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch return;
-    count.* = @intCast(self.queue_family_props.items.len);
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch return;
+    count.* = @intCast(physical_device.queue_family_props.items.len);
     if (properties) |props| {
-        @memcpy(props[0..count.*], self.queue_family_props.items[0..count.*]);
+        @memcpy(props[0..count.*], physical_device.queue_family_props.items[0..count.*]);
     }
 }
 
@@ -281,20 +286,45 @@ pub export fn strollGetPhysicalDeviceSparseImageFormatProperties(
     flags: vk.ImageCreateFlags,
     properties: *vk.SparseImageFormatProperties,
 ) callconv(vk.vulkan_call_conv) vk.Result {
-    const self = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
-    properties.* = self.getSparseImageFormatProperties(format, image_type, samples, tiling, usage, flags) catch |err| return toVkResult(err);
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
+    properties.* = physical_device.getSparseImageFormatProperties(format, image_type, samples, tiling, usage, flags) catch |err| return toVkResult(err);
+    return .success;
+}
+
+// Queue functions ===========================================================================================================================================
+
+pub export fn strollQueueBindSparse(p_queue: vk.Queue, count: u32, info: [*]vk.BindSparseInfo, p_fence: vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
+    const queue = Dispatchable(Queue).fromHandleObject(p_queue) catch |err| return toVkResult(err);
+    const fence = if (p_fence != .null_handle) NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err) else null;
+    queue.bindSparse(info[0..count], fence) catch |err| return toVkResult(err);
+    return .success;
+}
+
+pub export fn strollQueueSubmit(p_queue: vk.Queue, count: u32, info: [*]const vk.SubmitInfo, p_fence: vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
+    const queue = Dispatchable(Queue).fromHandleObject(p_queue) catch |err| return toVkResult(err);
+    const fence = if (p_fence != .null_handle) NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err) else null;
+    queue.submit(info[0..count], fence) catch |err| return toVkResult(err);
+    return .success;
+}
+
+pub export fn strollQueueWaitIdle(p_queue: vk.Queue) callconv(vk.vulkan_call_conv) vk.Result {
+    const queue = Dispatchable(Queue).fromHandleObject(p_queue) catch |err| return toVkResult(err);
+    queue.waitIdle() catch |err| return toVkResult(err);
     return .success;
 }
 
 // Device functions ==========================================================================================================================================
 
 pub export fn strollAllocateCommandBuffers(p_device: vk.Device, p_info: ?*const vk.CommandBufferAllocateInfo, p_cmds: [*]vk.CommandBuffer) callconv(vk.vulkan_call_conv) vk.Result {
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
+
     const info = p_info orelse return .error_validation_failed;
     if (info.s_type != .command_buffer_allocate_info) {
         return .error_validation_failed;
     }
-    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
-    const cmds = device.allocateCommandBuffers(info) catch |err| return toVkResult(err);
+
+    const pool = NonDispatchable(CommandPool).fromHandleObject(info.command_pool) catch |err| return toVkResult(err);
+    const cmds = pool.allocateCommandBuffers(info) catch |err| return toVkResult(err);
     for (cmds[0..info.command_buffer_count], 0..) |cmd, i| {
         p_cmds[i] = cmd.toVkHandle(vk.CommandBuffer);
     }
@@ -310,6 +340,27 @@ pub export fn strollAllocateMemory(p_device: vk.Device, p_info: ?*const vk.Memor
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const device_memory = device.allocateMemory(allocator, info) catch |err| return toVkResult(err);
     p_memory.* = (NonDispatchable(DeviceMemory).wrap(allocator, device_memory) catch |err| return toVkResult(err)).toVkHandle(vk.DeviceMemory);
+    return .success;
+}
+
+pub export fn strollBindBufferMemory(p_device: vk.Device, p_buffer: vk.Buffer, p_memory: vk.DeviceMemory, offset: vk.DeviceSize) callconv(vk.vulkan_call_conv) vk.Result {
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
+
+    const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return toVkResult(err);
+    const memory = NonDispatchable(DeviceMemory).fromHandleObject(p_memory) catch |err| return toVkResult(err);
+    buffer.bindMemory(memory, offset) catch |err| return toVkResult(err);
+    return .success;
+}
+
+pub export fn strollCreateBuffer(p_device: vk.Device, p_info: ?*const vk.BufferCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_buffer: *vk.Buffer) callconv(vk.vulkan_call_conv) vk.Result {
+    const info = p_info orelse return .error_validation_failed;
+    if (info.s_type != .buffer_create_info) {
+        return .error_validation_failed;
+    }
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const buffer = device.createBuffer(allocator, info) catch |err| return toVkResult(err);
+    p_buffer.* = (NonDispatchable(Buffer).wrap(allocator, buffer) catch |err| return toVkResult(err)).toVkHandle(vk.Buffer);
     return .success;
 }
 
@@ -337,13 +388,20 @@ pub export fn strollCreateFence(p_device: vk.Device, p_info: ?*const vk.FenceCre
     return .success;
 }
 
-pub export fn strollDestroyCommandPool(p_device: vk.Device, p_pool: vk.CommandPool, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
-    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
-    const device = Dispatchable(Device).fromHandleObject(p_device) catch return;
-    const non_dispatchable_pool = NonDispatchable(CommandPool).fromHandle(p_pool) catch return;
+pub export fn strollDestroyBuffer(p_device: vk.Device, p_buffer: vk.Buffer, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+    Dispatchable(Device).checkHandleValidity(p_device) catch return;
 
-    device.destroyCommandPool(allocator, non_dispatchable_pool.object) catch return;
-    non_dispatchable_pool.destroy(allocator);
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const non_dispatchable = NonDispatchable(Buffer).fromHandle(p_buffer) catch return;
+    non_dispatchable.intrusiveDestroy(allocator);
+}
+
+pub export fn strollDestroyCommandPool(p_device: vk.Device, p_pool: vk.CommandPool, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+    Dispatchable(Device).checkHandleValidity(p_device) catch return;
+
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const non_dispatchable = NonDispatchable(CommandPool).fromHandle(p_pool) catch return;
+    non_dispatchable.intrusiveDestroy(allocator);
 }
 
 pub export fn strollDestroyDevice(p_device: vk.Device, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
@@ -358,28 +416,27 @@ pub export fn strollDestroyDevice(p_device: vk.Device, callbacks: ?*const vk.All
 }
 
 pub export fn strollDestroyFence(p_device: vk.Device, p_fence: vk.Fence, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
-    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
-    const device = Dispatchable(Device).fromHandleObject(p_device) catch return;
-    const non_dispatchable_fence = NonDispatchable(Fence).fromHandle(p_fence) catch return;
+    Dispatchable(Device).checkHandleValidity(p_device) catch return;
 
-    device.destroyFence(allocator, non_dispatchable_fence.object) catch return;
-    non_dispatchable_fence.destroy(allocator);
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const non_dispatchable = NonDispatchable(Fence).fromHandle(p_fence) catch return;
+    non_dispatchable.intrusiveDestroy(allocator);
 }
 
 pub export fn strollFreeCommandBuffers(p_device: vk.Device, p_pool: vk.CommandPool, count: u32, p_cmds: [*]const vk.CommandBuffer) callconv(vk.vulkan_call_conv) void {
-    const device = Dispatchable(Device).fromHandleObject(p_device) catch return;
+    Dispatchable(Device).checkHandleValidity(p_device) catch return;
+
     const pool = NonDispatchable(CommandPool).fromHandleObject(p_pool) catch return;
     const cmds: [*]*Dispatchable(CommandBuffer) = @ptrCast(@constCast(p_cmds));
-    device.freeCommandBuffers(pool, cmds[0..count]) catch return;
+    pool.freeCommandBuffers(cmds[0..count]) catch return;
 }
 
 pub export fn strollFreeMemory(p_device: vk.Device, p_memory: vk.DeviceMemory, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
-    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
-    const device = Dispatchable(Device).fromHandleObject(p_device) catch return;
-    const non_dispatchable_device_memory = NonDispatchable(DeviceMemory).fromHandle(p_memory) catch return;
+    Dispatchable(Device).checkHandleValidity(p_device) catch return;
 
-    device.freeMemory(allocator, non_dispatchable_device_memory.object) catch return;
-    non_dispatchable_device_memory.destroy(allocator);
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const non_dispatchable = NonDispatchable(DeviceMemory).fromHandle(p_memory) catch return;
+    non_dispatchable.intrusiveDestroy(allocator);
 }
 
 pub export fn strollGetDeviceProcAddr(p_device: vk.Device, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
@@ -410,72 +467,53 @@ pub export fn strollGetDeviceQueue(p_device: vk.Device, queue_family_index: u32,
 }
 
 pub export fn strollGetFenceStatus(p_device: vk.Device, p_fence: vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
-    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
+
     const fence = NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err);
-    device.getFenceStatus(fence) catch |err| return toVkResult(err);
+    fence.getStatus() catch |err| return toVkResult(err);
     return .success;
 }
 
+pub export fn strollGetBufferMemoryRequirements(p_device: vk.Device, p_buffer: vk.Buffer, requirements: *vk.MemoryRequirements) callconv(vk.vulkan_call_conv) void {
+    Dispatchable(Device).checkHandleValidity(p_device) catch return;
+
+    const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch return;
+    buffer.getMemoryRequirements(requirements);
+}
+
 pub export fn strollMapMemory(p_device: vk.Device, p_memory: vk.DeviceMemory, offset: vk.DeviceSize, size: vk.DeviceSize, _: vk.MemoryMapFlags, pp_data: *?*anyopaque) callconv(vk.vulkan_call_conv) vk.Result {
-    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
+
     const device_memory = NonDispatchable(DeviceMemory).fromHandleObject(p_memory) catch |err| return toVkResult(err);
-    pp_data.* = device.mapMemory(device_memory, offset, size) catch |err| return toVkResult(err);
+    pp_data.* = device_memory.map(offset, size) catch |err| return toVkResult(err);
     return .success;
 }
 
 pub export fn strollUnmapMemory(p_device: vk.Device, p_memory: vk.DeviceMemory) callconv(vk.vulkan_call_conv) void {
-    const device = Dispatchable(Device).fromHandleObject(p_device) catch return;
+    Dispatchable(Device).checkHandleValidity(p_device) catch return;
+
     const device_memory = NonDispatchable(DeviceMemory).fromHandleObject(p_memory) catch return;
-    device.unmapMemory(device_memory);
+    device_memory.unmap();
 }
 
 pub export fn strollResetFences(p_device: vk.Device, count: u32, p_fences: [*]const vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
-    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
-    const allocator = device.host_allocator.cloneWithScope(.command).allocator();
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
 
-    const fences: []*Fence = allocator.alloc(*Fence, count) catch return .error_unknown;
-    defer allocator.free(fences);
-
-    for (p_fences, 0..count) |fence, i| {
-        fences[i] = NonDispatchable(Fence).fromHandleObject(fence) catch |err| return toVkResult(err);
+    for (p_fences, 0..count) |p_fence, _| {
+        const fence = NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err);
+        fence.reset() catch |err| return toVkResult(err);
     }
-
-    device.resetFences(fences) catch |err| return toVkResult(err);
-    return .success;
-}
-
-pub export fn strollQueueBindSparse(p_queue: vk.Queue, count: u32, info: [*]vk.BindSparseInfo, p_fence: vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
-    const queue = Dispatchable(Queue).fromHandleObject(p_queue) catch |err| return toVkResult(err);
-    const fence = if (p_fence != .null_handle) NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err) else null;
-    queue.bindSparse(info[0..count], fence) catch |err| return toVkResult(err);
-    return .success;
-}
-
-pub export fn strollQueueSubmit(p_queue: vk.Queue, count: u32, info: [*]const vk.SubmitInfo, p_fence: vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
-    const queue = Dispatchable(Queue).fromHandleObject(p_queue) catch |err| return toVkResult(err);
-    const fence = if (p_fence != .null_handle) NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err) else null;
-    queue.submit(info[0..count], fence) catch |err| return toVkResult(err);
-    return .success;
-}
-
-pub export fn strollQueueWaitIdle(p_queue: vk.Queue) callconv(vk.vulkan_call_conv) vk.Result {
-    const queue = Dispatchable(Queue).fromHandleObject(p_queue) catch |err| return toVkResult(err);
-    queue.waitIdle() catch |err| return toVkResult(err);
     return .success;
 }
 
 pub export fn strollWaitForFences(p_device: vk.Device, count: u32, p_fences: [*]const vk.Fence, waitForAll: vk.Bool32, timeout: u64) callconv(vk.vulkan_call_conv) vk.Result {
-    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
-    const allocator = device.host_allocator.cloneWithScope(.command).allocator();
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
 
-    const fences: []*Fence = allocator.alloc(*Fence, count) catch return .error_unknown;
-    defer allocator.free(fences);
-
-    for (p_fences, 0..count) |fence, i| {
-        fences[i] = NonDispatchable(Fence).fromHandleObject(fence) catch |err| return toVkResult(err);
+    loop: for (p_fences, 0..count) |p_fence, _| {
+        const fence = NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err);
+        fence.wait(timeout) catch |err| return toVkResult(err);
+        if (waitForAll == .false) break :loop;
     }
-
-    device.waitForFences(fences, (waitForAll == .true), timeout) catch |err| return toVkResult(err);
     return .success;
 }
 

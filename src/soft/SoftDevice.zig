@@ -5,9 +5,10 @@ const builtin = @import("builtin");
 
 const Debug = std.builtin.OptimizeMode.Debug;
 
+const SoftCommandPool = @import("SoftCommandPool.zig");
 const SoftQueue = @import("SoftQueue.zig");
 
-const SoftCommandPool = @import("SoftCommandPool.zig");
+const SoftBuffer = @import("SoftBuffer.zig");
 const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
 const SoftFence = @import("SoftFence.zig");
 
@@ -36,18 +37,11 @@ pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocato
     };
 
     interface.dispatch_table = &.{
-        .allocateCommandBuffers = allocateCommandBuffers,
         .allocateMemory = allocateMemory,
+        .createBuffer = createBuffer,
         .createCommandPool = createCommandPool,
         .createFence = createFence,
         .destroy = destroy,
-        .destroyCommandPool = destroyCommandPool,
-        .destroyFence = destroyFence,
-        .freeCommandBuffers = freeCommandBuffers,
-        .freeMemory = freeMemory,
-        .getFenceStatus = getFenceStatus,
-        .resetFences = resetFences,
-        .waitForFences = waitForFences,
     };
 
     self.* = .{
@@ -79,39 +73,14 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void
     allocator.destroy(self);
 }
 
-// Fence functions ===================================================================================================================================
+pub fn createBuffer(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.BufferCreateInfo) VkError!*base.Buffer {
+    const buffer = try SoftBuffer.create(interface, allocator, info);
+    return &buffer.interface;
+}
 
 pub fn createFence(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.FenceCreateInfo) VkError!*base.Fence {
     const fence = try SoftFence.create(interface, allocator, info);
     return &fence.interface;
-}
-
-pub fn destroyFence(_: *Interface, allocator: std.mem.Allocator, fence: *base.Fence) VkError!void {
-    fence.destroy(allocator);
-}
-
-pub fn getFenceStatus(_: *Interface, fence: *base.Fence) VkError!void {
-    try fence.getStatus();
-}
-
-pub fn resetFences(_: *Interface, fences: []*base.Fence) VkError!void {
-    for (fences) |fence| {
-        try fence.reset();
-    }
-}
-
-pub fn waitForFences(_: *Interface, fences: []*base.Fence, waitForAll: bool, timeout: u64) VkError!void {
-    for (fences) |fence| {
-        try fence.wait(timeout);
-        if (!waitForAll) return;
-    }
-}
-
-// Command Pool functions ============================================================================================================================
-
-pub fn allocateCommandBuffers(_: *Interface, info: *const vk.CommandBufferAllocateInfo) VkError![]*Dispatchable(base.CommandBuffer) {
-    const pool = try NonDispatchable(base.CommandPool).fromHandleObject(info.command_pool);
-    return pool.allocateCommandBuffers(info);
 }
 
 pub fn createCommandPool(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.CommandPoolCreateInfo) VkError!*base.CommandPool {
@@ -119,22 +88,8 @@ pub fn createCommandPool(interface: *Interface, allocator: std.mem.Allocator, in
     return &pool.interface;
 }
 
-pub fn destroyCommandPool(_: *Interface, allocator: std.mem.Allocator, pool: *base.CommandPool) VkError!void {
-    pool.destroy(allocator);
-}
-
-pub fn freeCommandBuffers(_: *Interface, pool: *base.CommandPool, cmds: []*Dispatchable(base.CommandBuffer)) VkError!void {
-    try pool.freeCommandBuffers(cmds);
-}
-
-// Memory functions ==================================================================================================================================
-
 pub fn allocateMemory(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.MemoryAllocateInfo) VkError!*base.DeviceMemory {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     const device_memory = try SoftDeviceMemory.create(self, allocator, info.allocation_size, info.memory_type_index);
     return &device_memory.interface;
-}
-
-pub fn freeMemory(_: *Interface, allocator: std.mem.Allocator, device_memory: *base.DeviceMemory) VkError!void {
-    device_memory.destroy(allocator);
 }

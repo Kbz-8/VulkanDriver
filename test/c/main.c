@@ -52,6 +52,8 @@ int main(void)
 	VkDevice device = kvfCreateDevice(physical_device, NULL, 0, NULL);
 	volkLoadDevice(device);
 
+	VkBuffer buffer = kvfCreateBuffer(device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 256);
+
 	VkQueue queue = kvfGetDeviceQueue(device, KVF_GRAPHICS_QUEUE);
 	VkFence fence = kvfCreateFence(device);
 	VkCommandBuffer cmd = kvfCreateCommandBuffer(device);
@@ -65,6 +67,7 @@ int main(void)
 	kvfWaitForFence(device, fence);
 
 	kvfDestroyFence(device, fence);
+	kvfDestroyBuffer(device, buffer);
 
 	kvfDestroyDevice(device);
 	kvfDestroyInstance(instance);

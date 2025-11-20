@@ -24,6 +24,11 @@ pub fn Dispatchable(comptime T: type) type {
             return self;
         }
 
+        pub inline fn intrusiveDestroy(self: *Self, allocator: std.mem.Allocator) void {
+            self.object.destroy(allocator);
+            allocator.destroy(self);
+        }
+
         pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
             allocator.destroy(self);
         }
@@ -51,6 +56,10 @@ pub fn Dispatchable(comptime T: type) type {
         pub inline fn fromHandleObject(handle: anytype) VkError!*T {
             const dispatchable_handle = try Self.fromHandle(handle);
             return dispatchable_handle.object;
+        }
+
+        pub inline fn checkHandleValidity(handle: anytype) VkError!void {
+            _ = try Self.fromHandle(handle);
         }
     };
 }

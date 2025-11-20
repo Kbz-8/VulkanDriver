@@ -1,6 +1,7 @@
 const std = @import("std");
 const vk = @import("vulkan");
 
+pub const commands = @import("commands.zig");
 pub const lib_vulkan = @import("lib_vulkan.zig");
 pub const logger = @import("logger.zig");
 
@@ -14,6 +15,7 @@ pub const Device = @import("Device.zig");
 pub const PhysicalDevice = @import("PhysicalDevice.zig");
 pub const Queue = @import("Queue.zig");
 
+pub const Buffer = @import("Buffer.zig");
 pub const CommandBuffer = @import("CommandBuffer.zig");
 pub const CommandPool = @import("CommandPool.zig");
 pub const DeviceMemory = @import("DeviceMemory.zig");
