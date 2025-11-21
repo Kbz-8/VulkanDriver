@@ -12,6 +12,8 @@ interface: Interface,
 mutex: std.Thread.Mutex,
 condition: std.Thread.Condition,
 is_signaled: bool,
+/// Used by impl queues to know when the fence should be signaled
+concurrent_submits_count: std.atomic.Value(usize),
 
 pub fn create(device: *Device, allocator: std.mem.Allocator, info: *const vk.FenceCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
@@ -32,6 +34,7 @@ pub fn create(device: *Device, allocator: std.mem.Allocator, info: *const vk.Fen
         .mutex = std.Thread.Mutex{},
         .condition = std.Thread.Condition{},
         .is_signaled = info.flags.signaled_bit,
+        .concurrent_submits_count = std.atomic.Value(usize).init(0),
     };
     return self;
 }

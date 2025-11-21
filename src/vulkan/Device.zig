@@ -85,7 +85,9 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) VkError!void {
 }
 
 pub inline fn createBuffer(self: *Self, allocator: std.mem.Allocator, info: *const vk.BufferCreateInfo) VkError!*Buffer {
-    return self.dispatch_table.createBuffer(self, allocator, info);
+    const buffer = try self.dispatch_table.createBuffer(self, allocator, info);
+    std.debug.assert(buffer.allowed_memory_types != 0);
+    return buffer;
 }
 
 pub inline fn createFence(self: *Self, allocator: std.mem.Allocator, info: *const vk.FenceCreateInfo) VkError!*Fence {

@@ -4,17 +4,32 @@ const vk = @import("vulkan");
 const Buffer = @import("Buffer.zig");
 
 pub const CommandType = enum {
+    BindPipeline,
     BindVertexBuffer,
+    CopyBuffer,
     Draw,
     DrawIndexed,
-    DrawIndirect,
     DrawIndexedIndirect,
-    BindPipeline,
+    DrawIndirect,
+    FillBuffer,
+};
+
+pub const CommandCopyBuffer = struct {
+    src: *Buffer,
+    dst: *Buffer,
+    regions: []*const vk.BufferCopy,
+};
+
+pub const CommandFillBuffer = struct {
+    buffer: *Buffer,
+    offset: vk.DeviceSize,
+    size: vk.DeviceSize,
+    data: u32,
 };
 
 pub const CommandBindVertexBuffer = struct {
-    buffers: std.ArrayList(Buffer),
-    offsets: std.ArrayList(vk.DeviceSize),
+    buffers: []*const Buffer,
+    offsets: []vk.DeviceSize,
     first_binding: u32,
 };
 
@@ -52,10 +67,12 @@ pub const CommandBindPipeline = struct {
 };
 
 pub const Command = union(CommandType) {
+    BindPipeline: CommandBindPipeline,
     BindVertexBuffer: CommandBindVertexBuffer,
+    CopyBuffer: CommandCopyBuffer,
     Draw: CommandDraw,
     DrawIndexed: CommandDrawIndexed,
-    DrawIndirect: CommandDrawIndirect,
     DrawIndexedIndirect: CommandDrawIndexedIndirect,
-    BindPipeline: CommandBindPipeline,
+    DrawIndirect: CommandDrawIndirect,
+    FillBuffer: CommandFillBuffer,
 };

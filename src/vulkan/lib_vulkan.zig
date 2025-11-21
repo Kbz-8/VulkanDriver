@@ -301,6 +301,8 @@ pub export fn strollQueueBindSparse(p_queue: vk.Queue, count: u32, info: [*]vk.B
 }
 
 pub export fn strollQueueSubmit(p_queue: vk.Queue, count: u32, info: [*]const vk.SubmitInfo, p_fence: vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
+    if (count == 0) return .success;
+
     const queue = Dispatchable(Queue).fromHandleObject(p_queue) catch |err| return toVkResult(err);
     const fence = if (p_fence != .null_handle) NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err) else null;
     queue.submit(info[0..count], fence) catch |err| return toVkResult(err);

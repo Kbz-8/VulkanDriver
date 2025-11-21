@@ -1,10 +1,18 @@
 const std = @import("std");
 const vk = @import("vulkan");
 
-const VkError = @import("error_set.zig").VkError;
-const CommandPool = @import("CommandPool.zig");
-const Device = @import("Device.zig");
+const cmd = @import("commands.zig");
+
 const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
+const VkError = @import("error_set.zig").VkError;
+const VulkanAllocator = @import("VulkanAllocator.zig");
+
+const Device = @import("Device.zig");
+
+const Buffer = @import("Buffer.zig");
+const CommandPool = @import("CommandPool.zig");
+
+const COMMAND_BUFFER_BASE_CAPACITY = 256;
 
 const State = enum {
     Initial,
@@ -21,6 +29,9 @@ owner: *Device,
 pool: *CommandPool,
 state: State,
 begin_info: ?vk.CommandBufferBeginInfo,
+host_allocator: VulkanAllocator,
+commands: std.ArrayList(cmd.Command),
+state_mutex: std.Thread.Mutex,
 
 vtable: *const VTable,
 dispatch_table: *const DispatchTable,
@@ -28,6 +39,7 @@ dispatch_table: *const DispatchTable,
 pub const DispatchTable = struct {
     begin: *const fn (*Self, *const vk.CommandBufferBeginInfo) VkError!void,
     end: *const fn (*Self) VkError!void,
+    fillBuffer: *const fn (*Self, *Buffer, vk.DeviceSize, vk.DeviceSize, u32) VkError!void,
     reset: *const fn (*Self, vk.CommandBufferResetFlags) VkError!void,
 };
 
@@ -36,12 +48,14 @@ pub const VTable = struct {
 };
 
 pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.CommandBufferAllocateInfo) VkError!Self {
-    _ = allocator;
     return .{
         .owner = device,
         .pool = try NonDispatchable(CommandPool).fromHandleObject(info.command_pool),
         .state = .Initial,
         .begin_info = null,
+        .host_allocator = VulkanAllocator.from(allocator).clone(),
+        .commands = std.ArrayList(cmd.Command).initCapacity(allocator, COMMAND_BUFFER_BASE_CAPACITY) catch return VkError.OutOfHostMemory,
+        .state_mutex = .{},
         .vtable = undefined,
         .dispatch_table = undefined,
     };
@@ -51,10 +65,13 @@ inline fn transitionState(self: *Self, target: State, from_allowed: []const Stat
     if (!std.EnumSet(State).initMany(from_allowed).contains(self.state)) {
         return error.NotAllowed;
     }
+    self.state_mutex.lock();
+    defer self.state_mutex.unlock();
     self.state = target;
 }
 
 pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
+    self.commands.deinit(allocator);
     self.vtable.destroy(self, allocator);
 }
 
@@ -88,4 +105,17 @@ pub inline fn submit(self: *Self) VkError!void {
         }
     }
     self.transitionState(.Pending, &.{ .Pending, .Executable }) catch return VkError.ValidationFailed;
+}
+
+// Commands ====================================================================================================
+
+pub inline fn fillBuffer(self: *Self, buffer: *Buffer, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) VkError!void {
+    const allocator = self.host_allocator.allocator();
+    self.commands.append(allocator, .{ .FillBuffer = .{
+        .buffer = buffer,
+        .offset = offset,
+        .size = size,
+        .data = data,
+    } }) catch return VkError.OutOfHostMemory;
+    try self.dispatch_table.fillBuffer(self, buffer, offset, size, data);
 }

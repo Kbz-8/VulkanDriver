@@ -23,6 +23,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
     interface.dispatch_table = &.{
         .begin = begin,
         .end = end,
+        .fillBuffer = fillBuffer,
         .reset = reset,
     };
 
@@ -38,15 +39,29 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 }
 
 pub fn begin(interface: *Interface, info: *const vk.CommandBufferBeginInfo) VkError!void {
+    // No-op
     _ = interface;
     _ = info;
 }
 
 pub fn end(interface: *Interface) VkError!void {
+    // No-op
     _ = interface;
 }
 
 pub fn reset(interface: *Interface, flags: vk.CommandBufferResetFlags) VkError!void {
+    // No-op
     _ = interface;
     _ = flags;
+}
+
+// Commands ====================================================================================================
+
+pub fn fillBuffer(interface: *Interface, buffer: *base.Buffer, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) VkError!void {
+    // No-op
+    _ = interface;
+    _ = buffer;
+    _ = offset;
+    _ = size;
+    _ = data;
 }

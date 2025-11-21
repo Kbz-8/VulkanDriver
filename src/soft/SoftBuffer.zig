@@ -2,6 +2,8 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 
+const lib = @import("lib.zig");
+
 const VkError = base.VkError;
 const Device = base.Device;
 
@@ -21,6 +23,8 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .getMemoryRequirements = getMemoryRequirements,
     };
 
+    interface.allowed_memory_types = lib.MEMORY_TYPE_GENERIC_BIT;
+
     self.* = .{
         .interface = interface,
     };
@@ -33,6 +37,14 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 }
 
 pub fn getMemoryRequirements(interface: *Interface, requirements: *vk.MemoryRequirements) void {
-    _ = interface;
-    _ = requirements;
+    requirements.alignment = lib.MEMORY_REQUIREMENTS_ALIGNMENT;
+    if (interface.usage.uniform_texel_buffer_bit or interface.usage.uniform_texel_buffer_bit) {
+        requirements.alignment = @max(requirements.alignment, lib.MIN_TEXEL_BUFFER_ALIGNMENT);
+    }
+    if (interface.usage.storage_buffer_bit) {
+        requirements.alignment = @max(requirements.alignment, lib.MIN_STORAGE_BUFFER_ALIGNMENT);
+    }
+    if (interface.usage.uniform_buffer_bit) {
+        requirements.alignment = @max(requirements.alignment, lib.MIN_UNIFORM_BUFFER_ALIGNMENT);
+    }
 }
