@@ -13,7 +13,7 @@ size: vk.DeviceSize,
 offset: vk.DeviceSize,
 usage: vk.BufferUsageFlags,
 memory: ?*DeviceMemory,
-allowed_memory_types: u32,
+allowed_memory_types: std.bit_set.IntegerBitSet(32),
 
 vtable: *const VTable,
 
@@ -30,7 +30,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Buffe
         .offset = 0,
         .usage = info.usage,
         .memory = null,
-        .allowed_memory_types = 0,
+        .allowed_memory_types = std.bit_set.IntegerBitSet(32).initFull(),
         .vtable = undefined,
     };
 }
@@ -40,7 +40,7 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
 }
 
 pub inline fn bindMemory(self: *Self, memory: *DeviceMemory, offset: vk.DeviceSize) VkError!void {
-    if (offset >= self.size or self.allowed_memory_types & memory.memory_type_index == 0) {
+    if (offset >= self.size or !self.allowed_memory_types.isSet(memory.memory_type_index)) {
         return VkError.ValidationFailed;
     }
     self.memory = memory;
@@ -49,6 +49,6 @@ pub inline fn bindMemory(self: *Self, memory: *DeviceMemory, offset: vk.DeviceSi
 
 pub inline fn getMemoryRequirements(self: *Self, requirements: *vk.MemoryRequirements) void {
     requirements.size = self.size;
-    requirements.memory_type_bits = self.allowed_memory_types;
+    requirements.memory_type_bits = self.allowed_memory_types.mask;
     self.vtable.getMemoryRequirements(self, requirements);
 }

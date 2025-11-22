@@ -80,10 +80,10 @@ pub fn releasePhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError
 pub fn requestPhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError!void {
     try self.vtable.requestPhysicalDevices(self, allocator);
     if (self.physical_devices.items.len == 0) {
-        std.log.scoped(.vkCreateInstance).info("No VkPhysicalDevice found", .{});
+        std.log.scoped(.vkCreateInstance).err("No VkPhysicalDevice found", .{});
         return;
     }
     for (self.physical_devices.items) |physical_device| {
-        std.log.scoped(.vkCreateInstance).info("Found VkPhysicalDevice named {s}", .{physical_device.object.props.device_name});
+        std.log.scoped(.vkCreateInstance).debug("Found VkPhysicalDevice named {s}", .{physical_device.object.props.device_name});
     }
 }

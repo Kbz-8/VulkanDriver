@@ -25,7 +25,7 @@ pub const DRIVER_VERSION = vk.makeApiVersion(0, 0, 0, 1);
 pub const DEVICE_ID = 0x600DCAFE;
 
 /// Generic system memory.
-pub const MEMORY_TYPE_GENERIC_BIT = 0x1;
+pub const MEMORY_TYPE_GENERIC_BIT = 0;
 
 /// 16 bytes for 128-bit vector types.
 pub const MEMORY_REQUIREMENTS_ALIGNMENT = 16;

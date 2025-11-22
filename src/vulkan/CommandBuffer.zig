@@ -110,11 +110,17 @@ pub inline fn submit(self: *Self) VkError!void {
 // Commands ====================================================================================================
 
 pub inline fn fillBuffer(self: *Self, buffer: *Buffer, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) VkError!void {
+    if (offset >= buffer.size) return VkError.ValidationFailed;
+    if (size != vk.WHOLE_SIZE and (size == 0 or size > offset + buffer.size)) return VkError.ValidationFailed;
+    if ((size != vk.WHOLE_SIZE and @mod(size, 4) != 0) or @mod(offset, 4) != 0) return VkError.ValidationFailed;
+    if (!buffer.usage.transfer_dst_bit) return VkError.ValidationFailed;
+    if (buffer.memory == null) return VkError.ValidationFailed;
+
     const allocator = self.host_allocator.allocator();
     self.commands.append(allocator, .{ .FillBuffer = .{
         .buffer = buffer,
         .offset = offset,
-        .size = size,
+        .size = if (size == vk.WHOLE_SIZE) buffer.size else size,
         .data = data,
     } }) catch return VkError.OutOfHostMemory;
     try self.dispatch_table.fillBuffer(self, buffer, offset, size, data);

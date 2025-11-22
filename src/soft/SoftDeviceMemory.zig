@@ -25,13 +25,15 @@ pub fn create(device: *SoftDevice, allocator: std.mem.Allocator, size: vk.Device
 
     self.* = .{
         .interface = interface,
-        .data = device.device_allocator.allocator().alignedAlloc(u8, std.mem.Alignment.@"16", size) catch return VkError.OutOfDeviceMemory,
+        .data = device.device_allocator.allocator().alloc(u8, size) catch return VkError.OutOfDeviceMemory,
     };
     return self;
 }
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", interface.owner));
+    soft_device.device_allocator.allocator().free(self.data);
     allocator.destroy(self);
 }
 

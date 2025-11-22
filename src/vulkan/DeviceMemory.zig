@@ -7,7 +7,7 @@ const Device = @import("Device.zig");
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .device_memory;
 
-owner: *const Device,
+owner: *Device,
 size: vk.DeviceSize,
 memory_type_index: u32,
 is_mapped: bool,
@@ -20,7 +20,7 @@ pub const VTable = struct {
     unmap: *const fn (*Self) void,
 };
 
-pub fn init(device: *const Device, size: vk.DeviceSize, memory_type_index: u32) VkError!Self {
+pub fn init(device: *Device, size: vk.DeviceSize, memory_type_index: u32) VkError!Self {
     return .{
         .owner = device,
         .size = size,

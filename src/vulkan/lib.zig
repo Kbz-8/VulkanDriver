@@ -40,6 +40,7 @@ pub const LogVerboseLevel = enum {
     None,
     Standard,
     High,
+    TooMuch,
 };
 
 pub inline fn getLogVerboseLevel() LogVerboseLevel {
@@ -49,6 +50,8 @@ pub inline fn getLogVerboseLevel() LogVerboseLevel {
         .None
     else if (std.mem.eql(u8, level, "all"))
         .High
+    else if (std.mem.eql(u8, level, "stupid"))
+        .TooMuch
     else
         .Standard;
 }

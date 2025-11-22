@@ -62,7 +62,7 @@ pub const SubmitInfo = struct {
 };
 
 pub fn init(allocator: std.mem.Allocator, device: *Device, index: u32, family_index: u32, flags: vk.DeviceQueueCreateFlags) VkError!Self {
-    std.log.scoped(.vkCreateDevice).info("Creating device queue with family index {d} and index {d}", .{ family_index, index });
+    std.log.scoped(.vkCreateDevice).debug("Creating device queue with family index {d} and index {d}", .{ family_index, index });
     return .{
         .owner = device,
         .family_index = family_index,

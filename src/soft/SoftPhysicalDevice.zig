@@ -36,6 +36,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
     interface.props.device_type = .cpu;
 
     interface.props.limits.max_bound_descriptor_sets = 1024; // tmp
+    interface.props.limits.max_memory_allocation_count = 1024;
 
     interface.mem_props.memory_type_count = 1;
     interface.mem_props.memory_types[0] = .{

@@ -52,7 +52,16 @@ int main(void)
 	VkDevice device = kvfCreateDevice(physical_device, NULL, 0, NULL);
 	volkLoadDevice(device);
 
-	VkBuffer buffer = kvfCreateBuffer(device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 256);
+	VkBuffer buffer = kvfCreateBuffer(device, VK_BUFFER_USAGE_TRANSFER_DST_BIT, 256);
+
+	VkDeviceMemory memory = VK_NULL_HANDLE;
+	VkMemoryAllocateInfo alloc_info = {0};
+	alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	alloc_info.allocationSize = 256;
+	alloc_info.memoryTypeIndex = 0;
+	kvfCheckVk(vkAllocateMemory(device, &alloc_info, NULL, &memory));
+
+	kvfCheckVk(vkBindBufferMemory(device, buffer, memory, 0));
 
 	VkQueue queue = kvfGetDeviceQueue(device, KVF_GRAPHICS_QUEUE);
 	VkFence fence = kvfCreateFence(device);
@@ -61,13 +70,24 @@ int main(void)
 	kvfCheckVk(vkResetCommandBuffer(cmd, 0));
 
 	kvfBeginCommandBuffer(cmd, 0);
+	{
+		vkCmdFillBuffer(cmd, buffer, 0, VK_WHOLE_SIZE, 0x12ABCDEF);
+	}
 	kvfEndCommandBuffer(cmd);
 
 	kvfSubmitCommandBuffer(device, cmd, KVF_GRAPHICS_QUEUE, VK_NULL_HANDLE, VK_NULL_HANDLE, fence, NULL);
 	kvfWaitForFence(device, fence);
 
+	uint32_t* map = NULL;
+	kvfCheckVk(vkMapMemory(device, memory, 0, VK_WHOLE_SIZE, 0, (void**)&map));
+	for(size_t i = 0; i < 64; i++)
+		printf("0x%X%s", map[i], (i + 1 == 64 ? "" : " - "));
+	puts("");
+	vkUnmapMemory(device, memory);
+
 	kvfDestroyFence(device, fence);
 	kvfDestroyBuffer(device, buffer);
+	vkFreeMemory(device, memory, NULL);
 
 	kvfDestroyDevice(device);
 	kvfDestroyInstance(instance);

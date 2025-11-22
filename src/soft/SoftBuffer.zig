@@ -23,8 +23,6 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .getMemoryRequirements = getMemoryRequirements,
     };
 
-    interface.allowed_memory_types = lib.MEMORY_TYPE_GENERIC_BIT;
-
     self.* = .{
         .interface = interface,
     };

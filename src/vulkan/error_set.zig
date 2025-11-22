@@ -1,3 +1,4 @@
+const std = @import("std");
 const vk = @import("vulkan");
 
 pub const VkError = error{
@@ -51,7 +52,12 @@ pub const VkError = error{
     NotEnoughSpaceKhr,
 };
 
+pub inline fn errorLogger(err: VkError) void {
+    std.log.scoped(.errorLogger).err("Error logger catched a '{s}'", .{@errorName(err)});
+}
+
 pub inline fn toVkResult(err: VkError) vk.Result {
+    errorLogger(err);
     return switch (err) {
         VkError.NotReady => .not_ready,
         VkError.Timeout => .timeout,
