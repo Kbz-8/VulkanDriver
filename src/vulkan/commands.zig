@@ -17,7 +17,7 @@ pub const CommandType = enum {
 pub const CommandCopyBuffer = struct {
     src: *Buffer,
     dst: *Buffer,
-    regions: []*const vk.BufferCopy,
+    regions: []const vk.BufferCopy,
 };
 
 pub const CommandFillBuffer = struct {

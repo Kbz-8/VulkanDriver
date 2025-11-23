@@ -14,6 +14,7 @@ const CommandBuffer = @import("CommandBuffer.zig");
 const CommandPool = @import("CommandPool.zig");
 const DeviceMemory = @import("DeviceMemory.zig");
 const Fence = @import("Fence.zig");
+const Image = @import("Image.zig");
 
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .device;
@@ -35,6 +36,7 @@ pub const DispatchTable = struct {
     createBuffer: *const fn (*Self, std.mem.Allocator, *const vk.BufferCreateInfo) VkError!*Buffer,
     createCommandPool: *const fn (*Self, std.mem.Allocator, *const vk.CommandPoolCreateInfo) VkError!*CommandPool,
     createFence: *const fn (*Self, std.mem.Allocator, *const vk.FenceCreateInfo) VkError!*Fence,
+    createImage: *const fn (*Self, std.mem.Allocator, *const vk.ImageCreateInfo) VkError!*Image,
     destroy: *const fn (*Self, std.mem.Allocator) VkError!void,
 };
 
@@ -84,6 +86,10 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) VkError!void {
     try self.dispatch_table.destroy(self, allocator);
 }
 
+pub inline fn allocateMemory(self: *Self, allocator: std.mem.Allocator, info: *const vk.MemoryAllocateInfo) VkError!*DeviceMemory {
+    return self.dispatch_table.allocateMemory(self, allocator, info);
+}
+
 pub inline fn createBuffer(self: *Self, allocator: std.mem.Allocator, info: *const vk.BufferCreateInfo) VkError!*Buffer {
     return self.dispatch_table.createBuffer(self, allocator, info);
 }
@@ -96,6 +102,6 @@ pub inline fn createCommandPool(self: *Self, allocator: std.mem.Allocator, info:
     return self.dispatch_table.createCommandPool(self, allocator, info);
 }
 
-pub inline fn allocateMemory(self: *Self, allocator: std.mem.Allocator, info: *const vk.MemoryAllocateInfo) VkError!*DeviceMemory {
-    return self.dispatch_table.allocateMemory(self, allocator, info);
+pub inline fn createImage(self: *Self, allocator: std.mem.Allocator, info: *const vk.ImageCreateInfo) VkError!*Image {
+    return self.dispatch_table.createImage(self, allocator, info);
 }

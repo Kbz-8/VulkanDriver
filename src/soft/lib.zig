@@ -14,6 +14,7 @@ pub const SoftCommandBuffer = @import("SoftCommandBuffer.zig");
 pub const SoftCommandPool = @import("SoftCommandPool.zig");
 pub const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
 pub const SoftFence = @import("SoftFence.zig");
+pub const SoftImage = @import("SoftImage.zig");
 
 pub const Instance = SoftInstance;
 

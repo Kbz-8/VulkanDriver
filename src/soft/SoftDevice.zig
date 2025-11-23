@@ -11,10 +11,9 @@ const SoftQueue = @import("SoftQueue.zig");
 const SoftBuffer = @import("SoftBuffer.zig");
 const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
 const SoftFence = @import("SoftFence.zig");
+const SoftImage = @import("SoftImage.zig");
 
 const VkError = base.VkError;
-const Dispatchable = base.Dispatchable;
-const NonDispatchable = base.NonDispatchable;
 
 const Self = @This();
 pub const Interface = base.Device;
@@ -41,6 +40,7 @@ pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocato
         .createBuffer = createBuffer,
         .createCommandPool = createCommandPool,
         .createFence = createFence,
+        .createImage = createImage,
         .destroy = destroy,
     };
 
@@ -73,6 +73,12 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void
     allocator.destroy(self);
 }
 
+pub fn allocateMemory(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.MemoryAllocateInfo) VkError!*base.DeviceMemory {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const device_memory = try SoftDeviceMemory.create(self, allocator, info.allocation_size, info.memory_type_index);
+    return &device_memory.interface;
+}
+
 pub fn createBuffer(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.BufferCreateInfo) VkError!*base.Buffer {
     const buffer = try SoftBuffer.create(interface, allocator, info);
     return &buffer.interface;
@@ -88,8 +94,7 @@ pub fn createCommandPool(interface: *Interface, allocator: std.mem.Allocator, in
     return &pool.interface;
 }
 
-pub fn allocateMemory(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.MemoryAllocateInfo) VkError!*base.DeviceMemory {
-    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    const device_memory = try SoftDeviceMemory.create(self, allocator, info.allocation_size, info.memory_type_index);
-    return &device_memory.interface;
+pub fn createImage(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.ImageCreateInfo) VkError!*base.Image {
+    const image = try SoftImage.create(interface, allocator, info);
+    return &image.interface;
 }

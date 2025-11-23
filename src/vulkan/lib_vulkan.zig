@@ -27,6 +27,7 @@ const CommandBuffer = @import("CommandBuffer.zig");
 const CommandPool = @import("CommandPool.zig");
 const DeviceMemory = @import("DeviceMemory.zig");
 const Fence = @import("Fence.zig");
+const Image = @import("Image.zig");
 
 fn entryPointBeginLogTrace(comptime scope: @Type(.enum_literal)) void {
     std.log.scoped(scope).debug("Calling {s}...", .{@tagName(scope)});
@@ -43,6 +44,7 @@ fn entryPointNotFoundErrorLog(comptime scope: @Type(.enum_literal), name: []cons
 }
 
 fn functionMapEntryPoint(comptime name: []const u8) struct { []const u8, vk.PfnVoidFunction } {
+    // Mapping 'vkFnName' to 'strollFnName'
     const stroll_name = std.fmt.comptimePrint("stroll{s}", .{name[2..]});
 
     return if (std.meta.hasFn(@This(), name))
@@ -89,20 +91,24 @@ const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkAllocateMemory"),
     functionMapEntryPoint("vkBeginCommandBuffer"),
     functionMapEntryPoint("vkBindBufferMemory"),
+    functionMapEntryPoint("vkCmdCopyBuffer"),
     functionMapEntryPoint("vkCmdFillBuffer"),
     functionMapEntryPoint("vkCreateCommandPool"),
     functionMapEntryPoint("vkCreateBuffer"),
     functionMapEntryPoint("vkCreateFence"),
+    functionMapEntryPoint("vkCreateImage"),
     functionMapEntryPoint("vkDestroyBuffer"),
     functionMapEntryPoint("vkDestroyCommandPool"),
-    functionMapEntryPoint("vkDestroyFence"),
     functionMapEntryPoint("vkDestroyDevice"),
+    functionMapEntryPoint("vkDestroyFence"),
+    functionMapEntryPoint("vkDestroyImage"),
     functionMapEntryPoint("vkEndCommandBuffer"),
     functionMapEntryPoint("vkFreeCommandBuffers"),
     functionMapEntryPoint("vkFreeMemory"),
+    functionMapEntryPoint("vkGetBufferMemoryRequirements"),
     functionMapEntryPoint("vkGetDeviceQueue"),
     functionMapEntryPoint("vkGetFenceStatus"),
-    functionMapEntryPoint("vkGetBufferMemoryRequirements"),
+    functionMapEntryPoint("vkGetImageMemoryRequirements"),
     functionMapEntryPoint("vkMapMemory"),
     functionMapEntryPoint("vkUnmapMemory"),
     functionMapEntryPoint("vkResetCommandBuffer"),
@@ -302,7 +308,15 @@ pub export fn strollGetPhysicalDeviceFeatures(p_physical_device: vk.PhysicalDevi
     features.* = physical_device.features;
 }
 
-pub export fn strollGetPhysicalDeviceImageFormatProperties(p_physical_device: vk.PhysicalDevice, format: vk.Format, image_type: vk.ImageType, tiling: vk.ImageTiling, usage: vk.ImageUsageFlags, flags: vk.ImageCreateFlags, properties: *vk.ImageFormatProperties) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn strollGetPhysicalDeviceImageFormatProperties(
+    p_physical_device: vk.PhysicalDevice,
+    format: vk.Format,
+    image_type: vk.ImageType,
+    tiling: vk.ImageTiling,
+    usage: vk.ImageUsageFlags,
+    flags: vk.ImageCreateFlags,
+    properties: *vk.ImageFormatProperties,
+) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkGetPhysicalDeviceImageFormatProperties);
     defer entryPointEndLogTrace();
 
@@ -491,6 +505,21 @@ pub export fn strollCreateFence(p_device: vk.Device, p_info: ?*const vk.FenceCre
     return .success;
 }
 
+pub export fn strollCreateImage(p_device: vk.Device, p_info: ?*const vk.ImageCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_image: *vk.Image) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkCreateImage);
+    defer entryPointEndLogTrace();
+
+    const info = p_info orelse return .error_validation_failed;
+    if (info.s_type != .image_create_info) {
+        return .error_validation_failed;
+    }
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const image = device.createImage(allocator, info) catch |err| return toVkResult(err);
+    p_image.* = (NonDispatchable(Image).wrap(allocator, image) catch |err| return toVkResult(err)).toVkHandle(vk.Image);
+    return .success;
+}
+
 pub export fn strollDestroyBuffer(p_device: vk.Device, p_buffer: vk.Buffer, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkDestroyBuffer);
     defer entryPointEndLogTrace();
@@ -537,6 +566,17 @@ pub export fn strollDestroyFence(p_device: vk.Device, p_fence: vk.Fence, callbac
     non_dispatchable.intrusiveDestroy(allocator);
 }
 
+pub export fn strollDestroyImage(p_device: vk.Device, p_image: vk.Image, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkDestroyImage);
+    defer entryPointEndLogTrace();
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
+
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const non_dispatchable = NonDispatchable(Image).fromHandle(p_image) catch |err| return errorLogger(err);
+    non_dispatchable.intrusiveDestroy(allocator);
+}
+
 pub export fn strollFreeCommandBuffers(p_device: vk.Device, p_pool: vk.CommandPool, count: u32, p_cmds: [*]const vk.CommandBuffer) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkFreeCommandBuffers);
     defer entryPointEndLogTrace();
@@ -557,6 +597,16 @@ pub export fn strollFreeMemory(p_device: vk.Device, p_memory: vk.DeviceMemory, c
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const non_dispatchable = NonDispatchable(DeviceMemory).fromHandle(p_memory) catch |err| return errorLogger(err);
     non_dispatchable.intrusiveDestroy(allocator);
+}
+
+pub export fn strollGetBufferMemoryRequirements(p_device: vk.Device, p_buffer: vk.Buffer, requirements: *vk.MemoryRequirements) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetBufferMemoryRequirements);
+    defer entryPointEndLogTrace();
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
+
+    const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
+    buffer.getMemoryRequirements(requirements);
 }
 
 pub export fn strollGetDeviceProcAddr(p_device: vk.Device, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
@@ -605,14 +655,14 @@ pub export fn strollGetFenceStatus(p_device: vk.Device, p_fence: vk.Fence) callc
     return .success;
 }
 
-pub export fn strollGetBufferMemoryRequirements(p_device: vk.Device, p_buffer: vk.Buffer, requirements: *vk.MemoryRequirements) callconv(vk.vulkan_call_conv) void {
-    entryPointBeginLogTrace(.vkGetBufferMemoryRequirements);
+pub export fn strollGetImageMemoryRequirements(p_device: vk.Device, p_image: vk.Image, requirements: *vk.MemoryRequirements) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetImageMemoryRequirements);
     defer entryPointEndLogTrace();
 
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
 
-    const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
-    buffer.getMemoryRequirements(requirements);
+    const image = NonDispatchable(Image).fromHandleObject(p_image) catch |err| return errorLogger(err);
+    image.getMemoryRequirements(requirements);
 }
 
 pub export fn strollMapMemory(p_device: vk.Device, p_memory: vk.DeviceMemory, offset: vk.DeviceSize, size: vk.DeviceSize, _: vk.MemoryMapFlags, pp_data: *?*anyopaque) callconv(vk.vulkan_call_conv) vk.Result {
@@ -676,6 +726,16 @@ pub export fn strollBeginCommandBuffer(p_cmd: vk.CommandBuffer, p_info: ?*const 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return toVkResult(err);
     cmd.begin(info) catch |err| return toVkResult(err);
     return .success;
+}
+
+pub export fn strollCmdCopyBuffer(p_cmd: vk.CommandBuffer, p_src: vk.Buffer, p_dst: vk.Buffer, count: u32, regions: [*]const vk.BufferCopy) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdCopyBuffer);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+    const src = NonDispatchable(Buffer).fromHandleObject(p_src) catch |err| return errorLogger(err);
+    const dst = NonDispatchable(Buffer).fromHandleObject(p_dst) catch |err| return errorLogger(err);
+    cmd.copyBuffer(src, dst, regions[0..count]) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdFillBuffer(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) callconv(vk.vulkan_call_conv) void {

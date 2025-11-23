@@ -5,6 +5,7 @@ const zcc = @import("compile_commands");
 const ImplementationDesc = struct {
     name: []const u8,
     root_source_file: []const u8,
+    vulkan_version: std.SemanticVersion,
     custom: ?*const fn (*std.Build, *std.Build.Module) anyerror!void = null,
 };
 
@@ -12,6 +13,7 @@ const implementations = [_]ImplementationDesc{
     .{
         .name = "soft",
         .root_source_file = "src/soft/lib.zig",
+        .vulkan_version = .{ .major = 1, .minor = 0, .patch = 0 },
         .custom = customSoft,
     },
 };
@@ -29,6 +31,7 @@ pub fn build(b: *std.Build) !void {
 
     const zdt = b.dependency("zdt", .{}).module("zdt");
     const vulkan_headers = b.dependency("vulkan_headers", .{});
+    const vulkan_utility_libraries = b.dependency("vulkan_utility_libraries", .{});
 
     const vulkan = b.dependency("vulkan_zig", .{
         .registry = vulkan_headers.path("registry/vk.xml"),
@@ -37,6 +40,7 @@ pub fn build(b: *std.Build) !void {
     base_mod.addImport("zdt", zdt);
     base_mod.addImport("vulkan", vulkan);
     base_mod.addSystemIncludePath(vulkan_headers.path("include"));
+    base_mod.addSystemIncludePath(vulkan_utility_libraries.path("include"));
 
     for (implementations) |impl| {
         var targets = std.ArrayList(*std.Build.Step.Compile){};
@@ -64,6 +68,20 @@ pub fn build(b: *std.Build) !void {
             .linkage = .dynamic,
             .use_llvm = true, // Fixes some random bugs happenning with custom backend. Investigations needed
         });
+
+        const icd_file = b.addWriteFile(b.getInstallPath(.lib, b.fmt("vk_stroll_{s}.json", .{impl.name})), b.fmt(
+            \\{{
+            \\    "file_format_version": "1.0.1",
+            \\    "ICD": {{
+            \\        "library_path": "{s}",
+            \\        "api_version": "{}.{}.{}",
+            \\        "library_arch": "64",
+            \\        "is_portability_driver": false
+            \\    }}
+            \\}}
+        , .{ lib.out_lib_filename, impl.vulkan_version.major, impl.vulkan_version.minor, impl.vulkan_version.patch }));
+
+        lib.step.dependOn(&icd_file.step);
         const lib_install = b.addInstallArtifact(lib, .{});
 
         const lib_tests = b.addTest(.{ .root_module = lib_mod });

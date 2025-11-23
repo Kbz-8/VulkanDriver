@@ -89,7 +89,7 @@ fn taskRunner(self: *Self, info: Interface.SubmitInfo, p_fence: ?*base.Fence) vo
     loop: for (info.command_buffers.items) |command_buffer| {
         command_buffer.submit() catch continue :loop;
         for (command_buffer.commands.items) |command| {
-            executor.dispatch(&command);
+            executor.dispatch(&command) catch |err| base.errors.errorLoggerContext(err, "the software command dispatcher");
         }
     }
 

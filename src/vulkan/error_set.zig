@@ -56,6 +56,10 @@ pub inline fn errorLogger(err: VkError) void {
     std.log.scoped(.errorLogger).err("Error logger catched a '{s}'", .{@errorName(err)});
 }
 
+pub inline fn errorLoggerContext(err: VkError, context: []const u8) void {
+    std.log.scoped(.errorLogger).err("Error logger catched a '{s}' in {s}", .{ @errorName(err), context });
+}
+
 pub inline fn toVkResult(err: VkError) vk.Result {
     errorLogger(err);
     return switch (err) {

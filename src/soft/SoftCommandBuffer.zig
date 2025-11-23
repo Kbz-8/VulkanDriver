@@ -22,6 +22,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 
     interface.dispatch_table = &.{
         .begin = begin,
+        .copyBuffer = copyBuffer,
         .end = end,
         .fillBuffer = fillBuffer,
         .reset = reset,
@@ -64,4 +65,12 @@ pub fn fillBuffer(interface: *Interface, buffer: *base.Buffer, offset: vk.Device
     _ = offset;
     _ = size;
     _ = data;
+}
+
+pub fn copyBuffer(interface: *Interface, src: *base.Buffer, dst: *base.Buffer, regions: []const vk.BufferCopy) VkError!void {
+    // No-op
+    _ = interface;
+    _ = src;
+    _ = dst;
+    _ = regions;
 }

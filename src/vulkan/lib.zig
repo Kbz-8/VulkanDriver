@@ -4,10 +4,11 @@ const vk = @import("vulkan");
 pub const commands = @import("commands.zig");
 pub const lib_vulkan = @import("lib_vulkan.zig");
 pub const logger = @import("logger.zig");
+pub const errors = @import("error_set.zig");
 
 pub const Dispatchable = @import("Dispatchable.zig").Dispatchable;
 pub const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
-pub const VkError = @import("error_set.zig").VkError;
+pub const VkError = errors.VkError;
 pub const VulkanAllocator = @import("VulkanAllocator.zig");
 
 pub const Instance = @import("Instance.zig");
@@ -20,6 +21,7 @@ pub const CommandBuffer = @import("CommandBuffer.zig");
 pub const CommandPool = @import("CommandPool.zig");
 pub const DeviceMemory = @import("DeviceMemory.zig");
 pub const Fence = @import("Fence.zig");
+pub const Image = @import("Image.zig");
 
 pub const VULKAN_VENDOR_ID = @typeInfo(vk.VendorId).@"enum".fields[@typeInfo(vk.VendorId).@"enum".fields.len - 1].value + 1;
 

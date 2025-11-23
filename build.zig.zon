@@ -17,6 +17,10 @@
             .url = "git+https://github.com/catmeow72/vulkan-zig/#8961518db28f88d2cf09ea68e146923de2cfa7f0",
             .hash = "vulkan-0.0.0-r7Ytx6hBAwD8X_TN32qlkzul4riK6vFvjtK9fZfRvALg",
         },
+        .vulkan_utility_libraries = .{
+            .url = "git+https://github.com/KhronosGroup/Vulkan-Utility-Libraries.git#ba452bad58bb4d4c64d7fbd872bf69f70141510e",
+            .hash = "N-V-__8AAE42fwC1FFw26LNZ8AaSuGMdgG4vfYkfV_227sET",
+        },
         .zdt = .{
             .url = "git+https://github.com/FObersteiner/zdt/?ref=v0.8.1#8b551a0a3e5ae64a32b5bad0e6a93119787b43af",
             .hash = "zdt-0.8.1-xr0_vAxUDwCJRDh9pcAS_mdZBIsvcGTtN-K8JJSWY4I6",
@@ -32,8 +36,8 @@
             .lazy = true,
         },
         .kvf = .{
-            .url = "git+https://github.com/Kbz-8/KVF#f633db3070033db1a9358fd4b5cae7b35245ed9d",
-            .hash = "N-V-__8AAPaHAgCFo6mTsjpxuOdPZSpYtFZlDOlRXeu499mJ",
+            .url = "git+https://github.com/Kbz-8/KVF#98b845f876bea94f7bf1b9d30588cf617bf93452",
+            .hash = "N-V-__8AAEGKAgC2cGDnxmAIFKkaICxS_ogfVYWH83Re29zN",
             .lazy = true,
         },
     },
