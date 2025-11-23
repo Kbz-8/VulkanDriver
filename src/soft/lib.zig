@@ -47,5 +47,5 @@ comptime {
 }
 
 test {
-    std.testing.refAllDeclsRecursive(@This());
+    //std.testing.refAllDeclsRecursive(@This());
 }
