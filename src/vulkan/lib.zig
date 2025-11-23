@@ -1,3 +1,5 @@
+//! Here lies the documentation of the common internal API that backends need to implement
+
 const std = @import("std");
 const vk = @import("vulkan");
 
