@@ -4,3 +4,4 @@ zig-out/
 *.o
 .gdb_history
 *.json
+*.png

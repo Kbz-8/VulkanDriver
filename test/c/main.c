@@ -20,17 +20,33 @@
 #define KVF_NO_KHR
 #include <kvf.h>
 
-void CreateAndBindMemoryToBuffer(VkPhysicalDevice physical_device, VkDevice device, VkBuffer buffer, VkDeviceMemory* memory , VkDeviceSize size, VkMemoryPropertyFlags props)
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
+
+void CreateAndBindMemoryToBuffer(VkPhysicalDevice physical_device, VkDevice device, VkBuffer buffer, VkDeviceMemory* memory, VkMemoryPropertyFlags props)
 {
 	VkMemoryRequirements requirements;
 	vkGetBufferMemoryRequirements(device, buffer, &requirements);
 
 	VkMemoryAllocateInfo alloc_info = {0};
 	alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-	alloc_info.allocationSize = size;
+	alloc_info.allocationSize = requirements.size;
 	alloc_info.memoryTypeIndex = kvfFindMemoryType(physical_device, requirements.memoryTypeBits, props);
 	kvfCheckVk(vkAllocateMemory(device, &alloc_info, NULL, memory));
 	kvfCheckVk(vkBindBufferMemory(device, buffer, *memory, 0));
+}
+
+void CreateAndBindMemoryToImage(VkPhysicalDevice physical_device, VkDevice device, VkImage image, VkDeviceMemory* memory, VkMemoryPropertyFlags props)
+{
+	VkMemoryRequirements requirements;
+	vkGetImageMemoryRequirements(device, image, &requirements);
+
+	VkMemoryAllocateInfo alloc_info = {0};
+	alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	alloc_info.allocationSize = requirements.size;
+	alloc_info.memoryTypeIndex = kvfFindMemoryType(physical_device, requirements.memoryTypeBits, props);
+	kvfCheckVk(vkAllocateMemory(device, &alloc_info, NULL, memory));
+	kvfCheckVk(vkBindImageMemory(device, image, *memory, 0));
 }
 
 int main(void)
@@ -65,15 +81,9 @@ int main(void)
 	VkDevice device = kvfCreateDevice(physical_device, NULL, 0, NULL);
 	volkLoadDevice(device);
 
-	VkBuffer buffer = kvfCreateBuffer(device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 256);
+	VkImage image = kvfCreateImage(device, 256, 256, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_LINEAR, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, KVF_IMAGE_COLOR);
 	VkDeviceMemory memory;
-	CreateAndBindMemoryToBuffer(physical_device, device, buffer, &memory, 256, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-	VkBuffer buffer2 = kvfCreateBuffer(device, VK_BUFFER_USAGE_TRANSFER_DST_BIT, 256);
-	VkDeviceMemory memory2;
-	CreateAndBindMemoryToBuffer(physical_device, device, buffer2, &memory2, 256, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-
-	VkImage image = kvfCreateImage(device, 256, 256, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_LINEAR, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, KVF_IMAGE_COLOR);
+	CreateAndBindMemoryToImage(physical_device, device, image, &memory, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
 
 	VkQueue queue = kvfGetDeviceQueue(device, KVF_GRAPHICS_QUEUE);
 	VkFence fence = kvfCreateFence(device);
@@ -83,33 +93,32 @@ int main(void)
 
 	kvfBeginCommandBuffer(cmd, 0);
 	{
-		vkCmdFillBuffer(cmd, buffer, 0, VK_WHOLE_SIZE, 0x600DCAFE);
-
-		VkBufferCopy region = {0};
-		region.srcOffset = 0;
-		region.dstOffset = 0;
-		region.size = 256;
-		vkCmdCopyBuffer(cmd, buffer, buffer2, 1, &region);
+		VkClearColorValue color = {0};
+		color.uint32[0] = 0xFF;
+		color.uint32[1] = 0x00;
+		color.uint32[2] = 0x00;
+		color.uint32[3] = 0xFF;
+		VkImageSubresourceRange range = {0};
+		range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		range.levelCount = 1;
+		range.layerCount = 1;
+		vkCmdClearColorImage(cmd, image, VK_IMAGE_LAYOUT_GENERAL, &color, 1, &range);
 	}
 	kvfEndCommandBuffer(cmd);
 
 	kvfSubmitCommandBuffer(device, cmd, KVF_GRAPHICS_QUEUE, VK_NULL_HANDLE, VK_NULL_HANDLE, fence, NULL);
 	kvfWaitForFence(device, fence);
 
-	uint32_t* map = NULL;
-	kvfCheckVk(vkMapMemory(device, memory2, 0, VK_WHOLE_SIZE, 0, (void**)&map));
-	for(size_t i = 0; i < 64; i++)
-		printf("0x%X ", map[i]);
-	puts("");
-	vkUnmapMemory(device, memory2);
+	void* map = NULL;
+	kvfCheckVk(vkMapMemory(device, memory, 0, VK_WHOLE_SIZE, 0, &map));
+	if(!stbi_write_png("res.png", 256, 256, 4, map, 256 * 4))
+		fprintf(stderr, "Failed to write result image to file\n");
+	vkUnmapMemory(device, memory);
 
 	kvfDestroyFence(device, fence);
-	kvfDestroyBuffer(device, buffer);
-	vkFreeMemory(device, memory, NULL);
-	kvfDestroyBuffer(device, buffer2);
-	vkFreeMemory(device, memory2, NULL);
 
 	kvfDestroyImage(device, image);
+	vkFreeMemory(device, memory, NULL);
 
 	kvfDestroyDevice(device);
 	kvfDestroyInstance(instance);

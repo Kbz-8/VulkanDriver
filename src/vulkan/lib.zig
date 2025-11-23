@@ -2,6 +2,9 @@
 
 const std = @import("std");
 const vk = @import("vulkan");
+pub const vku = @cImport({
+    @cInclude("vulkan/utility/vk_format_utils.h");
+});
 
 pub const commands = @import("commands.zig");
 pub const lib_vulkan = @import("lib_vulkan.zig");

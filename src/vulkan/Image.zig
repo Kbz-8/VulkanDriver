@@ -1,8 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
-const vku = @cImport({
-    @cInclude("vulkan/utility/vk_format_utils.h");
-});
+const lib = @import("lib.zig");
 
 const VkError = @import("error_set.zig").VkError;
 const DeviceMemory = @import("DeviceMemory.zig");
@@ -55,17 +53,35 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
 }
 
 pub inline fn bindMemory(self: *Self, memory: *DeviceMemory, offset: vk.DeviceSize) VkError!void {
-    if (offset >= self.size or !self.allowed_memory_types.isSet(memory.memory_type_index)) {
+    const image_size = self.getTotalSize();
+    if (offset >= image_size or !self.allowed_memory_types.isSet(memory.memory_type_index)) {
         return VkError.ValidationFailed;
     }
     self.memory = memory;
-    self.offset = offset;
+    self.memory_offset = offset;
 }
 
 pub inline fn getMemoryRequirements(self: *Self, requirements: *vk.MemoryRequirements) void {
-    const pixel_size = vku.vkuFormatTexelBlockSize(@intCast(@intFromEnum(self.format)));
-
-    requirements.size = self.extent.width * self.extent.height * self.extent.depth * pixel_size;
+    const image_size = self.getTotalSize();
+    requirements.size = image_size;
     requirements.memory_type_bits = self.allowed_memory_types.mask;
     self.vtable.getMemoryRequirements(self, requirements);
+}
+
+pub inline fn getClearFormat(self: *Self) vk.Format {
+    return if (lib.vku.vkuFormatIsSINT(@intCast(@intFromEnum(self.format))))
+        .r32g32b32a32_sint
+    else if (lib.vku.vkuFormatIsUINT(@intCast(@intFromEnum(self.format))))
+        .r32g32b32a32_uint
+    else
+        .r32g32b32a32_sfloat;
+}
+
+pub inline fn getPixelSize(self: *Self) usize {
+    return lib.vku.vkuFormatTexelBlockSize(@intCast(@intFromEnum(self.format)));
+}
+
+pub inline fn getTotalSize(self: *Self) usize {
+    const pixel_size = self.getPixelSize();
+    return self.extent.width * self.extent.height * self.extent.depth * pixel_size;
 }

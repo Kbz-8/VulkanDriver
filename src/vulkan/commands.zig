@@ -2,11 +2,14 @@ const std = @import("std");
 const vk = @import("vulkan");
 
 const Buffer = @import("Buffer.zig");
+const Image = @import("Image.zig");
 
 pub const CommandType = enum {
     BindPipeline,
     BindVertexBuffer,
+    ClearColorImage,
     CopyBuffer,
+    CopyImage,
     Draw,
     DrawIndexed,
     DrawIndexedIndirect,
@@ -14,32 +17,36 @@ pub const CommandType = enum {
     FillBuffer,
 };
 
-pub const CommandCopyBuffer = struct {
-    src: *Buffer,
-    dst: *Buffer,
-    regions: []const vk.BufferCopy,
+pub const CommandBindPipeline = struct {
+    bind_point: vk.PipelineBindPoint,
 };
-
-pub const CommandFillBuffer = struct {
-    buffer: *Buffer,
-    offset: vk.DeviceSize,
-    size: vk.DeviceSize,
-    data: u32,
-};
-
 pub const CommandBindVertexBuffer = struct {
     buffers: []*const Buffer,
     offsets: []vk.DeviceSize,
     first_binding: u32,
 };
-
+pub const CommandClearColorImage = struct {
+    image: *Image,
+    layout: vk.ImageLayout,
+    clear_color: vk.ClearColorValue,
+    ranges: []const vk.ImageSubresourceRange,
+};
+pub const CommandCopyBuffer = struct {
+    src: *Buffer,
+    dst: *Buffer,
+    regions: []const vk.BufferCopy,
+};
+pub const CommandCopyImage = struct {
+    src: *Image,
+    dst: *Image,
+    regions: []const vk.ImageCopy,
+};
 pub const CommandDraw = struct {
     vertex_count: u32,
     instance_count: u32,
     first_vertex: u32,
     first_instance: u32,
 };
-
 pub const CommandDrawIndexed = struct {
     index_count: u32,
     instance_count: u32,
@@ -47,29 +54,31 @@ pub const CommandDrawIndexed = struct {
     vertex_offset: i32,
     first_instance: u32,
 };
-
-pub const CommandDrawIndirect = struct {
-    buffer: *Buffer,
-    offset: vk.DeviceSize,
-    count: u32,
-    stride: u32,
-};
-
 pub const CommandDrawIndexedIndirect = struct {
     buffer: *Buffer,
     offset: vk.DeviceSize,
     count: u32,
     stride: u32,
 };
-
-pub const CommandBindPipeline = struct {
-    bind_point: vk.PipelineBindPoint,
+pub const CommandDrawIndirect = struct {
+    buffer: *Buffer,
+    offset: vk.DeviceSize,
+    count: u32,
+    stride: u32,
+};
+pub const CommandFillBuffer = struct {
+    buffer: *Buffer,
+    offset: vk.DeviceSize,
+    size: vk.DeviceSize,
+    data: u32,
 };
 
 pub const Command = union(CommandType) {
     BindPipeline: CommandBindPipeline,
     BindVertexBuffer: CommandBindVertexBuffer,
+    ClearColorImage: CommandClearColorImage,
     CopyBuffer: CommandCopyBuffer,
+    CopyImage: CommandCopyImage,
     Draw: CommandDraw,
     DrawIndexed: CommandDrawIndexed,
     DrawIndexedIndirect: CommandDrawIndexedIndirect,

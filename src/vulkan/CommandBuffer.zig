@@ -11,6 +11,7 @@ const Device = @import("Device.zig");
 
 const Buffer = @import("Buffer.zig");
 const CommandPool = @import("CommandPool.zig");
+const Image = @import("Image.zig");
 
 const COMMAND_BUFFER_BASE_CAPACITY = 256;
 
@@ -38,7 +39,9 @@ dispatch_table: *const DispatchTable,
 
 pub const DispatchTable = struct {
     begin: *const fn (*Self, *const vk.CommandBufferBeginInfo) VkError!void,
+    clearColorImage: *const fn (*Self, *Image, vk.ImageLayout, *const vk.ClearColorValue, []const vk.ImageSubresourceRange) VkError!void,
     copyBuffer: *const fn (*Self, *Buffer, *Buffer, []const vk.BufferCopy) VkError!void,
+    copyImage: *const fn (*Self, *Image, *Image, []const vk.ImageCopy) VkError!void,
     end: *const fn (*Self) VkError!void,
     fillBuffer: *const fn (*Self, *Buffer, vk.DeviceSize, vk.DeviceSize, u32) VkError!void,
     reset: *const fn (*Self, vk.CommandBufferResetFlags) VkError!void,
@@ -54,7 +57,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Comma
         .pool = try NonDispatchable(CommandPool).fromHandleObject(info.command_pool),
         .state = .Initial,
         .begin_info = null,
-        .host_allocator = VulkanAllocator.from(allocator).clone(),
+        .host_allocator = VulkanAllocator.from(allocator).cloneWithScope(.object),
         .commands = std.ArrayList(cmd.Command).initCapacity(allocator, COMMAND_BUFFER_BASE_CAPACITY) catch return VkError.OutOfHostMemory,
         .state_mutex = .{},
         .vtable = undefined,
@@ -113,15 +116,48 @@ pub inline fn submit(self: *Self) VkError!void {
 
 fn cleanCommandList(self: *Self) void {
     const allocator = self.host_allocator.allocator();
-    _ = allocator;
     for (self.commands.items) |command| {
         switch (command) {
+            .ClearColorImage => |data| allocator.free(data.ranges),
+            .CopyBuffer => |data| allocator.free(data.regions),
+            .CopyImage => |data| allocator.free(data.regions),
             else => {},
         }
     }
 }
 
 // Commands ====================================================================================================
+
+pub inline fn clearColorImage(self: *Self, image: *Image, layout: vk.ImageLayout, color: *const vk.ClearColorValue, ranges: []const vk.ImageSubresourceRange) VkError!void {
+    const allocator = self.host_allocator.allocator();
+    self.commands.append(allocator, .{ .ClearColorImage = .{
+        .image = image,
+        .layout = layout,
+        .clear_color = color.*,
+        .ranges = allocator.dupe(vk.ImageSubresourceRange, ranges) catch return VkError.OutOfHostMemory,
+    } }) catch return VkError.OutOfHostMemory;
+    try self.dispatch_table.clearColorImage(self, image, layout, color, ranges);
+}
+
+pub inline fn copyBuffer(self: *Self, src: *Buffer, dst: *Buffer, regions: []const vk.BufferCopy) VkError!void {
+    const allocator = self.host_allocator.allocator();
+    self.commands.append(allocator, .{ .CopyBuffer = .{
+        .src = src,
+        .dst = dst,
+        .regions = allocator.dupe(vk.BufferCopy, regions) catch return VkError.OutOfHostMemory,
+    } }) catch return VkError.OutOfHostMemory;
+    try self.dispatch_table.copyBuffer(self, src, dst, regions);
+}
+
+pub inline fn copyImage(self: *Self, src: *Image, dst: *Image, regions: []const vk.ImageCopy) VkError!void {
+    const allocator = self.host_allocator.allocator();
+    self.commands.append(allocator, .{ .CopyImage = .{
+        .src = src,
+        .dst = dst,
+        .regions = allocator.dupe(vk.ImageCopy, regions) catch return VkError.OutOfHostMemory,
+    } }) catch return VkError.OutOfHostMemory;
+    try self.dispatch_table.copyImage(self, src, dst, regions);
+}
 
 pub inline fn fillBuffer(self: *Self, buffer: *Buffer, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) VkError!void {
     const allocator = self.host_allocator.allocator();
@@ -132,14 +168,4 @@ pub inline fn fillBuffer(self: *Self, buffer: *Buffer, offset: vk.DeviceSize, si
         .data = data,
     } }) catch return VkError.OutOfHostMemory;
     try self.dispatch_table.fillBuffer(self, buffer, offset, size, data);
-}
-
-pub inline fn copyBuffer(self: *Self, src: *Buffer, dst: *Buffer, regions: []const vk.BufferCopy) VkError!void {
-    const allocator = self.host_allocator.allocator();
-    self.commands.append(allocator, .{ .CopyBuffer = .{
-        .src = src,
-        .dst = dst,
-        .regions = regions,
-    } }) catch return VkError.OutOfHostMemory;
-    try self.dispatch_table.copyBuffer(self, src, dst, regions);
 }

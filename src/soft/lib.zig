@@ -29,7 +29,9 @@ pub const DEVICE_ID = 0x600DCAFE;
 pub const MEMORY_TYPE_GENERIC_BIT = 0;
 
 /// 16 bytes for 128-bit vector types.
-pub const MEMORY_REQUIREMENTS_ALIGNMENT = 16;
+pub const MEMORY_REQUIREMENTS_BUFFER_ALIGNMENT = 16;
+
+pub const MEMORY_REQUIREMENTS_IMAGE_ALIGNMENT = 256;
 
 /// Vulkan 1.2 requires buffer offset alignment to be at most 256.
 pub const MIN_TEXEL_BUFFER_ALIGNMENT = 256;

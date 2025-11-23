@@ -40,6 +40,10 @@
             .hash = "N-V-__8AAEGKAgC2cGDnxmAIFKkaICxS_ogfVYWH83Re29zN",
             .lazy = true,
         },
+        .stb = .{
+            .url = "git+https://github.com/nothings/stb#f1c79c02822848a9bed4315b12c8c8f3761e1296",
+            .hash = "N-V-__8AABQ7TgCnPlp8MP4YA8znrjd6E-ZjpF1rvrS8J_2I",
+        },
     },
 
     .paths = .{

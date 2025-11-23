@@ -18,6 +18,7 @@ comptime {
 const DebugStackElement = struct {
     log: [512]u8,
     indent_level: usize,
+    log_level: std.log.Level,
 };
 
 var indent_level: usize = 0;
@@ -73,9 +74,16 @@ pub fn log(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), 
     std.debug.lockStdErr();
     defer std.debug.unlockStdErr();
 
-    var buffer = std.mem.zeroes([512]u8);
     var stderr_file = std.fs.File.stderr();
-    var out_config = std.Io.tty.Config.detect(stderr_file);
+    var stdout_file = std.fs.File.stdout();
+
+    const file = switch (level) {
+        .info, .debug => stdout_file,
+        .warn, .err => stderr_file,
+    };
+
+    var buffer = std.mem.zeroes([512]u8);
+    var out_config = std.Io.tty.Config.detect(file);
     var writer = std.Io.Writer.fixed(&buffer);
 
     var timezone = zdt.Timezone.tzLocal(std.heap.page_allocator) catch zdt.Timezone.UTC;
@@ -111,12 +119,19 @@ pub fn log(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), 
         (debug_stack.addOne(std.heap.c_allocator) catch return).* = .{
             .log = buffer,
             .indent_level = indent_level,
+            .log_level = level,
         };
     } else {
         while (debug_stack.items.len != 0) {
-            const elem_buffer = debug_stack.orderedRemove(0).log;
-            _ = stderr_file.write(&elem_buffer) catch return;
+            const elem = debug_stack.orderedRemove(0);
+            switch (elem.log_level) {
+                .info, .debug => _ = stdout_file.write(&elem.log) catch {},
+                .warn, .err => _ = stderr_file.write(&elem.log) catch {},
+            }
         }
-        _ = stderr_file.write(&buffer) catch return;
+        switch (level) {
+            .info, .debug => _ = stdout_file.write(&buffer) catch {},
+            .warn, .err => _ = stderr_file.write(&buffer) catch {},
+        }
     }
 }

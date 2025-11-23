@@ -91,7 +91,10 @@ const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkAllocateMemory"),
     functionMapEntryPoint("vkBeginCommandBuffer"),
     functionMapEntryPoint("vkBindBufferMemory"),
+    functionMapEntryPoint("vkBindImageMemory"),
+    functionMapEntryPoint("vkCmdClearColorImage"),
     functionMapEntryPoint("vkCmdCopyBuffer"),
+    functionMapEntryPoint("vkCmdCopyImage"),
     functionMapEntryPoint("vkCmdFillBuffer"),
     functionMapEntryPoint("vkCreateCommandPool"),
     functionMapEntryPoint("vkCreateBuffer"),
@@ -458,6 +461,21 @@ pub export fn strollBindBufferMemory(p_device: vk.Device, p_buffer: vk.Buffer, p
     return .success;
 }
 
+pub export fn strollBindImageMemory(p_device: vk.Device, p_image: vk.Image, p_memory: vk.DeviceMemory, offset: vk.DeviceSize) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkBindImageMemory);
+    defer entryPointEndLogTrace();
+
+    std.log.scoped(.vkBindImageMemory).debug("Binding device memory 0x{X} to image 0x{X}", .{ @intFromEnum(p_memory), @intFromEnum(p_image) });
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
+
+    const image = NonDispatchable(Image).fromHandleObject(p_image) catch |err| return toVkResult(err);
+    const memory = NonDispatchable(DeviceMemory).fromHandleObject(p_memory) catch |err| return toVkResult(err);
+
+    image.bindMemory(memory, offset) catch |err| return toVkResult(err);
+    return .success;
+}
+
 pub export fn strollCreateBuffer(p_device: vk.Device, p_info: ?*const vk.BufferCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_buffer: *vk.Buffer) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkCreateBuffer);
     defer entryPointEndLogTrace();
@@ -728,6 +746,15 @@ pub export fn strollBeginCommandBuffer(p_cmd: vk.CommandBuffer, p_info: ?*const 
     return .success;
 }
 
+pub export fn strollCmdClearColorImage(p_cmd: vk.CommandBuffer, p_image: vk.Image, layout: vk.ImageLayout, color: *const vk.ClearColorValue, count: u32, ranges: [*]const vk.ImageSubresourceRange) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdCopyImage);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+    const image = NonDispatchable(Image).fromHandleObject(p_image) catch |err| return errorLogger(err);
+    cmd.clearColorImage(image, layout, color, ranges[0..count]) catch |err| return errorLogger(err);
+}
+
 pub export fn strollCmdCopyBuffer(p_cmd: vk.CommandBuffer, p_src: vk.Buffer, p_dst: vk.Buffer, count: u32, regions: [*]const vk.BufferCopy) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkCmdCopyBuffer);
     defer entryPointEndLogTrace();
@@ -736,6 +763,16 @@ pub export fn strollCmdCopyBuffer(p_cmd: vk.CommandBuffer, p_src: vk.Buffer, p_d
     const src = NonDispatchable(Buffer).fromHandleObject(p_src) catch |err| return errorLogger(err);
     const dst = NonDispatchable(Buffer).fromHandleObject(p_dst) catch |err| return errorLogger(err);
     cmd.copyBuffer(src, dst, regions[0..count]) catch |err| return errorLogger(err);
+}
+
+pub export fn strollCmdCopyImage(p_cmd: vk.CommandBuffer, p_src: vk.Image, p_dst: vk.Image, count: u32, regions: [*]const vk.ImageCopy) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdCopyImage);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+    const src = NonDispatchable(Image).fromHandleObject(p_src) catch |err| return errorLogger(err);
+    const dst = NonDispatchable(Image).fromHandleObject(p_dst) catch |err| return errorLogger(err);
+    cmd.copyImage(src, dst, regions[0..count]) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdFillBuffer(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) callconv(vk.vulkan_call_conv) void {

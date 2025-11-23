@@ -35,7 +35,7 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 }
 
 pub fn getMemoryRequirements(interface: *Interface, requirements: *vk.MemoryRequirements) void {
-    requirements.alignment = lib.MEMORY_REQUIREMENTS_ALIGNMENT;
+    requirements.alignment = lib.MEMORY_REQUIREMENTS_BUFFER_ALIGNMENT;
     if (interface.usage.uniform_texel_buffer_bit or interface.usage.uniform_texel_buffer_bit) {
         requirements.alignment = @max(requirements.alignment, lib.MIN_TEXEL_BUFFER_ALIGNMENT);
     }
