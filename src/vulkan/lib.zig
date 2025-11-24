@@ -27,6 +27,7 @@ pub const CommandPool = @import("CommandPool.zig");
 pub const DeviceMemory = @import("DeviceMemory.zig");
 pub const Fence = @import("Fence.zig");
 pub const Image = @import("Image.zig");
+pub const ImageView = @import("ImageView.zig");
 
 pub const VULKAN_VENDOR_ID = @typeInfo(vk.VendorId).@"enum".fields[@typeInfo(vk.VendorId).@"enum".fields.len - 1].value + 1;
 

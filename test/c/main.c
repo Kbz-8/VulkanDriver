@@ -85,6 +85,8 @@ int main(void)
 	VkDeviceMemory memory;
 	CreateAndBindMemoryToImage(physical_device, device, image, &memory, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
 
+	VkImageView image_view = kvfCreateImageView(device, image, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+
 	VkQueue queue = kvfGetDeviceQueue(device, KVF_GRAPHICS_QUEUE);
 	VkFence fence = kvfCreateFence(device);
 	VkCommandBuffer cmd = kvfCreateCommandBuffer(device);
@@ -93,16 +95,6 @@ int main(void)
 
 	kvfBeginCommandBuffer(cmd, 0);
 	{
-		VkClearColorValue color = {0};
-		color.uint32[0] = 0xFF;
-		color.uint32[1] = 0x00;
-		color.uint32[2] = 0x00;
-		color.uint32[3] = 0xFF;
-		VkImageSubresourceRange range = {0};
-		range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		range.levelCount = 1;
-		range.layerCount = 1;
-		vkCmdClearColorImage(cmd, image, VK_IMAGE_LAYOUT_GENERAL, &color, 1, &range);
 	}
 	kvfEndCommandBuffer(cmd);
 
@@ -117,6 +109,7 @@ int main(void)
 
 	kvfDestroyFence(device, fence);
 
+	kvfDestroyImageView(device, image_view);
 	kvfDestroyImage(device, image);
 	vkFreeMemory(device, memory, NULL);
 

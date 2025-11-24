@@ -12,6 +12,7 @@ const SoftBuffer = @import("SoftBuffer.zig");
 const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
 const SoftFence = @import("SoftFence.zig");
 const SoftImage = @import("SoftImage.zig");
+const SoftImageView = @import("SoftImageView.zig");
 
 const VkError = base.VkError;
 
@@ -41,6 +42,7 @@ pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocato
         .createCommandPool = createCommandPool,
         .createFence = createFence,
         .createImage = createImage,
+        .createImageView = createImageView,
         .destroy = destroy,
     };
 
@@ -97,4 +99,9 @@ pub fn createCommandPool(interface: *Interface, allocator: std.mem.Allocator, in
 pub fn createImage(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.ImageCreateInfo) VkError!*base.Image {
     const image = try SoftImage.create(interface, allocator, info);
     return &image.interface;
+}
+
+pub fn createImageView(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.ImageViewCreateInfo) VkError!*base.ImageView {
+    const image_view = try SoftImageView.create(interface, allocator, info);
+    return &image_view.interface;
 }

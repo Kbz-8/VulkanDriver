@@ -28,6 +28,7 @@ const CommandPool = @import("CommandPool.zig");
 const DeviceMemory = @import("DeviceMemory.zig");
 const Fence = @import("Fence.zig");
 const Image = @import("Image.zig");
+const ImageView = @import("ImageView.zig");
 
 fn entryPointBeginLogTrace(comptime scope: @Type(.enum_literal)) void {
     std.log.scoped(scope).debug("Calling {s}...", .{@tagName(scope)});
@@ -100,11 +101,13 @@ const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkCreateBuffer"),
     functionMapEntryPoint("vkCreateFence"),
     functionMapEntryPoint("vkCreateImage"),
+    functionMapEntryPoint("vkCreateImageView"),
     functionMapEntryPoint("vkDestroyBuffer"),
     functionMapEntryPoint("vkDestroyCommandPool"),
     functionMapEntryPoint("vkDestroyDevice"),
     functionMapEntryPoint("vkDestroyFence"),
     functionMapEntryPoint("vkDestroyImage"),
+    functionMapEntryPoint("vkDestroyImageView"),
     functionMapEntryPoint("vkEndCommandBuffer"),
     functionMapEntryPoint("vkFreeCommandBuffers"),
     functionMapEntryPoint("vkFreeMemory"),
@@ -538,6 +541,21 @@ pub export fn strollCreateImage(p_device: vk.Device, p_info: ?*const vk.ImageCre
     return .success;
 }
 
+pub export fn strollCreateImageView(p_device: vk.Device, p_info: ?*const vk.ImageViewCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_image_view: *vk.ImageView) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkCreateImageView);
+    defer entryPointEndLogTrace();
+
+    const info = p_info orelse return .error_validation_failed;
+    if (info.s_type != .image_view_create_info) {
+        return .error_validation_failed;
+    }
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const image_view = device.createImageView(allocator, info) catch |err| return toVkResult(err);
+    p_image_view.* = (NonDispatchable(ImageView).wrap(allocator, image_view) catch |err| return toVkResult(err)).toVkHandle(vk.ImageView);
+    return .success;
+}
+
 pub export fn strollDestroyBuffer(p_device: vk.Device, p_buffer: vk.Buffer, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkDestroyBuffer);
     defer entryPointEndLogTrace();
@@ -592,6 +610,17 @@ pub export fn strollDestroyImage(p_device: vk.Device, p_image: vk.Image, callbac
 
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const non_dispatchable = NonDispatchable(Image).fromHandle(p_image) catch |err| return errorLogger(err);
+    non_dispatchable.intrusiveDestroy(allocator);
+}
+
+pub export fn strollDestroyImageView(p_device: vk.Device, p_image_view: vk.ImageView, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkDestroyImageView);
+    defer entryPointEndLogTrace();
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
+
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const non_dispatchable = NonDispatchable(ImageView).fromHandle(p_image_view) catch |err| return errorLogger(err);
     non_dispatchable.intrusiveDestroy(allocator);
 }
 

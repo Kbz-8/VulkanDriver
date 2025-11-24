@@ -63,11 +63,11 @@ pub fn log(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), 
             std.fmt.comptimePrint("({s}): ", .{scope_name});
     };
 
-    const prefix = std.fmt.comptimePrint("{s: <8}", .{"[" ++ comptime level.asText() ++ "] "});
+    const prefix = std.fmt.comptimePrint("{s: <10}", .{"[" ++ comptime level.asText() ++ "] "});
 
     const level_color: std.Io.tty.Color = switch (level) {
         .info, .debug => .blue,
-        .warn => .yellow,
+        .warn => .magenta,
         .err => .red,
     };
 
@@ -104,7 +104,11 @@ pub fn log(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), 
     out_config.setColor(&writer, level_color) catch {};
     writer.print(prefix, .{}) catch {};
 
-    out_config.setColor(&writer, if (level == .err) .red else .green) catch {};
+    out_config.setColor(&writer, switch (level) {
+        .err => .red,
+        .warn => .magenta,
+        else => .green,
+    }) catch {};
     writer.print("{s: >30}", .{scope_prefix}) catch {};
 
     out_config.setColor(&writer, .reset) catch {};

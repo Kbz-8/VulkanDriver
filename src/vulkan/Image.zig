@@ -3,8 +3,10 @@ const vk = @import("vulkan");
 const lib = @import("lib.zig");
 
 const VkError = @import("error_set.zig").VkError;
-const DeviceMemory = @import("DeviceMemory.zig");
+
 const Device = @import("Device.zig");
+
+const DeviceMemory = @import("DeviceMemory.zig");
 
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .image;

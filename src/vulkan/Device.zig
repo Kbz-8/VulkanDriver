@@ -15,6 +15,7 @@ const CommandPool = @import("CommandPool.zig");
 const DeviceMemory = @import("DeviceMemory.zig");
 const Fence = @import("Fence.zig");
 const Image = @import("Image.zig");
+const ImageView = @import("ImageView.zig");
 
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .device;
@@ -37,6 +38,7 @@ pub const DispatchTable = struct {
     createCommandPool: *const fn (*Self, std.mem.Allocator, *const vk.CommandPoolCreateInfo) VkError!*CommandPool,
     createFence: *const fn (*Self, std.mem.Allocator, *const vk.FenceCreateInfo) VkError!*Fence,
     createImage: *const fn (*Self, std.mem.Allocator, *const vk.ImageCreateInfo) VkError!*Image,
+    createImageView: *const fn (*Self, std.mem.Allocator, *const vk.ImageViewCreateInfo) VkError!*ImageView,
     destroy: *const fn (*Self, std.mem.Allocator) VkError!void,
 };
 
@@ -104,4 +106,8 @@ pub inline fn createCommandPool(self: *Self, allocator: std.mem.Allocator, info:
 
 pub inline fn createImage(self: *Self, allocator: std.mem.Allocator, info: *const vk.ImageCreateInfo) VkError!*Image {
     return self.dispatch_table.createImage(self, allocator, info);
+}
+
+pub inline fn createImageView(self: *Self, allocator: std.mem.Allocator, info: *const vk.ImageViewCreateInfo) VkError!*ImageView {
+    return self.dispatch_table.createImageView(self, allocator, info);
 }

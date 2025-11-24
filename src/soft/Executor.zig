@@ -39,6 +39,8 @@ fn clearColorImage(data: *const cmd.CommandClearColorImage) VkError!void {
         _ = range;
         _ = &memory_map;
 
+        std.log.scoped(.commandExecutor).warn("FIXME: implement image clear", .{});
+
         memory.unmap();
     }
 }
@@ -60,6 +62,7 @@ fn copyBuffer(data: *const cmd.CommandCopyBuffer) VkError!void {
 
 fn copyImage(data: *const cmd.CommandCopyImage) VkError!void {
     _ = data;
+    std.log.scoped(.commandExecutor).warn("FIXME: implement image to image copy", .{});
 }
 
 fn fillBuffer(data: *const cmd.CommandFillBuffer) VkError!void {
