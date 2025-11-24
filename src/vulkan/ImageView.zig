@@ -11,7 +11,7 @@ const DeviceMemory = @import("DeviceMemory.zig");
 const Image = @import("Image.zig");
 
 const Self = @This();
-pub const ObjectType: vk.ObjectType = .image;
+pub const ObjectType: vk.ObjectType = .image_view;
 
 owner: *Device,
 image: *Image,
