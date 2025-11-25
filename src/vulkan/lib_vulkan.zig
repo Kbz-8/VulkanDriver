@@ -44,6 +44,10 @@ fn entryPointNotFoundErrorLog(comptime scope: @Type(.enum_literal), name: []cons
     std.log.scoped(scope).err("Could not find function {s}", .{name});
 }
 
+inline fn notImplementedWarning() void {
+    logger.nestedFixme("function not yet implemented", .{});
+}
+
 fn functionMapEntryPoint(comptime name: []const u8) struct { []const u8, vk.PfnVoidFunction } {
     // Mapping 'vkFnName' to 'strollFnName'
     const stroll_name = std.fmt.comptimePrint("stroll{s}", .{name[2..]});
@@ -64,9 +68,9 @@ const icd_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
 
 const global_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkCreateInstance"),
-    functionMapEntryPoint("vkGetInstanceProcAddr"),
     functionMapEntryPoint("vkEnumerateInstanceExtensionProperties"),
     functionMapEntryPoint("vkEnumerateInstanceVersion"),
+    functionMapEntryPoint("vkGetInstanceProcAddr"),
 });
 
 const instance_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
@@ -78,27 +82,38 @@ const instance_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
 const physical_device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkCreateDevice"),
     functionMapEntryPoint("vkEnumerateDeviceExtensionProperties"),
-    functionMapEntryPoint("vkGetPhysicalDeviceFormatProperties"),
     functionMapEntryPoint("vkGetPhysicalDeviceFeatures"),
+    functionMapEntryPoint("vkGetPhysicalDeviceFormatProperties"),
     functionMapEntryPoint("vkGetPhysicalDeviceImageFormatProperties"),
-    functionMapEntryPoint("vkGetPhysicalDeviceProperties"),
     functionMapEntryPoint("vkGetPhysicalDeviceMemoryProperties"),
+    functionMapEntryPoint("vkGetPhysicalDeviceProperties"),
     functionMapEntryPoint("vkGetPhysicalDeviceQueueFamilyProperties"),
     functionMapEntryPoint("vkGetPhysicalDeviceSparseImageFormatProperties"),
 });
 
 const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkAllocateCommandBuffers"),
+    functionMapEntryPoint("vkAllocateDescriptorSets"),
     functionMapEntryPoint("vkAllocateMemory"),
     functionMapEntryPoint("vkBeginCommandBuffer"),
     functionMapEntryPoint("vkBindBufferMemory"),
     functionMapEntryPoint("vkBindImageMemory"),
+    functionMapEntryPoint("vkCmdBeginQuery"),
+    functionMapEntryPoint("vkCmdBeginRenderPass"),
+    functionMapEntryPoint("vkCmdBindDescriptorSets"),
+    functionMapEntryPoint("vkCmdBindIndexBuffer"),
+    functionMapEntryPoint("vkCmdBindPipeline"),
+    functionMapEntryPoint("vkCmdBindVertexBuffers"),
+    functionMapEntryPoint("vkCmdBlitImage"),
+    functionMapEntryPoint("vkCmdClearAttachments"),
     functionMapEntryPoint("vkCmdClearColorImage"),
+    functionMapEntryPoint("vkCmdClearDepthStencilImage"),
     functionMapEntryPoint("vkCmdCopyBuffer"),
+    functionMapEntryPoint("vkCmdCopyBufferToImage"),
     functionMapEntryPoint("vkCmdCopyImage"),
     functionMapEntryPoint("vkCmdFillBuffer"),
-    functionMapEntryPoint("vkCreateCommandPool"),
     functionMapEntryPoint("vkCreateBuffer"),
+    functionMapEntryPoint("vkCreateCommandPool"),
     functionMapEntryPoint("vkCreateFence"),
     functionMapEntryPoint("vkCreateImage"),
     functionMapEntryPoint("vkCreateImageView"),
@@ -116,12 +131,12 @@ const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkGetFenceStatus"),
     functionMapEntryPoint("vkGetImageMemoryRequirements"),
     functionMapEntryPoint("vkMapMemory"),
-    functionMapEntryPoint("vkUnmapMemory"),
-    functionMapEntryPoint("vkResetCommandBuffer"),
-    functionMapEntryPoint("vkResetFences"),
     functionMapEntryPoint("vkQueueBindSparse"),
     functionMapEntryPoint("vkQueueSubmit"),
     functionMapEntryPoint("vkQueueWaitIdle"),
+    functionMapEntryPoint("vkResetCommandBuffer"),
+    functionMapEntryPoint("vkResetFences"),
+    functionMapEntryPoint("vkUnmapMemory"),
     functionMapEntryPoint("vkWaitForFences"),
 });
 
@@ -187,11 +202,10 @@ pub export fn vkGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]const
     return null;
 }
 
-pub export fn strollCreateInstance(p_info: ?*const vk.InstanceCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_instance: *vk.Instance) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn strollCreateInstance(info: *const vk.InstanceCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_instance: *vk.Instance) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkCreateInstance);
     defer entryPointEndLogTrace();
 
-    const info = p_info orelse return .error_validation_failed;
     if (info.s_type != .instance_create_info) {
         return .error_validation_failed;
     }
@@ -265,11 +279,10 @@ pub export fn strollEnumeratePhysicalDevices(p_instance: vk.Instance, count: *u3
 
 // Physical Device functions =================================================================================================================================
 
-pub export fn strollCreateDevice(p_physical_device: vk.PhysicalDevice, p_info: ?*const vk.DeviceCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_device: *vk.Device) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn strollCreateDevice(p_physical_device: vk.PhysicalDevice, info: *const vk.DeviceCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_device: *vk.Device) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkCreateDevice);
     defer entryPointEndLogTrace();
 
-    const info = p_info orelse return .error_validation_failed;
     if (info.s_type != .device_create_info) {
         return .error_validation_failed;
     }
@@ -411,13 +424,12 @@ pub export fn strollQueueWaitIdle(p_queue: vk.Queue) callconv(vk.vulkan_call_con
 
 // Device functions ==========================================================================================================================================
 
-pub export fn strollAllocateCommandBuffers(p_device: vk.Device, p_info: ?*const vk.CommandBufferAllocateInfo, p_cmds: [*]vk.CommandBuffer) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn strollAllocateCommandBuffers(p_device: vk.Device, info: *const vk.CommandBufferAllocateInfo, p_cmds: [*]vk.CommandBuffer) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkAllocateCommandBuffers);
     defer entryPointEndLogTrace();
 
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
 
-    const info = p_info orelse return .error_validation_failed;
     if (info.s_type != .command_buffer_allocate_info) {
         return .error_validation_failed;
     }
@@ -430,11 +442,28 @@ pub export fn strollAllocateCommandBuffers(p_device: vk.Device, p_info: ?*const 
     return .success;
 }
 
-pub export fn strollAllocateMemory(p_device: vk.Device, p_info: ?*const vk.MemoryAllocateInfo, callbacks: ?*const vk.AllocationCallbacks, p_memory: *vk.DeviceMemory) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn strollAllocateDescriptorSets(p_device: vk.Device, info: *const vk.DescriptorSetAllocateInfo, p_set: *vk.DescriptorSet) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkAllocateCommandBuffers);
+    defer entryPointEndLogTrace();
+
+    if (info.s_type != .descriptor_set_allocate_info) {
+        return .error_validation_failed;
+    }
+
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+
+    notImplementedWarning();
+
+    _ = device;
+    _ = p_set;
+
+    return .success;
+}
+
+pub export fn strollAllocateMemory(p_device: vk.Device, info: *const vk.MemoryAllocateInfo, callbacks: ?*const vk.AllocationCallbacks, p_memory: *vk.DeviceMemory) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkAllocateMemory);
     defer entryPointEndLogTrace();
 
-    const info = p_info orelse return .error_validation_failed;
     if (info.s_type != .memory_allocate_info) {
         return .error_validation_failed;
     }
@@ -479,11 +508,10 @@ pub export fn strollBindImageMemory(p_device: vk.Device, p_image: vk.Image, p_me
     return .success;
 }
 
-pub export fn strollCreateBuffer(p_device: vk.Device, p_info: ?*const vk.BufferCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_buffer: *vk.Buffer) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn strollCreateBuffer(p_device: vk.Device, info: *const vk.BufferCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_buffer: *vk.Buffer) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkCreateBuffer);
     defer entryPointEndLogTrace();
 
-    const info = p_info orelse return .error_validation_failed;
     if (info.s_type != .buffer_create_info) {
         return .error_validation_failed;
     }
@@ -494,11 +522,10 @@ pub export fn strollCreateBuffer(p_device: vk.Device, p_info: ?*const vk.BufferC
     return .success;
 }
 
-pub export fn strollCreateCommandPool(p_device: vk.Device, p_info: ?*const vk.CommandPoolCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_pool: *vk.CommandPool) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn strollCreateCommandPool(p_device: vk.Device, info: *const vk.CommandPoolCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_pool: *vk.CommandPool) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkCreateCommandPool);
     defer entryPointEndLogTrace();
 
-    const info = p_info orelse return .error_validation_failed;
     if (info.s_type != .command_pool_create_info) {
         return .error_validation_failed;
     }
@@ -510,11 +537,10 @@ pub export fn strollCreateCommandPool(p_device: vk.Device, p_info: ?*const vk.Co
     return .success;
 }
 
-pub export fn strollCreateFence(p_device: vk.Device, p_info: ?*const vk.FenceCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_fence: *vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn strollCreateFence(p_device: vk.Device, info: *const vk.FenceCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_fence: *vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkCreateFence);
     defer entryPointEndLogTrace();
 
-    const info = p_info orelse return .error_validation_failed;
     if (info.s_type != .fence_create_info) {
         return .error_validation_failed;
     }
@@ -526,11 +552,10 @@ pub export fn strollCreateFence(p_device: vk.Device, p_info: ?*const vk.FenceCre
     return .success;
 }
 
-pub export fn strollCreateImage(p_device: vk.Device, p_info: ?*const vk.ImageCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_image: *vk.Image) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn strollCreateImage(p_device: vk.Device, info: *const vk.ImageCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_image: *vk.Image) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkCreateImage);
     defer entryPointEndLogTrace();
 
-    const info = p_info orelse return .error_validation_failed;
     if (info.s_type != .image_create_info) {
         return .error_validation_failed;
     }
@@ -541,11 +566,10 @@ pub export fn strollCreateImage(p_device: vk.Device, p_info: ?*const vk.ImageCre
     return .success;
 }
 
-pub export fn strollCreateImageView(p_device: vk.Device, p_info: ?*const vk.ImageViewCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_image_view: *vk.ImageView) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn strollCreateImageView(p_device: vk.Device, info: *const vk.ImageViewCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_image_view: *vk.ImageView) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkCreateImageView);
     defer entryPointEndLogTrace();
 
-    const info = p_info orelse return .error_validation_failed;
     if (info.s_type != .image_view_create_info) {
         return .error_validation_failed;
     }
@@ -762,17 +786,159 @@ pub export fn strollWaitForFences(p_device: vk.Device, count: u32, p_fences: [*]
 
 // Command Buffer functions ===================================================================================================================================
 
-pub export fn strollBeginCommandBuffer(p_cmd: vk.CommandBuffer, p_info: ?*const vk.CommandBufferBeginInfo) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn strollBeginCommandBuffer(p_cmd: vk.CommandBuffer, info: *const vk.CommandBufferBeginInfo) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkBeginCommandBuffer);
     defer entryPointEndLogTrace();
 
-    const info = p_info orelse return .error_validation_failed;
     if (info.s_type != .command_buffer_begin_info) {
         return .error_validation_failed;
     }
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return toVkResult(err);
     cmd.begin(info) catch |err| return toVkResult(err);
     return .success;
+}
+
+pub export fn strollCmdBeginQuery(p_cmd: vk.CommandBuffer, p_pool: vk.QueryPool, query: u32, flags: vk.QueryControlFlags) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdBeginQuery);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = p_pool;
+    _ = query;
+    _ = flags;
+}
+
+pub export fn strollCmdBeginRenderPass(p_cmd: vk.CommandBuffer, info: *const vk.RenderPassBeginInfo, contents: vk.SubpassContents) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdBeginRenderPass);
+    defer entryPointEndLogTrace();
+
+    if (info.s_type != .render_pass_begin_info) {
+        return errorLogger(VkError.ValidationFailed);
+    }
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = contents;
+}
+
+pub export fn strollCmdBindDescriptorSets(
+    p_cmd: vk.CommandBuffer,
+    bind_point: vk.PipelineBindPoint,
+    layout: vk.PipelineLayout,
+    first: u32,
+    count: u32,
+    sets: [*]const vk.DescriptorSet,
+    dynamic_offset_count: u32,
+    dynamic_offsets: [*]const u32,
+) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdBindDescriptorSets);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = bind_point;
+    _ = layout;
+    _ = first;
+    _ = count;
+    _ = sets;
+    _ = dynamic_offsets;
+    _ = dynamic_offset_count;
+}
+
+pub export fn strollCmdBindIndexBuffer(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer, offset: vk.DeviceSize, index_type: vk.IndexType) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdBindIndexBuffer);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+    const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = buffer;
+    _ = offset;
+    _ = index_type;
+}
+
+pub export fn strollCmdBindPipeline(p_cmd: vk.CommandBuffer, bind_point: vk.PipelineBindPoint, p_pipeline: vk.Pipeline) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdBindPipeline);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = bind_point;
+    _ = p_pipeline;
+}
+
+pub export fn strollCmdBindVertexBuffers(p_cmd: vk.CommandBuffer, first: u32, count: u32, p_buffers: [*]const vk.Buffer, offsets: [*]const vk.DeviceSize) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdBindVertexBuffer);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = first;
+    _ = count;
+    _ = p_buffers;
+    _ = offsets;
+}
+
+pub export fn strollCmdBlitImage(
+    p_cmd: vk.CommandBuffer,
+    p_src_image: vk.Image,
+    src_layout: vk.ImageLayout,
+    p_dst_image: vk.Image,
+    dst_layout: vk.ImageLayout,
+    count: u32,
+    regions: [*]const vk.ImageBlit,
+    filter: vk.Filter,
+) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdBlitImage);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+    const src = NonDispatchable(Image).fromHandleObject(p_src_image) catch |err| return errorLogger(err);
+    const dst = NonDispatchable(Image).fromHandleObject(p_dst_image) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = src;
+    _ = src_layout;
+    _ = dst;
+    _ = dst_layout;
+    _ = count;
+    _ = regions;
+    _ = filter;
+}
+
+pub export fn strollCmdClearAttachments(p_cmd: vk.CommandBuffer, attachment_count: u32, attachments: [*]const vk.ClearAttachment, rect_count: u32, rects: [*]const vk.ClearRect) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdClearAttachments);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = attachment_count;
+    _ = attachments;
+    _ = rect_count;
+    _ = rects;
 }
 
 pub export fn strollCmdClearColorImage(p_cmd: vk.CommandBuffer, p_image: vk.Image, layout: vk.ImageLayout, color: *const vk.ClearColorValue, count: u32, ranges: [*]const vk.ImageSubresourceRange) callconv(vk.vulkan_call_conv) void {
@@ -784,6 +950,23 @@ pub export fn strollCmdClearColorImage(p_cmd: vk.CommandBuffer, p_image: vk.Imag
     cmd.clearColorImage(image, layout, color, ranges[0..count]) catch |err| return errorLogger(err);
 }
 
+pub export fn strollCmdClearDepthStencilImage(p_cmd: vk.CommandBuffer, p_image: vk.Image, layout: vk.ImageLayout, stencil: *const vk.ClearDepthStencilValue, count: u32, ranges: [*]const vk.ImageSubresourceRange) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdClearDepthStencilImage);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+    const image = NonDispatchable(Image).fromHandleObject(p_image) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = image;
+    _ = layout;
+    _ = stencil;
+    _ = count;
+    _ = ranges;
+}
+
 pub export fn strollCmdCopyBuffer(p_cmd: vk.CommandBuffer, p_src: vk.Buffer, p_dst: vk.Buffer, count: u32, regions: [*]const vk.BufferCopy) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkCmdCopyBuffer);
     defer entryPointEndLogTrace();
@@ -792,6 +975,24 @@ pub export fn strollCmdCopyBuffer(p_cmd: vk.CommandBuffer, p_src: vk.Buffer, p_d
     const src = NonDispatchable(Buffer).fromHandleObject(p_src) catch |err| return errorLogger(err);
     const dst = NonDispatchable(Buffer).fromHandleObject(p_dst) catch |err| return errorLogger(err);
     cmd.copyBuffer(src, dst, regions[0..count]) catch |err| return errorLogger(err);
+}
+
+pub export fn strollCmdCopyBufferToImage(p_cmd: vk.CommandBuffer, p_src: vk.Buffer, p_dst: vk.Image, layout: vk.ImageLayout, count: u32, regions: [*]const vk.BufferImageCopy) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdCopyBufferToImage);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+    const src = NonDispatchable(Buffer).fromHandleObject(p_src) catch |err| return errorLogger(err);
+    const dst = NonDispatchable(Image).fromHandleObject(p_dst) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = src;
+    _ = dst;
+    _ = layout;
+    _ = count;
+    _ = regions;
 }
 
 pub export fn strollCmdCopyImage(p_cmd: vk.CommandBuffer, p_src: vk.Image, p_dst: vk.Image, count: u32, regions: [*]const vk.ImageCopy) callconv(vk.vulkan_call_conv) void {

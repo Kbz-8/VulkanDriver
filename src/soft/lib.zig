@@ -48,5 +48,17 @@ comptime {
 }
 
 test {
-    //std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(base);
+    std.testing.refAllDecls(SoftInstance);
+    std.testing.refAllDecls(SoftDevice);
+    std.testing.refAllDecls(SoftPhysicalDevice);
+    std.testing.refAllDecls(SoftQueue);
+    std.testing.refAllDecls(SoftBuffer);
+    std.testing.refAllDecls(SoftCommandBuffer);
+    std.testing.refAllDecls(SoftCommandPool);
+    std.testing.refAllDecls(SoftDeviceMemory);
+    std.testing.refAllDecls(SoftFence);
+    std.testing.refAllDecls(SoftImage);
+    std.testing.refAllDecls(SoftImageView);
+    std.testing.refAllDecls(Executor);
 }

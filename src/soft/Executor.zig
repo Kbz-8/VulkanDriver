@@ -39,7 +39,7 @@ fn clearColorImage(data: *const cmd.CommandClearColorImage) VkError!void {
         _ = range;
         _ = &memory_map;
 
-        std.log.scoped(.commandExecutor).warn("FIXME: implement image clear", .{});
+        base.logger.fixme("Implement image clear", .{});
 
         memory.unmap();
     }

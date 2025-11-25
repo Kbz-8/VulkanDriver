@@ -23,7 +23,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
 
-void CreateAndBindMemoryToBuffer(VkPhysicalDevice physical_device, VkDevice device, VkBuffer buffer, VkDeviceMemory* memory, VkMemoryPropertyFlags props)
+VkDeviceMemory CreateAndBindMemoryToBuffer(VkPhysicalDevice physical_device, VkDevice device, VkBuffer buffer, VkMemoryPropertyFlags props)
 {
 	VkMemoryRequirements requirements;
 	vkGetBufferMemoryRequirements(device, buffer, &requirements);
@@ -32,11 +32,14 @@ void CreateAndBindMemoryToBuffer(VkPhysicalDevice physical_device, VkDevice devi
 	alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
 	alloc_info.allocationSize = requirements.size;
 	alloc_info.memoryTypeIndex = kvfFindMemoryType(physical_device, requirements.memoryTypeBits, props);
-	kvfCheckVk(vkAllocateMemory(device, &alloc_info, NULL, memory));
-	kvfCheckVk(vkBindBufferMemory(device, buffer, *memory, 0));
+
+	VkDeviceMemory memory;
+	kvfCheckVk(vkAllocateMemory(device, &alloc_info, NULL, &memory));
+	kvfCheckVk(vkBindBufferMemory(device, buffer, memory, 0));
+	return memory;
 }
 
-void CreateAndBindMemoryToImage(VkPhysicalDevice physical_device, VkDevice device, VkImage image, VkDeviceMemory* memory, VkMemoryPropertyFlags props)
+VkDeviceMemory CreateAndBindMemoryToImage(VkPhysicalDevice physical_device, VkDevice device, VkImage image, VkMemoryPropertyFlags props)
 {
 	VkMemoryRequirements requirements;
 	vkGetImageMemoryRequirements(device, image, &requirements);
@@ -45,8 +48,11 @@ void CreateAndBindMemoryToImage(VkPhysicalDevice physical_device, VkDevice devic
 	alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
 	alloc_info.allocationSize = requirements.size;
 	alloc_info.memoryTypeIndex = kvfFindMemoryType(physical_device, requirements.memoryTypeBits, props);
-	kvfCheckVk(vkAllocateMemory(device, &alloc_info, NULL, memory));
-	kvfCheckVk(vkBindImageMemory(device, image, *memory, 0));
+
+	VkDeviceMemory memory;
+	kvfCheckVk(vkAllocateMemory(device, &alloc_info, NULL, &memory));
+	kvfCheckVk(vkBindImageMemory(device, image, memory, 0));
+	return memory;
 }
 
 int main(void)
@@ -82,8 +88,7 @@ int main(void)
 	volkLoadDevice(device);
 
 	VkImage image = kvfCreateImage(device, 256, 256, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_LINEAR, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, KVF_IMAGE_COLOR);
-	VkDeviceMemory memory;
-	CreateAndBindMemoryToImage(physical_device, device, image, &memory, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+	VkDeviceMemory memory = CreateAndBindMemoryToImage(physical_device, device, image, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
 
 	VkImageView image_view = kvfCreateImageView(device, image, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT, 1);
 

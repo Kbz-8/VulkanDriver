@@ -21,6 +21,7 @@ const DebugStackElement = struct {
     log_level: std.log.Level,
 };
 
+var indent_enabled = true;
 var indent_level: usize = 0;
 var debug_stack = std.ArrayList(DebugStackElement).empty;
 
@@ -45,8 +46,26 @@ pub inline fn unindent() void {
     }
 }
 
+pub inline fn enableIndent() void {
+    indent_enabled = true;
+}
+
+pub inline fn disableIndent() void {
+    indent_enabled = false;
+}
+
 pub inline fn freeInnerDebugStack() void {
     debug_stack.deinit(std.heap.c_allocator);
+}
+
+pub inline fn fixme(comptime format: []const u8, args: anytype) void {
+    disableIndent();
+    defer enableIndent();
+    nestedFixme(format, args);
+}
+
+pub inline fn nestedFixme(comptime format: []const u8, args: anytype) void {
+    std.log.scoped(.FIXME).warn("FIXME: " ++ format, args);
 }
 
 pub fn log(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), comptime format: []const u8, args: anytype) void {
@@ -113,8 +132,10 @@ pub fn log(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), 
 
     out_config.setColor(&writer, .reset) catch {};
 
-    for (0..indent_level) |_| {
-        writer.print(">   ", .{}) catch {};
+    if (indent_enabled) {
+        for (0..indent_level) |_| {
+            writer.print(">   ", .{}) catch {};
+        }
     }
     writer.print(format ++ "\n", args) catch {};
     writer.flush() catch return;
@@ -125,7 +146,10 @@ pub fn log(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), 
             .indent_level = indent_level,
             .log_level = level,
         };
-    } else {
+        return;
+    }
+
+    if (indent_enabled) {
         while (debug_stack.items.len != 0) {
             const elem = debug_stack.orderedRemove(0);
             switch (elem.log_level) {
@@ -133,9 +157,9 @@ pub fn log(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), 
                 .warn, .err => _ = stderr_file.write(&elem.log) catch {},
             }
         }
-        switch (level) {
-            .info, .debug => _ = stdout_file.write(&buffer) catch {},
-            .warn, .err => _ = stderr_file.write(&buffer) catch {},
-        }
+    }
+    switch (level) {
+        .info, .debug => _ = stdout_file.write(&buffer) catch {},
+        .warn, .err => _ = stderr_file.write(&buffer) catch {},
     }
 }
