@@ -13,6 +13,9 @@ const Buffer = @import("Buffer.zig");
 const CommandBuffer = @import("CommandBuffer.zig");
 const CommandPool = @import("CommandPool.zig");
 const DeviceMemory = @import("DeviceMemory.zig");
+const DescriptorPool = @import("DescriptorPool.zig");
+const DescriptorSet = @import("DescriptorSet.zig");
+const DescriptorSetLayout = @import("DescriptorSetLayout.zig");
 const Fence = @import("Fence.zig");
 const Image = @import("Image.zig");
 const ImageView = @import("ImageView.zig");
@@ -36,6 +39,8 @@ pub const DispatchTable = struct {
     allocateMemory: *const fn (*Self, std.mem.Allocator, *const vk.MemoryAllocateInfo) VkError!*DeviceMemory,
     createBuffer: *const fn (*Self, std.mem.Allocator, *const vk.BufferCreateInfo) VkError!*Buffer,
     createCommandPool: *const fn (*Self, std.mem.Allocator, *const vk.CommandPoolCreateInfo) VkError!*CommandPool,
+    createDescriptorPool: *const fn (*Self, std.mem.Allocator, *const vk.DescriptorPoolCreateInfo) VkError!*DescriptorPool,
+    createDescriptorSetLayout: *const fn (*Self, std.mem.Allocator, *const vk.DescriptorSetLayoutCreateInfo) VkError!*DescriptorSetLayout,
     createFence: *const fn (*Self, std.mem.Allocator, *const vk.FenceCreateInfo) VkError!*Fence,
     createImage: *const fn (*Self, std.mem.Allocator, *const vk.ImageCreateInfo) VkError!*Image,
     createImageView: *const fn (*Self, std.mem.Allocator, *const vk.ImageViewCreateInfo) VkError!*ImageView,
@@ -94,6 +99,14 @@ pub inline fn allocateMemory(self: *Self, allocator: std.mem.Allocator, info: *c
 
 pub inline fn createBuffer(self: *Self, allocator: std.mem.Allocator, info: *const vk.BufferCreateInfo) VkError!*Buffer {
     return self.dispatch_table.createBuffer(self, allocator, info);
+}
+
+pub inline fn createDescriptorPool(self: *Self, allocator: std.mem.Allocator, info: *const vk.DescriptorPoolCreateInfo) VkError!*DescriptorPool {
+    return self.dispatch_table.createDescriptorPool(self, allocator, info);
+}
+
+pub inline fn createDescriptorSetLayout(self: *Self, allocator: std.mem.Allocator, info: *const vk.DescriptorSetLayoutCreateInfo) VkError!*DescriptorSetLayout {
+    return self.dispatch_table.createDescriptorSetLayout(self, allocator, info);
 }
 
 pub inline fn createFence(self: *Self, allocator: std.mem.Allocator, info: *const vk.FenceCreateInfo) VkError!*Fence {

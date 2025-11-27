@@ -96,10 +96,10 @@ vkCmdWaitEvents                                | ❌ Not implemented
 vkCmdWriteTimestamp                            | ❌ Not implemented
 vkCreateBuffer                                 | ✅ Implemented
 vkCreateBufferView                             | ❌ Not implemented
-vkCreateCommandPool                            | ❌ Not implemented
+vkCreateCommandPool                            | ✅ Implemented
 vkCreateComputePipelines                       | ❌ Not implemented
-vkCreateDescriptorPool                         | ❌ Not implemented
-vkCreateDescriptorSetLayout                    | ❌ Not implemented
+vkCreateDescriptorPool                         | ⚙️ WIP
+vkCreateDescriptorSetLayout                    | ⚙️ WIP
 vkCreateDevice                                 | ✅ Implemented
 vkCreateEvent                                  | ❌ Not implemented
 vkCreateFence                                  | ✅ Implemented
@@ -117,9 +117,9 @@ vkCreateSemaphore                              | ❌ Not implemented
 vkCreateShaderModule                           | ❌ Not implemented
 vkDestroyBuffer                                | ✅ Implemented
 vkDestroyBufferView                            | ❌ Not implemented
-vkDestroyCommandPool                           | ❌ Not implemented
-vkDestroyDescriptorPool                        | ❌ Not implemented
-vkDestroyDescriptorSetLayout                   | ❌ Not implemented
+vkDestroyCommandPool                           | ✅ Implemented
+vkDestroyDescriptorPool                        | ⚙️ WIP
+vkDestroyDescriptorSetLayout                   | ⚙️ WIP
 vkDestroyDevice                                | ✅ Implemented
 vkDestroyEvent                                 | ❌ Not implemented
 vkDestroyFence                                 | ✅ Implemented
@@ -144,7 +144,7 @@ vkEnumerateInstanceLayerProperties             | ⚙️ WIP
 vkEnumeratePhysicalDevices                     | ✅ Implemented
 vkFlushMappedMemoryRanges                      | ❌ Not implemented
 vkFreeCommandBuffers                           | ✅ Implemented
-vkFreeDescriptorSets                           | ❌ Not implemented
+vkFreeDescriptorSets                           | ⚙️ WIP
 vkFreeMemory                                   | ✅ Implemented
 vkGetBufferMemoryRequirements                  | ✅ Implemented
 vkGetDeviceMemoryCommitment                    | ❌ Not implemented

@@ -94,54 +94,63 @@ const physical_device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComp
     functionMapEntryPoint("vkGetPhysicalDeviceSparseImageFormatProperties"),
 });
 
-const device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
-    functionMapEntryPoint("vkAllocateCommandBuffers"),
-    functionMapEntryPoint("vkAllocateDescriptorSets"),
-    functionMapEntryPoint("vkAllocateMemory"),
-    functionMapEntryPoint("vkBeginCommandBuffer"),
-    functionMapEntryPoint("vkBindBufferMemory"),
-    functionMapEntryPoint("vkBindImageMemory"),
-    functionMapEntryPoint("vkCmdBeginQuery"),
-    functionMapEntryPoint("vkCmdBeginRenderPass"),
-    functionMapEntryPoint("vkCmdBindDescriptorSets"),
-    functionMapEntryPoint("vkCmdBindIndexBuffer"),
-    functionMapEntryPoint("vkCmdBindPipeline"),
-    functionMapEntryPoint("vkCmdBindVertexBuffers"),
-    functionMapEntryPoint("vkCmdBlitImage"),
-    functionMapEntryPoint("vkCmdClearAttachments"),
-    functionMapEntryPoint("vkCmdClearColorImage"),
-    functionMapEntryPoint("vkCmdClearDepthStencilImage"),
-    functionMapEntryPoint("vkCmdCopyBuffer"),
-    functionMapEntryPoint("vkCmdCopyBufferToImage"),
-    functionMapEntryPoint("vkCmdCopyImage"),
-    functionMapEntryPoint("vkCmdFillBuffer"),
-    functionMapEntryPoint("vkCreateBuffer"),
-    functionMapEntryPoint("vkCreateCommandPool"),
-    functionMapEntryPoint("vkCreateFence"),
-    functionMapEntryPoint("vkCreateImage"),
-    functionMapEntryPoint("vkCreateImageView"),
-    functionMapEntryPoint("vkDestroyBuffer"),
-    functionMapEntryPoint("vkDestroyCommandPool"),
-    functionMapEntryPoint("vkDestroyDevice"),
-    functionMapEntryPoint("vkDestroyFence"),
-    functionMapEntryPoint("vkDestroyImage"),
-    functionMapEntryPoint("vkDestroyImageView"),
-    functionMapEntryPoint("vkEndCommandBuffer"),
-    functionMapEntryPoint("vkFreeCommandBuffers"),
-    functionMapEntryPoint("vkFreeMemory"),
-    functionMapEntryPoint("vkGetBufferMemoryRequirements"),
-    functionMapEntryPoint("vkGetDeviceQueue"),
-    functionMapEntryPoint("vkGetFenceStatus"),
-    functionMapEntryPoint("vkGetImageMemoryRequirements"),
-    functionMapEntryPoint("vkMapMemory"),
-    functionMapEntryPoint("vkQueueBindSparse"),
-    functionMapEntryPoint("vkQueueSubmit"),
-    functionMapEntryPoint("vkQueueWaitIdle"),
-    functionMapEntryPoint("vkResetCommandBuffer"),
-    functionMapEntryPoint("vkResetFences"),
-    functionMapEntryPoint("vkUnmapMemory"),
-    functionMapEntryPoint("vkWaitForFences"),
-});
+const device_pfn_map = block: {
+    @setEvalBranchQuota(65535);
+    break :block std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
+        functionMapEntryPoint("vkAllocateCommandBuffers"),
+        functionMapEntryPoint("vkAllocateDescriptorSets"),
+        functionMapEntryPoint("vkAllocateDescriptorSets"),
+        functionMapEntryPoint("vkAllocateMemory"),
+        functionMapEntryPoint("vkBeginCommandBuffer"),
+        functionMapEntryPoint("vkBindBufferMemory"),
+        functionMapEntryPoint("vkBindImageMemory"),
+        functionMapEntryPoint("vkCmdBeginQuery"),
+        functionMapEntryPoint("vkCmdBeginRenderPass"),
+        functionMapEntryPoint("vkCmdBindDescriptorSets"),
+        functionMapEntryPoint("vkCmdBindIndexBuffer"),
+        functionMapEntryPoint("vkCmdBindPipeline"),
+        functionMapEntryPoint("vkCmdBindVertexBuffers"),
+        functionMapEntryPoint("vkCmdBlitImage"),
+        functionMapEntryPoint("vkCmdClearAttachments"),
+        functionMapEntryPoint("vkCmdClearColorImage"),
+        functionMapEntryPoint("vkCmdClearDepthStencilImage"),
+        functionMapEntryPoint("vkCmdCopyBuffer"),
+        functionMapEntryPoint("vkCmdCopyBufferToImage"),
+        functionMapEntryPoint("vkCmdCopyImage"),
+        functionMapEntryPoint("vkCmdFillBuffer"),
+        functionMapEntryPoint("vkCreateBuffer"),
+        functionMapEntryPoint("vkCreateCommandPool"),
+        functionMapEntryPoint("vkCreateDescriptorPool"),
+        functionMapEntryPoint("vkCreateDescriptorSetLayout"),
+        functionMapEntryPoint("vkCreateFence"),
+        functionMapEntryPoint("vkCreateImage"),
+        functionMapEntryPoint("vkCreateImageView"),
+        functionMapEntryPoint("vkDestroyBuffer"),
+        functionMapEntryPoint("vkDestroyCommandPool"),
+        functionMapEntryPoint("vkDestroyDescriptorPool"),
+        functionMapEntryPoint("vkDestroyDescriptorSetLayout"),
+        functionMapEntryPoint("vkDestroyDevice"),
+        functionMapEntryPoint("vkDestroyFence"),
+        functionMapEntryPoint("vkDestroyImage"),
+        functionMapEntryPoint("vkDestroyImageView"),
+        functionMapEntryPoint("vkEndCommandBuffer"),
+        functionMapEntryPoint("vkFreeCommandBuffers"),
+        functionMapEntryPoint("vkFreeDescriptorSets"),
+        functionMapEntryPoint("vkFreeMemory"),
+        functionMapEntryPoint("vkGetBufferMemoryRequirements"),
+        functionMapEntryPoint("vkGetDeviceQueue"),
+        functionMapEntryPoint("vkGetFenceStatus"),
+        functionMapEntryPoint("vkGetImageMemoryRequirements"),
+        functionMapEntryPoint("vkMapMemory"),
+        functionMapEntryPoint("vkQueueBindSparse"),
+        functionMapEntryPoint("vkQueueSubmit"),
+        functionMapEntryPoint("vkQueueWaitIdle"),
+        functionMapEntryPoint("vkResetCommandBuffer"),
+        functionMapEntryPoint("vkResetFences"),
+        functionMapEntryPoint("vkUnmapMemory"),
+        functionMapEntryPoint("vkWaitForFences"),
+    });
+};
 
 // ICD Interface =============================================================================================================================================
 
@@ -540,6 +549,36 @@ pub export fn strollCreateCommandPool(p_device: vk.Device, info: *const vk.Comma
     return .success;
 }
 
+pub export fn strollCreateDescriptorPool(p_device: vk.Device, info: *const vk.DescriptorPoolCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_pool: *vk.DescriptorPool) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkCreateDescriptorPool);
+    defer entryPointEndLogTrace();
+
+    if (info.s_type != .descriptor_pool_create_info) {
+        return .error_validation_failed;
+    }
+
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const pool = device.createDescriptorPool(allocator, info) catch |err| return toVkResult(err);
+    p_pool.* = (NonDispatchable(DescriptorPool).wrap(allocator, pool) catch |err| return toVkResult(err)).toVkHandle(vk.DescriptorPool);
+    return .success;
+}
+
+pub export fn strollCreateDescriptorSetLayout(p_device: vk.Device, info: *const vk.DescriptorSetLayoutCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_layout: *vk.DescriptorSetLayout) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkCreateDescriptorSetLayout);
+    defer entryPointEndLogTrace();
+
+    if (info.s_type != .descriptor_set_layout_create_info) {
+        return .error_validation_failed;
+    }
+
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const layout = device.createDescriptorSetLayout(allocator, info) catch |err| return toVkResult(err);
+    p_layout.* = (NonDispatchable(DescriptorSetLayout).wrap(allocator, layout) catch |err| return toVkResult(err)).toVkHandle(vk.DescriptorSetLayout);
+    return .success;
+}
+
 pub export fn strollCreateFence(p_device: vk.Device, info: *const vk.FenceCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_fence: *vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkCreateFence);
     defer entryPointEndLogTrace();
@@ -618,6 +657,28 @@ pub export fn strollDestroyDevice(p_device: vk.Device, callbacks: ?*const vk.All
     dispatchable.destroy(allocator);
 }
 
+pub export fn strollDestroyDescriptorPool(p_device: vk.Device, p_pool: vk.DescriptorPool, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkDestroyDescriptorPool);
+    defer entryPointEndLogTrace();
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
+
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const non_dispatchable = NonDispatchable(DescriptorPool).fromHandle(p_pool) catch |err| return errorLogger(err);
+    non_dispatchable.intrusiveDestroy(allocator);
+}
+
+pub export fn strollDestroyDescriptorSetLayout(p_device: vk.Device, p_layout: vk.DescriptorSetLayout, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkDestroyDescriptorLayout);
+    defer entryPointEndLogTrace();
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
+
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const non_dispatchable = NonDispatchable(DescriptorSetLayout).fromHandle(p_layout) catch |err| return errorLogger(err);
+    non_dispatchable.intrusiveDestroy(allocator);
+}
+
 pub export fn strollDestroyFence(p_device: vk.Device, p_fence: vk.Fence, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkDestroyFence);
     defer entryPointEndLogTrace();
@@ -660,6 +721,17 @@ pub export fn strollFreeCommandBuffers(p_device: vk.Device, p_pool: vk.CommandPo
     const pool = NonDispatchable(CommandPool).fromHandleObject(p_pool) catch |err| return errorLogger(err);
     const cmds: [*]*Dispatchable(CommandBuffer) = @ptrCast(@constCast(p_cmds));
     pool.freeCommandBuffers(cmds[0..count]) catch |err| return errorLogger(err);
+}
+
+pub export fn strollFreeDescriptorSets(p_device: vk.Device, p_pool: vk.CommandPool, count: u32, p_sets: [*]const vk.DescriptorSet) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkFreeDescriptorSets);
+    defer entryPointEndLogTrace();
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
+
+    const pool = NonDispatchable(DescriptorPool).fromHandleObject(p_pool) catch |err| return errorLogger(err);
+    const sets: [*]*Dispatchable(DescriptorSet) = @ptrCast(@constCast(p_sets));
+    pool.freeDescriptorSets(sets[0..count]) catch |err| return errorLogger(err);
 }
 
 pub export fn strollFreeMemory(p_device: vk.Device, p_memory: vk.DeviceMemory, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {

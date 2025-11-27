@@ -32,6 +32,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Descr
     return .{
         .owner = device,
         .layouts = layouts,
+        .vtable = undefined,
     };
 }
 

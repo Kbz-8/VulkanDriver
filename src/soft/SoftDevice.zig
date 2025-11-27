@@ -10,6 +10,8 @@ const SoftQueue = @import("SoftQueue.zig");
 
 const SoftBuffer = @import("SoftBuffer.zig");
 const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
+const SoftDescriptorPool = @import("SoftDescriptorPool.zig");
+const SoftDescriptorSetLayout = @import("SoftDescriptorSetLayout.zig");
 const SoftFence = @import("SoftFence.zig");
 const SoftImage = @import("SoftImage.zig");
 const SoftImageView = @import("SoftImageView.zig");
@@ -40,6 +42,8 @@ pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocato
         .allocateMemory = allocateMemory,
         .createBuffer = createBuffer,
         .createCommandPool = createCommandPool,
+        .createDescriptorPool = createDescriptorPool,
+        .createDescriptorSetLayout = createDescriptorSetLayout,
         .createFence = createFence,
         .createImage = createImage,
         .createImageView = createImageView,
@@ -84,6 +88,16 @@ pub fn allocateMemory(interface: *Interface, allocator: std.mem.Allocator, info:
 pub fn createBuffer(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.BufferCreateInfo) VkError!*base.Buffer {
     const buffer = try SoftBuffer.create(interface, allocator, info);
     return &buffer.interface;
+}
+
+pub fn createDescriptorPool(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.DescriptorPoolCreateInfo) VkError!*base.DescriptorPool {
+    const pool = try SoftDescriptorPool.create(interface, allocator, info);
+    return &pool.interface;
+}
+
+pub fn createDescriptorSetLayout(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.DescriptorSetLayoutCreateInfo) VkError!*base.DescriptorSetLayout {
+    const layout = try SoftDescriptorSetLayout.create(interface, allocator, info);
+    return &layout.interface;
 }
 
 pub fn createFence(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.FenceCreateInfo) VkError!*base.Fence {
