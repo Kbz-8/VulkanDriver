@@ -95,66 +95,66 @@ vkCmdUpdateBuffer                              | ⚙️ WIP
 vkCmdWaitEvents                                | ⚙️ WIP
 vkCmdWriteTimestamp                            | ⚙️ WIP
 vkCreateBuffer                                 | ✅ Implemented
-vkCreateBufferView                             | ❌ Not implemented
+vkCreateBufferView                             | ⚙️ WIP
 vkCreateCommandPool                            | ✅ Implemented
-vkCreateComputePipelines                       | ❌ Not implemented
+vkCreateComputePipelines                       | ⚙️ WIP
 vkCreateDescriptorPool                         | ⚙️ WIP
 vkCreateDescriptorSetLayout                    | ⚙️ WIP
 vkCreateDevice                                 | ✅ Implemented
-vkCreateEvent                                  | ❌ Not implemented
+vkCreateEvent                                  | ⚙️ WIP
 vkCreateFence                                  | ✅ Implemented
-vkCreateFramebuffer                            | ❌ Not implemented
-vkCreateGraphicsPipelines                      | ❌ Not implemented
+vkCreateFramebuffer                            | ⚙️ WIP
+vkCreateGraphicsPipelines                      | ⚙️ WIP
 vkCreateImage                                  | ✅ Implemented
 vkCreateImageView                              | ✅ Implemented
 vkCreateInstance                               | ✅ Implemented
-vkCreatePipelineCache                          | ❌ Not implemented
-vkCreatePipelineLayout                         | ❌ Not implemented
-vkCreateQueryPool                              | ❌ Not implemented
-vkCreateRenderPass                             | ❌ Not implemented
-vkCreateSampler                                | ❌ Not implemented
-vkCreateSemaphore                              | ❌ Not implemented
-vkCreateShaderModule                           | ❌ Not implemented
+vkCreatePipelineCache                          | ⚙️ WIP
+vkCreatePipelineLayout                         | ⚙️ WIP
+vkCreateQueryPool                              | ⚙️ WIP
+vkCreateRenderPass                             | ⚙️ WIP
+vkCreateSampler                                | ⚙️ WIP
+vkCreateSemaphore                              | ⚙️ WIP
+vkCreateShaderModule                           | ⚙️ WIP
 vkDestroyBuffer                                | ✅ Implemented
-vkDestroyBufferView                            | ❌ Not implemented
+vkDestroyBufferView                            | ⚙️ WIP
 vkDestroyCommandPool                           | ✅ Implemented
 vkDestroyDescriptorPool                        | ⚙️ WIP
 vkDestroyDescriptorSetLayout                   | ⚙️ WIP
 vkDestroyDevice                                | ✅ Implemented
-vkDestroyEvent                                 | ❌ Not implemented
+vkDestroyEvent                                 | ⚙️ WIP
 vkDestroyFence                                 | ✅ Implemented
-vkDestroyFramebuffer                           | ❌ Not implemented
+vkDestroyFramebuffer                           | ⚙️ WIP
 vkDestroyImage                                 | ✅ Implemented
 vkDestroyImageView                             | ✅ Implemented
 vkDestroyInstance                              | ✅ Implemented
-vkDestroyPipeline                              | ❌ Not implemented
-vkDestroyPipelineCache                         | ❌ Not implemented
-vkDestroyPipelineLayout                        | ❌ Not implemented
-vkDestroyQueryPool                             | ❌ Not implemented
-vkDestroyRenderPass                            | ❌ Not implemented
-vkDestroySampler                               | ❌ Not implemented
-vkDestroySemaphore                             | ❌ Not implemented
-vkDestroyShaderModule                          | ❌ Not implemented
-vkDeviceWaitIdle                               | ❌ Not implemented
+vkDestroyPipeline                              | ⚙️ WIP
+vkDestroyPipelineCache                         | ⚙️ WIP
+vkDestroyPipelineLayout                        | ⚙️ WIP
+vkDestroyQueryPool                             | ⚙️ WIP
+vkDestroyRenderPass                            | ⚙️ WIP
+vkDestroySampler                               | ⚙️ WIP
+vkDestroySemaphore                             | ⚙️ WIP
+vkDestroyShaderModule                          | ⚙️ WIP
+vkDeviceWaitIdle                               | ⚙️ WIP
 vkEndCommandBuffer                             | ✅ Implemented
 vkEnumerateDeviceExtensionProperties           | ⚙️ WIP
 vkEnumerateDeviceLayerProperties               | ⚙️ WIP
 vkEnumerateInstanceExtensionProperties         | ⚙️ WIP
 vkEnumerateInstanceLayerProperties             | ⚙️ WIP
 vkEnumeratePhysicalDevices                     | ✅ Implemented
-vkFlushMappedMemoryRanges                      | ❌ Not implemented
+vkFlushMappedMemoryRanges                      | ⚙️ WIP
 vkFreeCommandBuffers                           | ✅ Implemented
 vkFreeDescriptorSets                           | ⚙️ WIP
 vkFreeMemory                                   | ✅ Implemented
 vkGetBufferMemoryRequirements                  | ✅ Implemented
-vkGetDeviceMemoryCommitment                    | ❌ Not implemented
+vkGetDeviceMemoryCommitment                    | ⚙️ WIP
 vkGetDeviceProcAddr                            | ✅ Implemented
 vkGetDeviceQueue                               | ✅ Implemented
-vkGetEventStatus                               | ❌ Not implemented
+vkGetEventStatus                               | ⚙️ WIP
 vkGetFenceStatus                               | ✅ Implemented
 vkGetImageMemoryRequirements                   | ✅ Implemented
-vkGetImageSparseMemoryRequirements             | ❌ Not implemented
-vkGetImageSubresourceLayout                    | ❌ Not implemented
+vkGetImageSparseMemoryRequirements             | ⚙️ WIP
+vkGetImageSubresourceLayout                    | ⚙️ WIP
 vkGetInstanceProcAddr                          | ✅ Implemented
 vkGetPhysicalDeviceFeatures                    | ✅ Implemented
 vkGetPhysicalDeviceFormatProperties            | ⚙️ WIP
@@ -163,23 +163,23 @@ vkGetPhysicalDeviceMemoryProperties            | ✅ Implemented
 vkGetPhysicalDeviceProperties                  | ✅ Implemented
 vkGetPhysicalDeviceQueueFamilyProperties       | ✅ Implemented
 vkGetPhysicalDeviceSparseImageFormatProperties | ⚙️ WIP
-vkGetPipelineCacheData                         | ❌ Not implemented
-vkGetQueryPoolResults                          | ❌ Not implemented
-vkGetRenderAreaGranularity                     | ❌ Not implemented
-vkInvalidateMappedMemoryRanges                 | ❌ Not implemented
+vkGetPipelineCacheData                         | ⚙️ WIP
+vkGetQueryPoolResults                          | ⚙️ WIP
+vkGetRenderAreaGranularity                     | ⚙️ WIP
+vkInvalidateMappedMemoryRanges                 | ⚙️ WIP
 vkMapMemory                                    | ✅ Implemented
-vkMergePipelineCaches                          | ❌ Not implemented
-vkQueueBindSparse                              | ❌ Not implemented
+vkMergePipelineCaches                          | ⚙️ WIP
+vkQueueBindSparse                              | ⚙️ WIP
 vkQueueSubmit                                  | ✅ Implemented
 vkQueueWaitIdle                                | ✅ Implemented
 vkResetCommandBuffer                           | ✅ Implemented
-vkResetCommandPool                             | ❌ Not implemented
-vkResetDescriptorPool                          | ❌ Not implemented
-vkResetEvent                                   | ❌ Not implemented
+vkResetCommandPool                             | ⚙️ WIP
+vkResetDescriptorPool                          | ⚙️ WIP
+vkResetEvent                                   | ⚙️ WIP
 vkResetFences                                  | ✅ Implemented
-vkSetEvent                                     | ❌ Not implemented
+vkSetEvent                                     | ⚙️ WIP
 vkUnmapMemory                                  | ✅ Implemented
-vkUpdateDescriptorSets                         | ❌ Not implemented
+vkUpdateDescriptorSets                         | ⚙️ WIP
 vkWaitForFences                                | ✅ Implemented
 </details>
 
