@@ -57,43 +57,43 @@ vkCmdBindIndexBuffer                           | ⚙️ WIP
 vkCmdBindPipeline                              | ⚙️ WIP
 vkCmdBindVertexBuffers                         | ⚙️ WIP
 vkCmdBlitImage                                 | ⚙️ WIP
-vkCmdClearAttachments                          | ⚙️ WIP
+vkCmdClearAttachments                          | ⚙️ wip
 vkCmdClearColorImage                           | ⚙️ WIP
 vkCmdClearDepthStencilImage                    | ⚙️ WIP
 vkCmdCopyBuffer                                | ✅ Implemented
 vkCmdCopyBufferToImage                         | ⚙️ WIP
 vkCmdCopyImage                                 | ⚙️ WIP
-vkCmdCopyImageToBuffer                         | ❌ Not implemented
-vkCmdCopyQueryPoolResults                      | ❌ Not implemented
-vkCmdDispatch                                  | ❌ Not implemented
-vkCmdDispatchIndirect                          | ❌ Not implemented
-vkCmdDraw                                      | ❌ Not implemented
-vkCmdDrawIndexed                               | ❌ Not implemented
-vkCmdDrawIndexedIndirect                       | ❌ Not implemented
-vkCmdDrawIndirect                              | ❌ Not implemented
-vkCmdEndQuery                                  | ❌ Not implemented
-vkCmdEndRenderPass                             | ❌ Not implemented
-vkCmdExecuteCommands                           | ❌ Not implemented
+vkCmdCopyImageToBuffer                         | ⚙️ WIP
+vkCmdCopyQueryPoolResults                      | ⚙️ WIP
+vkCmdDispatch                                  | ⚙️ WIP
+vkCmdDispatchIndirect                          | ⚙️ WIP
+vkCmdDraw                                      | ⚙️ WIP
+vkCmdDrawIndexed                               | ⚙️ WIP
+vkCmdDrawIndexedIndirect                       | ⚙️ WIP
+vkCmdDrawIndirect                              | ⚙️ WIP
+vkCmdEndQuery                                  | ⚙️ WIP
+vkCmdEndRenderPass                             | ⚙️ WIP
+vkCmdExecuteCommands                           | ⚙️ WIP
 vkCmdFillBuffer                                | ✅ Implemented
-vkCmdNextSubpass                               | ❌ Not implemented
-vkCmdPipelineBarrier                           | ❌ Not implemented
-vkCmdPushConstants                             | ❌ Not implemented
-vkCmdResetEvent                                | ❌ Not implemented
-vkCmdResetQueryPool                            | ❌ Not implemented
-vkCmdResolveImage                              | ❌ Not implemented
-vkCmdSetBlendConstants                         | ❌ Not implemented
-vkCmdSetDepthBias                              | ❌ Not implemented
-vkCmdSetDepthBounds                            | ❌ Not implemented
-vkCmdSetEvent                                  | ❌ Not implemented
-vkCmdSetLineWidth                              | ❌ Not implemented
-vkCmdSetScissor                                | ❌ Not implemented
-vkCmdSetStencilCompareMask                     | ❌ Not implemented
-vkCmdSetStencilReference                       | ❌ Not implemented
-vkCmdSetStencilWriteMask                       | ❌ Not implemented
-vkCmdSetViewport                               | ❌ Not implemented
-vkCmdUpdateBuffer                              | ❌ Not implemented
-vkCmdWaitEvents                                | ❌ Not implemented
-vkCmdWriteTimestamp                            | ❌ Not implemented
+vkCmdNextSubpass                               | ⚙️ WIP
+vkCmdPipelineBarrier                           | ⚙️ WIP
+vkCmdPushConstants                             | ⚙️ WIP
+vkCmdResetEvent                                | ⚙️ WIP
+vkCmdResetQueryPool                            | ⚙️ WIP
+vkCmdResolveImage                              | ⚙️ WIP
+vkCmdSetBlendConstants                         | ⚙️ WIP
+vkCmdSetDepthBias                              | ⚙️ WIP
+vkCmdSetDepthBounds                            | ⚙️ WIP
+vkCmdSetEvent                                  | ⚙️ WIP
+vkCmdSetLineWidth                              | ⚙️ WIP
+vkCmdSetScissor                                | ⚙️ WIP
+vkCmdSetStencilCompareMask                     | ⚙️ WIP
+vkCmdSetStencilReference                       | ⚙️ WIP
+vkCmdSetStencilWriteMask                       | ⚙️ WIP
+vkCmdSetViewport                               | ⚙️ WIP
+vkCmdUpdateBuffer                              | ⚙️ WIP
+vkCmdWaitEvents                                | ⚙️ WIP
+vkCmdWriteTimestamp                            | ⚙️ WIP
 vkCreateBuffer                                 | ✅ Implemented
 vkCreateBufferView                             | ❌ Not implemented
 vkCreateCommandPool                            | ✅ Implemented

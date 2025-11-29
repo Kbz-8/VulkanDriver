@@ -117,7 +117,37 @@ const device_pfn_map = block: {
         functionMapEntryPoint("vkCmdCopyBuffer"),
         functionMapEntryPoint("vkCmdCopyBufferToImage"),
         functionMapEntryPoint("vkCmdCopyImage"),
+        functionMapEntryPoint("vkCmdCopyImageToBuffer"),
+        functionMapEntryPoint("vkCmdCopyQueryPoolResults"),
+        functionMapEntryPoint("vkCmdDispatch"),
+        functionMapEntryPoint("vkCmdDispatchIndirect"),
+        functionMapEntryPoint("vkCmdDraw"),
+        functionMapEntryPoint("vkCmdDrawIndexed"),
+        functionMapEntryPoint("vkCmdDrawIndexedIndirect"),
+        functionMapEntryPoint("vkCmdDrawIndirect"),
+        functionMapEntryPoint("vkCmdEndQuery"),
+        functionMapEntryPoint("vkCmdEndRenderPass"),
+        functionMapEntryPoint("vkCmdExecuteCommands"),
         functionMapEntryPoint("vkCmdFillBuffer"),
+        functionMapEntryPoint("vkCmdNextSubpass"),
+        functionMapEntryPoint("vkCmdPipelineBarrier"),
+        functionMapEntryPoint("vkCmdPushConstants"),
+        functionMapEntryPoint("vkCmdResetEvent"),
+        functionMapEntryPoint("vkCmdResetQueryPool"),
+        functionMapEntryPoint("vkCmdResolveImage"),
+        functionMapEntryPoint("vkCmdSetBlendConstants"), //
+        functionMapEntryPoint("vkCmdSetDepthBias"), //
+        functionMapEntryPoint("vkCmdSetDepthBounds"), //
+        functionMapEntryPoint("vkCmdSetEvent"), //
+        functionMapEntryPoint("vkCmdSetLineWidth"), //
+        functionMapEntryPoint("vkCmdSetScissor"), //
+        functionMapEntryPoint("vkCmdSetStencilCompareMask"), //
+        functionMapEntryPoint("vkCmdSetStencilReference"), //
+        functionMapEntryPoint("vkCmdSetStencilWriteMask"), //
+        functionMapEntryPoint("vkCmdSetViewport"), //
+        functionMapEntryPoint("vkCmdUpdateBuffer"), //
+        functionMapEntryPoint("vkCmdWaitEvents"), //
+        functionMapEntryPoint("vkCmdWriteTimestamp"), //
         functionMapEntryPoint("vkCreateBuffer"),
         functionMapEntryPoint("vkCreateCommandPool"),
         functionMapEntryPoint("vkCreateDescriptorPool"),
@@ -1080,6 +1110,272 @@ pub export fn strollCmdCopyImage(p_cmd: vk.CommandBuffer, p_src: vk.Image, p_dst
     cmd.copyImage(src, dst, regions[0..count]) catch |err| return errorLogger(err);
 }
 
+pub export fn strollCmdCopyImageToBuffer(p_cmd: vk.CommandBuffer, p_src: vk.Image, layout: vk.ImageLayout, p_dst: vk.Buffer, count: u32, regions: [*]const vk.BufferImageCopy) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdCopyImageToBuffer);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+    const src = NonDispatchable(Image).fromHandleObject(p_src) catch |err| return errorLogger(err);
+    const dst = NonDispatchable(Buffer).fromHandleObject(p_dst) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = src;
+    _ = dst;
+    _ = layout;
+    _ = count;
+    _ = regions;
+}
+
+pub export fn strollCmdCopyQueryPoolResults(p_cmd: vk.CommandBuffer, p_pool: vk.QueryPool, first: u32, count: u32, p_dst: vk.Buffer, offset: vk.DeviceSize, stride: vk.DeviceSize, flags: vk.QueryResultFlags) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdCopyQueryPoolResults);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+    const dst = NonDispatchable(Image).fromHandleObject(p_dst) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = p_pool;
+    _ = first;
+    _ = count;
+    _ = dst;
+    _ = offset;
+    _ = stride;
+    _ = flags;
+}
+
+pub export fn strollCmdDispatch(p_cmd: vk.CommandBuffer, group_count_x: u32, group_count_y: u32, group_count_z: u32) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdDispatch);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = group_count_x;
+    _ = group_count_y;
+    _ = group_count_z;
+}
+
+pub export fn strollCmdDispatchIndirect(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer, offset: vk.DeviceSize) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdDispatchIndirect);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+    const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = buffer;
+    _ = offset;
+}
+
+pub export fn strollCmdDraw(p_cmd: vk.CommandBuffer, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdDraw);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = vertex_count;
+    _ = instance_count;
+    _ = first_vertex;
+    _ = first_instance;
+}
+
+pub export fn strollCmdDrawIndexed(p_cmd: vk.CommandBuffer, index_count: u32, instance_count: u32, first_index: u32, vertex_offset: u32, first_instance: u32) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdDrawIndexed);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = index_count;
+    _ = instance_count;
+    _ = first_index;
+    _ = vertex_offset;
+    _ = first_instance;
+}
+
+pub export fn strollCmdDrawIndexedIndirect(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer, offset: vk.DeviceSize, count: u32, stride: u32) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdDrawIndexedIndirect);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+    const buffer = Dispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = buffer;
+    _ = offset;
+    _ = count;
+    _ = stride;
+}
+
+pub export fn strollCmdDrawIndirect(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer, offset: vk.DeviceSize, count: u32, stride: u32) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdDrawIndirect);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+    const buffer = Dispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = buffer;
+    _ = offset;
+    _ = count;
+    _ = stride;
+}
+
+pub export fn strollCmdEndQuery(p_cmd: vk.CommandBuffer, p_pool: vk.QueryPool, query: u32) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdEndQuery);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = p_pool;
+    _ = query;
+}
+
+pub export fn strollCmdEndRenderPass(p_cmd: vk.CommandBuffer) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdEndRenderPass);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+}
+
+pub export fn strollCmdExecuteCommands(p_cmd: vk.CommandBuffer, count: u32, p_cmds: [*]const vk.CommandBuffer) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdExecuteCommands);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = count;
+    _ = p_cmds;
+}
+
+pub export fn strollCmdPipelineBarrier(
+    p_cmd: vk.CommandBuffer,
+    src_stage_mask: vk.PipelineStageFlags,
+    dst_stage_mask: vk.PipelineStageFlags,
+    dependency_flags: vk.DependencyFlags,
+    memory_barrier_count: u32,
+    memory_barriers: [*]const vk.MemoryBarrier,
+    buffer_memory_barrier_count: u32,
+    buffer_memory_barriers: [*]const vk.BufferMemoryBarrier,
+    image_memory_barrier_count: u32,
+    image_memory_barriers: [*]const vk.ImageMemoryBarrier,
+) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdPipelineBarrier);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = src_stage_mask;
+    _ = dst_stage_mask;
+    _ = dependency_flags;
+    _ = memory_barrier_count;
+    _ = memory_barriers;
+    _ = buffer_memory_barrier_count;
+    _ = buffer_memory_barriers;
+    _ = image_memory_barrier_count;
+    _ = image_memory_barriers;
+}
+
+pub export fn strollCmdPushConstants(p_cmd: vk.CommandBuffer, layout: vk.PipelineLayout, flags: vk.ShaderStageFlags, offset: u32, size: u32, values: [*]const anyopaque) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdPushConstants);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = layout;
+    _ = flags;
+    _ = offset;
+    _ = size;
+    _ = values;
+}
+
+pub export fn strollCmdResetQueryPool(p_cmd: vk.CommandBuffer, p_pool: vk.QueryPool, first: u32, count: u32) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdResetQueryPool);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = p_pool;
+    _ = first;
+    _ = count;
+}
+
+pub export fn strollCmdResetEvent(p_cmd: vk.CommandBuffer, p_event: vk.Event, stage_mask: vk.PipelineStageFlags) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdResetEvent);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = p_event;
+    _ = stage_mask;
+}
+
+pub export fn strollCmdResolveImage(
+    p_cmd: vk.CommandBuffer,
+    p_src: vk.Image,
+    src_layout: vk.ImageLayout,
+    p_dst: vk.Image,
+    dst_layout: vk.ImageLayout,
+    count: u32,
+    regions: [*]const vk.ImageResolve,
+) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdResolveImage);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+    const src = Dispatchable(Image).fromHandleObject(p_src) catch |err| return errorLogger(err);
+    const dst = Dispatchable(Image).fromHandleObject(p_dst) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = src;
+    _ = src_layout;
+    _ = dst;
+    _ = dst_layout;
+    _ = count;
+    _ = regions;
+}
+
 pub export fn strollCmdFillBuffer(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkCmdFillBuffer);
     defer entryPointEndLogTrace();
@@ -1087,6 +1383,18 @@ pub export fn strollCmdFillBuffer(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer, 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
     const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
     cmd.fillBuffer(buffer, offset, size, data) catch |err| return errorLogger(err);
+}
+
+pub export fn strollCmdNextSubpass(p_cmd: vk.CommandBuffer, contents: vk.SubpassContents) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdNextSubpass);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+
+    notImplementedWarning();
+
+    _ = cmd;
+    _ = contents;
 }
 
 pub export fn strollEndCommandBuffer(p_cmd: vk.CommandBuffer) callconv(vk.vulkan_call_conv) vk.Result {
