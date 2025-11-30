@@ -9,16 +9,26 @@ const VkError = @import("error_set.zig").VkError;
 const PhysicalDevice = @import("PhysicalDevice.zig");
 const Queue = @import("Queue.zig");
 
+const BinarySemaphore = @import("BinarySemaphore.zig");
 const Buffer = @import("Buffer.zig");
-const CommandBuffer = @import("CommandBuffer.zig");
+const BufferView = @import("BufferView.zig");
 const CommandPool = @import("CommandPool.zig");
-const DeviceMemory = @import("DeviceMemory.zig");
 const DescriptorPool = @import("DescriptorPool.zig");
 const DescriptorSet = @import("DescriptorSet.zig");
 const DescriptorSetLayout = @import("DescriptorSetLayout.zig");
+const DeviceMemory = @import("DeviceMemory.zig");
+const Event = @import("Event.zig");
 const Fence = @import("Fence.zig");
+const Framebuffer = @import("Framebuffer.zig");
 const Image = @import("Image.zig");
 const ImageView = @import("ImageView.zig");
+const Pipeline = @import("Pipeline.zig");
+const PipelineCache = @import("PipelineCache.zig");
+const PipelineLayout = @import("PipelineLayout.zig");
+const QueryPool = @import("QueryPool.zig");
+const RenderPass = @import("RenderPass.zig");
+const Sampler = @import("Sampler.zig");
+const ShaderModule = @import("ShaderModule.zig");
 
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .device;
@@ -38,12 +48,24 @@ pub const VTable = struct {
 pub const DispatchTable = struct {
     allocateMemory: *const fn (*Self, std.mem.Allocator, *const vk.MemoryAllocateInfo) VkError!*DeviceMemory,
     createBuffer: *const fn (*Self, std.mem.Allocator, *const vk.BufferCreateInfo) VkError!*Buffer,
+    createBufferView: *const fn (*Self, std.mem.Allocator, *const vk.BufferViewCreateInfo) VkError!*BufferView,
     createCommandPool: *const fn (*Self, std.mem.Allocator, *const vk.CommandPoolCreateInfo) VkError!*CommandPool,
+    createComputePipeline: *const fn (*Self, std.mem.Allocator, ?*PipelineCache, *const vk.ComputePipelineCreateInfo) VkError!*Pipeline,
     createDescriptorPool: *const fn (*Self, std.mem.Allocator, *const vk.DescriptorPoolCreateInfo) VkError!*DescriptorPool,
     createDescriptorSetLayout: *const fn (*Self, std.mem.Allocator, *const vk.DescriptorSetLayoutCreateInfo) VkError!*DescriptorSetLayout,
+    createEvent: *const fn (*Self, std.mem.Allocator, *const vk.EventCreateInfo) VkError!*Event,
     createFence: *const fn (*Self, std.mem.Allocator, *const vk.FenceCreateInfo) VkError!*Fence,
+    createFramebuffer: *const fn (*Self, std.mem.Allocator, *const vk.FramebufferCreateInfo) VkError!*Framebuffer,
+    createGraphicsPipeline: *const fn (*Self, std.mem.Allocator, ?*PipelineCache, *const vk.GraphicsPipelineCreateInfo) VkError!*Pipeline,
     createImage: *const fn (*Self, std.mem.Allocator, *const vk.ImageCreateInfo) VkError!*Image,
     createImageView: *const fn (*Self, std.mem.Allocator, *const vk.ImageViewCreateInfo) VkError!*ImageView,
+    createPipelineCache: *const fn (*Self, std.mem.Allocator, *const vk.PipelineCacheCreateInfo) VkError!*PipelineCache,
+    createPipelineLayout: *const fn (*Self, std.mem.Allocator, *const vk.PipelineLayoutCreateInfo) VkError!*PipelineLayout,
+    createQueryPool: *const fn (*Self, std.mem.Allocator, *const vk.QueryPoolCreateInfo) VkError!*QueryPool,
+    createRenderPass: *const fn (*Self, std.mem.Allocator, *const vk.RenderPassCreateInfo) VkError!*RenderPass,
+    createSampler: *const fn (*Self, std.mem.Allocator, *const vk.SamplerCreateInfo) VkError!*Sampler,
+    createSemaphore: *const fn (*Self, std.mem.Allocator, *const vk.SemaphoreCreateInfo) VkError!*BinarySemaphore,
+    createShaderModule: *const fn (*Self, std.mem.Allocator, *const vk.ShaderModuleCreateInfo) VkError!*ShaderModule,
     destroy: *const fn (*Self, std.mem.Allocator) VkError!void,
 };
 
@@ -123,4 +145,61 @@ pub inline fn createImage(self: *Self, allocator: std.mem.Allocator, info: *cons
 
 pub inline fn createImageView(self: *Self, allocator: std.mem.Allocator, info: *const vk.ImageViewCreateInfo) VkError!*ImageView {
     return self.dispatch_table.createImageView(self, allocator, info);
+}
+
+pub inline fn createBufferView(self: *Self, allocator: std.mem.Allocator, info: *const vk.BufferViewCreateInfo) VkError!*BufferView {
+    return self.dispatch_table.createBufferView(self, allocator, info);
+}
+
+pub inline fn createComputePipeline(self: *Self, allocator: std.mem.Allocator, cache: ?*PipelineCache, info: *const vk.ComputePipelineCreateInfo) VkError!*Pipeline {
+    return self.dispatch_table.createComputePipeline(self, allocator, cache, info);
+}
+
+pub inline fn createEvent(self: *Self, allocator: std.mem.Allocator, info: *const vk.EventCreateInfo) VkError!*Event {
+    return self.dispatch_table.createEvent(self, allocator, info);
+}
+
+pub inline fn createFramebuffer(self: *Self, allocator: std.mem.Allocator, info: *const vk.FramebufferCreateInfo) VkError!*Framebuffer {
+    return self.dispatch_table.createFramebuffer(self, allocator, info);
+}
+
+pub inline fn createGraphicsPipeline(self: *Self, allocator: std.mem.Allocator, cache: ?*PipelineCache, info: *const vk.GraphicsPipelineCreateInfo) VkError!*Pipeline {
+    return self.dispatch_table.createGraphicsPipeline(self, allocator, cache, info);
+}
+
+pub inline fn createPipelineCache(self: *Self, allocator: std.mem.Allocator, info: *const vk.PipelineCacheCreateInfo) VkError!*PipelineCache {
+    return self.dispatch_table.createPipelineCache(self, allocator, info);
+}
+
+pub inline fn createPipelineLayout(self: *Self, allocator: std.mem.Allocator, info: *const vk.PipelineLayoutCreateInfo) VkError!*PipelineLayout {
+    return self.dispatch_table.createPipelineLayout(self, allocator, info);
+}
+
+pub inline fn createQueryPool(self: *Self, allocator: std.mem.Allocator, info: *const vk.QueryPoolCreateInfo) VkError!*QueryPool {
+    return self.dispatch_table.createQueryPool(self, allocator, info);
+}
+
+pub inline fn createRenderPass(self: *Self, allocator: std.mem.Allocator, info: *const vk.RenderPassCreateInfo) VkError!*RenderPass {
+    return self.dispatch_table.createRenderPass(self, allocator, info);
+}
+
+pub inline fn createSampler(self: *Self, allocator: std.mem.Allocator, info: *const vk.SamplerCreateInfo) VkError!*Sampler {
+    return self.dispatch_table.createSampler(self, allocator, info);
+}
+
+pub inline fn createSemaphore(self: *Self, allocator: std.mem.Allocator, info: *const vk.SemaphoreCreateInfo) VkError!*BinarySemaphore {
+    return self.dispatch_table.createSemaphore(self, allocator, info);
+}
+
+pub inline fn createShaderModule(self: *Self, allocator: std.mem.Allocator, info: *const vk.ShaderModuleCreateInfo) VkError!*ShaderModule {
+    return self.dispatch_table.createShaderModule(self, allocator, info);
+}
+
+pub inline fn waitIdle(self: *Self) VkError!void {
+    var it = self.queues.iterator();
+    while (it.next()) |family| {
+        for (family.value_ptr.items) |queue| {
+            try queue.object.waitIdle();
+        }
+    }
 }

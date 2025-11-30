@@ -5,16 +5,28 @@ const builtin = @import("builtin");
 
 const Debug = std.builtin.OptimizeMode.Debug;
 
-const SoftCommandPool = @import("SoftCommandPool.zig");
 const SoftQueue = @import("SoftQueue.zig");
 
-const SoftBuffer = @import("SoftBuffer.zig");
-const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
-const SoftDescriptorPool = @import("SoftDescriptorPool.zig");
-const SoftDescriptorSetLayout = @import("SoftDescriptorSetLayout.zig");
-const SoftFence = @import("SoftFence.zig");
-const SoftImage = @import("SoftImage.zig");
-const SoftImageView = @import("SoftImageView.zig");
+pub const SoftBinarySemaphore = @import("SoftBinarySemaphore.zig");
+pub const SoftBuffer = @import("SoftBuffer.zig");
+pub const SoftBufferView = @import("SoftBufferView.zig");
+pub const SoftCommandBuffer = @import("SoftCommandBuffer.zig");
+pub const SoftCommandPool = @import("SoftCommandPool.zig");
+pub const SoftDescriptorPool = @import("SoftDescriptorPool.zig");
+pub const SoftDescriptorSetLayout = @import("SoftDescriptorSetLayout.zig");
+pub const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
+pub const SoftEvent = @import("SoftEvent.zig");
+pub const SoftFence = @import("SoftFence.zig");
+pub const SoftFramebuffer = @import("SoftFramebuffer.zig");
+pub const SoftImage = @import("SoftImage.zig");
+pub const SoftImageView = @import("SoftImageView.zig");
+pub const SoftPipeline = @import("SoftPipeline.zig");
+pub const SoftPipelineCache = @import("SoftPipelineCache.zig");
+pub const SoftPipelineLayout = @import("SoftPipelineLayout.zig");
+pub const SoftQueryPool = @import("SoftQueryPool.zig");
+pub const SoftRenderPass = @import("SoftRenderPass.zig");
+pub const SoftSampler = @import("SoftSampler.zig");
+pub const SoftShaderModule = @import("SoftShaderModule.zig");
 
 const VkError = base.VkError;
 
@@ -41,12 +53,24 @@ pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocato
     interface.dispatch_table = &.{
         .allocateMemory = allocateMemory,
         .createBuffer = createBuffer,
+        .createBufferView = createBufferView,
         .createCommandPool = createCommandPool,
+        .createComputePipeline = createComputePipeline,
         .createDescriptorPool = createDescriptorPool,
         .createDescriptorSetLayout = createDescriptorSetLayout,
+        .createEvent = createEvent,
         .createFence = createFence,
+        .createFramebuffer = createFramebuffer,
+        .createGraphicsPipeline = createGraphicsPipeline,
         .createImage = createImage,
         .createImageView = createImageView,
+        .createPipelineCache = createPipelineCache,
+        .createPipelineLayout = createPipelineLayout,
+        .createQueryPool = createQueryPool,
+        .createRenderPass = createRenderPass,
+        .createSampler = createSampler,
+        .createSemaphore = createSemaphore,
+        .createShaderModule = createShaderModule,
         .destroy = destroy,
     };
 
@@ -116,6 +140,66 @@ pub fn createImage(interface: *Interface, allocator: std.mem.Allocator, info: *c
 }
 
 pub fn createImageView(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.ImageViewCreateInfo) VkError!*base.ImageView {
-    const image_view = try SoftImageView.create(interface, allocator, info);
-    return &image_view.interface;
+    const view = try SoftImageView.create(interface, allocator, info);
+    return &view.interface;
+}
+
+pub fn createBufferView(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.BufferViewCreateInfo) VkError!*base.BufferView {
+    const view = try SoftBufferView.create(interface, allocator, info);
+    return &view.interface;
+}
+
+pub fn createComputePipeline(interface: *Interface, allocator: std.mem.Allocator, cache: ?*base.PipelineCache, info: *const vk.ComputePipelineCreateInfo) VkError!*base.Pipeline {
+    const pipeline = try SoftPipeline.createCompute(interface, allocator, cache, info);
+    return &pipeline.interface;
+}
+
+pub fn createEvent(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.EventCreateInfo) VkError!*base.Event {
+    const event = try SoftEvent.create(interface, allocator, info);
+    return &event.interface;
+}
+
+pub fn createFramebuffer(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.FramebufferCreateInfo) VkError!*base.Framebuffer {
+    const framebuffer = try SoftFramebuffer.create(interface, allocator, info);
+    return &framebuffer.interface;
+}
+
+pub fn createGraphicsPipeline(interface: *Interface, allocator: std.mem.Allocator, cache: ?*base.PipelineCache, info: *const vk.GraphicsPipelineCreateInfo) VkError!*base.Pipeline {
+    const pipeline = try SoftPipeline.createGraphics(interface, allocator, cache, info);
+    return &pipeline.interface;
+}
+
+pub fn createPipelineCache(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.PipelineCacheCreateInfo) VkError!*base.PipelineCache {
+    const cache = try SoftPipelineCache.create(interface, allocator, info);
+    return &cache.interface;
+}
+
+pub fn createPipelineLayout(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.PipelineLayoutCreateInfo) VkError!*base.PipelineLayout {
+    const layout = try SoftPipelineLayout.create(interface, allocator, info);
+    return &layout.interface;
+}
+
+pub fn createQueryPool(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.QueryPoolCreateInfo) VkError!*base.QueryPool {
+    const pool = try SoftQueryPool.create(interface, allocator, info);
+    return &pool.interface;
+}
+
+pub fn createRenderPass(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.RenderPassCreateInfo) VkError!*base.RenderPass {
+    const pass = try SoftRenderPass.create(interface, allocator, info);
+    return &pass.interface;
+}
+
+pub fn createSampler(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.SamplerCreateInfo) VkError!*base.Sampler {
+    const sampler = try SoftSampler.create(interface, allocator, info);
+    return &sampler.interface;
+}
+
+pub fn createSemaphore(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.SemaphoreCreateInfo) VkError!*base.BinarySemaphore {
+    const semaphore = try SoftBinarySemaphore.create(interface, allocator, info);
+    return &semaphore.interface;
+}
+
+pub fn createShaderModule(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.ShaderModuleCreateInfo) VkError!*base.ShaderModule {
+    const module = try SoftShaderModule.create(interface, allocator, info);
+    return &module.interface;
 }

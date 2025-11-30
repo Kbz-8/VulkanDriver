@@ -73,7 +73,8 @@ pub fn submit(interface: *Interface, infos: []Interface.SubmitInfo, p_fence: ?*b
 
 pub fn waitIdle(interface: *Interface) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    self.wait_group.wait();
+    if (!self.wait_group.isDone())
+        self.wait_group.wait();
 }
 
 fn taskRunner(self: *Self, info: Interface.SubmitInfo, p_fence: ?*base.Fence) void {

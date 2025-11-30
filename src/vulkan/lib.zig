@@ -7,35 +7,46 @@ pub const vku = @cImport({
 });
 
 pub const commands = @import("commands.zig");
+pub const errors = @import("error_set.zig");
 pub const lib_vulkan = @import("lib_vulkan.zig");
 pub const logger = @import("logger.zig");
-pub const errors = @import("error_set.zig");
 
 pub const Dispatchable = @import("Dispatchable.zig").Dispatchable;
 pub const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
 pub const VkError = errors.VkError;
 pub const VulkanAllocator = @import("VulkanAllocator.zig");
 
-pub const Instance = @import("Instance.zig");
+pub const CommandBuffer = @import("CommandBuffer.zig");
 pub const Device = @import("Device.zig");
+pub const Instance = @import("Instance.zig");
 pub const PhysicalDevice = @import("PhysicalDevice.zig");
 pub const Queue = @import("Queue.zig");
 
+pub const BinarySemaphore = @import("BinarySemaphore.zig");
 pub const Buffer = @import("Buffer.zig");
-pub const CommandBuffer = @import("CommandBuffer.zig");
+pub const BufferView = @import("BufferView.zig");
 pub const CommandPool = @import("CommandPool.zig");
 pub const DescriptorPool = @import("DescriptorPool.zig");
 pub const DescriptorSet = @import("DescriptorSet.zig");
 pub const DescriptorSetLayout = @import("DescriptorSetLayout.zig");
 pub const DeviceMemory = @import("DeviceMemory.zig");
+pub const Event = @import("Event.zig");
 pub const Fence = @import("Fence.zig");
+pub const Framebuffer = @import("Framebuffer.zig");
 pub const Image = @import("Image.zig");
 pub const ImageView = @import("ImageView.zig");
+pub const Pipeline = @import("Pipeline.zig");
+pub const PipelineCache = @import("PipelineCache.zig");
+pub const PipelineLayout = @import("PipelineLayout.zig");
+pub const QueryPool = @import("QueryPool.zig");
+pub const RenderPass = @import("RenderPass.zig");
+pub const Sampler = @import("Sampler.zig");
+pub const ShaderModule = @import("ShaderModule.zig");
 
 pub const VULKAN_VENDOR_ID = @typeInfo(vk.VendorId).@"enum".fields[@typeInfo(vk.VendorId).@"enum".fields.len - 1].value + 1;
 
-pub const DRIVER_LOGS_ENV_NAME = "STROLL_LOGS_LEVEL";
 pub const DRIVER_DEBUG_ALLOCATOR_ENV_NAME = "STROLL_DEBUG_ALLOCATOR";
+pub const DRIVER_LOGS_ENV_NAME = "STROLL_LOGS_LEVEL";
 
 /// Default driver name
 pub const DRIVER_NAME = "Unnamed Driver";

@@ -17,21 +17,32 @@ const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
 
 const VulkanAllocator = @import("VulkanAllocator.zig");
 
-const Instance = @import("Instance.zig");
-const Device = @import("Device.zig");
-const PhysicalDevice = @import("PhysicalDevice.zig");
-const Queue = @import("Queue.zig");
+pub const CommandBuffer = @import("CommandBuffer.zig");
+pub const Device = @import("Device.zig");
+pub const Instance = @import("Instance.zig");
+pub const PhysicalDevice = @import("PhysicalDevice.zig");
+pub const Queue = @import("Queue.zig");
 
-const Buffer = @import("Buffer.zig");
-const CommandBuffer = @import("CommandBuffer.zig");
-const CommandPool = @import("CommandPool.zig");
-const DeviceMemory = @import("DeviceMemory.zig");
-const DescriptorPool = @import("DescriptorPool.zig");
-const DescriptorSet = @import("DescriptorSet.zig");
-const DescriptorSetLayout = @import("DescriptorSetLayout.zig");
-const Fence = @import("Fence.zig");
-const Image = @import("Image.zig");
-const ImageView = @import("ImageView.zig");
+pub const BinarySemaphore = @import("BinarySemaphore.zig");
+pub const Buffer = @import("Buffer.zig");
+pub const BufferView = @import("BufferView.zig");
+pub const CommandPool = @import("CommandPool.zig");
+pub const DescriptorPool = @import("DescriptorPool.zig");
+pub const DescriptorSet = @import("DescriptorSet.zig");
+pub const DescriptorSetLayout = @import("DescriptorSetLayout.zig");
+pub const DeviceMemory = @import("DeviceMemory.zig");
+pub const Event = @import("Event.zig");
+pub const Fence = @import("Fence.zig");
+pub const Framebuffer = @import("Framebuffer.zig");
+pub const Image = @import("Image.zig");
+pub const ImageView = @import("ImageView.zig");
+pub const Pipeline = @import("Pipeline.zig");
+pub const PipelineCache = @import("PipelineCache.zig");
+pub const PipelineLayout = @import("PipelineLayout.zig");
+pub const QueryPool = @import("QueryPool.zig");
+pub const RenderPass = @import("RenderPass.zig");
+pub const Sampler = @import("Sampler.zig");
+pub const ShaderModule = @import("ShaderModule.zig");
 
 fn entryPointBeginLogTrace(comptime scope: @Type(.enum_literal)) void {
     std.log.scoped(scope).debug("Calling {s}...", .{@tagName(scope)});
@@ -216,7 +227,7 @@ const device_pfn_map = block: {
         functionMapEntryPoint("vkResetFences"),
         functionMapEntryPoint("vkSetEvent"),
         functionMapEntryPoint("vkUnmapMemory"),
-        functionMapEntryPoint("vkUpdateDescriptorSets"), //
+        functionMapEntryPoint("vkUpdateDescriptorSets"),
         functionMapEntryPoint("vkWaitForFences"),
     });
 };
@@ -612,15 +623,9 @@ pub export fn strollCreateBufferView(p_device: vk.Device, info: *const vk.Buffer
     }
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
-
-    notImplementedWarning();
-
-    _ = allocator;
-    _ = device;
-
-    p_view.* = .null_handle;
-
-    return .error_unknown;
+    const view = device.createBufferView(allocator, info) catch |err| return toVkResult(err);
+    p_view.* = (NonDispatchable(BufferView).wrap(allocator, view) catch |err| return toVkResult(err)).toVkHandle(vk.BufferView);
+    return .success;
 }
 
 pub export fn strollCreateCommandPool(p_device: vk.Device, info: *const vk.CommandPoolCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_pool: *vk.CommandPool) callconv(vk.vulkan_call_conv) vk.Result {
@@ -644,21 +649,16 @@ pub export fn strollCreateComputePipelines(p_device: vk.Device, p_cache: vk.Pipe
 
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const cache = if (p_cache == .null_handle) null else NonDispatchable(PipelineCache).fromHandleObject(p_cache) catch |err| return toVkResult(err);
 
-    notImplementedWarning();
-
-    for (p_pipelines, infos, 0..count) |*p_pipeline, info, _| {
+    for (p_pipelines, infos, 0..count) |*p_pipeline, *info, _| {
         if (info.s_type != .compute_pipeline_create_info) {
             return .error_validation_failed;
         }
-        p_pipeline.* = .null_handle;
+        const pipeline = device.createComputePipeline(allocator, cache, info) catch |err| return toVkResult(err);
+        p_pipeline.* = (NonDispatchable(Pipeline).wrap(allocator, pipeline) catch |err| return toVkResult(err)).toVkHandle(vk.Pipeline);
     }
-
-    _ = allocator;
-    _ = device;
-    _ = p_cache;
-
-    return .error_unknown;
+    return .success;
 }
 
 pub export fn strollCreateDescriptorPool(p_device: vk.Device, info: *const vk.DescriptorPoolCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_pool: *vk.DescriptorPool) callconv(vk.vulkan_call_conv) vk.Result {
@@ -699,17 +699,11 @@ pub export fn strollCreateEvent(p_device: vk.Device, info: *const vk.EventCreate
         return .error_validation_failed;
     }
 
-    notImplementedWarning();
-
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
-
-    p_event.* = .null_handle;
-
-    _ = device;
-    _ = allocator;
-
-    return .error_unknown;
+    const event = device.createEvent(allocator, info) catch |err| return toVkResult(err);
+    p_event.* = (NonDispatchable(Event).wrap(allocator, event) catch |err| return toVkResult(err)).toVkHandle(vk.Event);
+    return .success;
 }
 
 pub export fn strollCreateFence(p_device: vk.Device, info: *const vk.FenceCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_fence: *vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
@@ -735,17 +729,11 @@ pub export fn strollCreateFramebuffer(p_device: vk.Device, info: *const vk.Frame
         return .error_validation_failed;
     }
 
-    notImplementedWarning();
-
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
-
-    p_framebuffer.* = .null_handle;
-
-    _ = device;
-    _ = allocator;
-
-    return .error_unknown;
+    const framebuffer = device.createFramebuffer(allocator, info) catch |err| return toVkResult(err);
+    p_framebuffer.* = (NonDispatchable(Framebuffer).wrap(allocator, framebuffer) catch |err| return toVkResult(err)).toVkHandle(vk.Framebuffer);
+    return .success;
 }
 
 pub export fn strollCreateGraphicsPipelines(p_device: vk.Device, p_cache: vk.PipelineCache, count: u32, infos: [*]const vk.GraphicsPipelineCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_pipelines: [*]vk.Pipeline) callconv(vk.vulkan_call_conv) vk.Result {
@@ -754,21 +742,16 @@ pub export fn strollCreateGraphicsPipelines(p_device: vk.Device, p_cache: vk.Pip
 
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const cache = if (p_cache == .null_handle) null else NonDispatchable(PipelineCache).fromHandleObject(p_cache) catch |err| return toVkResult(err);
 
-    notImplementedWarning();
-
-    for (p_pipelines, infos, 0..count) |*p_pipeline, info, _| {
+    for (p_pipelines, infos, 0..count) |*p_pipeline, *info, _| {
         if (info.s_type != .graphics_pipeline_create_info) {
             return .error_validation_failed;
         }
-        p_pipeline.* = .null_handle;
+        const pipeline = device.createGraphicsPipeline(allocator, cache, info) catch |err| return toVkResult(err);
+        p_pipeline.* = (NonDispatchable(Pipeline).wrap(allocator, pipeline) catch |err| return toVkResult(err)).toVkHandle(vk.Pipeline);
     }
-
-    _ = allocator;
-    _ = device;
-    _ = p_cache;
-
-    return .error_unknown;
+    return .success;
 }
 
 pub export fn strollCreateImage(p_device: vk.Device, info: *const vk.ImageCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_image: *vk.Image) callconv(vk.vulkan_call_conv) vk.Result {
@@ -807,17 +790,11 @@ pub export fn strollCreatePipelineCache(p_device: vk.Device, info: *const vk.Pip
         return .error_validation_failed;
     }
 
-    notImplementedWarning();
-
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
-
-    p_cache.* = .null_handle;
-
-    _ = device;
-    _ = allocator;
-
-    return .error_unknown;
+    const cache = device.createPipelineCache(allocator, info) catch |err| return toVkResult(err);
+    p_cache.* = (NonDispatchable(PipelineCache).wrap(allocator, cache) catch |err| return toVkResult(err)).toVkHandle(vk.PipelineCache);
+    return .success;
 }
 
 pub export fn strollCreatePipelineLayout(p_device: vk.Device, info: *const vk.PipelineLayoutCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_layout: *vk.PipelineLayout) callconv(vk.vulkan_call_conv) vk.Result {
@@ -828,17 +805,11 @@ pub export fn strollCreatePipelineLayout(p_device: vk.Device, info: *const vk.Pi
         return .error_validation_failed;
     }
 
-    notImplementedWarning();
-
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
-
-    p_layout.* = .null_handle;
-
-    _ = device;
-    _ = allocator;
-
-    return .error_unknown;
+    const layout = device.createPipelineLayout(allocator, info) catch |err| return toVkResult(err);
+    p_layout.* = (NonDispatchable(PipelineLayout).wrap(allocator, layout) catch |err| return toVkResult(err)).toVkHandle(vk.PipelineLayout);
+    return .success;
 }
 
 pub export fn strollCreateQueryPool(p_device: vk.Device, info: *const vk.QueryPoolCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_pool: *vk.QueryPool) callconv(vk.vulkan_call_conv) vk.Result {
@@ -849,17 +820,11 @@ pub export fn strollCreateQueryPool(p_device: vk.Device, info: *const vk.QueryPo
         return .error_validation_failed;
     }
 
-    notImplementedWarning();
-
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
-
-    p_pool.* = .null_handle;
-
-    _ = device;
-    _ = allocator;
-
-    return .error_unknown;
+    const pool = device.createQueryPool(allocator, info) catch |err| return toVkResult(err);
+    p_pool.* = (NonDispatchable(QueryPool).wrap(allocator, pool) catch |err| return toVkResult(err)).toVkHandle(vk.QueryPool);
+    return .success;
 }
 
 pub export fn strollCreateRenderPass(p_device: vk.Device, info: *const vk.RenderPassCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_pass: *vk.RenderPass) callconv(vk.vulkan_call_conv) vk.Result {
@@ -870,17 +835,11 @@ pub export fn strollCreateRenderPass(p_device: vk.Device, info: *const vk.Render
         return .error_validation_failed;
     }
 
-    notImplementedWarning();
-
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
-
-    p_pass.* = .null_handle;
-
-    _ = device;
-    _ = allocator;
-
-    return .error_unknown;
+    const pass = device.createRenderPass(allocator, info) catch |err| return toVkResult(err);
+    p_pass.* = (NonDispatchable(RenderPass).wrap(allocator, pass) catch |err| return toVkResult(err)).toVkHandle(vk.RenderPass);
+    return .success;
 }
 
 pub export fn strollCreateSampler(p_device: vk.Device, info: *const vk.SamplerCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_sampler: *vk.Sampler) callconv(vk.vulkan_call_conv) vk.Result {
@@ -891,17 +850,11 @@ pub export fn strollCreateSampler(p_device: vk.Device, info: *const vk.SamplerCr
         return .error_validation_failed;
     }
 
-    notImplementedWarning();
-
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
-
-    p_sampler.* = .null_handle;
-
-    _ = device;
-    _ = allocator;
-
-    return .error_unknown;
+    const sampler = device.createSampler(allocator, info) catch |err| return toVkResult(err);
+    p_sampler.* = (NonDispatchable(Sampler).wrap(allocator, sampler) catch |err| return toVkResult(err)).toVkHandle(vk.Sampler);
+    return .success;
 }
 
 pub export fn strollCreateSemaphore(p_device: vk.Device, info: *const vk.SemaphoreCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_semaphore: *vk.Semaphore) callconv(vk.vulkan_call_conv) vk.Result {
@@ -912,17 +865,11 @@ pub export fn strollCreateSemaphore(p_device: vk.Device, info: *const vk.Semapho
         return .error_validation_failed;
     }
 
-    notImplementedWarning();
-
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
-
-    p_semaphore.* = .null_handle;
-
-    _ = device;
-    _ = allocator;
-
-    return .error_unknown;
+    const semaphore = device.createSemaphore(allocator, info) catch |err| return toVkResult(err);
+    p_semaphore.* = (NonDispatchable(BinarySemaphore).wrap(allocator, semaphore) catch |err| return toVkResult(err)).toVkHandle(vk.Semaphore);
+    return .success;
 }
 
 pub export fn strollCreateShaderModule(p_device: vk.Device, info: *const vk.ShaderModuleCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_module: *vk.ShaderModule) callconv(vk.vulkan_call_conv) vk.Result {
@@ -933,17 +880,11 @@ pub export fn strollCreateShaderModule(p_device: vk.Device, info: *const vk.Shad
         return .error_validation_failed;
     }
 
-    notImplementedWarning();
-
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
-
-    p_module.* = .null_handle;
-
-    _ = device;
-    _ = allocator;
-
-    return .error_unknown;
+    const module = device.createShaderModule(allocator, info) catch |err| return toVkResult(err);
+    p_module.* = (NonDispatchable(ShaderModule).wrap(allocator, module) catch |err| return toVkResult(err)).toVkHandle(vk.ShaderModule);
+    return .success;
 }
 
 pub export fn strollDestroyBuffer(p_device: vk.Device, p_buffer: vk.Buffer, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
@@ -964,11 +905,8 @@ pub export fn strollDestroyBufferView(p_device: vk.Device, p_view: vk.BufferView
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
 
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
-
-    notImplementedWarning();
-
-    _ = p_view;
-    _ = allocator;
+    const non_dispatchable = NonDispatchable(BufferView).fromHandle(p_view) catch |err| return errorLogger(err);
+    non_dispatchable.intrusiveDestroy(allocator);
 }
 
 pub export fn strollDestroyCommandPool(p_device: vk.Device, p_pool: vk.CommandPool, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
@@ -1024,11 +962,8 @@ pub export fn strollDestroyEvent(p_device: vk.Device, p_event: vk.Event, callbac
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
 
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
-
-    notImplementedWarning();
-
-    _ = p_event;
-    _ = allocator;
+    const non_dispatchable = NonDispatchable(Event).fromHandle(p_event) catch |err| return errorLogger(err);
+    non_dispatchable.intrusiveDestroy(allocator);
 }
 
 pub export fn strollDestroyFence(p_device: vk.Device, p_fence: vk.Fence, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
@@ -1049,11 +984,8 @@ pub export fn strollDestroyFramebuffer(p_device: vk.Device, p_framebuffer: vk.Fr
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
 
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
-
-    notImplementedWarning();
-
-    _ = p_framebuffer;
-    _ = allocator;
+    const non_dispatchable = NonDispatchable(Framebuffer).fromHandle(p_framebuffer) catch |err| return errorLogger(err);
+    non_dispatchable.intrusiveDestroy(allocator);
 }
 
 pub export fn strollDestroyImage(p_device: vk.Device, p_image: vk.Image, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
@@ -1085,11 +1017,8 @@ pub export fn strollDestroyPipeline(p_device: vk.Device, p_pipeline: vk.Pipeline
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
 
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
-
-    notImplementedWarning();
-
-    _ = p_pipeline;
-    _ = allocator;
+    const non_dispatchable = NonDispatchable(Pipeline).fromHandle(p_pipeline) catch |err| return errorLogger(err);
+    non_dispatchable.intrusiveDestroy(allocator);
 }
 
 pub export fn strollDestroyPipelineCache(p_device: vk.Device, p_cache: vk.PipelineCache, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
@@ -1099,11 +1028,8 @@ pub export fn strollDestroyPipelineCache(p_device: vk.Device, p_cache: vk.Pipeli
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
 
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
-
-    notImplementedWarning();
-
-    _ = p_cache;
-    _ = allocator;
+    const non_dispatchable = NonDispatchable(PipelineCache).fromHandle(p_cache) catch |err| return errorLogger(err);
+    non_dispatchable.intrusiveDestroy(allocator);
 }
 
 pub export fn strollDestroyPipelineLayout(p_device: vk.Device, p_layout: vk.PipelineLayout, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
@@ -1113,11 +1039,8 @@ pub export fn strollDestroyPipelineLayout(p_device: vk.Device, p_layout: vk.Pipe
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
 
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
-
-    notImplementedWarning();
-
-    _ = p_layout;
-    _ = allocator;
+    const non_dispatchable = NonDispatchable(PipelineLayout).fromHandle(p_layout) catch |err| return errorLogger(err);
+    non_dispatchable.intrusiveDestroy(allocator);
 }
 
 pub export fn strollDestroyQueryPool(p_device: vk.Device, p_pool: vk.QueryPool, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
@@ -1127,11 +1050,8 @@ pub export fn strollDestroyQueryPool(p_device: vk.Device, p_pool: vk.QueryPool, 
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
 
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
-
-    notImplementedWarning();
-
-    _ = p_pool;
-    _ = allocator;
+    const non_dispatchable = NonDispatchable(QueryPool).fromHandle(p_pool) catch |err| return errorLogger(err);
+    non_dispatchable.intrusiveDestroy(allocator);
 }
 
 pub export fn strollDestroyRenderPass(p_device: vk.Device, p_pass: vk.RenderPass, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
@@ -1141,11 +1061,8 @@ pub export fn strollDestroyRenderPass(p_device: vk.Device, p_pass: vk.RenderPass
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
 
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
-
-    notImplementedWarning();
-
-    _ = p_pass;
-    _ = allocator;
+    const non_dispatchable = NonDispatchable(RenderPass).fromHandle(p_pass) catch |err| return errorLogger(err);
+    non_dispatchable.intrusiveDestroy(allocator);
 }
 
 pub export fn strollDestroySampler(p_device: vk.Device, p_sampler: vk.Sampler, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
@@ -1155,11 +1072,8 @@ pub export fn strollDestroySampler(p_device: vk.Device, p_sampler: vk.Sampler, c
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
 
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
-
-    notImplementedWarning();
-
-    _ = p_sampler;
-    _ = allocator;
+    const non_dispatchable = NonDispatchable(Sampler).fromHandle(p_sampler) catch |err| return errorLogger(err);
+    non_dispatchable.intrusiveDestroy(allocator);
 }
 
 pub export fn strollDestroySemaphore(p_device: vk.Device, p_semaphore: vk.Semaphore, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
@@ -1169,11 +1083,8 @@ pub export fn strollDestroySemaphore(p_device: vk.Device, p_semaphore: vk.Semaph
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
 
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
-
-    notImplementedWarning();
-
-    _ = p_semaphore;
-    _ = allocator;
+    const non_dispatchable = NonDispatchable(BinarySemaphore).fromHandle(p_semaphore) catch |err| return errorLogger(err);
+    non_dispatchable.intrusiveDestroy(allocator);
 }
 
 pub export fn strollDestroyShaderModule(p_device: vk.Device, p_module: vk.ShaderModule, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
@@ -1183,11 +1094,8 @@ pub export fn strollDestroyShaderModule(p_device: vk.Device, p_module: vk.Shader
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
 
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
-
-    notImplementedWarning();
-
-    _ = p_module;
-    _ = allocator;
+    const non_dispatchable = NonDispatchable(ShaderModule).fromHandle(p_module) catch |err| return errorLogger(err);
+    non_dispatchable.intrusiveDestroy(allocator);
 }
 
 pub export fn strollDeviceWaitIdle(p_device: vk.Device) callconv(vk.vulkan_call_conv) vk.Result {
@@ -1195,12 +1103,8 @@ pub export fn strollDeviceWaitIdle(p_device: vk.Device) callconv(vk.vulkan_call_
     defer entryPointEndLogTrace();
 
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
-
-    notImplementedWarning();
-
-    _ = device;
-
-    return .error_unknown;
+    device.waitIdle() catch |err| return toVkResult(err);
+    return .success;
 }
 
 pub export fn strollFlushMappedMemoryRanges(p_device: vk.Device, count: u32, p_ranges: [*]const vk.MappedMemoryRange) callconv(vk.vulkan_call_conv) vk.Result {

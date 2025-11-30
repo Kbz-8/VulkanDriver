@@ -9,15 +9,26 @@ pub const SoftDevice = @import("SoftDevice.zig");
 pub const SoftPhysicalDevice = @import("SoftPhysicalDevice.zig");
 pub const SoftQueue = @import("SoftQueue.zig");
 
+pub const SoftBinarySemaphore = @import("SoftBinarySemaphore.zig");
 pub const SoftBuffer = @import("SoftBuffer.zig");
+pub const SoftBufferView = @import("SoftBufferView.zig");
 pub const SoftCommandBuffer = @import("SoftCommandBuffer.zig");
 pub const SoftCommandPool = @import("SoftCommandPool.zig");
-pub const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
 pub const SoftDescriptorPool = @import("SoftDescriptorPool.zig");
 pub const SoftDescriptorSetLayout = @import("SoftDescriptorSetLayout.zig");
+pub const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
+pub const SoftEvent = @import("SoftEvent.zig");
 pub const SoftFence = @import("SoftFence.zig");
+pub const SoftFramebuffer = @import("SoftFramebuffer.zig");
 pub const SoftImage = @import("SoftImage.zig");
 pub const SoftImageView = @import("SoftImageView.zig");
+pub const SoftPipeline = @import("SoftPipeline.zig");
+pub const SoftPipelineCache = @import("SoftPipelineCache.zig");
+pub const SoftPipelineLayout = @import("SoftPipelineLayout.zig");
+pub const SoftQueryPool = @import("SoftQueryPool.zig");
+pub const SoftRenderPass = @import("SoftRenderPass.zig");
+pub const SoftSampler = @import("SoftSampler.zig");
+pub const SoftShaderModule = @import("SoftShaderModule.zig");
 
 pub const Instance = SoftInstance;
 
@@ -50,17 +61,30 @@ comptime {
 }
 
 test {
-    std.testing.refAllDecls(base);
-    std.testing.refAllDecls(SoftInstance);
-    std.testing.refAllDecls(SoftDevice);
-    std.testing.refAllDecls(SoftPhysicalDevice);
-    std.testing.refAllDecls(SoftQueue);
+    std.testing.refAllDecls(Executor);
+    std.testing.refAllDecls(SoftBinarySemaphore);
     std.testing.refAllDecls(SoftBuffer);
+    std.testing.refAllDecls(SoftBufferView);
     std.testing.refAllDecls(SoftCommandBuffer);
     std.testing.refAllDecls(SoftCommandPool);
+    std.testing.refAllDecls(SoftDescriptorPool);
+    std.testing.refAllDecls(SoftDescriptorSetLayout);
+    std.testing.refAllDecls(SoftDevice);
     std.testing.refAllDecls(SoftDeviceMemory);
+    std.testing.refAllDecls(SoftEvent);
     std.testing.refAllDecls(SoftFence);
+    std.testing.refAllDecls(SoftFramebuffer);
     std.testing.refAllDecls(SoftImage);
     std.testing.refAllDecls(SoftImageView);
-    std.testing.refAllDecls(Executor);
+    std.testing.refAllDecls(SoftInstance);
+    std.testing.refAllDecls(SoftPhysicalDevice);
+    std.testing.refAllDecls(SoftPipeline);
+    std.testing.refAllDecls(SoftPipelineCache);
+    std.testing.refAllDecls(SoftPipelineLayout);
+    std.testing.refAllDecls(SoftQueryPool);
+    std.testing.refAllDecls(SoftQueue);
+    std.testing.refAllDecls(SoftRenderPass);
+    std.testing.refAllDecls(SoftSampler);
+    std.testing.refAllDecls(SoftShaderModule);
+    std.testing.refAllDecls(base);
 }
