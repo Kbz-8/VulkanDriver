@@ -90,7 +90,6 @@ fn free(context: *anyopaque, ptr: []u8, alignment: Alignment, ret_addr: usize) v
             pfn_free(self.callbacks.?.p_user_data, ptr.ptr);
         }
     }
-
     getFallbackAllocator().rawFree(ptr, alignment, ret_addr);
 }
 
@@ -99,6 +98,6 @@ inline fn getFallbackAllocator() std.mem.Allocator {
         @branchHint(.unlikely);
         return debug_allocator.allocator();
     } else {
-        return std.heap.c_allocator;
+        return std.heap.page_allocator;
     }
 }

@@ -1,6 +1,7 @@
 const std = @import("std");
 const Step = std.Build.Step;
 const zcc = @import("compile_commands");
+const builtin = @import("builtin");
 
 const ImplementationDesc = struct {
     name: []const u8,
@@ -133,6 +134,25 @@ pub fn build(b: *std.Build) !void {
 
         const run_c_test_gdb_step = b.step(b.fmt("test-c-{s}-gdb", .{impl.name}), b.fmt("Run lib{s} C test within gdb", .{impl.name}));
         run_c_test_gdb_step.dependOn(&run_c_test_gdb_exe.step);
+
+        const cts = b.dependency("cts_bin", .{});
+
+        const cts_exe_path = cts.path(b.fmt("deqp-vk-{s}", .{
+            switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
+                .linux => "linux.x86_64",
+                else => unreachable,
+            },
+        }));
+
+        const run_cts = b.addSystemCommand(&[_][]const u8{
+            try cts_exe_path.getPath3(b, null).toString(b.allocator),
+            b.fmt("--deqp-caselist-file={s}", .{try cts.path("mustpass/1.0.0/vk-default.txt").getPath3(b, null).toString(b.allocator)}),
+            b.fmt("--deqp-vk-library-path={s}/{s}", .{ b.getInstallPath(.lib, ""), lib.out_lib_filename }),
+        });
+        run_cts.step.dependOn(&lib_install.step);
+
+        const run_cts_step = b.step(b.fmt("test-conformance-{s}", .{impl.name}), b.fmt("Run Vulkan conformance tests for {s}", .{impl.name}));
+        run_cts_step.dependOn(&run_cts.step);
     }
 
     const autodoc_test = b.addObject(.{

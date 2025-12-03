@@ -78,6 +78,13 @@ pub inline fn bindSparse(self: *Self, info: []const vk.BindSparseInfo, fence: ?*
 }
 
 pub inline fn submit(self: *Self, infos: []const vk.SubmitInfo, p_fence: ?*Fence) VkError!void {
+    if (infos.len == 0) {
+        if (p_fence) |fence| {
+            try fence.signal();
+        }
+        return;
+    }
+
     const allocator = self.host_allocator.cloneWithScope(.command).allocator();
 
     var submit_infos = try SubmitInfo.initBlob(allocator, infos);

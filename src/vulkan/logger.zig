@@ -56,6 +56,7 @@ pub inline fn disableIndent() void {
 
 pub inline fn freeInnerDebugStack() void {
     debug_stack.deinit(std.heap.c_allocator);
+    debug_stack = .empty;
 }
 
 pub inline fn fixme(comptime format: []const u8, args: anytype) void {
