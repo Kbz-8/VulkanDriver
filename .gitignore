@@ -5,3 +5,5 @@ zig-out/
 .gdb_history
 *.json
 *.png
+*.bin
+*.qpa
