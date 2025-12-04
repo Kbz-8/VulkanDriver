@@ -9,8 +9,6 @@ const Alignment = std.mem.Alignment;
 
 const Self = @This();
 
-var fallback_allocator: std.heap.ThreadSafeAllocator = .{ .child_allocator = std.heap.c_allocator };
-
 callbacks: ?vk.AllocationCallbacks,
 scope: vk.SystemAllocationScope,
 
@@ -39,7 +37,7 @@ pub fn from(a: Allocator) *Self {
     return self;
 }
 
-pub fn clone(self: *Self) Self {
+pub inline fn clone(self: *Self) Self {
     return self.cloneWithScope(self.scope);
 }
 
@@ -91,5 +89,6 @@ fn free(context: *anyopaque, ptr: []u8, alignment: Alignment, ret_addr: usize) v
 }
 
 inline fn getFallbackAllocator() std.mem.Allocator {
+    var fallback_allocator: std.heap.ThreadSafeAllocator = .{ .child_allocator = std.heap.c_allocator };
     return fallback_allocator.allocator();
 }

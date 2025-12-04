@@ -153,6 +153,18 @@ pub fn build(b: *std.Build) !void {
 
         const run_cts_step = b.step(b.fmt("test-conformance-{s}", .{impl.name}), b.fmt("Run Vulkan conformance tests for {s}", .{impl.name}));
         run_cts_step.dependOn(&run_cts.step);
+
+        const run_gdb_cts = b.addSystemCommand(&[_][]const u8{
+            "gdb",
+            "--args",
+            try cts_exe_path.getPath3(b, null).toString(b.allocator),
+            b.fmt("--deqp-caselist-file={s}", .{try cts.path("mustpass/1.0.0/vk-default.txt").getPath3(b, null).toString(b.allocator)}),
+            b.fmt("--deqp-vk-library-path={s}", .{b.getInstallPath(.lib, lib.out_lib_filename)}),
+        });
+        run_gdb_cts.step.dependOn(&lib_install.step);
+
+        const run_cts_gdb_step = b.step(b.fmt("test-conformance-{s}-gdb", .{impl.name}), b.fmt("Run Vulkan conformance tests for {s} with GDB", .{impl.name}));
+        run_cts_gdb_step.dependOn(&run_gdb_cts.step);
     }
 
     const autodoc_test = b.addObject(.{

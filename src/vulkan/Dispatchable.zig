@@ -21,17 +21,19 @@ pub fn Dispatchable(comptime T: type) type {
                 .object_type = T.ObjectType,
                 .object = object,
             };
-            std.log.debug("Created dispatchable handle at 0x{X}", .{@intFromPtr(self)});
+            std.log.debug("Created dispatchable handle of type '{s}' at 0x{X}", .{ @typeName(T), @intFromPtr(self) });
             return self;
         }
 
         pub inline fn intrusiveDestroy(self: *Self, allocator: std.mem.Allocator) void {
             self.object.destroy(allocator);
             allocator.destroy(self);
+            std.log.debug("Destroyed dispatchable handle of type '{s}' at 0x{X}", .{ @typeName(T), @intFromPtr(self) });
         }
 
         pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
             allocator.destroy(self);
+            std.log.debug("Destroyed dispatchable handle of type '{s}' at 0x{X}", .{ @typeName(T), @intFromPtr(self) });
         }
 
         pub inline fn toHandle(self: *Self) usize {

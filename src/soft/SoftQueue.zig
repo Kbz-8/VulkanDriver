@@ -2,14 +2,13 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 
+const RefCounter = base.RefCounter;
+
 const Executor = @import("Executor.zig");
 const Dispatchable = base.Dispatchable;
 
 const CommandBuffer = base.CommandBuffer;
 const SoftDevice = @import("SoftDevice.zig");
-
-const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
-const SoftFence = @import("SoftFence.zig");
 
 const VkError = base.VkError;
 
@@ -17,8 +16,7 @@ const Self = @This();
 pub const Interface = base.Queue;
 
 interface: Interface,
-wait_group: std.Thread.WaitGroup,
-worker_mutex: std.Thread.Mutex,
+lock: std.Thread.RwLock,
 
 pub fn create(allocator: std.mem.Allocator, device: *base.Device, index: u32, family_index: u32, flags: vk.DeviceQueueCreateFlags) VkError!*Interface {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
@@ -34,8 +32,7 @@ pub fn create(allocator: std.mem.Allocator, device: *base.Device, index: u32, fa
 
     self.* = .{
         .interface = interface,
-        .wait_group = .{},
-        .worker_mutex = .{},
+        .lock = .{},
     };
     return &self.interface;
 }
@@ -54,30 +51,46 @@ pub fn bindSparse(interface: *Interface, info: []const vk.BindSparseInfo, fence:
 }
 
 pub fn submit(interface: *Interface, infos: []Interface.SubmitInfo, p_fence: ?*base.Fence) VkError!void {
-    var self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    var soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", interface.owner));
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", interface.owner));
 
-    if (p_fence) |fence| {
-        const soft_fence: *SoftFence = @alignCast(@fieldParentPtr("interface", fence));
-        soft_fence.concurrent_submits_count = std.atomic.Value(usize).init(infos.len);
-    }
+    const allocator = soft_device.device_allocator.allocator();
+
+    // Lock here to avoid acquiring it in `waitIdle` before runners start
+    self.lock.lockShared();
+    defer self.lock.unlockShared();
 
     for (infos) |info| {
         // Cloning info to keep them alive until commands dispatch end
         const cloned_info: Interface.SubmitInfo = .{
-            .command_buffers = info.command_buffers.clone(soft_device.device_allocator.allocator()) catch return VkError.OutOfDeviceMemory,
+            .command_buffers = info.command_buffers.clone(allocator) catch return VkError.OutOfDeviceMemory,
         };
-        soft_device.workers.spawnWg(&self.wait_group, Self.taskRunner, .{ self, cloned_info, p_fence });
+        const runners_counter = allocator.create(RefCounter) catch return VkError.OutOfDeviceMemory;
+        runners_counter.* = .init;
+        soft_device.workers.spawn(Self.taskRunner, .{ self, cloned_info, p_fence, runners_counter }) catch return VkError.Unknown;
     }
 }
 
 pub fn waitIdle(interface: *Interface) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    if (!self.wait_group.isDone())
-        self.wait_group.wait();
+    self.lock.lock();
+    defer self.lock.unlock();
 }
 
-fn taskRunner(self: *Self, info: Interface.SubmitInfo, p_fence: ?*base.Fence) void {
+fn taskRunner(self: *Self, info: Interface.SubmitInfo, p_fence: ?*base.Fence, runners_counter: *RefCounter) void {
+    self.lock.lockShared();
+    defer self.lock.unlockShared();
+
+    runners_counter.ref();
+    defer {
+        runners_counter.unref();
+        if (!runners_counter.hasRefs()) {
+            const soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", self.interface.owner));
+            const allocator = soft_device.device_allocator.allocator();
+            allocator.destroy(runners_counter);
+        }
+    }
+
     var soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", self.interface.owner));
     defer {
         var command_buffers = info.command_buffers;
@@ -95,8 +108,7 @@ fn taskRunner(self: *Self, info: Interface.SubmitInfo, p_fence: ?*base.Fence) vo
     }
 
     if (p_fence) |fence| {
-        const soft_fence: *SoftFence = @alignCast(@fieldParentPtr("interface", fence));
-        if (soft_fence.concurrent_submits_count.fetchSub(1, .release) == 1) {
+        if (runners_counter.getRefsCount() == 1) {
             fence.signal() catch {};
         }
     }
