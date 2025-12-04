@@ -2,6 +2,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 const vk = @import("vulkan");
 
+const logger = @import("lib.zig").logger;
+
 const VkError = @import("error_set.zig").VkError;
 const Dispatchable = @import("Dispatchable.zig").Dispatchable;
 const PhysicalDevice = @import("PhysicalDevice.zig");
@@ -78,6 +80,9 @@ pub fn releasePhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError
 }
 
 pub fn requestPhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError!void {
+    logger.indent();
+    defer logger.unindent();
+
     try self.vtable.requestPhysicalDevices(self, allocator);
     if (self.physical_devices.items.len == 0) {
         std.log.scoped(.vkCreateInstance).err("No VkPhysicalDevice found", .{});

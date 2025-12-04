@@ -16,6 +16,7 @@ pub fn NonDispatchable(comptime T: type) type {
                 .object_type = T.ObjectType,
                 .object = object,
             };
+            std.log.debug("Created non dispatchable handle at 0x{X}", .{@intFromPtr(self)});
             return self;
         }
 

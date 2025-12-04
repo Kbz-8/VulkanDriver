@@ -3,16 +3,13 @@
 
 const std = @import("std");
 const vk = @import("vulkan");
-const builtin = @import("builtin");
-const DRIVER_DEBUG_ALLOCATOR_ENV_NAME = @import("lib.zig").DRIVER_DEBUG_ALLOCATOR_ENV_NAME;
 
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 
 const Self = @This();
 
-/// Global debug allocator for leaks detection purpose
-pub var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+var fallback_allocator: std.heap.ThreadSafeAllocator = .{ .child_allocator = std.heap.c_allocator };
 
 callbacks: ?vk.AllocationCallbacks,
 scope: vk.SystemAllocationScope,
@@ -94,10 +91,5 @@ fn free(context: *anyopaque, ptr: []u8, alignment: Alignment, ret_addr: usize) v
 }
 
 inline fn getFallbackAllocator() std.mem.Allocator {
-    if (std.process.hasEnvVarConstant(DRIVER_DEBUG_ALLOCATOR_ENV_NAME) or builtin.mode == std.builtin.OptimizeMode.Debug) {
-        @branchHint(.unlikely);
-        return debug_allocator.allocator();
-    } else {
-        return std.heap.page_allocator;
-    }
+    return fallback_allocator.allocator();
 }

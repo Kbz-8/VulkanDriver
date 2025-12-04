@@ -83,5 +83,7 @@ pub fn getSparseImageFormatProperties(
 }
 
 pub fn releasePhysicalDevice(self: *Self, allocator: std.mem.Allocator) VkError!void {
+    self.queue_family_props.deinit(allocator);
+    self.queue_family_props = .empty;
     try self.dispatch_table.release(self, allocator);
 }

@@ -1,6 +1,8 @@
 const std = @import("std");
 const vk = @import("vulkan");
 
+const logger = @import("lib.zig").logger;
+
 const Dispatchable = @import("Dispatchable.zig").Dispatchable;
 const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
 const VulkanAllocator = @import("VulkanAllocator.zig");
@@ -96,6 +98,10 @@ pub fn createQueues(self: *Self, allocator: std.mem.Allocator, info: *const vk.D
         }
 
         const queue = try self.vtable.createQueue(allocator, self, queue_info.queue_family_index, @intCast(family_ptr.items.len), queue_info.flags);
+
+        logger.indent();
+        defer logger.unindent();
+
         const dispatchable_queue = try Dispatchable(Queue).wrap(allocator, queue);
         family_ptr.append(allocator, dispatchable_queue) catch return VkError.OutOfHostMemory;
     }

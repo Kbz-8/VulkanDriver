@@ -12,6 +12,9 @@ const VulkanAllocator = base.VulkanAllocator;
 const Self = @This();
 pub const Interface = base.PhysicalDevice;
 
+// Device name should always be the same so avoid reprocessing it multiple times
+var device_name = [_]u8{0} ** vk.MAX_PHYSICAL_DEVICE_NAME_SIZE;
+
 interface: Interface,
 
 pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkError!*Self {
@@ -34,7 +37,6 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
     interface.props.driver_version = @bitCast(root.DRIVER_VERSION);
     interface.props.device_id = root.DEVICE_ID;
     interface.props.device_type = .cpu;
-
     interface.props.limits = .{
         .max_image_dimension_1d = 4096,
         .max_image_dimension_2d = 4096,
@@ -190,17 +192,26 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
     };
     interface.queue_family_props.appendSlice(allocator, queue_family_props[0..]) catch return VkError.OutOfHostMemory;
 
-    // TODO: use Pytorch's cpuinfo someday
-    const info = cpuinfo.get(command_allocator) catch return VkError.InitializationFailed;
-    defer info.deinit(command_allocator);
+    if (device_name[0] == 0) {
+        // TODO: use Pytorch's cpuinfo someday
+        const info = cpuinfo.get(command_allocator) catch return VkError.InitializationFailed;
+        defer info.deinit(command_allocator);
 
-    var writer = std.Io.Writer.fixed(interface.props.device_name[0 .. vk.MAX_PHYSICAL_DEVICE_NAME_SIZE - 1]);
-    writer.print("{s} [" ++ root.DRIVER_NAME ++ " StrollDriver]", .{info.name}) catch return VkError.InitializationFailed;
+        var writer = std.Io.Writer.fixed(device_name[0 .. vk.MAX_PHYSICAL_DEVICE_NAME_SIZE - 1]);
+        writer.print("{s} [" ++ root.DRIVER_NAME ++ " StrollDriver]", .{info.name}) catch return VkError.InitializationFailed;
+    }
+
+    @memcpy(&interface.props.device_name, &device_name);
 
     self.* = .{
         .interface = interface,
     };
     return self;
+}
+
+pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    allocator.destroy(self);
 }
 
 pub fn createDevice(interface: *Interface, allocator: std.mem.Allocator, infos: *const vk.DeviceCreateInfo) VkError!*base.Device {
@@ -254,10 +265,4 @@ pub fn getSparseImageFormatProperties(
     _ = usage;
     _ = flags;
     return undefined;
-}
-
-pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
-    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    interface.queue_family_props.deinit(allocator);
-    allocator.destroy(self);
 }

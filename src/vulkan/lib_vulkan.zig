@@ -347,13 +347,6 @@ pub export fn strollDestroyInstance(p_instance: vk.Instance, callbacks: ?*const 
     const dispatchable = Dispatchable(Instance).fromHandle(p_instance) catch |err| return errorLogger(err);
     dispatchable.object.deinit(allocator) catch |err| return errorLogger(err);
     dispatchable.destroy(allocator);
-
-    if (std.process.hasEnvVarConstant(lib.DRIVER_DEBUG_ALLOCATOR_ENV_NAME) or builtin.mode == std.builtin.OptimizeMode.Debug) {
-        // All host memory allocations should've been freed by now
-        if (!VulkanAllocator.debug_allocator.detectLeaks()) {
-            std.log.scoped(.vkDestroyInstance).debug("No memory leaks detected", .{});
-        }
-    }
 }
 
 pub export fn strollEnumeratePhysicalDevices(p_instance: vk.Instance, count: *u32, p_devices: ?[*]vk.PhysicalDevice) callconv(vk.vulkan_call_conv) vk.Result {

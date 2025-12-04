@@ -21,6 +21,7 @@ pub fn Dispatchable(comptime T: type) type {
                 .object_type = T.ObjectType,
                 .object = object,
             };
+            std.log.debug("Created dispatchable handle at 0x{X}", .{@intFromPtr(self)});
             return self;
         }
 
