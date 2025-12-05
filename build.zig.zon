@@ -26,8 +26,8 @@
             .hash = "zdt-0.8.1-xr0_vAxUDwCJRDh9pcAS_mdZBIsvcGTtN-K8JJSWY4I6",
         },
         .cts_bin = .{
-            .url = "git+https://github.com/Kbz-8/Vulkan-CTS-bin#f0317494ed3784c17cf44a4f59a40d9c868073d2",
-            .hash = "N-V-__8AAK0SyAbVT6fSdbtrr5f3TaxffmQDtge6sMrLN-R5",
+            .url = "git+https://github.com/Kbz-8/Vulkan-CTS-bin#2fa3e9310a627c13ba512b5781284f1b1481a938",
+            .hash = "N-V-__8AAIxh3gbzEZcY5tBSA2BSVhLyCyOG0tnAdYviHn99",
         },
         .cpuinfo = .{
             .url = "git+https://github.com/Kbz-8/cpuinfo-zig#77f82a1248194e7fb706967343c66021f8522766",

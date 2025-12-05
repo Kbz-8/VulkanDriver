@@ -28,21 +28,19 @@ pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo)
 }
 
 fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
-    // Software driver only has one physical device (the CPU)
+    // Software driver has only one physical device (the CPU)
     const physical_device = try SoftPhysicalDevice.create(allocator, interface);
     errdefer physical_device.interface.releasePhysicalDevice(allocator) catch {};
     interface.physical_devices.append(allocator, try Dispatchable(base.PhysicalDevice).wrap(allocator, &physical_device.interface)) catch return VkError.OutOfHostMemory;
 }
 
 fn releasePhysicalDevices(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
-    defer {
-        interface.physical_devices.deinit(allocator);
-        interface.physical_devices = .empty;
-    }
-
     const physical_device = interface.physical_devices.getLast();
     try physical_device.object.releasePhysicalDevice(allocator);
     physical_device.destroy(allocator);
+
+    interface.physical_devices.deinit(allocator);
+    interface.physical_devices = .empty;
 }
 
 fn destroyInstance(interface: *Interface, allocator: std.mem.Allocator) VkError!void {

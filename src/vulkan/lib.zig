@@ -9,7 +9,7 @@ pub const vku = @cImport({
 pub const commands = @import("commands.zig");
 pub const errors = @import("error_set.zig");
 pub const lib_vulkan = @import("lib_vulkan.zig");
-pub const logger = @import("logger.zig");
+pub const logger = @import("logger/logger.zig");
 
 pub const Dispatchable = @import("Dispatchable.zig").Dispatchable;
 pub const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;

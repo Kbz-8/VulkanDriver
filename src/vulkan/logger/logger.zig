@@ -5,7 +5,9 @@ const std = @import("std");
 const builtin = @import("builtin");
 const zdt = @import("zdt");
 const root = @import("root");
-const lib = @import("lib.zig");
+const lib = @import("../lib.zig");
+
+const ThreadSafeManager = @import("ThreadSafeManager.zig");
 
 comptime {
     if (!builtin.is_test) {
@@ -15,53 +17,11 @@ comptime {
     }
 }
 
-const DebugStackElement = struct {
-    log: [512]u8,
-    indent_level: usize,
-    log_level: std.log.Level,
-};
-
-var indent_enabled = true;
-var indent_level: usize = 0;
-var debug_stack = std.ArrayList(DebugStackElement).empty;
-
-pub inline fn indent() void {
-    const new_indent_level, const has_overflown = @addWithOverflow(indent_level, 1);
-    if (has_overflown == 0) {
-        indent_level = new_indent_level;
-    }
-}
-
-pub inline fn unindent() void {
-    const new_indent_level, const has_overflown = @subWithOverflow(indent_level, 1);
-    if (has_overflown == 0) {
-        indent_level = new_indent_level;
-    }
-    loop: while (debug_stack.getLastOrNull()) |last| {
-        if (last.indent_level >= indent_level) {
-            _ = debug_stack.pop();
-        } else {
-            break :loop;
-        }
-    }
-}
-
-pub inline fn enableIndent() void {
-    indent_enabled = true;
-}
-
-pub inline fn disableIndent() void {
-    indent_enabled = false;
-}
-
-pub inline fn freeInnerDebugStack() void {
-    debug_stack.deinit(std.heap.c_allocator);
-    debug_stack = .empty;
-}
+pub var manager: ThreadSafeManager = .init;
 
 pub inline fn fixme(comptime format: []const u8, args: anytype) void {
-    disableIndent();
-    defer enableIndent();
+    manager.get().disableIndent();
+    defer manager.get().enableIndent();
     nestedFixme(format, args);
 }
 
@@ -133,8 +93,8 @@ pub fn log(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), 
 
     out_config.setColor(&writer, .reset) catch {};
 
-    if (indent_enabled) {
-        for (0..indent_level) |_| {
+    if (manager.get().indent_enabled) {
+        for (0..manager.get().indent_level) |_| {
             writer.print(">   ", .{}) catch {};
         }
     }
@@ -142,17 +102,17 @@ pub fn log(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), 
     writer.flush() catch return;
 
     if (level == .debug and lib.getLogVerboseLevel() == .Standard) {
-        (debug_stack.addOne(std.heap.c_allocator) catch return).* = .{
+        manager.get().debug_stack.pushBack(.{
             .log = buffer,
-            .indent_level = indent_level,
+            .indent_level = manager.get().indent_level,
             .log_level = level,
-        };
+        }) catch return;
         return;
     }
 
-    if (indent_enabled) {
-        while (debug_stack.items.len != 0) {
-            const elem = debug_stack.orderedRemove(0);
+    if (manager.get().indent_enabled) {
+        while (manager.get().debug_stack.len() != 0) {
+            const elem = manager.get().debug_stack.popFront();
             switch (elem.log_level) {
                 .info, .debug => _ = stdout_file.write(&elem.log) catch {},
                 .warn, .err => _ = stderr_file.write(&elem.log) catch {},

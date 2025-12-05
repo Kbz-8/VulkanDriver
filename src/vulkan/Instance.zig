@@ -44,7 +44,7 @@ pub fn init(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) V
     };
 }
 
-// Dummy for docs creation and stuff
+/// Dummy for docs creation and stuff
 pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) VkError!*Self {
     _ = allocator;
     _ = infos;
@@ -80,8 +80,8 @@ pub fn releasePhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError
 }
 
 pub fn requestPhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError!void {
-    logger.indent();
-    defer logger.unindent();
+    logger.manager.get().indent();
+    defer logger.manager.get().unindent();
 
     try self.vtable.requestPhysicalDevices(self, allocator);
     if (self.physical_devices.items.len == 0) {

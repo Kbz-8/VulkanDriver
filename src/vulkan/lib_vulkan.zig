@@ -6,11 +6,11 @@ const root = @import("root");
 const lib = @import("lib.zig");
 const builtin = @import("builtin");
 
-const logger = @import("logger.zig");
-const error_set = @import("error_set.zig");
-const VkError = error_set.VkError;
-const toVkResult = error_set.toVkResult;
-const errorLogger = error_set.errorLogger;
+const logger = lib.logger;
+const errors = lib.errors;
+const VkError = errors.VkError;
+const toVkResult = errors.toVkResult;
+const errorLogger = errors.errorLogger;
 
 const Dispatchable = @import("Dispatchable.zig").Dispatchable;
 const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
@@ -46,11 +46,11 @@ pub const ShaderModule = @import("ShaderModule.zig");
 
 fn entryPointBeginLogTrace(comptime scope: @Type(.enum_literal)) void {
     std.log.scoped(scope).debug("Calling {s}...", .{@tagName(scope)});
-    logger.indent();
+    logger.manager.get().indent();
 }
 
 fn entryPointEndLogTrace() void {
-    logger.unindent();
+    logger.manager.get().unindent();
 }
 
 fn entryPointNotFoundErrorLog(comptime scope: @Type(.enum_literal), name: []const u8) void {
@@ -338,7 +338,7 @@ pub export fn strollEnumerateInstanceVersion(version: *u32) callconv(vk.vulkan_c
 // Instance functions ========================================================================================================================================
 
 pub export fn strollDestroyInstance(p_instance: vk.Instance, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
-    defer logger.freeInnerDebugStack();
+    //defer logger.manager.deinit();
 
     entryPointBeginLogTrace(.vkDestroyInstance);
     defer entryPointEndLogTrace();
