@@ -1,6 +1,7 @@
 .cache/
 .zig-cache/
 zig-out/
+scripts/__pycache__/
 *.o
 .gdb_history
 *.json
@@ -9,3 +10,4 @@ zig-out/
 *.qpa
 *.xml
 *.html
+*.pyc

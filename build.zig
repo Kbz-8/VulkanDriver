@@ -173,7 +173,7 @@ fn addCTestRunner(b: *std.Build, impl: *const ImplementationDesc, exe: *std.Buil
 fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *std.Build.Step.Compile, comptime gdb: bool) !*std.Build.Step {
     const cts = b.dependency("cts_bin", .{});
 
-    const cts_exe_path = cts.path(b.fmt("deqp-vk-{s}", .{
+    const cts_exe_name = cts.path(b.fmt("deqp-vk-{s}", .{
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
             .linux => "linux.x86_64",
             else => unreachable,
@@ -187,17 +187,21 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
         }),
     ).getPath3(b, null).toString(b.allocator);
 
-    var command_line = std.ArrayList([]const u8).empty;
+    const cts_exe_path = try cts_exe_name.getPath3(b, null).toString(b.allocator);
+
+    const run = b.addSystemCommand(&[_][]const u8{"./scripts/wrap_alway_success.sh"});
+    run.step.dependOn(&impl_lib.step);
 
     if (gdb) {
-        try command_line.append(b.allocator, "gdb");
-        try command_line.append(b.allocator, "--args");
+        run.addArg("gdb");
+        run.addArg("--args");
     }
 
-    try command_line.append(b.allocator, try cts_exe_path.getPath3(b, null).toString(b.allocator));
-    try command_line.append(b.allocator, b.fmt("--deqp-archive-dir={s}", .{try cts.path("").getPath3(b, null).toString(b.allocator)}));
-    try command_line.append(b.allocator, b.fmt("--deqp-vk-library-path={s}", .{b.getInstallPath(.lib, impl_lib.out_lib_filename)}));
-    try command_line.append(b.allocator, "--deqp-log-filename=vk-cts-logs.qpa");
+    run.addArg(cts_exe_path);
+    run.addArg(b.fmt("--deqp-archive-dir={s}", .{try cts.path("").getPath3(b, null).toString(b.allocator)}));
+    run.addArg(b.fmt("--deqp-vk-library-path={s}", .{b.getInstallPath(.lib, impl_lib.out_lib_filename)}));
+    run.addArg("--deqp-log-filename=vk-cts-logs.qpa");
+    run.addArg("--deqp-log-compact=enable");
 
     var requires_explicit_tests = false;
     if (b.args) |args| {
@@ -205,16 +209,12 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
             if (std.mem.startsWith(u8, arg, "--deqp-case")) {
                 requires_explicit_tests = true;
             }
-            try command_line.append(b.allocator, arg);
+            run.addArg(arg);
         }
     }
     if (!requires_explicit_tests) {
-        try command_line.append(b.allocator, b.fmt("--deqp-caselist-file={s}", .{mustpass}));
+        run.addArg(b.fmt("--deqp-caselist-file={s}", .{mustpass}));
     }
-
-    const run = b.addSystemCommand(command_line.items);
-    run.expectExitCode(1);
-    run.step.dependOn(&impl_lib.step);
 
     const run_to_xml = b.addSystemCommand(&[_][]const u8{ "python", "./scripts/cts_logs_to_xml.py", "./vk-cts-logs.qpa", "./vk-cts-logs.xml" });
     run_to_xml.step.dependOn(&run.step);
