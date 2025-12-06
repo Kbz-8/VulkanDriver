@@ -70,17 +70,20 @@ pub fn build(b: *std.Build) !void {
             .use_llvm = true, // Fixes some random bugs happenning with custom backend. Investigations needed
         });
 
-        const icd_file = b.addWriteFile(b.getInstallPath(.lib, b.fmt("vk_stroll_{s}.json", .{impl.name})), b.fmt(
-            \\{{
-            \\    "file_format_version": "1.0.1",
-            \\    "ICD": {{
-            \\        "library_path": "{s}",
-            \\        "api_version": "{}.{}.{}",
-            \\        "library_arch": "64",
-            \\        "is_portability_driver": false
-            \\    }}
-            \\}}
-        , .{ lib.out_lib_filename, impl.vulkan_version.major, impl.vulkan_version.minor, impl.vulkan_version.patch }));
+        const icd_file = b.addWriteFile(
+            b.getInstallPath(.lib, b.fmt("vk_stroll_{s}.json", .{impl.name})),
+            b.fmt(
+                \\{{
+                \\    "file_format_version": "1.0.1",
+                \\    "ICD": {{
+                \\        "library_path": "{s}",
+                \\        "api_version": "{}.{}.{}",
+                \\        "library_arch": "64",
+                \\        "is_portability_driver": false
+                \\    }}
+                \\}}
+            , .{ lib.out_lib_filename, impl.vulkan_version.major, impl.vulkan_version.minor, impl.vulkan_version.patch }),
+        );
 
         lib.step.dependOn(&icd_file.step);
         const lib_install = b.addInstallArtifact(lib, .{});
@@ -88,85 +91,20 @@ pub fn build(b: *std.Build) !void {
         const lib_tests = b.addTest(.{ .root_module = lib_mod });
 
         const run_tests = b.addRunArtifact(lib_tests);
-        const test_step = b.step(b.fmt("test-{s}", .{impl.name}), b.fmt("Run lib{s} tests", .{impl.name}));
+        const test_step = b.step(b.fmt("test-{s}", .{impl.name}), b.fmt("Run libvulkan_{s} tests", .{impl.name}));
         test_step.dependOn(&run_tests.step);
 
-        const volk = b.lazyDependency("volk", .{}) orelse continue;
-        const kvf = b.lazyDependency("kvf", .{}) orelse continue;
-        const stb = b.lazyDependency("stb", .{}) orelse continue;
+        const c_test = addCTest(b, target, optimize, vulkan_headers, &impl, lib) catch continue;
 
-        const c_test_exe = b.addExecutable(.{
-            .name = b.fmt("c_test_vulkan_{s}", .{impl.name}),
-            .root_module = b.createModule(.{
-                .target = target,
-                .optimize = optimize,
-                .link_libc = true,
-            }),
-        });
-
-        c_test_exe.root_module.addSystemIncludePath(volk.path(""));
-        c_test_exe.root_module.addSystemIncludePath(kvf.path(""));
-        c_test_exe.root_module.addSystemIncludePath(stb.path(""));
-        c_test_exe.root_module.addSystemIncludePath(vulkan_headers.path("include"));
-
-        c_test_exe.root_module.addCSourceFile(.{
-            .file = b.path("test/c/main.c"),
-            .flags = &.{b.fmt("-DLIBVK=\"{s}\"", .{lib.name})},
-        });
-
-        const c_test_exe_install = b.addInstallArtifact(c_test_exe, .{});
-        c_test_exe_install.step.dependOn(&lib_install.step);
-
+        try targets.append(b.allocator, c_test);
         try targets.append(b.allocator, lib);
-        try targets.append(b.allocator, c_test_exe);
-
         _ = zcc.createStep(b, "cdb", try targets.toOwnedSlice(b.allocator));
 
-        const run_c_test_exe = b.addRunArtifact(c_test_exe);
-        run_c_test_exe.step.dependOn(&c_test_exe_install.step);
+        (try addCTestRunner(b, &impl, c_test, false)).dependOn(&lib_install.step);
+        (try addCTestRunner(b, &impl, c_test, true)).dependOn(&lib_install.step);
 
-        const run_c_test_step = b.step(b.fmt("test-c-{s}", .{impl.name}), b.fmt("Run lib{s} C test", .{impl.name}));
-        run_c_test_step.dependOn(&run_c_test_exe.step);
-
-        const run_c_test_gdb_exe = b.addRunArtifact(c_test_exe);
-        try run_c_test_gdb_exe.argv.insert(b.allocator, 0, .{ .bytes = b.fmt("gdb", .{}) }); // Hacky
-        run_c_test_gdb_exe.step.dependOn(&c_test_exe_install.step);
-
-        const run_c_test_gdb_step = b.step(b.fmt("test-c-{s}-gdb", .{impl.name}), b.fmt("Run lib{s} C test within gdb", .{impl.name}));
-        run_c_test_gdb_step.dependOn(&run_c_test_gdb_exe.step);
-
-        const cts = b.dependency("cts_bin", .{});
-
-        const cts_exe_path = cts.path(b.fmt("deqp-vk-{s}", .{
-            switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
-                .linux => "linux.x86_64",
-                else => unreachable,
-            },
-        }));
-
-        const run_cts = b.addSystemCommand(&[_][]const u8{
-            try cts_exe_path.getPath3(b, null).toString(b.allocator),
-            b.fmt("--deqp-archive-dir={s}", .{try cts.path("").getPath3(b, null).toString(b.allocator)}),
-            b.fmt("--deqp-caselist-file={s}", .{try cts.path("mustpass/1.0.0/vk-default.txt").getPath3(b, null).toString(b.allocator)}),
-            b.fmt("--deqp-vk-library-path={s}", .{b.getInstallPath(.lib, lib.out_lib_filename)}),
-        });
-        run_cts.step.dependOn(&lib_install.step);
-
-        const run_cts_step = b.step(b.fmt("test-conformance-{s}", .{impl.name}), b.fmt("Run Vulkan conformance tests for {s}", .{impl.name}));
-        run_cts_step.dependOn(&run_cts.step);
-
-        const run_gdb_cts = b.addSystemCommand(&[_][]const u8{
-            "gdb",
-            "--args",
-            try cts_exe_path.getPath3(b, null).toString(b.allocator),
-            b.fmt("--deqp-archive-dir={s}", .{try cts.path("").getPath3(b, null).toString(b.allocator)}),
-            b.fmt("--deqp-caselist-file={s}", .{try cts.path("mustpass/1.0.0/vk-default.txt").getPath3(b, null).toString(b.allocator)}),
-            b.fmt("--deqp-vk-library-path={s}", .{b.getInstallPath(.lib, lib.out_lib_filename)}),
-        });
-        run_gdb_cts.step.dependOn(&lib_install.step);
-
-        const run_cts_gdb_step = b.step(b.fmt("test-conformance-{s}-gdb", .{impl.name}), b.fmt("Run Vulkan conformance tests for {s} with GDB", .{impl.name}));
-        run_cts_gdb_step.dependOn(&run_gdb_cts.step);
+        (try addCTS(b, target, &impl, lib, false)).dependOn(&lib_install.step);
+        (try addCTS(b, target, &impl, lib, true)).dependOn(&lib_install.step);
     }
 
     const autodoc_test = b.addObject(.{
@@ -187,4 +125,105 @@ pub fn build(b: *std.Build) !void {
 fn customSoft(b: *std.Build, mod: *std.Build.Module) !void {
     const cpuinfo = b.lazyDependency("cpuinfo", .{}) orelse return error.UnresolvedDependency;
     mod.addImport("cpuinfo", cpuinfo.module("cpuinfo"));
+}
+
+fn addCTest(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, vulkan_headers: *std.Build.Dependency, impl: *const ImplementationDesc, impl_lib: *std.Build.Step.Compile) !*std.Build.Step.Compile {
+    const volk = b.lazyDependency("volk", .{}) orelse return error.DepNotFound;
+    const kvf = b.lazyDependency("kvf", .{}) orelse return error.DepNotFound;
+    const stb = b.lazyDependency("stb", .{}) orelse return error.DepNotFound;
+
+    const exe = b.addExecutable(.{
+        .name = b.fmt("c_test_vulkan_{s}", .{impl.name}),
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+
+    exe.root_module.addSystemIncludePath(volk.path(""));
+    exe.root_module.addSystemIncludePath(kvf.path(""));
+    exe.root_module.addSystemIncludePath(stb.path(""));
+    exe.root_module.addSystemIncludePath(vulkan_headers.path("include"));
+
+    exe.root_module.addCSourceFile(.{
+        .file = b.path("test/c/main.c"),
+        .flags = &.{b.fmt("-DLIBVK=\"{s}\"", .{impl_lib.name})},
+    });
+
+    const install = b.addInstallArtifact(exe, .{});
+    install.step.dependOn(&impl_lib.step);
+
+    return exe;
+}
+
+fn addCTestRunner(b: *std.Build, impl: *const ImplementationDesc, exe: *std.Build.Step.Compile, comptime gdb: bool) !*std.Build.Step {
+    const run = b.addRunArtifact(exe);
+    if (gdb) {
+        try run.argv.insert(b.allocator, 0, .{ .bytes = b.fmt("gdb", .{}) }); // Hacky
+    }
+    run.step.dependOn(&exe.step);
+
+    const run_step = b.step(b.fmt("test-c-{s}{s}", .{ impl.name, if (gdb) "-gdb" else "" }), b.fmt("Run libvulkan_{s} C test{s}", .{ impl.name, if (gdb) " within GDB" else "" }));
+    run_step.dependOn(&run.step);
+
+    return &run.step;
+}
+
+fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *std.Build.Step.Compile, comptime gdb: bool) !*std.Build.Step {
+    const cts = b.dependency("cts_bin", .{});
+
+    const cts_exe_path = cts.path(b.fmt("deqp-vk-{s}", .{
+        switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
+            .linux => "linux.x86_64",
+            else => unreachable,
+        },
+    }));
+
+    const mustpass = try cts.path(
+        b.fmt("mustpass/{}.{}.0/vk-default.txt", .{
+            impl.vulkan_version.major,
+            impl.vulkan_version.minor,
+        }),
+    ).getPath3(b, null).toString(b.allocator);
+
+    var command_line = std.ArrayList([]const u8).empty;
+
+    if (gdb) {
+        try command_line.append(b.allocator, "gdb");
+        try command_line.append(b.allocator, "--args");
+    }
+
+    try command_line.append(b.allocator, try cts_exe_path.getPath3(b, null).toString(b.allocator));
+    try command_line.append(b.allocator, b.fmt("--deqp-archive-dir={s}", .{try cts.path("").getPath3(b, null).toString(b.allocator)}));
+    try command_line.append(b.allocator, b.fmt("--deqp-vk-library-path={s}", .{b.getInstallPath(.lib, impl_lib.out_lib_filename)}));
+    try command_line.append(b.allocator, "--deqp-log-filename=vk-cts-logs.qpa");
+
+    var requires_explicit_tests = false;
+    if (b.args) |args| {
+        for (args) |arg| {
+            if (std.mem.startsWith(u8, arg, "--deqp-case")) {
+                requires_explicit_tests = true;
+            }
+            try command_line.append(b.allocator, arg);
+        }
+    }
+    if (!requires_explicit_tests) {
+        try command_line.append(b.allocator, b.fmt("--deqp-caselist-file={s}", .{mustpass}));
+    }
+
+    const run = b.addSystemCommand(command_line.items);
+    run.expectExitCode(1);
+    run.step.dependOn(&impl_lib.step);
+
+    const run_to_xml = b.addSystemCommand(&[_][]const u8{ "python", "./scripts/cts_logs_to_xml.py", "./vk-cts-logs.qpa", "./vk-cts-logs.xml" });
+    run_to_xml.step.dependOn(&run.step);
+
+    const run_to_report = b.addSystemCommand(&[_][]const u8{ "python", "./scripts/cts_report_to_html.py", "./vk-cts-logs.xml", "./vk-cts-report.html" });
+    run_to_report.step.dependOn(&run_to_xml.step);
+
+    const run_step = b.step(b.fmt("test-conformance-{s}{s}", .{ impl.name, if (gdb) "-gdb" else "" }), b.fmt("Run Vulkan conformance tests for libvulkan_{s}{s}", .{ impl.name, if (gdb) " within GDB" else "" }));
+    run_step.dependOn(&run_to_report.step);
+
+    return &run.step;
 }

@@ -7,3 +7,5 @@ zig-out/
 *.png
 *.bin
 *.qpa
+*.xml
+*.html
