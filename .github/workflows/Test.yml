@@ -26,7 +26,7 @@ jobs:
 
     - name: Vulkan CTS report
       run: |
-        pip -m install pandas
+        pip install pandas
         zig build test-conformance-soft-result-to-html
 
     - name: Publish to Cloudflare Pages
