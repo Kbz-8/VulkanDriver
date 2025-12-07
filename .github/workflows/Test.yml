@@ -25,4 +25,6 @@ jobs:
       run: zig build test-conformance-soft
 
     - name: Vulkan CTS report
-      run: zig build test-conformance-soft-result-to-html
+      run: |
+        pip -m install pandas
+        zig build test-conformance-soft-result-to-html
