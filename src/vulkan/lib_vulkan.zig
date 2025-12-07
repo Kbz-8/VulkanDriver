@@ -1103,15 +1103,13 @@ pub export fn strollFlushMappedMemoryRanges(p_device: vk.Device, count: u32, p_r
     entryPointBeginLogTrace(.vkFlushMappedMemoryRanges);
     defer entryPointEndLogTrace();
 
-    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
 
-    notImplementedWarning();
-
-    _ = device;
-    _ = count;
-    _ = p_ranges;
-
-    return .error_unknown;
+    for (p_ranges, 0..count) |range, _| {
+        const memory = NonDispatchable(DeviceMemory).fromHandleObject(range.memory) catch |err| return toVkResult(err);
+        memory.flushRange(range.offset, range.size) catch |err| return toVkResult(err);
+    }
+    return .success;
 }
 
 pub export fn strollFreeCommandBuffers(p_device: vk.Device, p_pool: vk.CommandPool, count: u32, p_cmds: [*]const vk.CommandBuffer) callconv(vk.vulkan_call_conv) void {
@@ -1324,19 +1322,17 @@ pub export fn strollGetRenderAreaGranularity(p_device: vk.Device, p_pass: vk.Ren
     _ = granularity;
 }
 
-pub export fn strollInvalidateMappedMemoryRanges(p_device: vk.Device, count: u32, ranges: [*]const vk.MappedMemoryRange) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn strollInvalidateMappedMemoryRanges(p_device: vk.Device, count: u32, p_ranges: [*]const vk.MappedMemoryRange) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkInvalidateMappedMemoryRanges);
     defer entryPointEndLogTrace();
 
-    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
 
-    notImplementedWarning();
-
-    _ = device;
-    _ = count;
-    _ = ranges;
-
-    return .error_unknown;
+    for (p_ranges, 0..count) |range, _| {
+        const memory = NonDispatchable(DeviceMemory).fromHandleObject(range.memory) catch |err| return toVkResult(err);
+        memory.invalidateRange(range.offset, range.size) catch |err| return toVkResult(err);
+    }
+    return .success;
 }
 
 pub export fn strollMapMemory(p_device: vk.Device, p_memory: vk.DeviceMemory, offset: vk.DeviceSize, size: vk.DeviceSize, _: vk.MemoryMapFlags, pp_data: *?*anyopaque) callconv(vk.vulkan_call_conv) vk.Result {

@@ -21,6 +21,8 @@ pub fn create(device: *SoftDevice, allocator: std.mem.Allocator, size: vk.Device
         .destroy = destroy,
         .map = map,
         .unmap = unmap,
+        .flushRange = flushRange,
+        .invalidateRange = invalidateRange,
     };
 
     self.* = .{
@@ -35,6 +37,20 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     const soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", interface.owner));
     soft_device.device_allocator.allocator().free(self.data);
     allocator.destroy(self);
+}
+
+pub fn flushRange(interface: *Interface, offset: vk.DeviceSize, size: vk.DeviceSize) VkError!void {
+    // No-op, host and device memory are the same for software driver
+    _ = interface;
+    _ = offset;
+    _ = size;
+}
+
+pub fn invalidateRange(interface: *Interface, offset: vk.DeviceSize, size: vk.DeviceSize) VkError!void {
+    // No-op, host and device memory are the same for software driver
+    _ = interface;
+    _ = offset;
+    _ = size;
 }
 
 pub fn map(interface: *Interface, offset: vk.DeviceSize, size: vk.DeviceSize) VkError!?*anyopaque {

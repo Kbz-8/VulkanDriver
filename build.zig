@@ -189,19 +189,18 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
 
     const cts_exe_path = try cts_exe_name.getPath3(b, null).toString(b.allocator);
 
-    const run = b.addSystemCommand(&[_][]const u8{"./scripts/wrap_alway_success.sh"});
+    const run = b.addSystemCommand(&[_][]const u8{if (gdb) "gdb" else cts_exe_path});
     run.step.dependOn(&impl_lib.step);
 
     if (gdb) {
-        run.addArg("gdb");
         run.addArg("--args");
+        run.addArg(cts_exe_path);
     }
 
-    run.addArg(cts_exe_path);
     run.addArg(b.fmt("--deqp-archive-dir={s}", .{try cts.path("").getPath3(b, null).toString(b.allocator)}));
     run.addArg(b.fmt("--deqp-vk-library-path={s}", .{b.getInstallPath(.lib, impl_lib.out_lib_filename)}));
     run.addArg("--deqp-log-filename=vk-cts-logs.qpa");
-    run.addArg("--deqp-log-compact=enable");
+    run.addArg("--deqp-no-program-fail=enable"); // Option added by my fork, doubt it will be merge oneday
 
     var requires_explicit_tests = false;
     if (b.args) |args| {
@@ -216,14 +215,18 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
         run.addArg(b.fmt("--deqp-caselist-file={s}", .{mustpass}));
     }
 
-    const run_to_xml = b.addSystemCommand(&[_][]const u8{ "python", "./scripts/cts_logs_to_xml.py", "./vk-cts-logs.qpa", "./vk-cts-logs.xml" });
-    run_to_xml.step.dependOn(&run.step);
-
-    const run_to_report = b.addSystemCommand(&[_][]const u8{ "python", "./scripts/cts_report_to_html.py", "./vk-cts-logs.xml", "./vk-cts-report.html" });
-    run_to_report.step.dependOn(&run_to_xml.step);
-
     const run_step = b.step(b.fmt("test-conformance-{s}{s}", .{ impl.name, if (gdb) "-gdb" else "" }), b.fmt("Run Vulkan conformance tests for libvulkan_{s}{s}", .{ impl.name, if (gdb) " within GDB" else "" }));
-    run_step.dependOn(&run_to_report.step);
+    run_step.dependOn(&run.step);
+
+    if (!gdb) {
+        const run_to_xml = b.addSystemCommand(&[_][]const u8{ "python", "./scripts/cts_logs_to_xml.py", "./vk-cts-logs.qpa", "./vk-cts-logs.xml" });
+
+        const run_to_report = b.addSystemCommand(&[_][]const u8{ "python", "./scripts/cts_report_to_html.py", "./vk-cts-logs.xml", "vk-cts-report.html" });
+        run_to_report.step.dependOn(&run_to_xml.step);
+
+        const run_report_step = b.step(b.fmt("test-conformance-{s}-result-to-html", .{impl.name}), b.fmt("Run Vulkan conformance tests for libvulkan_{s} with a HTML report", .{impl.name}));
+        run_report_step.dependOn(&run_to_report.step);
+    }
 
     return &run.step;
 }

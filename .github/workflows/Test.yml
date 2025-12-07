@@ -18,5 +18,11 @@ jobs:
     - name: Building
       run: zig build
 
-    - name: Test
+    - name: Zig Tests
       run: zig build test-soft
+
+    - name: Vulkan Conformance Test Suite
+      run: zig build test-conformance-soft
+
+    - name: Vulkan CTS report
+      run: zig build test-conformance-soft-result-to-html

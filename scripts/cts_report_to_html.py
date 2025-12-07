@@ -9,10 +9,13 @@ https://github.com/ArthurVasseur/Vkd/blob/main/scripts/cts_report.py
 import sys
 import re
 import os
+import math
 import xml.etree.ElementTree as ET
 import pandas as pd
 from datetime import datetime
 from collections import Counter
+
+PAGE_SIZE = 100
 
 def parse_raw_log(log_text: str):
     """Extract <TestCaseResult> XML blocks from a raw CTS log file."""
@@ -193,6 +196,64 @@ def sin_approx(angle):
     import math
     return math.sin(angle)
 
+def build_pagination(page_num: int, num_pages: int, base_output: str) -> str:
+    """
+    base_output: basename used for files, e.g. 'report' -> report_page_1.html
+    """
+    window = 2  # how many pages before/after the current one to show
+    links = []
+
+    # First / Prev
+    if page_num > 1:
+        links.append(f'<a href="{base_output}_page_1.html" class="pag-link">First</a>')
+        links.append(
+            f'<a href="{base_output}_page_{page_num-1}.html" class="pag-link">Prev</a>'
+        )
+    else:
+        links.append('<span class="pag-link disabled">First</span>')
+        links.append('<span class="pag-link disabled">Prev</span>')
+
+    # Page range around current
+    start_page = max(1, page_num - window)
+    end_page = min(num_pages, page_num + window)
+
+    # Ellipsis before
+    if start_page > 1:
+        links.append('<span class="pag-ellipsis">…</span>')
+
+    for p in range(start_page, end_page + 1):
+        if p == page_num:
+            links.append(f'<span class="pag-link active">{p}</span>')
+        else:
+            links.append(
+                f'<a href="{base_output}_page_{p}.html" class="pag-link">{p}</a>'
+            )
+
+    # Ellipsis after
+    if end_page < num_pages:
+        links.append('<span class="pag-ellipsis">…</span>')
+
+    # Next / Last
+    if page_num < num_pages:
+        links.append(
+            f'<a href="{base_output}_page_{page_num+1}.html" class="pag-link">Next</a>'
+        )
+        links.append(
+            f'<a href="{base_output}_page_{num_pages}.html" class="pag-link">Last</a>'
+        )
+    else:
+        links.append('<span class="pag-link disabled">Next</span>')
+        links.append('<span class="pag-link disabled">Last</span>')
+
+    return f"""
+    <nav class="pagination">
+      <span class="pagination-summary">Page {page_num} of {num_pages}</span>
+      <div class="pagination-links">
+        {' '.join(links)}
+      </div>
+    </nav>
+    """
+
 def main():
     if len(sys.argv) != 3:
         print("Usage: cts_report.py <input_log_or_xml> <output_html>")
@@ -224,6 +285,9 @@ def main():
 
     df = pd.DataFrame(rows)
 
+    total_tests = len(df)
+    num_pages = math.ceil(total_tests / PAGE_SIZE)
+
     # Calculate statistics before converting status to HTML
     stats = calculate_statistics(df)
 
@@ -245,25 +309,44 @@ def main():
     else:
         duration_str = f"{stats['total_duration_ms']:.2f}ms"
 
-    table_html = df.to_html(
-        index=False,
-        escape=False,
-        justify="center",
-        border=0,
-        classes="cts-table",
-        table_id="results-table"
-    )
+    base_output = os.path.splitext(output_path)[0]  # e.g. "report"
 
-    # Replace placeholders with actual formatted messages
-    for i, msg in enumerate(formatted_messages):
-        table_html = table_html.replace(f"__MSG_PLACEHOLDER_{i}__", msg)
+    for page_index in range(num_pages):
+        start = page_index * PAGE_SIZE
+        end = min(start + PAGE_SIZE, total_tests)
+        df_page = df.iloc[start:end]
 
-    html = f"""
+        # recreate placeholders & table for this page
+        formatted_messages_page = formatted_messages[start:end]
+        df_page["Message"] = [f"__MSG_PLACEHOLDER_{i}__" for i in range(start, end)]
+        table_html = df_page.to_html(
+            index=False,
+            escape=False,
+            justify="center",
+            border=0,
+            classes="cts-table",
+            table_id="results-table"
+        )
+
+        # Replace placeholders for this chunk
+        for i in range(start, end):
+            table_html = table_html.replace(
+                f"__MSG_PLACEHOLDER_{i}__", formatted_messages[i]
+            )
+
+        # Page numbering (1-based for humans)
+        page_num = page_index + 1
+        page_title_suffix = f" – Page {page_num}/{num_pages}"
+
+        # Simple HTML navigation (pure HTML, no JS)
+        pagination_nav = build_pagination(page_num, num_pages, base_output)
+
+        page_html = f"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Vulkan CTS Report</title>
+<title>Vulkan CTS Report{page_title_suffix}</title>
 <style>
 :root {{
     --bg: #0f172a;
@@ -637,6 +720,66 @@ body {{
 .message-pre::-webkit-scrollbar-thumb:hover {{
     background: rgba(148, 163, 184, 0.5);
 }}
+
+.pagination {{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin: 12px 0;
+    font-size: 0.85rem;
+}}
+
+.pagination-summary {{
+    color: var(--text-muted);
+}}
+
+.pagination-links {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}}
+
+.pag-link,
+.pag-ellipsis {{
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+}}
+
+.pag-link {{
+    text-decoration: none;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    color: var(--text-muted);
+    background: rgba(15, 23, 42, 0.9);
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}}
+
+.pag-link:hover {{
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent-strong);
+}}
+
+.pag-link.active {{
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent-strong);
+    cursor: default;
+}}
+
+.pag-link.disabled {{
+    opacity: 0.4;
+    border-style: dashed;
+    cursor: not-allowed;
+    pointer-events: none;
+}}
+
+.pag-ellipsis {{
+    color: var(--text-muted);
+    padding: 4px 2px;
+}}
 </style>
 </head>
 <body>
@@ -701,22 +844,18 @@ body {{
       {pie_chart_svg}
     </div>
 
-    <div class="search-container">
-      <input
-        type="text"
-        id="search-input"
-        class="search-input"
-        placeholder="Search test cases..."
-        onkeyup="filterTable()"
-      />
-    </div>
+    {pagination_nav}
 
     <div class="table-wrapper">
       {table_html}
     </div>
 
     <div class="footer-note">
-      Generated by <code>cts_report.py</code> at {generation_time}
+        Generated by
+        <a href="https://github.com/Kbz-8/VulkanDriver/blob/master/scripts/cts_report_to_html.py">
+            <code>cts_report.py</code>
+        </a>
+        at {generation_time}
     </div>
   </div>
 </div>
@@ -755,9 +894,11 @@ function filterTable() {{
 </body>
 </html>
 """
+        page_output_path = f"cts_report/{base_output}_page_{page_num}.html"
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(html)
+        os.makedirs(os.path.dirname(page_output_path), exist_ok=True)
+        with open(page_output_path, "w", encoding="utf-8") as f:
+            f.write(page_html)
 
     print(f"[OK] HTML report saved to: {output_path}")
     print(f"\n--- Test Statistics ---")
