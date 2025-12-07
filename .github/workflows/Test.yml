@@ -28,3 +28,11 @@ jobs:
       run: |
         pip -m install pandas
         zig build test-conformance-soft-result-to-html
+
+    - name: Publish to Cloudflare Pages
+      uses: cloudflare/wrangler-action@v3
+      with:
+        apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        command: pages deploy cts_report --project-name=vulkan-driver-cts-report
+        gitHubToken: ${{ secrets.GITHUB_TOKEN }}
