@@ -894,7 +894,7 @@ function filterTable() {{
 </body>
 </html>
 """
-        page_output_path = f"cts_report/{base_output}_page_{page_num}.html"
+        page_output_path = f"cts_report/{base_output}_page_{page_num}.html" if page_num != 1 else f"cts_report/index.html"
 
         os.makedirs(os.path.dirname(page_output_path), exist_ok=True)
         with open(page_output_path, "w", encoding="utf-8") as f:
