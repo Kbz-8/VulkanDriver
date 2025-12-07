@@ -194,11 +194,16 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
 
     if (device_name[0] == 0) {
         // TODO: use Pytorch's cpuinfo someday
-        const info = cpuinfo.get(command_allocator) catch return VkError.InitializationFailed;
-        defer info.deinit(command_allocator);
+        const name = blk: {
+            const info = cpuinfo.get(command_allocator) catch break :blk command_allocator.dupe(u8, "Unkown") catch return VkError.OutOfHostMemory;
+            defer info.deinit(command_allocator);
+
+            break :blk command_allocator.dupe(u8, info.name) catch return VkError.OutOfHostMemory;
+        };
+        defer command_allocator.free(name);
 
         var writer = std.Io.Writer.fixed(device_name[0 .. vk.MAX_PHYSICAL_DEVICE_NAME_SIZE - 1]);
-        writer.print("{s} [" ++ root.DRIVER_NAME ++ " StrollDriver]", .{info.name}) catch return VkError.InitializationFailed;
+        writer.print("{s} [" ++ root.DRIVER_NAME ++ " StrollDriver]", .{name}) catch return VkError.InitializationFailed;
     }
 
     @memcpy(&interface.props.device_name, &device_name);
