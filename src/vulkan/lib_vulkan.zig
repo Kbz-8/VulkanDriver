@@ -526,20 +526,24 @@ pub export fn strollAllocateCommandBuffers(p_device: vk.Device, info: *const vk.
     return .success;
 }
 
-pub export fn strollAllocateDescriptorSets(p_device: vk.Device, info: *const vk.DescriptorSetAllocateInfo, p_set: *vk.DescriptorSet) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn strollAllocateDescriptorSets(p_device: vk.Device, info: *const vk.DescriptorSetAllocateInfo, p_sets: [*]vk.DescriptorSet) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkAllocateCommandBuffers);
     defer entryPointEndLogTrace();
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
 
     if (info.s_type != .descriptor_set_allocate_info) {
         return .error_validation_failed;
     }
 
-    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const allocator = VulkanAllocator.init(null, .command).allocator();
 
-    notImplementedWarning();
-
-    _ = device;
-    _ = p_set;
+    const pool = NonDispatchable(DescriptorPool).fromHandleObject(info.descriptor_pool) catch |err| return toVkResult(err);
+    for (0..info.descriptor_set_count) |i| {
+        const layout = NonDispatchable(DescriptorSetLayout).fromHandleObject(info.p_set_layouts[i]) catch |err| return toVkResult(err);
+        const set = pool.allocateDescriptorSet(layout) catch |err| return toVkResult(err);
+        p_sets[i] = (NonDispatchable(DescriptorSet).wrap(allocator, set) catch |err| return toVkResult(err)).toVkHandle(vk.DescriptorSet);
+    }
 
     return .success;
 }
@@ -1127,11 +1131,16 @@ pub export fn strollFreeDescriptorSets(p_device: vk.Device, p_pool: vk.CommandPo
     entryPointBeginLogTrace(.vkFreeDescriptorSets);
     defer entryPointEndLogTrace();
 
+    const allocator = VulkanAllocator.init(null, .command).allocator();
+
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
 
     const pool = NonDispatchable(DescriptorPool).fromHandleObject(p_pool) catch |err| return errorLogger(err);
-    const sets: [*]*Dispatchable(DescriptorSet) = @ptrCast(@constCast(p_sets));
-    pool.freeDescriptorSets(sets[0..count]) catch |err| return errorLogger(err);
+    for (p_sets[0..], 0..count) |p_set, _| {
+        const non_dispatchable_set = NonDispatchable(DescriptorSet).fromHandle(p_set) catch |err| return errorLogger(err);
+        pool.freeDescriptorSet(non_dispatchable_set.object) catch |err| return errorLogger(err);
+        non_dispatchable_set.destroy(allocator);
+    }
 }
 
 pub export fn strollFreeMemory(p_device: vk.Device, p_memory: vk.DeviceMemory, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {

@@ -13,7 +13,7 @@ const Self = @This();
 pub const ObjectType: vk.ObjectType = .descriptor_set;
 
 owner: *Device,
-layouts: []*const DescriptorSetLayout,
+layout: *DescriptorSetLayout,
 
 vtable: *const VTable,
 
@@ -21,17 +21,11 @@ pub const VTable = struct {
     destroy: *const fn (*Self, std.mem.Allocator) void,
 };
 
-pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.DescriptorSetAllocateInfo) VkError!Self {
-    var layouts = allocator.alloc(*DescriptorSetLayout, info.descriptor_set_count) catch return VkError.OutOfHostMemory;
-    errdefer allocator.free(layouts);
-
-    for (info.p_set_layouts, 0..info.descriptor_set_count) |p_set_layout, i| {
-        layouts[i] = try NonDispatchable(DescriptorSetLayout).fromHandleObject(p_set_layout);
-    }
-
+pub fn init(device: *Device, allocator: std.mem.Allocator, layout: *DescriptorSetLayout) VkError!Self {
+    _ = allocator;
     return .{
         .owner = device,
-        .layouts = layouts,
+        .layout = layout,
         .vtable = undefined,
     };
 }

@@ -87,3 +87,41 @@ pub inline fn getTotalSize(self: *Self) usize {
     const pixel_size = self.getPixelSize();
     return self.extent.width * self.extent.height * self.extent.depth * pixel_size;
 }
+
+pub fn formatSupportsColorAttachemendBlend(format: vk.Format) bool {
+    return switch (format) {
+        // Vulkan 1.1 mandatory
+        .r5g6b5_unorm_pack16,
+        .a1r5g5b5_unorm_pack16,
+        .r8_unorm,
+        .r8g8_unorm,
+        .r8g8b8a8_unorm,
+        .r8g8b8a8_srgb,
+        .b8g8r8a8_unorm,
+        .b8g8r8a8_srgb,
+        .a8b8g8r8_unorm_pack32,
+        .a8b8g8r8_srgb_pack32,
+        .a2b10g10r10_unorm_pack32,
+        .r16_sfloat,
+        .r16g16_sfloat,
+        .r16g16b16a16_sfloat,
+        // optional
+        .r4g4b4a4_unorm_pack16,
+        .b4g4r4a4_unorm_pack16,
+        .b5g6r5_unorm_pack16,
+        .r5g5b5a1_unorm_pack16,
+        .b5g5r5a1_unorm_pack16,
+        .a2r10g10b10_unorm_pack32,
+        .r16_unorm,
+        .r16g16_unorm,
+        .r16g16b16a16_unorm,
+        .r32_sfloat,
+        .r32g32_sfloat,
+        .r32g32b32a32_sfloat,
+        .b10g11r11_ufloat_pack32,
+        .a4r4g4b4_unorm_pack16,
+        .a4b4g4r4_unorm_pack16,
+        => true,
+        else => false,
+    };
+}

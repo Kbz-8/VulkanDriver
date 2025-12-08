@@ -15,6 +15,7 @@ pub const SoftBufferView = @import("SoftBufferView.zig");
 pub const SoftCommandBuffer = @import("SoftCommandBuffer.zig");
 pub const SoftCommandPool = @import("SoftCommandPool.zig");
 pub const SoftDescriptorPool = @import("SoftDescriptorPool.zig");
+pub const SoftDescriptorSet = @import("SoftDescriptorSet.zig");
 pub const SoftDescriptorSetLayout = @import("SoftDescriptorSetLayout.zig");
 pub const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
 pub const SoftEvent = @import("SoftEvent.zig");
@@ -68,6 +69,7 @@ test {
     std.testing.refAllDecls(SoftCommandBuffer);
     std.testing.refAllDecls(SoftCommandPool);
     std.testing.refAllDecls(SoftDescriptorPool);
+    std.testing.refAllDecls(SoftDescriptorSet);
     std.testing.refAllDecls(SoftDescriptorSetLayout);
     std.testing.refAllDecls(SoftDevice);
     std.testing.refAllDecls(SoftDeviceMemory);

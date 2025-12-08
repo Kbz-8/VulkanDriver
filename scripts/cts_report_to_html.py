@@ -10,6 +10,7 @@ import sys
 import re
 import os
 import math
+import shutil
 import xml.etree.ElementTree as ET
 import pandas as pd
 from datetime import datetime
@@ -859,46 +860,16 @@ body {{
     </div>
   </div>
 </div>
-
-<script>
-function filterTable() {{
-    const input = document.getElementById('search-input');
-    const filter = input.value.toLowerCase();
-    const table = document.getElementById('results-table');
-    const tbody = table.getElementsByTagName('tbody')[0];
-    const rows = tbody.getElementsByTagName('tr');
-
-    for (let i = 0; i < rows.length; i++) {{
-        const cells = rows[i].getElementsByTagName('td');
-        let found = false;
-
-        for (let j = 0; j < cells.length; j++) {{
-            const cell = cells[j];
-            if (cell) {{
-                const textValue = cell.textContent || cell.innerText;
-                if (textValue.toLowerCase().indexOf(filter) > -1) {{
-                    found = true;
-                    break;
-                }}
-            }}
-        }}
-
-        if (found) {{
-            rows[i].classList.remove('hidden');
-        }} else {{
-            rows[i].classList.add('hidden');
-        }}
-    }}
-}}
-</script>
 </body>
 </html>
 """
-        page_output_path = f"cts_report/{base_output}_page_{page_num}.html" if page_num != 1 else f"cts_report/index.html"
+        page_output_path = f"cts_report/{base_output}_page_{page_num}.html"
 
         os.makedirs(os.path.dirname(page_output_path), exist_ok=True)
         with open(page_output_path, "w", encoding="utf-8") as f:
             f.write(page_html)
+
+    shutil.copy(f"cts_report/{base_output}_page_1.html", "cts_report/index.html")
 
     print(f"[OK] HTML report saved to: {output_path}")
     print(f"\n--- Test Statistics ---")

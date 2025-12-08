@@ -167,6 +167,8 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
         .shader_float_64 = .true,
         .shader_int_64 = .true,
         .shader_int_16 = .true,
+        .texture_compression_etc2 = .true,
+        .texture_compression_bc = .true,
     };
 
     var queue_family_props = [_]vk.QueueFamilyProperties{
@@ -197,7 +199,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
             if (cpuinfo.cpuinfo_initialize()) {
                 const package = cpuinfo.cpuinfo_get_package(0).*;
                 const non_sentinel_name = package.name[0..(std.mem.len(@as([*:0]const u8, @ptrCast(&package.name))))];
-                break :blk std.fmt.allocPrint(command_allocator, "{s} {d} cores", .{ non_sentinel_name, package.processor_count }) catch return VkError.OutOfHostMemory;
+                break :blk std.fmt.allocPrint(command_allocator, "{s} ({d} threads)", .{ non_sentinel_name, package.processor_count }) catch return VkError.OutOfHostMemory;
             }
             break :blk command_allocator.dupe(u8, "Unkown") catch return VkError.OutOfHostMemory;
         };
@@ -227,8 +229,422 @@ pub fn createDevice(interface: *Interface, allocator: std.mem.Allocator, infos: 
 
 pub fn getFormatProperties(interface: *Interface, format: vk.Format) VkError!vk.FormatProperties {
     _ = interface;
-    _ = format;
-    return .{};
+    var properties: vk.FormatProperties = .{};
+
+    switch (format) {
+        // Formats which can be sampled *and* filtered
+        .r4g4b4a4_unorm_pack16,
+        .b4g4r4a4_unorm_pack16,
+        .a4r4g4b4_unorm_pack16,
+        .a4b4g4r4_unorm_pack16,
+        .r5g6b5_unorm_pack16,
+        .b5g6r5_unorm_pack16,
+        .r5g5b5a1_unorm_pack16,
+        .b5g5r5a1_unorm_pack16,
+        .a1r5g5b5_unorm_pack16,
+        .r8_unorm,
+        .r8_srgb,
+        .r8_snorm,
+        .r8g8_unorm,
+        .r8g8_srgb,
+        .r8g8_snorm,
+        .r8g8b8a8_unorm,
+        .r8g8b8a8_snorm,
+        .r8g8b8a8_srgb,
+        .b8g8r8a8_unorm,
+        .b8g8r8a8_srgb,
+        .a8b8g8r8_unorm_pack32,
+        .a8b8g8r8_snorm_pack32,
+        .a8b8g8r8_srgb_pack32,
+        .a2b10g10r10_unorm_pack32,
+        .a2r10g10b10_unorm_pack32,
+        .r16_unorm,
+        .r16_snorm,
+        .r16_sfloat,
+        .r16g16_unorm,
+        .r16g16_snorm,
+        .r16g16_sfloat,
+        .r16g16b16a16_unorm,
+        .r16g16b16a16_snorm,
+        .r16g16b16a16_sfloat,
+        .r32_sfloat,
+        .r32g32_sfloat,
+        .r32g32b32a32_sfloat,
+        .b10g11r11_ufloat_pack32,
+        .e5b9g9r9_ufloat_pack32,
+        .bc1_rgb_unorm_block,
+        .bc1_rgb_srgb_block,
+        .bc1_rgba_unorm_block,
+        .bc1_rgba_srgb_block,
+        .bc2_unorm_block,
+        .bc2_srgb_block,
+        .bc3_unorm_block,
+        .bc3_srgb_block,
+        .bc4_unorm_block,
+        .bc4_snorm_block,
+        .bc5_unorm_block,
+        .bc5_snorm_block,
+        .bc6h_ufloat_block,
+        .bc6h_sfloat_block,
+        .bc7_unorm_block,
+        .bc7_srgb_block,
+        .etc2_r8g8b8_unorm_block,
+        .etc2_r8g8b8_srgb_block,
+        .etc2_r8g8b8a1_unorm_block,
+        .etc2_r8g8b8a1_srgb_block,
+        .etc2_r8g8b8a8_unorm_block,
+        .etc2_r8g8b8a8_srgb_block,
+        .eac_r11_unorm_block,
+        .eac_r11_snorm_block,
+        .eac_r11g11_unorm_block,
+        .eac_r11g11_snorm_block,
+        //.astc_4x_4_unorm_block,
+        //.astc_5x_4_unorm_block,
+        //.astc_5x_5_unorm_block,
+        //.astc_6x_5_unorm_block,
+        //.astc_6x_6_unorm_block,
+        //.astc_8x_5_unorm_block,
+        //.astc_8x_6_unorm_block,
+        //.astc_8x_8_unorm_block,
+        //.astc_1_0x_5_unorm_block,
+        //.astc_1_0x_6_unorm_block,
+        //.astc_1_0x_8_unorm_block,
+        //.astc_1_0x_10_unorm_block,
+        //.astc_1_2x_10_unorm_block,
+        //.astc_1_2x_12_unorm_block,
+        //.astc_4x_4_srgb_block,
+        //.astc_5x_4_srgb_block,
+        //.astc_5x_5_srgb_block,
+        //.astc_6x_5_srgb_block,
+        //.astc_6x_6_srgb_block,
+        //.astc_8x_5_srgb_block,
+        //.astc_8x_6_srgb_block,
+        //.astc_8x_8_srgb_block,
+        //.astc_1_0x_5_srgb_block,
+        //.astc_1_0x_6_srgb_block,
+        //.astc_1_0x_8_srgb_block,
+        //.astc_1_0x_10_srgb_block,
+        //.astc_1_2x_10_srgb_block,
+        //.astc_1_2x_12_srgb_block,
+        .d16_unorm,
+        .d32_sfloat,
+        .d32_sfloat_s8_uint,
+        => {
+            properties.optimal_tiling_features.blit_src_bit = true;
+            properties.optimal_tiling_features.sampled_image_bit = true;
+            properties.optimal_tiling_features.transfer_dst_bit = true;
+            properties.optimal_tiling_features.transfer_src_bit = true;
+            properties.optimal_tiling_features.sampled_image_filter_linear_bit = true;
+        },
+
+        // Formats which can be sampled, but don't support filtering
+        .r8_uint,
+        .r8_sint,
+        .r8g8_uint,
+        .r8g8_sint,
+        .r8g8b8a8_uint,
+        .r8g8b8a8_sint,
+        .a8b8g8r8_uint_pack32,
+        .a8b8g8r8_sint_pack32,
+        .a2b10g10r10_uint_pack32,
+        .a2r10g10b10_uint_pack32,
+        .r16_uint,
+        .r16_sint,
+        .r16g16_uint,
+        .r16g16_sint,
+        .r16g16b16a16_uint,
+        .r16g16b16a16_sint,
+        .r32_uint,
+        .r32_sint,
+        .r32g32_uint,
+        .r32g32_sint,
+        .r32g32b32a32_uint,
+        .r32g32b32a32_sint,
+        .s8_uint,
+        => {
+            properties.optimal_tiling_features.blit_src_bit = true;
+            properties.optimal_tiling_features.sampled_image_bit = true;
+            properties.optimal_tiling_features.transfer_dst_bit = true;
+            properties.optimal_tiling_features.transfer_src_bit = true;
+        },
+
+        // YCbCr formats
+        .g8_b8_r8_3plane_420_unorm,
+        .g8_b8r8_2plane_420_unorm,
+        .g10x6_b10x6r10x6_2plane_420_unorm_3pack16,
+        => {
+            properties.optimal_tiling_features.sampled_image_bit = true;
+            properties.optimal_tiling_features.sampled_image_filter_linear_bit = true;
+            properties.optimal_tiling_features.sampled_image_ycbcr_conversion_linear_filter_bit = true;
+            properties.optimal_tiling_features.transfer_src_bit = true;
+            properties.optimal_tiling_features.transfer_dst_bit = true;
+            properties.optimal_tiling_features.cosited_chroma_samples_bit = true;
+        },
+        else => {},
+    }
+
+    switch (format) {
+        // Vulkan 1.0 mandatory storage image formats supporting atomic operations
+        .r32_uint,
+        .r32_sint,
+        => {
+            properties.buffer_features.storage_texel_buffer_bit = true;
+            properties.buffer_features.storage_texel_buffer_atomic_bit = true;
+            properties.optimal_tiling_features.storage_image_bit = true;
+            properties.optimal_tiling_features.storage_image_atomic_bit = true;
+        },
+        // vulkan 1.0 mandatory storage image formats
+        .r8g8b8a8_unorm,
+        .r8g8b8a8_snorm,
+        .r8g8b8a8_uint,
+        .r8g8b8a8_sint,
+        .r16g16b16a16_uint,
+        .r16g16b16a16_sint,
+        .r16g16b16a16_sfloat,
+        .r32_sfloat,
+        .r32g32_uint,
+        .r32g32_sint,
+        .r32g32_sfloat,
+        .r32g32b32a32_uint,
+        .r32g32b32a32_sint,
+        .r32g32b32a32_sfloat,
+        .a2b10g10r10_unorm_pack32,
+        .a2b10g10r10_uint_pack32,
+        // vulkan 1.0 shaderstorageimageextendedformats
+        .r16g16_sfloat,
+        .b10g11r11_ufloat_pack32,
+        .r16_sfloat,
+        .r16g16b16a16_unorm,
+        .r16g16_unorm,
+        .r8g8_unorm,
+        .r16_unorm,
+        .r8_unorm,
+        .r16g16b16a16_snorm,
+        .r16g16_snorm,
+        .r8g8_snorm,
+        .r16_snorm,
+        .r8_snorm,
+        .r16g16_sint,
+        .r8g8_sint,
+        .r16_sint,
+        .r8_sint,
+        .r16g16_uint,
+        .r8g8_uint,
+        .r16_uint,
+        .r8_uint,
+        // additional formats not listed under "formats without shader storage format"
+        .a8b8g8r8_unorm_pack32,
+        .a8b8g8r8_snorm_pack32,
+        .a8b8g8r8_uint_pack32,
+        .a8b8g8r8_sint_pack32,
+        .b8g8r8a8_unorm,
+        .b8g8r8a8_srgb,
+        => {
+            properties.optimal_tiling_features.storage_image_bit = true;
+            properties.buffer_features.storage_texel_buffer_bit = true;
+        },
+
+        else => {},
+    }
+
+    switch (format) {
+        .r5g6b5_unorm_pack16,
+        .a1r5g5b5_unorm_pack16,
+        .r4g4b4a4_unorm_pack16,
+        .b4g4r4a4_unorm_pack16,
+        .a4r4g4b4_unorm_pack16,
+        .a4b4g4r4_unorm_pack16,
+        .b5g6r5_unorm_pack16,
+        .r5g5b5a1_unorm_pack16,
+        .b5g5r5a1_unorm_pack16,
+        .r8_unorm,
+        .r8g8_unorm,
+        .r8g8b8a8_unorm,
+        .r8g8b8a8_srgb,
+        .b8g8r8a8_unorm,
+        .b8g8r8a8_srgb,
+        .a8b8g8r8_unorm_pack32,
+        .a8b8g8r8_srgb_pack32,
+        .a2b10g10r10_unorm_pack32,
+        .a2r10g10b10_unorm_pack32,
+        .r16_sfloat,
+        .r16g16_sfloat,
+        .r16g16b16a16_sfloat,
+        .r32_sfloat,
+        .r32g32_sfloat,
+        .r32g32b32a32_sfloat,
+        .b10g11r11_ufloat_pack32,
+        .r8_uint,
+        .r8_sint,
+        .r8g8_uint,
+        .r8g8_sint,
+        .r8g8b8a8_uint,
+        .r8g8b8a8_sint,
+        .a8b8g8r8_uint_pack32,
+        .a8b8g8r8_sint_pack32,
+        .a2b10g10r10_uint_pack32,
+        .a2r10g10b10_uint_pack32,
+        .r16_unorm,
+        .r16_uint,
+        .r16_sint,
+        .r16g16_unorm,
+        .r16g16_uint,
+        .r16g16_sint,
+        .r16g16b16a16_unorm,
+        .r16g16b16a16_uint,
+        .r16g16b16a16_sint,
+        .r32_uint,
+        .r32_sint,
+        .r32g32_uint,
+        .r32g32_sint,
+        .r32g32b32a32_uint,
+        .r32g32b32a32_sint,
+        => {
+            properties.optimal_tiling_features.color_attachment_bit = true;
+            properties.optimal_tiling_features.blit_dst_bit = true;
+        },
+        .s8_uint,
+        .d16_unorm,
+        .d32_sfloat, // note: either vk_format_d32_sfloat or vk_format_x8_d24_unorm_pack32 must be supported
+        .d32_sfloat_s8_uint,
+        => { // note: either vk_format_d24_unorm_s8_uint or vk_format_d32_sfloat_s8_uint must be supported
+            properties.optimal_tiling_features.depth_stencil_attachment_bit = true;
+        },
+
+        else => {},
+    }
+
+    if (base.Image.formatSupportsColorAttachemendBlend(format)) {
+        properties.optimal_tiling_features.color_attachment_blend_bit = true;
+    }
+
+    switch (format) {
+        .r8_unorm,
+        .r8_snorm,
+        .r8_uscaled,
+        .r8_sscaled,
+        .r8_uint,
+        .r8_sint,
+        .r8g8_unorm,
+        .r8g8_snorm,
+        .r8g8_uscaled,
+        .r8g8_sscaled,
+        .r8g8_uint,
+        .r8g8_sint,
+        .r8g8b8a8_unorm,
+        .r8g8b8a8_snorm,
+        .r8g8b8a8_uscaled,
+        .r8g8b8a8_sscaled,
+        .r8g8b8a8_uint,
+        .r8g8b8a8_sint,
+        .b8g8r8a8_unorm,
+        .a8b8g8r8_unorm_pack32,
+        .a8b8g8r8_snorm_pack32,
+        .a8b8g8r8_uscaled_pack32,
+        .a8b8g8r8_sscaled_pack32,
+        .a8b8g8r8_uint_pack32,
+        .a8b8g8r8_sint_pack32,
+        .a2r10g10b10_unorm_pack32,
+        .a2r10g10b10_snorm_pack32,
+        .a2r10g10b10_uint_pack32,
+        .a2r10g10b10_sint_pack32,
+        .a2b10g10r10_unorm_pack32,
+        .a2b10g10r10_snorm_pack32,
+        .a2b10g10r10_uint_pack32,
+        .a2b10g10r10_sint_pack32,
+        .r16_unorm,
+        .r16_snorm,
+        .r16_uscaled,
+        .r16_sscaled,
+        .r16_uint,
+        .r16_sint,
+        .r16_sfloat,
+        .r16g16_unorm,
+        .r16g16_snorm,
+        .r16g16_uscaled,
+        .r16g16_sscaled,
+        .r16g16_uint,
+        .r16g16_sint,
+        .r16g16_sfloat,
+        .r16g16b16a16_unorm,
+        .r16g16b16a16_snorm,
+        .r16g16b16a16_uscaled,
+        .r16g16b16a16_sscaled,
+        .r16g16b16a16_uint,
+        .r16g16b16a16_sint,
+        .r16g16b16a16_sfloat,
+        .r32_uint,
+        .r32_sint,
+        .r32_sfloat,
+        .r32g32_uint,
+        .r32g32_sint,
+        .r32g32_sfloat,
+        .r32g32b32_uint,
+        .r32g32b32_sint,
+        .r32g32b32_sfloat,
+        .r32g32b32a32_uint,
+        .r32g32b32a32_sint,
+        .r32g32b32a32_sfloat,
+        => properties.buffer_features.vertex_buffer_bit = true,
+        else => {},
+    }
+
+    switch (format) {
+        // Vulkan 1.1 mandatory
+        .r8_unorm,
+        .r8_snorm,
+        .r8_uint,
+        .r8_sint,
+        .r8g8_unorm,
+        .r8g8_snorm,
+        .r8g8_uint,
+        .r8g8_sint,
+        .r8g8b8a8_unorm,
+        .r8g8b8a8_snorm,
+        .r8g8b8a8_uint,
+        .r8g8b8a8_sint,
+        .b8g8r8a8_unorm,
+        .a8b8g8r8_unorm_pack32,
+        .a8b8g8r8_snorm_pack32,
+        .a8b8g8r8_uint_pack32,
+        .a8b8g8r8_sint_pack32,
+        .a2b10g10r10_unorm_pack32,
+        .a2b10g10r10_uint_pack32,
+        .r16_uint,
+        .r16_sint,
+        .r16_sfloat,
+        .r16g16_uint,
+        .r16g16_sint,
+        .r16g16_sfloat,
+        .r16g16b16a16_uint,
+        .r16g16b16a16_sint,
+        .r16g16b16a16_sfloat,
+        .r32_uint,
+        .r32_sint,
+        .r32_sfloat,
+        .r32g32_uint,
+        .r32g32_sint,
+        .r32g32_sfloat,
+        .r32g32b32a32_uint,
+        .r32g32b32a32_sint,
+        .r32g32b32a32_sfloat,
+        .b10g11r11_ufloat_pack32,
+        // optional
+        .a2r10g10b10_unorm_pack32,
+        .a2r10g10b10_uint_pack32,
+        => properties.buffer_features.uniform_texel_buffer_bit = true,
+        else => {},
+    }
+
+    if (properties.optimal_tiling_features.toInt() != 0) {
+        // "Formats that are required to support VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT must also support
+        //  VK_FORMAT_FEATURE_TRANSFER_SRC_BIT and VK_FORMAT_FEATURE_TRANSFER_DST_BIT."
+
+        properties.linear_tiling_features.transfer_src_bit = true;
+        properties.linear_tiling_features.transfer_dst_bit = true;
+    }
+
+    return properties;
 }
 
 pub fn getImageFormatProperties(
