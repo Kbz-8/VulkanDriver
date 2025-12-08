@@ -15,7 +15,7 @@ pub inline fn unref(self: *Self) void {
 }
 
 pub inline fn hasRefs(self: *Self) bool {
-    return self.getRefsCount() == 0;
+    return self.getRefsCount() != 0;
 }
 
 pub inline fn getRefsCount(self: *Self) usize {
