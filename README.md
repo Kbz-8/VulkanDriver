@@ -183,7 +183,6 @@ vkUpdateDescriptorSets                         | ⚙️ WIP
 vkWaitForFences                                | ✅ Implemented
 </details>
 
-\
 [Here](https://vulkan-driver-cts-report.kbz8.me/) shalt thou find a most meticulous account of the Vulkan 1.0 conformance trials, set forth for thy scrutiny.
 
 ## License

@@ -30,8 +30,8 @@
             .hash = "N-V-__8AAAQc6QJfozxsyRgirFFsKICXgADgmdztIaZkDBmF",
         },
         .cpuinfo = .{
-            .url = "git+https://github.com/Kbz-8/cpuinfo-zig#77f82a1248194e7fb706967343c66021f8522766",
-            .hash = "cpuinfo-0.1.0-V7dMLcghAADJuG7dkd3MnwDPZ232pBK_8uGjxY43eP5u",
+            .url = "git+https://github.com/Kbz-8/cpuinfo#4883954cfcec3f6c9ca9c4aaddfc26107e08726f",
+            .hash = "cpuinfo-0.0.1-RLgIQTLRMgF4dLo8AJ-HvnpFsJe6jmXCJjMWWjil6RF1",
             .lazy = true,
         },
         .volk = .{

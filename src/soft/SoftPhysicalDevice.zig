@@ -2,7 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 const root = @import("lib.zig");
-const cpuinfo = @import("cpuinfo");
+const cpuinfo = @cImport(@cInclude("cpuinfo.h"));
 
 const SoftDevice = @import("SoftDevice.zig");
 
@@ -193,12 +193,13 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
     interface.queue_family_props.appendSlice(allocator, queue_family_props[0..]) catch return VkError.OutOfHostMemory;
 
     if (device_name[0] == 0) {
-        // TODO: use Pytorch's cpuinfo someday
         const name = blk: {
-            const info = cpuinfo.get(command_allocator) catch break :blk command_allocator.dupe(u8, "Unkown") catch return VkError.OutOfHostMemory;
-            defer info.deinit(command_allocator);
-
-            break :blk command_allocator.dupe(u8, info.name) catch return VkError.OutOfHostMemory;
+            if (cpuinfo.cpuinfo_initialize()) {
+                const package = cpuinfo.cpuinfo_get_package(0).*;
+                const non_sentinel_name = package.name[0..(std.mem.len(@as([*:0]const u8, @ptrCast(&package.name))))];
+                break :blk std.fmt.allocPrint(command_allocator, "{s} {d} cores", .{ non_sentinel_name, package.processor_count }) catch return VkError.OutOfHostMemory;
+            }
+            break :blk command_allocator.dupe(u8, "Unkown") catch return VkError.OutOfHostMemory;
         };
         defer command_allocator.free(name);
 

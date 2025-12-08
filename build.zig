@@ -7,7 +7,7 @@ const ImplementationDesc = struct {
     name: []const u8,
     root_source_file: []const u8,
     vulkan_version: std.SemanticVersion,
-    custom: ?*const fn (*std.Build, *std.Build.Module) anyerror!void = null,
+    custom: ?*const fn (*std.Build, *std.Build.Step.Compile) anyerror!void = null,
 };
 
 const implementations = [_]ImplementationDesc{
@@ -59,16 +59,16 @@ pub fn build(b: *std.Build) !void {
 
         lib_mod.addSystemIncludePath(vulkan_headers.path("include"));
 
-        if (impl.custom) |custom| {
-            custom(b, lib_mod) catch continue;
-        }
-
         const lib = b.addLibrary(.{
             .name = b.fmt("vulkan_{s}", .{impl.name}),
             .root_module = lib_mod,
             .linkage = .dynamic,
             .use_llvm = true, // Fixes some random bugs happenning with custom backend. Investigations needed
         });
+
+        if (impl.custom) |custom| {
+            custom(b, lib) catch continue;
+        }
 
         const icd_file = b.addWriteFile(
             b.getInstallPath(.lib, b.fmt("vk_stroll_{s}.json", .{impl.name})),
@@ -122,9 +122,10 @@ pub fn build(b: *std.Build) !void {
     docs_step.dependOn(&install_docs.step);
 }
 
-fn customSoft(b: *std.Build, mod: *std.Build.Module) !void {
+fn customSoft(b: *std.Build, lib: *std.Build.Step.Compile) !void {
     const cpuinfo = b.lazyDependency("cpuinfo", .{}) orelse return error.UnresolvedDependency;
-    mod.addImport("cpuinfo", cpuinfo.module("cpuinfo"));
+    lib.addSystemIncludePath(cpuinfo.path("include"));
+    lib.linkLibrary(cpuinfo.artifact("cpuinfo"));
 }
 
 fn addCTest(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, vulkan_headers: *std.Build.Dependency, impl: *const ImplementationDesc, impl_lib: *std.Build.Step.Compile) !*std.Build.Step.Compile {
