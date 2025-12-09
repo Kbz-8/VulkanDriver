@@ -22,6 +22,8 @@ jobs:
       run: zig build test-soft
 
     - name: Vulkan Conformance Test Suite
+      env:
+        STROLL_LOGS_LEVEL: "all"
       run: zig build test-conformance-soft
 
     - name: Vulkan CTS report
