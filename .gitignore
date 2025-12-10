@@ -1,6 +1,7 @@
 .cache/
 .zig-cache/
 zig-out/
+cts/
 cts_report/
 scripts/__pycache__/
 *.o

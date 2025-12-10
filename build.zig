@@ -105,6 +105,8 @@ pub fn build(b: *std.Build) !void {
 
         (try addCTS(b, target, &impl, lib, false)).dependOn(&lib_install.step);
         (try addCTS(b, target, &impl, lib, true)).dependOn(&lib_install.step);
+
+        (try addMultithreadedCTS(b, target, &impl, lib)).dependOn(&lib_install.step);
     }
 
     const autodoc_test = b.addObject(.{
@@ -172,7 +174,7 @@ fn addCTestRunner(b: *std.Build, impl: *const ImplementationDesc, exe: *std.Buil
 }
 
 fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *std.Build.Step.Compile, comptime gdb: bool) !*std.Build.Step {
-    const cts = b.dependency("cts_bin", .{});
+    const cts = b.lazyDependency("cts_bin", .{}) orelse return error.CouldNotFetchCTS;
 
     const cts_exe_name = cts.path(b.fmt("deqp-vk-{s}", .{
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
@@ -228,6 +230,39 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
         const run_report_step = b.step(b.fmt("test-conformance-{s}-result-to-html", .{impl.name}), b.fmt("Run Vulkan conformance tests for libvulkan_{s} with a HTML report", .{impl.name}));
         run_report_step.dependOn(&run_to_report.step);
     }
+
+    return &run.step;
+}
+
+fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *std.Build.Step.Compile) !*std.Build.Step {
+    const cts = b.lazyDependency("cts_bin", .{}) orelse return error.CouldNotFetchCTS;
+
+    const cts_exe_name = cts.path(b.fmt("deqp-vk-{s}", .{
+        switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
+            .linux => "linux.x86_64",
+            else => unreachable,
+        },
+    }));
+
+    const mustpass_path = try cts.path("mustpass/master/vk-default.txt").getPath3(b, null).toString(b.allocator);
+    const cts_exe_path = try cts_exe_name.getPath3(b, null).toString(b.allocator);
+
+    const run = b.addSystemCommand(&[_][]const u8{"deqp-runner"});
+    run.step.dependOn(&impl_lib.step);
+
+    run.addArg("run");
+    run.addArg("--deqp");
+    run.addArg(cts_exe_path);
+    run.addArg("--caselist");
+    run.addArg(mustpass_path);
+    run.addArg("--output");
+    run.addArg("./cts");
+    run.addArg("--");
+    run.addArg(b.fmt("--deqp-archive-dir={s}", .{try cts.path("").getPath3(b, null).toString(b.allocator)}));
+    run.addArg(b.fmt("--deqp-vk-library-path={s}", .{b.getInstallPath(.lib, impl_lib.out_lib_filename)}));
+
+    const run_step = b.step(b.fmt("test-conformance-multithreaded-{s}", .{impl.name}), b.fmt("Run Vulkan conformance tests in a multithreaded environment for libvulkan_{s}", .{impl.name}));
+    run_step.dependOn(&run.step);
 
     return &run.step;
 }
