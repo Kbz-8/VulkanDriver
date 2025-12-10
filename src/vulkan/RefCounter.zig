@@ -7,11 +7,11 @@ count: std.atomic.Value(usize),
 pub const init: Self = .{ .count = std.atomic.Value(usize).init(0) };
 
 pub inline fn ref(self: *Self) void {
-    _ = self.count.fetchAdd(1, .monotonic);
+    _ = self.count.fetchAdd(1, .seq_cst);
 }
 
 pub inline fn unref(self: *Self) void {
-    _ = self.count.fetchSub(1, .monotonic);
+    _ = self.count.fetchSub(1, .seq_cst);
 }
 
 pub inline fn hasRefs(self: *Self) bool {
@@ -19,5 +19,5 @@ pub inline fn hasRefs(self: *Self) bool {
 }
 
 pub inline fn getRefsCount(self: *Self) usize {
-    return self.count.load(.acquire);
+    return self.count.load(.seq_cst);
 }
