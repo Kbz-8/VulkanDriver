@@ -174,7 +174,7 @@ fn addCTestRunner(b: *std.Build, impl: *const ImplementationDesc, exe: *std.Buil
 }
 
 fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *std.Build.Step.Compile, comptime gdb: bool) !*std.Build.Step {
-    const cts = b.lazyDependency("cts_bin", .{}) orelse return error.CouldNotFetchCTS;
+    const cts = b.dependency("cts_bin", .{});
 
     const cts_exe_name = cts.path(b.fmt("deqp-vk-{s}", .{
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
@@ -235,7 +235,7 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
 }
 
 fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *std.Build.Step.Compile) !*std.Build.Step {
-    const cts = b.lazyDependency("cts_bin", .{}) orelse return error.CouldNotFetchCTS;
+    const cts = b.dependency("cts_bin", .{});
 
     const cts_exe_name = cts.path(b.fmt("deqp-vk-{s}", .{
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
