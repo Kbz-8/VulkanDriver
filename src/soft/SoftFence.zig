@@ -11,7 +11,7 @@ pub const Interface = base.Fence;
 interface: Interface,
 mutex: std.Thread.Mutex,
 condition: std.Thread.Condition,
-is_signaled: std.atomic.Value(bool),
+is_signaled: bool,
 
 pub fn create(device: *Device, allocator: std.mem.Allocator, info: *const vk.FenceCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
@@ -31,7 +31,7 @@ pub fn create(device: *Device, allocator: std.mem.Allocator, info: *const vk.Fen
         .interface = interface,
         .mutex = std.Thread.Mutex{},
         .condition = std.Thread.Condition{},
-        .is_signaled = std.atomic.Value(bool).init(info.flags.signaled_bit),
+        .is_signaled = info.flags.signaled_bit,
     };
     return self;
 }
@@ -43,29 +43,34 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 
 pub fn getStatus(interface: *Interface) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    if (!self.is_signaled.load(.seq_cst)) {
+    if (!self.is_signaled) {
         return VkError.NotReady;
     }
 }
 
 pub fn reset(interface: *Interface) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    self.is_signaled.store(false, .seq_cst);
+    self.is_signaled = false;
 }
 
 pub fn signal(interface: *Interface) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    self.is_signaled.store(true, .seq_cst);
+
+    self.mutex.lock();
+    defer self.mutex.unlock();
+
+    self.is_signaled = true;
     self.condition.broadcast();
 }
 
 pub fn wait(interface: *Interface, timeout: u64) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    if (self.is_signaled.load(.seq_cst)) return;
-    if (timeout == 0) return VkError.Timeout;
 
     self.mutex.lock();
     defer self.mutex.unlock();
+
+    if (self.is_signaled) return;
+    if (timeout == 0) return VkError.Timeout;
 
     if (timeout == std.math.maxInt(@TypeOf(timeout))) {
         self.condition.wait(&self.mutex);
