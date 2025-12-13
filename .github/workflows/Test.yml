@@ -68,6 +68,7 @@ jobs:
         URL: https://vulkan-driver-cts-report.kbz8.me/
       run: |
         cd VulkanCTSViewer
+        cp ../cts/results.csv ./assets/
         dx build --verbose --platform web --release
 
     - name: Publish to Cloudflare Pages
