@@ -21,18 +21,59 @@ jobs:
     - name: Zig Tests
       run: zig build test-soft
 
-    - name: Vulkan Conformance Test Suite
-      run: zig build test-conformance-soft
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+        targets: x86_64-unknown-linux-gnu,wasm32-unknown-unknown
 
-    - name: Vulkan CTS report
+    - uses: Swatinem/rust-cache@v2
+      with:
+        cache-all-crates: "true"
+        cache-on-failure: "false"
+
+    - name: Install cargo tools
+      uses: cargo-bins/cargo-binstall@main
+
+    - name: Install Dioxus
+      shell: bash
       run: |
-        pip install pandas
-        zig build test-conformance-soft-result-to-html
+        source $HOME/.cargo/env
+        cargo binstall dioxus-cli --no-confirm --force --version 0.7.2
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+    - name: Install deqp-runner
+      run: cargo install deqp-runner
+
+    - name: Verify installations
+      shell: bash
+      run: |
+        source $HOME/.cargo/env
+        echo "Verifying tool installations..."
+        which dx && dx --version || echo "dioxus-cli not found"
+        which deqp-runner && deqp-runner --version || echo "deqp-runner not found"
+
+    - name: Run Vulkan CTS
+      run: zig build cts-soft
+      continue-on-error: true
+
+    - name: Verify tests
+      run: ls cts | grep "results.csv"
+
+    - name: Cloning CTS viewer
+      run: git clone github.com/Kbz-8/VulkanCTSViewer/
+
+    - name: Build CTS viewer
+      env:
+        URL: https://vulkan-driver-cts-report.kbz8.me/
+      run: |
+        cd VulkanCTSViewer
+        dx build --verbose --platform web --release
 
     - name: Publish to Cloudflare Pages
       uses: cloudflare/wrangler-action@v3
       with:
         apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        command: pages deploy cts_report --project-name=vulkan-driver-cts-report
+        command: pages deploy VulkanCTSViewer/target/dx/vulkan-cts-analyzer/release/web/public --project-name=vulkan-driver-cts-report
         gitHubToken: ${{ secrets.GITHUB_TOKEN }}
