@@ -1219,11 +1219,9 @@ pub export fn strollGetEventStatus(p_device: vk.Device, p_event: vk.Event) callc
 
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
 
-    notImplementedWarning();
-
-    _ = p_event;
-
-    return .error_unknown;
+    const event = NonDispatchable(Event).fromHandleObject(p_event) catch |err| return toVkResult(err);
+    event.getStatus() catch |err| return toVkResult(err);
+    return .success;
 }
 
 pub export fn strollGetFenceStatus(p_device: vk.Device, p_fence: vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
@@ -1234,7 +1232,7 @@ pub export fn strollGetFenceStatus(p_device: vk.Device, p_fence: vk.Fence) callc
 
     const fence = NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err);
     fence.getStatus() catch |err| return toVkResult(err);
-    return .success;
+    return .event_set;
 }
 
 pub export fn strollGetImageMemoryRequirements(p_device: vk.Device, p_image: vk.Image, requirements: *vk.MemoryRequirements) callconv(vk.vulkan_call_conv) void {
@@ -1406,11 +1404,9 @@ pub export fn strollResetEvent(p_device: vk.Device, p_event: vk.Fence) callconv(
 
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
 
-    notImplementedWarning();
-
-    _ = p_event;
-
-    return .error_unknown;
+    const event = NonDispatchable(Event).fromHandleObject(p_event) catch |err| return toVkResult(err);
+    event.reset() catch |err| return toVkResult(err);
+    return .success;
 }
 
 pub export fn strollResetFences(p_device: vk.Device, count: u32, p_fences: [*]const vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
@@ -1432,11 +1428,9 @@ pub export fn strollSetEvent(p_device: vk.Device, p_event: vk.Fence) callconv(vk
 
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
 
-    notImplementedWarning();
-
-    _ = p_event;
-
-    return .error_unknown;
+    const event = NonDispatchable(Event).fromHandleObject(p_event) catch |err| return toVkResult(err);
+    event.signal() catch |err| return toVkResult(err);
+    return .success;
 }
 
 pub export fn strollUnmapMemory(p_device: vk.Device, p_memory: vk.DeviceMemory) callconv(vk.vulkan_call_conv) void {
@@ -1951,12 +1945,8 @@ pub export fn strollCmdResetEvent(p_cmd: vk.CommandBuffer, p_event: vk.Event, st
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = p_event;
-    _ = stage_mask;
+    const event = NonDispatchable(Event).fromHandleObject(p_event) catch |err| return errorLogger(err);
+    cmd.resetEvent(event, stage_mask) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdResolveImage(
@@ -2031,12 +2021,8 @@ pub export fn strollCmdSetEvent(p_cmd: vk.CommandBuffer, p_event: vk.Event, stag
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = p_event;
-    _ = stage_mask;
+    const event = NonDispatchable(Event).fromHandleObject(p_event) catch |err| return errorLogger(err);
+    cmd.setEvent(event, stage_mask) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdSetLineWidth(p_cmd: vk.CommandBuffer, width: f32) callconv(vk.vulkan_call_conv) void {
@@ -2150,11 +2136,6 @@ pub export fn strollCmdWaitEvents(
     entryPointBeginLogTrace(.vkCmdWaitEvents);
     defer entryPointEndLogTrace();
 
-    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
     _ = count;
     _ = p_events;
     _ = src_stage_mask;
@@ -2165,6 +2146,8 @@ pub export fn strollCmdWaitEvents(
     _ = buffer_memory_barriers;
     _ = image_memory_barrier_count;
     _ = image_memory_barriers;
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+    _ = cmd;
 }
 
 pub export fn strollCmdWriteTimestamp(p_cmd: vk.CommandBuffer, stage: vk.PipelineStageFlags, p_pool: vk.QueryPool, query: u32) callconv(vk.vulkan_call_conv) void {

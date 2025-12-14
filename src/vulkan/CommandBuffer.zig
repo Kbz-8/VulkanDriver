@@ -11,6 +11,7 @@ const Device = @import("Device.zig");
 
 const Buffer = @import("Buffer.zig");
 const CommandPool = @import("CommandPool.zig");
+const Event = @import("Event.zig");
 const Image = @import("Image.zig");
 
 const COMMAND_BUFFER_BASE_CAPACITY = 256;
@@ -45,6 +46,9 @@ pub const DispatchTable = struct {
     end: *const fn (*Self) VkError!void,
     fillBuffer: *const fn (*Self, *Buffer, vk.DeviceSize, vk.DeviceSize, u32) VkError!void,
     reset: *const fn (*Self, vk.CommandBufferResetFlags) VkError!void,
+    resetEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
+    setEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
+    waitEvents: *const fn (*Self, []*const Event, vk.PipelineStageFlags, vk.PipelineStageFlags, []const vk.MemoryBarrier, []const vk.BufferMemoryBarrier, []const vk.ImageMemoryBarrier) VkError!void,
 };
 
 pub const VTable = struct {
@@ -168,4 +172,16 @@ pub inline fn fillBuffer(self: *Self, buffer: *Buffer, offset: vk.DeviceSize, si
         .data = data,
     } }) catch return VkError.OutOfHostMemory;
     try self.dispatch_table.fillBuffer(self, buffer, offset, size, data);
+}
+
+pub inline fn resetEvent(self: *Self, event: *Event, stage: vk.PipelineStageFlags) VkError!void {
+    try self.dispatch_table.resetEvent(self, event, stage);
+}
+
+pub inline fn setEvent(self: *Self, event: *Event, stage: vk.PipelineStageFlags) VkError!void {
+    try self.dispatch_table.setEvent(self, event, stage);
+}
+
+pub inline fn waitEvents(self: *Self, events: []*const Event, src_stage: vk.PipelineStageFlags, dst_stage: vk.PipelineStageFlags, memory_barriers: []const vk.MemoryBarrier, buffer_barriers: []const vk.BufferMemoryBarrier, image_barriers: []const vk.ImageMemoryBarrier) VkError!void {
+    try self.dispatch_table.waitEvents(self, events, src_stage, dst_stage, memory_barriers, buffer_barriers, image_barriers);
 }

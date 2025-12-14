@@ -28,6 +28,9 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .end = end,
         .fillBuffer = fillBuffer,
         .reset = reset,
+        .resetEvent = resetEvent,
+        .setEvent = setEvent,
+        .waitEvents = waitEvents,
     };
 
     self.* = .{
@@ -92,4 +95,29 @@ pub fn copyImage(interface: *Interface, src: *base.Image, dst: *base.Image, regi
     _ = src;
     _ = dst;
     _ = regions;
+}
+
+pub fn resetEvent(interface: *Interface, event: *base.Event, stage: vk.PipelineStageFlags) VkError!void {
+    // No-op
+    _ = interface;
+    _ = event;
+    _ = stage;
+}
+
+pub fn setEvent(interface: *Interface, event: *base.Event, stage: vk.PipelineStageFlags) VkError!void {
+    // No-op
+    _ = interface;
+    _ = event;
+    _ = stage;
+}
+
+pub fn waitEvents(interface: *Interface, events: []*const base.Event, src_stage: vk.PipelineStageFlags, dst_stage: vk.PipelineStageFlags, memory_barriers: []const vk.MemoryBarrier, buffer_barriers: []const vk.BufferMemoryBarrier, image_barriers: []const vk.ImageMemoryBarrier) VkError!void {
+    // No-op
+    _ = interface;
+    _ = events;
+    _ = src_stage;
+    _ = dst_stage;
+    _ = memory_barriers;
+    _ = buffer_barriers;
+    _ = image_barriers;
 }
