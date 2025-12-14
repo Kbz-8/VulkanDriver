@@ -242,7 +242,14 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
 
     run.addArg("run");
     run.addArg("--deqp");
-    run.addArg(b.fmt("{s}/{s}", .{ b.build_root.path.?, cts_exe_path }));
+    if (std.process.getEnvVarOwned(b.allocator, "ZIG_GLOBAL_CACHE_DIR")) |cache_path| {
+        run.addArg(b.fmt("{s}/{s}", .{ cache_path, cts_exe_path }));
+    } else |err| switch (err) {
+        error.EnvironmentVariableNotFound => {
+            run.addArg(cts_exe_path);
+        },
+        else => unreachable,
+    }
     run.addArg("--caselist");
     run.addArg(mustpass_path);
     run.addArg("--output");
