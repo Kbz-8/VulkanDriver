@@ -227,6 +227,18 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
 fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *std.Build.Step.Compile) !*std.Build.Step {
     const cts = b.dependency("cts_bin", .{});
 
+    // Some systems may need a manual path management to get to packages (e.g. Github Actions)
+    const cache_path = blk: {
+        if (std.process.getEnvVarOwned(b.allocator, "ZIG_GLOBAL_CACHE_DIR")) |cache_path| {
+            break :blk b.fmt("{s}/../", .{cache_path});
+        } else |err| switch (err) {
+            error.EnvironmentVariableNotFound => {
+                break :blk "";
+            },
+            else => unreachable,
+        }
+    };
+
     const cts_exe_name = cts.path(b.fmt("deqp-vk-{s}", .{
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
             .linux => "linux.x86_64",
@@ -242,20 +254,13 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
 
     run.addArg("run");
     run.addArg("--deqp");
-    if (std.process.getEnvVarOwned(b.allocator, "ZIG_GLOBAL_CACHE_DIR")) |cache_path| {
-        run.addArg(b.fmt("{s}/../{s}", .{ cache_path, cts_exe_path }));
-    } else |err| switch (err) {
-        error.EnvironmentVariableNotFound => {
-            run.addArg(cts_exe_path);
-        },
-        else => unreachable,
-    }
+    run.addArg(b.fmt("{s}{s}", .{ cache_path, cts_exe_path }));
     run.addArg("--caselist");
-    run.addArg(mustpass_path);
+    run.addArg(b.fmt("{s}{s}", .{ cache_path, mustpass_path }));
     run.addArg("--output");
     run.addArg("./cts");
     run.addArg("--");
-    run.addArg(b.fmt("--deqp-archive-dir={s}", .{try cts.path("").getPath3(b, null).toString(b.allocator)}));
+    run.addArg(b.fmt("--deqp-archive-dir={s}{s}", .{ cache_path, try cts.path("").getPath3(b, null).toString(b.allocator) }));
     run.addArg(b.fmt("--deqp-vk-library-path={s}", .{b.getInstallPath(.lib, impl_lib.out_lib_filename)}));
 
     const run_step = b.step(b.fmt("cts-{s}", .{impl.name}), b.fmt("Run Vulkan conformance tests in a multithreaded environment for libvulkan_{s}", .{impl.name}));
