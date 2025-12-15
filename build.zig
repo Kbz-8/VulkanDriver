@@ -203,7 +203,6 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
     run.addArg(b.fmt("--deqp-archive-dir={s}", .{try cts.path("").getPath3(b, null).toString(b.allocator)}));
     run.addArg(b.fmt("--deqp-vk-library-path={s}", .{b.getInstallPath(.lib, impl_lib.out_lib_filename)}));
     run.addArg("--deqp-log-filename=vk-cts-logs.qpa");
-    run.addArg("--deqp-no-program-fail=enable"); // Option added by my fork, doubt it will be merge oneday
 
     var requires_explicit_tests = false;
     if (b.args) |args| {
@@ -246,7 +245,12 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
         },
     }));
 
-    const mustpass_path = try cts.path("mustpass/master/vk-default.txt").getPath3(b, null).toString(b.allocator);
+    const mustpass_path = try cts.path(
+        b.fmt("mustpass/{}.{}.2/vk-default.txt", .{
+            impl.vulkan_version.major,
+            impl.vulkan_version.minor,
+        }),
+    ).getPath3(b, null).toString(b.allocator);
     const cts_exe_path = try cts_exe_name.getPath3(b, null).toString(b.allocator);
 
     const run = b.addSystemCommand(&[_][]const u8{"deqp-runner"});

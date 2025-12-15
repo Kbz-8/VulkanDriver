@@ -83,7 +83,7 @@ const icd_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
 const global_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkCreateInstance"),
     functionMapEntryPoint("vkEnumerateInstanceExtensionProperties"),
-    functionMapEntryPoint("vkEnumerateInstanceVersion"),
+    //functionMapEntryPoint("vkEnumerateInstanceVersion"),
     functionMapEntryPoint("vkGetInstanceProcAddr"),
 });
 
