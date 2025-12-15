@@ -246,7 +246,7 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
         },
     }));
 
-    const mustpass_path = try cts.path("mustpass/1.0.0/vk-default.txt").getPath3(b, null).toString(b.allocator);
+    const mustpass_path = try cts.path("mustpass/master/vk-default.txt").getPath3(b, null).toString(b.allocator);
     const cts_exe_path = try cts_exe_name.getPath3(b, null).toString(b.allocator);
 
     const run = b.addSystemCommand(&[_][]const u8{"deqp-runner"});

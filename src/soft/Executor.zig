@@ -69,7 +69,13 @@ fn fillBuffer(data: *const cmd.CommandFillBuffer) VkError!void {
     const memory = if (data.buffer.memory) |memory| memory else return VkError.ValidationFailed;
     var memory_map: []u32 = @as([*]u32, @ptrCast(@alignCast(try memory.map(data.offset, data.size))))[0..data.size];
 
-    for (0..@divExact(data.size, @sizeOf(u32))) |i| {
+    var bytes = if (data.size == vk.WHOLE_SIZE) memory.size - data.offset else data.size;
+
+    var i: usize = 0;
+    while (bytes >= 4) : ({
+        bytes -= 4;
+        i += 1;
+    }) {
         memory_map[i] = data.data;
     }
 
