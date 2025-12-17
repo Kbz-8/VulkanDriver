@@ -30,6 +30,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
         .getFormatProperties = getFormatProperties,
         .getImageFormatProperties = getImageFormatProperties,
         .getSparseImageFormatProperties = getSparseImageFormatProperties,
+        .getSparseImageFormatProperties2 = getSparseImageFormatProperties2,
         .release = destroy,
     };
 
@@ -670,6 +671,7 @@ pub fn getImageFormatProperties(
     };
 }
 
+/// Soft does not support sparse images.
 pub fn getSparseImageFormatProperties(
     interface: *Interface,
     format: vk.Format,
@@ -677,14 +679,34 @@ pub fn getSparseImageFormatProperties(
     samples: vk.SampleCountFlags,
     tiling: vk.ImageTiling,
     usage: vk.ImageUsageFlags,
-    flags: vk.ImageCreateFlags,
-) VkError!vk.SparseImageFormatProperties {
+    properties: ?[*]vk.SparseImageFormatProperties,
+) VkError!u32 {
     _ = interface;
     _ = format;
     _ = image_type;
     _ = samples;
     _ = tiling;
     _ = usage;
-    _ = flags;
-    return undefined;
+    _ = properties;
+    return 0;
+}
+
+/// Soft does not support sparse images.
+pub fn getSparseImageFormatProperties2(
+    interface: *Interface,
+    format: vk.Format,
+    image_type: vk.ImageType,
+    samples: vk.SampleCountFlags,
+    tiling: vk.ImageTiling,
+    usage: vk.ImageUsageFlags,
+    properties: ?[*]vk.SparseImageFormatProperties2,
+) VkError!u32 {
+    _ = interface;
+    _ = format;
+    _ = image_type;
+    _ = samples;
+    _ = tiling;
+    _ = usage;
+    _ = properties;
+    return 0;
 }

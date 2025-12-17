@@ -89,11 +89,13 @@ pub fn copyBuffer(interface: *Interface, src: *base.Buffer, dst: *base.Buffer, r
     _ = regions;
 }
 
-pub fn copyImage(interface: *Interface, src: *base.Image, dst: *base.Image, regions: []const vk.ImageCopy) VkError!void {
+pub fn copyImage(interface: *Interface, src: *base.Image, src_layout: vk.ImageLayout, dst: *base.Image, dst_layout: vk.ImageLayout, regions: []const vk.ImageCopy) VkError!void {
     // No-op
     _ = interface;
     _ = src;
+    _ = src_layout;
     _ = dst;
+    _ = dst_layout;
     _ = regions;
 }
 

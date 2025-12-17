@@ -15,6 +15,9 @@ comptime {
         if (!@hasDecl(root, "VULKAN_VERSION")) {
             @compileError("Missing VULKAN_VERSION in module root");
         }
+        if (!@hasDecl(root.Instance, "EXTENSIONS")) {
+            @compileError("Missing EXTENSIONS in Instance's implementation");
+        }
     }
 }
 
@@ -31,7 +34,7 @@ pub const VTable = struct {
 };
 
 pub const DispatchTable = struct {
-    destroyInstance: *const fn (*Self, std.mem.Allocator) VkError!void,
+    destroy: *const fn (*Self, std.mem.Allocator) VkError!void,
 };
 
 pub fn init(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) VkError!Self {
@@ -53,18 +56,19 @@ pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo)
 
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) VkError!void {
     try self.releasePhysicalDevices(allocator);
-    try self.dispatch_table.destroyInstance(self, allocator);
+    try self.dispatch_table.destroy(self, allocator);
 }
 
-pub fn enumerateExtensionProperties(layer_name: ?[]const u8, property_count: *u32, properties: ?*vk.ExtensionProperties) VkError!void {
+pub fn enumerateExtensionProperties(layer_name: ?[]const u8, count: *u32, p_properties: ?[*]vk.ExtensionProperties) VkError!void {
     if (layer_name) |_| {
         return VkError.LayerNotPresent;
     }
-
-    _ = properties;
-    _ = std.StaticStringMap(vk.ExtensionProperties).initComptime(.{});
-
-    property_count.* = 0;
+    count.* = root.Instance.EXTENSIONS.len;
+    if (p_properties) |properties| {
+        for (root.Instance.EXTENSIONS, 0..) |ext, i| {
+            properties[i] = ext;
+        }
+    }
 }
 
 pub fn enumerateVersion(version: *u32) VkError!void {
@@ -80,8 +84,8 @@ pub fn releasePhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError
 }
 
 pub fn requestPhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError!void {
-    logger.manager.get().indent();
-    defer logger.manager.get().unindent();
+    logger.getManager().get().indent();
+    defer logger.getManager().get().unindent();
 
     try self.vtable.requestPhysicalDevices(self, allocator);
     if (self.physical_devices.items.len == 0) {

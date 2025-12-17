@@ -29,6 +29,10 @@
             .url = "git+https://github.com/Kbz-8/Vulkan-CTS-bin#19ce2da05f8176348064a9fc6688847e5f76a46e",
             .hash = "N-V-__8AAHDV0xtS93nAGaYd7YWxBLnvHDEplwIpC29izSGa",
         },
+        .zigrc = .{
+            .url = "https://github.com/Aandreba/zigrc/archive/refs/tags/1.1.0.tar.gz",
+            .hash = "zigrc-1.0.0-lENlWzvQAACulrbkL9PVhWjFsWSkYhi7AmfSbCM-2Xlh",
+        },
         .cpuinfo = .{
             .url = "git+https://github.com/Kbz-8/cpuinfo#4883954cfcec3f6c9ca9c4aaddfc26107e08726f",
             .hash = "cpuinfo-0.0.1-RLgIQTLRMgF4dLo8AJ-HvnpFsJe6jmXCJjMWWjil6RF1",

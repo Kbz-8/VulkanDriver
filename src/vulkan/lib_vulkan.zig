@@ -46,11 +46,11 @@ pub const ShaderModule = @import("ShaderModule.zig");
 
 fn entryPointBeginLogTrace(comptime scope: @Type(.enum_literal)) void {
     std.log.scoped(scope).debug("Calling {s}...", .{@tagName(scope)});
-    logger.manager.get().indent();
+    logger.getManager().get().indent();
 }
 
 fn entryPointEndLogTrace() void {
-    logger.manager.get().unindent();
+    logger.getManager().get().unindent();
 }
 
 fn entryPointNotFoundErrorLog(comptime scope: @Type(.enum_literal), name: []const u8) void {
@@ -97,12 +97,19 @@ const physical_device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComp
     functionMapEntryPoint("vkCreateDevice"),
     functionMapEntryPoint("vkEnumerateDeviceExtensionProperties"),
     functionMapEntryPoint("vkGetPhysicalDeviceFeatures"),
+    functionMapEntryPoint("vkGetPhysicalDeviceFeatures2KHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceFormatProperties"),
+    functionMapEntryPoint("vkGetPhysicalDeviceFormatProperties2KHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceImageFormatProperties"),
+    functionMapEntryPoint("vkGetPhysicalDeviceImageFormatProperties2KHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceMemoryProperties"),
+    functionMapEntryPoint("vkGetPhysicalDeviceMemoryProperties2KHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceProperties"),
+    functionMapEntryPoint("vkGetPhysicalDeviceProperties2KHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceQueueFamilyProperties"),
+    functionMapEntryPoint("vkGetPhysicalDeviceQueueFamilyProperties2KHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceSparseImageFormatProperties"),
+    functionMapEntryPoint("vkGetPhysicalDeviceSparseImageFormatProperties2KHR"),
 });
 
 const device_pfn_map = block: {
@@ -283,14 +290,11 @@ pub export fn vkGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]const
     const name = std.mem.span(p_name.?);
 
     if (global_pfn_map.get(name)) |pfn| return pfn;
-    if (p_instance == .null_handle) {
-        entryPointNotFoundErrorLog(.vkGetInstanceProcAddr, name);
-        return null;
+    if (p_instance != .null_handle) {
+        if (instance_pfn_map.get(name)) |pfn| return pfn;
+        if (physical_device_pfn_map.get(name)) |pfn| return pfn;
+        if (device_pfn_map.get(name)) |pfn| return pfn;
     }
-    if (instance_pfn_map.get(name)) |pfn| return pfn;
-    if (physical_device_pfn_map.get(name)) |pfn| return pfn;
-    if (device_pfn_map.get(name)) |pfn| return pfn;
-
     entryPointNotFoundErrorLog(.vkGetInstanceProcAddr, name);
     return null;
 }
@@ -315,7 +319,7 @@ pub export fn strollCreateInstance(info: *const vk.InstanceCreateInfo, callbacks
     return .success;
 }
 
-pub export fn strollEnumerateInstanceExtensionProperties(p_layer_name: ?[*:0]const u8, property_count: *u32, properties: ?*vk.ExtensionProperties) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn strollEnumerateInstanceExtensionProperties(p_layer_name: ?[*:0]const u8, property_count: *u32, properties: ?[*]vk.ExtensionProperties) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkEnumerateInstanceExtensionProperties);
     defer entryPointEndLogTrace();
 
@@ -338,7 +342,7 @@ pub export fn strollEnumerateInstanceVersion(version: *u32) callconv(vk.vulkan_c
 // Instance functions ========================================================================================================================================
 
 pub export fn strollDestroyInstance(p_instance: vk.Instance, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
-    //defer logger.manager.deinit();
+    defer logger.getManager().deinit();
 
     entryPointBeginLogTrace(.vkDestroyInstance);
     defer entryPointEndLogTrace();
@@ -405,12 +409,32 @@ pub export fn strollGetPhysicalDeviceFormatProperties(p_physical_device: vk.Phys
     properties.* = physical_device.getFormatProperties(format) catch |err| return errorLogger(err);
 }
 
+pub export fn strollGetPhysicalDeviceFormatProperties2KHR(p_physical_device: vk.PhysicalDevice, format: vk.Format, properties: *vk.FormatProperties2KHR) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceFormatProperties2KHR);
+    defer entryPointEndLogTrace();
+
+    if (properties.s_type != .format_properties_2) return;
+
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
+    properties.format_properties = physical_device.getFormatProperties(format) catch |err| return errorLogger(err);
+}
+
 pub export fn strollGetPhysicalDeviceFeatures(p_physical_device: vk.PhysicalDevice, features: *vk.PhysicalDeviceFeatures) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkGetPhysicalDeviceFeatures);
     defer entryPointEndLogTrace();
 
     const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
     features.* = physical_device.features;
+}
+
+pub export fn strollGetPhysicalDeviceFeatures2KHR(p_physical_device: vk.PhysicalDevice, features: *vk.PhysicalDeviceFeatures2KHR) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceFeatures2KHR);
+    defer entryPointEndLogTrace();
+
+    if (features.s_type != .physical_device_features_2) return;
+
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
+    features.features = physical_device.features;
 }
 
 pub export fn strollGetPhysicalDeviceImageFormatProperties(
@@ -430,6 +454,24 @@ pub export fn strollGetPhysicalDeviceImageFormatProperties(
     return .success;
 }
 
+pub export fn strollGetPhysicalDeviceImageFormatProperties2KHR(p_physical_device: vk.PhysicalDevice, format_info: *vk.PhysicalDeviceImageFormatInfo2KHR, properties: *vk.ImageFormatProperties2KHR) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceImageFormatProperties2KHR);
+    defer entryPointEndLogTrace();
+
+    if (format_info.s_type != .physical_device_image_format_info_2) return .error_validation_failed;
+    if (properties.s_type != .image_format_properties_2) return .error_validation_failed;
+
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
+    properties.image_format_properties = physical_device.getImageFormatProperties(
+        format_info.format,
+        format_info.type,
+        format_info.tiling,
+        format_info.usage,
+        format_info.flags,
+    ) catch |err| return toVkResult(err);
+    return .success;
+}
+
 pub export fn strollGetPhysicalDeviceProperties(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceProperties) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkGetPhysicalDeviceProperties);
     defer entryPointEndLogTrace();
@@ -438,12 +480,32 @@ pub export fn strollGetPhysicalDeviceProperties(p_physical_device: vk.PhysicalDe
     properties.* = physical_device.props;
 }
 
+pub export fn strollGetPhysicalDeviceProperties2KHR(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceProperties2KHR) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceProperties2KHR);
+    defer entryPointEndLogTrace();
+
+    if (properties.s_type != .physical_device_properties_2) return;
+
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
+    properties.properties = physical_device.props;
+}
+
 pub export fn strollGetPhysicalDeviceMemoryProperties(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceMemoryProperties) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkGetPhysicalDeviceMemoryProperties);
     defer entryPointEndLogTrace();
 
     const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
     properties.* = physical_device.mem_props;
+}
+
+pub export fn strollGetPhysicalDeviceMemoryProperties2KHR(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceMemoryProperties2KHR) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceMemoryProperties2KHR);
+    defer entryPointEndLogTrace();
+
+    if (properties.s_type != .physical_device_memory_properties_2) return;
+
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
+    properties.memory_properties = physical_device.mem_props;
 }
 
 pub export fn strollGetPhysicalDeviceQueueFamilyProperties(p_physical_device: vk.PhysicalDevice, count: *u32, properties: ?[*]vk.QueueFamilyProperties) callconv(vk.vulkan_call_conv) void {
@@ -457,21 +519,56 @@ pub export fn strollGetPhysicalDeviceQueueFamilyProperties(p_physical_device: vk
     }
 }
 
+pub export fn strollGetPhysicalDeviceQueueFamilyProperties2KHR(p_physical_device: vk.PhysicalDevice, count: *u32, properties: ?[*]vk.QueueFamilyProperties2KHR) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceQueueFamilyProperties2KHR);
+    defer entryPointEndLogTrace();
+
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
+    count.* = @intCast(physical_device.queue_family_props.items.len);
+    if (properties) |p_props| {
+        for (p_props[0..], physical_device.queue_family_props.items[0..], 0..count.*) |*props, device_props, _| {
+            if (props.s_type != .queue_family_properties_2) continue;
+            props.queue_family_properties = device_props;
+        }
+    }
+}
+
 pub export fn strollGetPhysicalDeviceSparseImageFormatProperties(
     p_physical_device: vk.PhysicalDevice,
     format: vk.Format,
     image_type: vk.ImageType,
     samples: vk.SampleCountFlags,
-    tiling: vk.ImageTiling,
     usage: vk.ImageUsageFlags,
-    flags: vk.ImageCreateFlags,
-    properties: *vk.SparseImageFormatProperties,
+    tiling: vk.ImageTiling,
+    count: *u32,
+    properties: ?[*]vk.SparseImageFormatProperties,
 ) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkGetPhysicalDeviceSparseImageFormatProperties);
     defer entryPointEndLogTrace();
 
     const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
-    properties.* = physical_device.getSparseImageFormatProperties(format, image_type, samples, tiling, usage, flags) catch |err| return toVkResult(err);
+    count.* = physical_device.getSparseImageFormatProperties(format, image_type, samples, tiling, usage, properties) catch |err| return toVkResult(err);
+    return .success;
+}
+
+pub export fn strollGetPhysicalDeviceSparseImageFormatProperties2KHR(
+    p_physical_device: vk.PhysicalDevice,
+    format_info: *const vk.PhysicalDeviceSparseImageFormatInfo2KHR,
+    count: *u32,
+    properties: ?[*]vk.SparseImageFormatProperties2KHR,
+) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceSparseImageFormatProperties2KHR);
+    defer entryPointEndLogTrace();
+
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
+    count.* = physical_device.getSparseImageFormatProperties2(
+        format_info.format,
+        format_info.type,
+        format_info.samples,
+        format_info.tiling,
+        format_info.usage,
+        properties,
+    ) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -647,14 +744,35 @@ pub export fn strollCreateComputePipelines(p_device: vk.Device, p_cache: vk.Pipe
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const cache = if (p_cache == .null_handle) null else NonDispatchable(PipelineCache).fromHandleObject(p_cache) catch |err| return toVkResult(err);
 
+    var global_res: vk.Result = .success;
+
     for (p_pipelines, infos, 0..count) |*p_pipeline, *info, _| {
         if (info.s_type != .compute_pipeline_create_info) {
             return .error_validation_failed;
         }
-        const pipeline = device.createComputePipeline(allocator, cache, info) catch |err| return toVkResult(err);
-        p_pipeline.* = (NonDispatchable(Pipeline).wrap(allocator, pipeline) catch |err| return toVkResult(err)).toVkHandle(vk.Pipeline);
+
+        // According to the Vulkan spec, section 9.4. Multiple Pipeline Creation
+        // "When an application attempts to create many pipelines in a single command,
+        //  it is possible that some subset may fail creation. In that case, the
+        //  corresponding entries in the pPipelines output array will be filled with
+        //  VK_NULL_HANDLE values. If any pipeline fails creation (for example, due to
+        //  out of memory errors), the vkCreate*Pipelines commands will return an
+        //  error code. The implementation will attempt to create all pipelines, and
+        //  only return VK_NULL_HANDLE values for those that actually failed."
+        p_pipeline.*, const local_res = blk: {
+            const pipeline = device.createComputePipeline(allocator, cache, info) catch |err| break :blk .{ .null_handle, toVkResult(err) };
+            const handle = NonDispatchable(Pipeline).wrap(allocator, pipeline) catch |err| {
+                pipeline.destroy(allocator);
+                break :blk .{ .null_handle, toVkResult(err) };
+            };
+            break :blk .{ handle.toVkHandle(vk.Pipeline), .success };
+        };
+
+        if (local_res != .success) {
+            global_res = local_res;
+        }
     }
-    return .success;
+    return global_res;
 }
 
 pub export fn strollCreateDescriptorPool(p_device: vk.Device, info: *const vk.DescriptorPoolCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_pool: *vk.DescriptorPool) callconv(vk.vulkan_call_conv) vk.Result {
@@ -740,14 +858,35 @@ pub export fn strollCreateGraphicsPipelines(p_device: vk.Device, p_cache: vk.Pip
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const cache = if (p_cache == .null_handle) null else NonDispatchable(PipelineCache).fromHandleObject(p_cache) catch |err| return toVkResult(err);
 
+    var global_res: vk.Result = .success;
+
     for (p_pipelines, infos, 0..count) |*p_pipeline, *info, _| {
         if (info.s_type != .graphics_pipeline_create_info) {
             return .error_validation_failed;
         }
-        const pipeline = device.createGraphicsPipeline(allocator, cache, info) catch |err| return toVkResult(err);
-        p_pipeline.* = (NonDispatchable(Pipeline).wrap(allocator, pipeline) catch |err| return toVkResult(err)).toVkHandle(vk.Pipeline);
+
+        // According to the Vulkan spec, section 9.4. Multiple Pipeline Creation
+        // "When an application attempts to create many pipelines in a single command,
+        //  it is possible that some subset may fail creation. In that case, the
+        //  corresponding entries in the pPipelines output array will be filled with
+        //  VK_NULL_HANDLE values. If any pipeline fails creation (for example, due to
+        //  out of memory errors), the vkCreate*Pipelines commands will return an
+        //  error code. The implementation will attempt to create all pipelines, and
+        //  only return VK_NULL_HANDLE values for those that actually failed."
+        p_pipeline.*, const local_res = blk: {
+            const pipeline = device.createGraphicsPipeline(allocator, cache, info) catch |err| break :blk .{ .null_handle, toVkResult(err) };
+            const handle = NonDispatchable(Pipeline).wrap(allocator, pipeline) catch |err| {
+                pipeline.destroy(allocator);
+                break :blk .{ .null_handle, toVkResult(err) };
+            };
+            break :blk .{ handle.toVkHandle(vk.Pipeline), .success };
+        };
+
+        if (local_res != .success) {
+            global_res = local_res;
+        }
     }
-    return .success;
+    return global_res;
 }
 
 pub export fn strollCreateImage(p_device: vk.Device, info: *const vk.ImageCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_image: *vk.Image) callconv(vk.vulkan_call_conv) vk.Result {
@@ -1630,7 +1769,7 @@ pub export fn strollCmdClearAttachments(p_cmd: vk.CommandBuffer, attachment_coun
 }
 
 pub export fn strollCmdClearColorImage(p_cmd: vk.CommandBuffer, p_image: vk.Image, layout: vk.ImageLayout, color: *const vk.ClearColorValue, count: u32, ranges: [*]const vk.ImageSubresourceRange) callconv(vk.vulkan_call_conv) void {
-    entryPointBeginLogTrace(.vkCmdCopyImage);
+    entryPointBeginLogTrace(.vkCmdClearColorImage);
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
@@ -1683,14 +1822,14 @@ pub export fn strollCmdCopyBufferToImage(p_cmd: vk.CommandBuffer, p_src: vk.Buff
     _ = regions;
 }
 
-pub export fn strollCmdCopyImage(p_cmd: vk.CommandBuffer, p_src: vk.Image, p_dst: vk.Image, count: u32, regions: [*]const vk.ImageCopy) callconv(vk.vulkan_call_conv) void {
+pub export fn strollCmdCopyImage(p_cmd: vk.CommandBuffer, p_src: vk.Image, src_layout: vk.ImageLayout, p_dst: vk.Image, dst_layout: vk.ImageLayout, count: u32, regions: [*]const vk.ImageCopy) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkCmdCopyImage);
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
     const src = NonDispatchable(Image).fromHandleObject(p_src) catch |err| return errorLogger(err);
     const dst = NonDispatchable(Image).fromHandleObject(p_dst) catch |err| return errorLogger(err);
-    cmd.copyImage(src, dst, regions[0..count]) catch |err| return errorLogger(err);
+    cmd.copyImage(src, src_layout, dst, dst_layout, regions[0..count]) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdCopyImageToBuffer(p_cmd: vk.CommandBuffer, p_src: vk.Image, layout: vk.ImageLayout, p_dst: vk.Buffer, count: u32, regions: [*]const vk.BufferImageCopy) callconv(vk.vulkan_call_conv) void {

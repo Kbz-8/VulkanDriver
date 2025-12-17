@@ -23,12 +23,20 @@ pub fn get(self: *Self) *Manager {
 }
 
 pub fn deinit(self: *Self) void {
-    self.mutex.lock();
-    defer self.mutex.unlock();
+    {
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
-    var it = self.managers.iterator();
-    while (it.next()) |entry| {
-        entry.value_ptr.deinit();
+        if (self.managers.getPtr(std.Thread.getCurrentId())) |manager| {
+            manager.deinit();
+            _ = self.managers.orderedRemove(std.Thread.getCurrentId());
+        }
     }
-    self.managers.deinit(self.allocator.allocator());
+    if (self.managers.count() == 0) {
+        self.mutex.lock();
+        self.mutex.unlock();
+
+        self.managers.deinit(self.allocator.allocator());
+        self.* = .init;
+    }
 }

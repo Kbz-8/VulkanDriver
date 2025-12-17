@@ -38,7 +38,9 @@ pub const CommandCopyBuffer = struct {
 };
 pub const CommandCopyImage = struct {
     src: *Image,
+    src_layout: vk.ImageLayout,
     dst: *Image,
+    dst_layout: vk.ImageLayout,
     regions: []const vk.ImageCopy,
 };
 pub const CommandDraw = struct {

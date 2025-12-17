@@ -42,7 +42,7 @@ pub const DispatchTable = struct {
     begin: *const fn (*Self, *const vk.CommandBufferBeginInfo) VkError!void,
     clearColorImage: *const fn (*Self, *Image, vk.ImageLayout, *const vk.ClearColorValue, []const vk.ImageSubresourceRange) VkError!void,
     copyBuffer: *const fn (*Self, *Buffer, *Buffer, []const vk.BufferCopy) VkError!void,
-    copyImage: *const fn (*Self, *Image, *Image, []const vk.ImageCopy) VkError!void,
+    copyImage: *const fn (*Self, *Image, vk.ImageLayout, *Image, vk.ImageLayout, []const vk.ImageCopy) VkError!void,
     end: *const fn (*Self) VkError!void,
     fillBuffer: *const fn (*Self, *Buffer, vk.DeviceSize, vk.DeviceSize, u32) VkError!void,
     reset: *const fn (*Self, vk.CommandBufferResetFlags) VkError!void,
@@ -153,14 +153,16 @@ pub inline fn copyBuffer(self: *Self, src: *Buffer, dst: *Buffer, regions: []con
     try self.dispatch_table.copyBuffer(self, src, dst, regions);
 }
 
-pub inline fn copyImage(self: *Self, src: *Image, dst: *Image, regions: []const vk.ImageCopy) VkError!void {
+pub inline fn copyImage(self: *Self, src: *Image, src_layout: vk.ImageLayout, dst: *Image, dst_layout: vk.ImageLayout, regions: []const vk.ImageCopy) VkError!void {
     const allocator = self.host_allocator.allocator();
     self.commands.append(allocator, .{ .CopyImage = .{
         .src = src,
+        .src_layout = src_layout,
         .dst = dst,
+        .dst_layout = dst_layout,
         .regions = allocator.dupe(vk.ImageCopy, regions) catch return VkError.OutOfHostMemory,
     } }) catch return VkError.OutOfHostMemory;
-    try self.dispatch_table.copyImage(self, src, dst, regions);
+    try self.dispatch_table.copyImage(self, src, src_layout, dst, dst_layout, regions);
 }
 
 pub inline fn fillBuffer(self: *Self, buffer: *Buffer, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) VkError!void {

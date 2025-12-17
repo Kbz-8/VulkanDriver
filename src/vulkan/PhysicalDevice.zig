@@ -20,7 +20,8 @@ pub const DispatchTable = struct {
     createDevice: *const fn (*Self, std.mem.Allocator, *const vk.DeviceCreateInfo) VkError!*Device,
     getFormatProperties: *const fn (*Self, vk.Format) VkError!vk.FormatProperties,
     getImageFormatProperties: *const fn (*Self, vk.Format, vk.ImageType, vk.ImageTiling, vk.ImageUsageFlags, vk.ImageCreateFlags) VkError!vk.ImageFormatProperties,
-    getSparseImageFormatProperties: *const fn (*Self, vk.Format, vk.ImageType, vk.SampleCountFlags, vk.ImageTiling, vk.ImageUsageFlags, vk.ImageCreateFlags) VkError!vk.SparseImageFormatProperties,
+    getSparseImageFormatProperties: *const fn (*Self, vk.Format, vk.ImageType, vk.SampleCountFlags, vk.ImageTiling, vk.ImageUsageFlags, ?[*]vk.SparseImageFormatProperties) VkError!u32,
+    getSparseImageFormatProperties2: ?*const fn (*Self, vk.Format, vk.ImageType, vk.SampleCountFlags, vk.ImageTiling, vk.ImageUsageFlags, ?[*]vk.SparseImageFormatProperties2) VkError!u32,
     release: *const fn (*Self, std.mem.Allocator) VkError!void,
 };
 
@@ -67,7 +68,7 @@ pub fn getImageFormatProperties(
     usage: vk.ImageUsageFlags,
     flags: vk.ImageCreateFlags,
 ) VkError!vk.ImageFormatProperties {
-    return try self.dispatch_table.getImageFormatProperties(self, format, image_type, tiling, usage, flags);
+    return self.dispatch_table.getImageFormatProperties(self, format, image_type, tiling, usage, flags);
 }
 
 pub fn getSparseImageFormatProperties(
@@ -77,9 +78,24 @@ pub fn getSparseImageFormatProperties(
     samples: vk.SampleCountFlags,
     tiling: vk.ImageTiling,
     usage: vk.ImageUsageFlags,
-    flags: vk.ImageCreateFlags,
-) VkError!vk.SparseImageFormatProperties {
-    return try self.dispatch_table.getSparseImageFormatProperties(self, format, image_type, samples, tiling, usage, flags);
+    properties: ?[*]vk.SparseImageFormatProperties,
+) VkError!u32 {
+    return self.dispatch_table.getSparseImageFormatProperties(self, format, image_type, samples, tiling, usage, properties);
+}
+
+pub fn getSparseImageFormatProperties2(
+    self: *Self,
+    format: vk.Format,
+    image_type: vk.ImageType,
+    samples: vk.SampleCountFlags,
+    tiling: vk.ImageTiling,
+    usage: vk.ImageUsageFlags,
+    properties: ?[*]vk.SparseImageFormatProperties2,
+) VkError!u32 {
+    return if (self.dispatch_table.getSparseImageFormatProperties2) |pfn|
+        pfn(self, format, image_type, samples, tiling, usage, properties)
+    else
+        0;
 }
 
 pub fn releasePhysicalDevice(self: *Self, allocator: std.mem.Allocator) VkError!void {

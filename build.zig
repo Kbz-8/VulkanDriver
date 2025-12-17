@@ -31,6 +31,7 @@ pub fn build(b: *std.Build) !void {
     });
 
     const zdt = b.dependency("zdt", .{}).module("zdt");
+    const zigrc = b.dependency("zigrc", .{}).module("zigrc");
     const vulkan_headers = b.dependency("vulkan_headers", .{});
     const vulkan_utility_libraries = b.dependency("vulkan_utility_libraries", .{});
 
@@ -39,6 +40,7 @@ pub fn build(b: *std.Build) !void {
     }).module("vulkan-zig");
 
     base_mod.addImport("zdt", zdt);
+    base_mod.addImport("zigrc", zigrc);
     base_mod.addImport("vulkan", vulkan);
     base_mod.addSystemIncludePath(vulkan_headers.path("include"));
     base_mod.addSystemIncludePath(vulkan_utility_libraries.path("include"));
@@ -184,7 +186,7 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
     }));
 
     const mustpass = try cts.path(
-        b.fmt("mustpass/{}.{}.0/vk-default.txt", .{
+        b.fmt("mustpass/{}.{}.2/vk-default.txt", .{
             impl.vulkan_version.major,
             impl.vulkan_version.minor,
         }),

@@ -17,11 +17,15 @@ comptime {
     }
 }
 
-pub var manager: ThreadSafeManager = .init;
+var manager: ThreadSafeManager = .init;
+
+pub inline fn getManager() *ThreadSafeManager {
+    return &manager;
+}
 
 pub inline fn fixme(comptime format: []const u8, args: anytype) void {
-    manager.get().disableIndent();
-    defer manager.get().enableIndent();
+    getManager().get().disableIndent();
+    defer getManager().get().enableIndent();
     nestedFixme(format, args);
 }
 
@@ -93,8 +97,8 @@ pub fn log(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), 
 
     out_config.setColor(&writer, .reset) catch {};
 
-    if (manager.get().indent_enabled) {
-        for (0..manager.get().indent_level) |_| {
+    if (getManager().get().indent_enabled) {
+        for (0..getManager().get().indent_level) |_| {
             writer.print(">   ", .{}) catch {};
         }
     }
@@ -102,17 +106,17 @@ pub fn log(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), 
     writer.flush() catch return;
 
     if (level == .debug and lib.getLogVerboseLevel() == .Standard) {
-        manager.get().debug_stack.pushBack(.{
+        getManager().get().debug_stack.pushBack(.{
             .log = buffer,
-            .indent_level = manager.get().indent_level,
+            .indent_level = getManager().get().indent_level,
             .log_level = level,
         }) catch return;
         return;
     }
 
-    if (manager.get().indent_enabled) {
-        while (manager.get().debug_stack.len() != 0) {
-            const elem = manager.get().debug_stack.popFront();
+    if (getManager().get().indent_enabled) {
+        while (getManager().get().debug_stack.len() != 0) {
+            const elem = getManager().get().debug_stack.popFront();
             switch (elem.log_level) {
                 .info, .debug => _ = stdout_file.write(&elem.log) catch {},
                 .warn, .err => _ = stderr_file.write(&elem.log) catch {},

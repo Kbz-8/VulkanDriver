@@ -99,8 +99,8 @@ pub fn createQueues(self: *Self, allocator: std.mem.Allocator, info: *const vk.D
 
         const queue = try self.vtable.createQueue(allocator, self, queue_info.queue_family_index, @intCast(family_ptr.items.len), queue_info.flags);
 
-        logger.manager.get().indent();
-        defer logger.manager.get().unindent();
+        logger.getManager().get().indent();
+        defer logger.getManager().get().unindent();
 
         const dispatchable_queue = try Dispatchable(Queue).wrap(allocator, queue);
         family_ptr.append(allocator, dispatchable_queue) catch return VkError.OutOfHostMemory;
