@@ -15,9 +15,6 @@ comptime {
         if (!@hasDecl(root, "VULKAN_VERSION")) {
             @compileError("Missing VULKAN_VERSION in module root");
         }
-        if (!@hasDecl(root.Instance, "EXTENSIONS")) {
-            @compileError("Missing EXTENSIONS in Instance's implementation");
-        }
     }
 }
 
@@ -63,11 +60,15 @@ pub fn enumerateExtensionProperties(layer_name: ?[]const u8, count: *u32, p_prop
     if (layer_name) |_| {
         return VkError.LayerNotPresent;
     }
-    count.* = root.Instance.EXTENSIONS.len;
-    if (p_properties) |properties| {
-        for (root.Instance.EXTENSIONS, 0..) |ext, i| {
-            properties[i] = ext;
+    if (@hasDecl(root, "EXTENSIONS")) {
+        count.* = root.Instance.EXTENSIONS.len;
+        if (p_properties) |properties| {
+            for (root.Instance.EXTENSIONS, 0..) |ext, i| {
+                properties[i] = ext;
+            }
         }
+    } else {
+        count.* = 0;
     }
 }
 
