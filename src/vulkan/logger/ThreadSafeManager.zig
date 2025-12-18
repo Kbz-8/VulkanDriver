@@ -33,9 +33,6 @@ pub fn deinit(self: *Self) void {
         }
     }
     if (self.managers.count() == 0) {
-        self.mutex.lock();
-        self.mutex.unlock();
-
         self.managers.deinit(self.allocator.allocator());
         self.* = .init;
     }
