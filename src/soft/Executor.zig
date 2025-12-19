@@ -2,6 +2,8 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 
+const SoftImage = @import("SoftImage.zig");
+
 const cmd = base.commands;
 const VkError = base.VkError;
 
@@ -27,22 +29,8 @@ pub fn dispatch(self: *Self, command: *const cmd.Command) VkError!void {
 }
 
 fn clearColorImage(data: *const cmd.CommandClearColorImage) VkError!void {
-    // TODO: use a blitter
-
-    const image = data.image;
-    for (data.ranges) |range| {
-        const image_size = image.getTotalSize();
-
-        const memory = if (image.memory) |memory| memory else return VkError.ValidationFailed;
-        var memory_map: []u32 = @as([*]u32, @ptrCast(@alignCast(try memory.map(0, image_size))))[0..image_size];
-
-        _ = range;
-        _ = &memory_map;
-
-        base.logger.fixme("Implement image clear", .{});
-
-        memory.unmap();
-    }
+    const soft_image: *SoftImage = @alignCast(@fieldParentPtr("interface", data.image));
+    soft_image.clearRange(data.clear_color, data.range);
 }
 
 fn copyBuffer(data: *const cmd.CommandCopyBuffer) VkError!void {

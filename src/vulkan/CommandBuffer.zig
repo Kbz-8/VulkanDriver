@@ -40,7 +40,7 @@ dispatch_table: *const DispatchTable,
 
 pub const DispatchTable = struct {
     begin: *const fn (*Self, *const vk.CommandBufferBeginInfo) VkError!void,
-    clearColorImage: *const fn (*Self, *Image, vk.ImageLayout, *const vk.ClearColorValue, []const vk.ImageSubresourceRange) VkError!void,
+    clearColorImage: *const fn (*Self, *Image, vk.ImageLayout, *const vk.ClearColorValue, vk.ImageSubresourceRange) VkError!void,
     copyBuffer: *const fn (*Self, *Buffer, *Buffer, []const vk.BufferCopy) VkError!void,
     copyImage: *const fn (*Self, *Image, vk.ImageLayout, *Image, vk.ImageLayout, []const vk.ImageCopy) VkError!void,
     end: *const fn (*Self) VkError!void,
@@ -122,7 +122,6 @@ fn cleanCommandList(self: *Self) void {
     const allocator = self.host_allocator.allocator();
     for (self.commands.items) |command| {
         switch (command) {
-            .ClearColorImage => |data| allocator.free(data.ranges),
             .CopyBuffer => |data| allocator.free(data.regions),
             .CopyImage => |data| allocator.free(data.regions),
             else => {},
@@ -134,13 +133,15 @@ fn cleanCommandList(self: *Self) void {
 
 pub inline fn clearColorImage(self: *Self, image: *Image, layout: vk.ImageLayout, color: *const vk.ClearColorValue, ranges: []const vk.ImageSubresourceRange) VkError!void {
     const allocator = self.host_allocator.allocator();
-    self.commands.append(allocator, .{ .ClearColorImage = .{
-        .image = image,
-        .layout = layout,
-        .clear_color = color.*,
-        .ranges = allocator.dupe(vk.ImageSubresourceRange, ranges) catch return VkError.OutOfHostMemory,
-    } }) catch return VkError.OutOfHostMemory;
-    try self.dispatch_table.clearColorImage(self, image, layout, color, ranges);
+    for (ranges) |range| {
+        self.commands.append(allocator, .{ .ClearColorImage = .{
+            .image = image,
+            .layout = layout,
+            .clear_color = color.*,
+            .range = range,
+        } }) catch return VkError.OutOfHostMemory;
+        try self.dispatch_table.clearColorImage(self, image, layout, color, range);
+    }
 }
 
 pub inline fn copyBuffer(self: *Self, src: *Buffer, dst: *Buffer, regions: []const vk.BufferCopy) VkError!void {

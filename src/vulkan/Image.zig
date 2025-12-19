@@ -125,3 +125,23 @@ pub fn formatSupportsColorAttachemendBlend(format: vk.Format) bool {
         else => false,
     };
 }
+
+pub fn formatFromAspect(base_format: vk.Format, aspect: vk.ImageAspectFlags) vk.Format {
+    if (aspect.color_bit or (aspect.color_bit and aspect.stencil_bit)) {
+        return base_format;
+    } else if (aspect.depth_bit) {
+        if (base_format == .d16_unorm or base_format == .d16_unorm_s8_uint) {
+            return .d16_unorm;
+        } else if (base_format == .d24_unorm_s8_uint) {
+            return .x8_d24_unorm_pack32;
+        } else if (base_format == .d32_sfloat or base_format == .d32_sfloat_s8_uint) {
+            return .d32_sfloat;
+        }
+    } else if (aspect.stencil_bit) {
+        if (base_format == .s8_uint or base_format == .d16_unorm_s8_uint or base_format == .d24_unorm_s8_uint or base_format == .d32_sfloat_s8_uint) {
+            return .s8_uint;
+        }
+    }
+    lib.unsupported("format {d}", .{@intFromEnum(base_format)});
+    return base_format;
+}

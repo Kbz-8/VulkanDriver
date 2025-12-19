@@ -1,6 +1,7 @@
 //! Here lies the documentation of the common internal API that backends need to implement
 
 const std = @import("std");
+const builtin = @import("builtin");
 const vk = @import("vulkan");
 pub const vku = @cImport({
     @cInclude("vulkan/utility/vk_format_utils.h");
@@ -77,6 +78,14 @@ pub inline fn getLogVerboseLevel() LogVerboseLevel {
         .TooMuch
     else
         .Standard;
+}
+
+pub fn unsupported(comptime fmt: []const u8, args: anytype) void {
+    if (builtin.mode == std.builtin.OptimizeMode.Debug) {
+        std.debug.panic("UNSUPPORTED " ++ fmt, args);
+    } else {
+        std.log.scoped(.UNSUPPORTED).warn(fmt, args);
+    }
 }
 
 comptime {

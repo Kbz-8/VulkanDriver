@@ -6,6 +6,7 @@ const builtin = @import("builtin");
 const Debug = std.builtin.OptimizeMode.Debug;
 
 const SoftQueue = @import("SoftQueue.zig");
+const Blitter = @import("device/Blitter.zig");
 
 pub const SoftBinarySemaphore = @import("SoftBinarySemaphore.zig");
 pub const SoftBuffer = @import("SoftBuffer.zig");
@@ -38,6 +39,7 @@ const SpawnError = std.Thread.SpawnError;
 interface: Interface,
 device_allocator: if (builtin.mode == Debug) std.heap.DebugAllocator(.{}) else std.heap.ThreadSafeAllocator,
 workers: std.Thread.Pool,
+blitter: Blitter,
 
 pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
@@ -78,6 +80,7 @@ pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocato
         .interface = interface,
         .device_allocator = if (builtin.mode == Debug) .init else .{ .child_allocator = std.heap.c_allocator }, // TODO: better device allocator
         .workers = undefined,
+        .blitter = .init,
     };
 
     self.workers.init(.{ .allocator = self.device_allocator.allocator() }) catch |err| return switch (err) {

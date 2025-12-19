@@ -63,13 +63,13 @@ pub fn reset(interface: *Interface, flags: vk.CommandBufferResetFlags) VkError!v
 
 // Commands ====================================================================================================
 
-pub fn clearColorImage(interface: *Interface, image: *base.Image, layout: vk.ImageLayout, color: *const vk.ClearColorValue, ranges: []const vk.ImageSubresourceRange) VkError!void {
+pub fn clearColorImage(interface: *Interface, image: *base.Image, layout: vk.ImageLayout, color: *const vk.ClearColorValue, range: vk.ImageSubresourceRange) VkError!void {
     // No-op
     _ = interface;
     _ = image;
     _ = layout;
     _ = color;
-    _ = ranges;
+    _ = range;
 }
 
 pub fn fillBuffer(interface: *Interface, buffer: *base.Buffer, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) VkError!void {

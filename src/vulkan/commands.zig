@@ -29,7 +29,7 @@ pub const CommandClearColorImage = struct {
     image: *Image,
     layout: vk.ImageLayout,
     clear_color: vk.ClearColorValue,
-    ranges: []const vk.ImageSubresourceRange,
+    range: vk.ImageSubresourceRange,
 };
 pub const CommandCopyBuffer = struct {
     src: *Buffer,
