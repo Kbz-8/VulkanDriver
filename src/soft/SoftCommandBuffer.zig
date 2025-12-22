@@ -25,6 +25,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .clearColorImage = clearColorImage,
         .copyBuffer = copyBuffer,
         .copyImage = copyImage,
+        .copyImageToBuffer = copyImageToBuffer,
         .end = end,
         .fillBuffer = fillBuffer,
         .reset = reset,
@@ -96,6 +97,15 @@ pub fn copyImage(interface: *Interface, src: *base.Image, src_layout: vk.ImageLa
     _ = src_layout;
     _ = dst;
     _ = dst_layout;
+    _ = regions;
+}
+
+pub fn copyImageToBuffer(interface: *Interface, src: *base.Image, src_layout: vk.ImageLayout, dst: *base.Buffer, regions: []const vk.BufferImageCopy) VkError!void {
+    // No-op
+    _ = interface;
+    _ = src;
+    _ = src_layout;
+    _ = dst;
     _ = regions;
 }
 

@@ -10,6 +10,7 @@ pub const CommandType = enum {
     ClearColorImage,
     CopyBuffer,
     CopyImage,
+    CopyImageToBuffer,
     Draw,
     DrawIndexed,
     DrawIndexedIndirect,
@@ -42,6 +43,12 @@ pub const CommandCopyImage = struct {
     dst: *Image,
     dst_layout: vk.ImageLayout,
     regions: []const vk.ImageCopy,
+};
+pub const CommandCopyImageToBuffer = struct {
+    src: *Image,
+    src_layout: vk.ImageLayout,
+    dst: *Buffer,
+    regions: []const vk.BufferImageCopy,
 };
 pub const CommandDraw = struct {
     vertex_count: u32,
@@ -81,6 +88,7 @@ pub const Command = union(CommandType) {
     ClearColorImage: CommandClearColorImage,
     CopyBuffer: CommandCopyBuffer,
     CopyImage: CommandCopyImage,
+    CopyImageToBuffer: CommandCopyImageToBuffer,
     Draw: CommandDraw,
     DrawIndexed: CommandDrawIndexed,
     DrawIndexedIndirect: CommandDrawIndexedIndirect,

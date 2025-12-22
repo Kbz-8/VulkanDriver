@@ -1839,15 +1839,7 @@ pub export fn strollCmdCopyImageToBuffer(p_cmd: vk.CommandBuffer, p_src: vk.Imag
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
     const src = NonDispatchable(Image).fromHandleObject(p_src) catch |err| return errorLogger(err);
     const dst = NonDispatchable(Buffer).fromHandleObject(p_dst) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = src;
-    _ = dst;
-    _ = layout;
-    _ = count;
-    _ = regions;
+    cmd.copyImageToBuffer(src, layout, dst, regions[0..count]) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdCopyQueryPoolResults(p_cmd: vk.CommandBuffer, p_pool: vk.QueryPool, first: u32, count: u32, p_dst: vk.Buffer, offset: vk.DeviceSize, stride: vk.DeviceSize, flags: vk.QueryResultFlags) callconv(vk.vulkan_call_conv) void {

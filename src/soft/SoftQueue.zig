@@ -4,7 +4,7 @@ const base = @import("base");
 
 const RefCounter = base.RefCounter;
 
-const Executor = @import("Executor.zig");
+const Device = @import("device/Device.zig");
 const Dispatchable = base.Dispatchable;
 
 const CommandBuffer = base.CommandBuffer;
@@ -97,13 +97,13 @@ fn taskRunner(self: *Self, info: Interface.SubmitInfo, p_fence: ?*base.Fence, ru
         command_buffers.deinit(soft_device.device_allocator.allocator());
     }
 
-    var executor = Executor.init();
-    defer executor.deinit();
+    var device = Device.init();
+    defer device.deinit();
 
     loop: for (info.command_buffers.items) |command_buffer| {
         command_buffer.submit() catch continue :loop;
         for (command_buffer.commands.items) |command| {
-            executor.dispatch(&command) catch |err| base.errors.errorLoggerContext(err, "the software command dispatcher");
+            device.dispatch(&command) catch |err| base.errors.errorLoggerContext(err, "the software command dispatcher");
         }
     }
 

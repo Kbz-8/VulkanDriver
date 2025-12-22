@@ -43,6 +43,7 @@ pub const DispatchTable = struct {
     clearColorImage: *const fn (*Self, *Image, vk.ImageLayout, *const vk.ClearColorValue, vk.ImageSubresourceRange) VkError!void,
     copyBuffer: *const fn (*Self, *Buffer, *Buffer, []const vk.BufferCopy) VkError!void,
     copyImage: *const fn (*Self, *Image, vk.ImageLayout, *Image, vk.ImageLayout, []const vk.ImageCopy) VkError!void,
+    copyImageToBuffer: *const fn (*Self, *Image, vk.ImageLayout, *Buffer, []const vk.BufferImageCopy) VkError!void,
     end: *const fn (*Self) VkError!void,
     fillBuffer: *const fn (*Self, *Buffer, vk.DeviceSize, vk.DeviceSize, u32) VkError!void,
     reset: *const fn (*Self, vk.CommandBufferResetFlags) VkError!void,
@@ -124,6 +125,7 @@ fn cleanCommandList(self: *Self) void {
         switch (command) {
             .CopyBuffer => |data| allocator.free(data.regions),
             .CopyImage => |data| allocator.free(data.regions),
+            .CopyImageToBuffer => |data| allocator.free(data.regions),
             else => {},
         }
     }
@@ -164,6 +166,17 @@ pub inline fn copyImage(self: *Self, src: *Image, src_layout: vk.ImageLayout, ds
         .regions = allocator.dupe(vk.ImageCopy, regions) catch return VkError.OutOfHostMemory,
     } }) catch return VkError.OutOfHostMemory;
     try self.dispatch_table.copyImage(self, src, src_layout, dst, dst_layout, regions);
+}
+
+pub inline fn copyImageToBuffer(self: *Self, src: *Image, src_layout: vk.ImageLayout, dst: *Buffer, regions: []const vk.BufferImageCopy) VkError!void {
+    const allocator = self.host_allocator.allocator();
+    self.commands.append(allocator, .{ .CopyImageToBuffer = .{
+        .src = src,
+        .src_layout = src_layout,
+        .dst = dst,
+        .regions = allocator.dupe(vk.BufferImageCopy, regions) catch return VkError.OutOfHostMemory,
+    } }) catch return VkError.OutOfHostMemory;
+    try self.dispatch_table.copyImageToBuffer(self, src, src_layout, dst, regions);
 }
 
 pub inline fn fillBuffer(self: *Self, buffer: *Buffer, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) VkError!void {

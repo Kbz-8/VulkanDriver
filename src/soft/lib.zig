@@ -2,7 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 pub const base = @import("base");
 
-pub const Executor = @import("Executor.zig");
+pub const Device = @import("device/Device.zig");
 
 pub const SoftInstance = @import("SoftInstance.zig");
 pub const SoftDevice = @import("SoftDevice.zig");
@@ -62,7 +62,7 @@ comptime {
 }
 
 test {
-    std.testing.refAllDecls(Executor);
+    std.testing.refAllDecls(Device);
     std.testing.refAllDecls(SoftBinarySemaphore);
     std.testing.refAllDecls(SoftBuffer);
     std.testing.refAllDecls(SoftBufferView);

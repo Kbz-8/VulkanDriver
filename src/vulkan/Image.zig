@@ -88,6 +88,15 @@ pub inline fn getTotalSize(self: *Self) usize {
     return self.extent.width * self.extent.height * self.extent.depth * pixel_size;
 }
 
+pub inline fn getFormatPixelSize(format: vk.Format) usize {
+    return lib.vku.vkuFormatTexelBlockSize(@intCast(@intFromEnum(format)));
+}
+
+pub inline fn getFormatTotalSize(self: *Self, format: vk.Format) usize {
+    const pixel_size = self.getFormatPixelSize(format);
+    return self.extent.width * self.extent.height * self.extent.depth * pixel_size;
+}
+
 pub fn formatSupportsColorAttachemendBlend(format: vk.Format) bool {
     return switch (format) {
         // Vulkan 1.1 mandatory

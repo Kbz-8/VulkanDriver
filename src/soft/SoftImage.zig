@@ -41,7 +41,7 @@ pub fn getMemoryRequirements(interface: *Interface, requirements: *vk.MemoryRequ
     requirements.alignment = lib.MEMORY_REQUIREMENTS_IMAGE_ALIGNMENT;
 }
 
-inline fn clear(self: *Self, pixel: *const anyopaque, format: vk.Format, view_format: vk.Format, range: vk.ImageSubresourceRange, area: ?vk.Rect2D) void {
+inline fn clear(self: *Self, pixel: vk.ClearValue, format: vk.Format, view_format: vk.Format, range: vk.ImageSubresourceRange, area: ?vk.Rect2D) void {
     const soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", self.interface.owner));
     soft_device.blitter.clear(pixel, format, self, view_format, range, area);
 }
@@ -55,5 +55,5 @@ pub fn clearRange(self: *Self, color: vk.ClearColorValue, range: vk.ImageSubreso
         .r32g32b32a32_uint
     else
         .r32g32b32a32_sfloat;
-    self.clear(@ptrCast(&color.float_32), clear_format, self.interface.format, range, null);
+    self.clear(.{ .color = color }, clear_format, self.interface.format, range, null);
 }
