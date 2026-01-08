@@ -26,7 +26,7 @@
             .hash = "zdt-0.8.1-xr0_vAxUDwCJRDh9pcAS_mdZBIsvcGTtN-K8JJSWY4I6",
         },
         .cts_bin = .{
-            .url = "git+https://github.com/Kbz-8/Vulkan-CTS-bin#19ce2da05f8176348064a9fc6688847e5f76a46e",
+            .url = "git+https://git.kbz8.me/kbz_8/Vulkan-CTS-bin#19ce2da05f8176348064a9fc6688847e5f76a46e",
             .hash = "N-V-__8AAHDV0xtS93nAGaYd7YWxBLnvHDEplwIpC29izSGa",
         },
         .zigrc = .{
@@ -44,7 +44,7 @@
             .lazy = true,
         },
         .kvf = .{
-            .url = "git+https://github.com/Kbz-8/KVF#98b845f876bea94f7bf1b9d30588cf617bf93452",
+            .url = "git+https://git.kbz8.me/kbz_8/KVF#98b845f876bea94f7bf1b9d30588cf617bf93452",
             .hash = "N-V-__8AAEGKAgC2cGDnxmAIFKkaICxS_ogfVYWH83Re29zN",
             .lazy = true,
         },
