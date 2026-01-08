@@ -1,0 +1,81 @@
+name: Vulkan 1.4 CTS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, 'ci skip')"
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: mlugg/setup-zig@v2
+    - uses: actions/setup-node@v6
+      with:
+        node-version: 24
+    - name: Install system dependencies
+      run: |
+        apt update
+        apt install -y libgl1 libwayland-egl1 libwayland-cursor0
+
+    - name: Building
+      run: zig build
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+        targets: x86_64-unknown-linux-gnu,wasm32-unknown-unknown
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        cache-all-crates: "true"
+        cache-on-failure: "false"
+
+    - name: Install cargo tools
+      uses: cargo-bins/cargo-binstall@main
+
+    - name: Install Dioxus
+      shell: bash
+      run: |
+        source $HOME/.cargo/env
+        cargo binstall dioxus-cli --no-confirm --force --version 0.7.2
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+    - name: Install deqp-runner
+      run: cargo install deqp-runner
+
+    - name: Verify installations
+      shell: bash
+      run: |
+        source $HOME/.cargo/env
+        echo "Verifying tool installations..."
+        which dx && dx --version || echo "dioxus-cli not found"
+        which deqp-runner && deqp-runner --version || echo "deqp-runner not found"
+
+    - name: Run Vulkan CTS
+      run: zig build cts-soft -- --mustpass-list=master
+      continue-on-error: true
+
+    - name: Verify tests
+      run: ls cts | grep "results.csv"
+
+    - name: Cloning CTS viewer
+      run: git clone https://github.com/Kbz-8/VulkanCTSViewer.git
+
+    - name: Build CTS viewer
+      env:
+        URL: https://vulkan-driver-1-4-cts-report.kbz8.me/
+      run: |
+        cd VulkanCTSViewer
+        zip ./assets/results.zip ../cts/results.csv
+        dx build --verbose --platform web --release
+
+    - name: Publish to Cloudflare Pages
+      uses: cloudflare/wrangler-action@v3
+      with:
+        apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        command: pages deploy VulkanCTSViewer/target/dx/vulkan-cts-analyzer/release/web/public --project-name=vulkan-driver-1-4-cts-report
+        gitHubToken: ${{ secrets.GITHUB_TOKEN }}
