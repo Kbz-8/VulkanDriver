@@ -18,10 +18,9 @@ jobs:
       with:
         node-version: 24
     - name: Install system dependencies
-      uses: awalsh128/cache-apt-pkgs-action@latest
-      with:
-        packages: build-essential libgl1-mesa-dev
-        version: 1.0
+      run: |
+        apt update
+        apt install -y libgl1
 
     - name: Building
       run: zig build
