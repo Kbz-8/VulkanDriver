@@ -247,11 +247,25 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
         },
     }));
 
+    const mustpass_override = blk: {
+        if (b.args) |args| {
+            for (args) |arg| {
+                if (std.mem.startsWith(u8, arg, "--mustpass-list")) {
+                    break :blk arg["--mustpass-list=".len..];
+                }
+            }
+        }
+        break :blk null;
+    };
+
     const mustpass_path = try cts.path(
-        b.fmt("mustpass/{}.{}.2/vk-default.txt", .{
-            impl.vulkan_version.major,
-            impl.vulkan_version.minor,
-        }),
+        if (mustpass_override) |override|
+            b.fmt("mustpass/{s}/vk-default.txt", .{override})
+        else
+            b.fmt("mustpass/{}.{}.2/vk-default.txt", .{
+                impl.vulkan_version.major,
+                impl.vulkan_version.minor,
+            }),
     ).getPath3(b, null).toString(b.allocator);
     const cts_exe_path = try cts_exe_name.getPath3(b, null).toString(b.allocator);
 
