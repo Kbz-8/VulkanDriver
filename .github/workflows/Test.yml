@@ -17,6 +17,11 @@ jobs:
     - uses: actions/setup-node@v6
       with:
         node-version: 24
+    - name: Install system dependencies
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: libgl1-mesa-dev
+        version: 1.0
 
     - name: Building
       run: zig build
