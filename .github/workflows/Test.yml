@@ -20,7 +20,7 @@ jobs:
     - name: Install system dependencies
       run: |
         apt update
-        apt install -y libgl1
+        apt install -y libgl1 libwayland-egl1
 
     - name: Building
       run: zig build
