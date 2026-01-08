@@ -68,8 +68,9 @@ pub const LogVerboseLevel = enum {
 };
 
 pub inline fn getLogVerboseLevel() LogVerboseLevel {
-    const allocator = std.heap.page_allocator;
+    const allocator = std.heap.c_allocator;
     const level = std.process.getEnvVarOwned(allocator, DRIVER_LOGS_ENV_NAME) catch return .None;
+    defer allocator.free(level);
     return if (std.mem.eql(u8, level, "none"))
         .None
     else if (std.mem.eql(u8, level, "all"))

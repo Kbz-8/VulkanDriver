@@ -62,7 +62,7 @@ jobs:
       run: ls cts | grep "results.csv"
 
     - name: Cloning CTS viewer
-      run: git clone https://github.com/Kbz-8/VulkanCTSViewer.git
+      run: git clone https://git.kbz8.me/kbz_8/VulkanCTSViewer.git
 
     - name: Build CTS viewer
       env:
