@@ -36,6 +36,7 @@
         .SPIRV_Interpreter = .{
             .url = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#e21d26d9975b96a222b70648ceeea9e473e9657f",
             .hash = "SPIRV_Interpreter-0.0.1-ajmpn2tAAwCBI0oWa3VKlYX3MEM0OxN4iXQ-PwO6_Vhx",
+            //.path = "../SPIRV-Interpreter",
         },
         .cpuinfo = .{
             .url = "git+https://github.com/Kbz-8/cpuinfo#4883954cfcec3f6c9ca9c4aaddfc26107e08726f",

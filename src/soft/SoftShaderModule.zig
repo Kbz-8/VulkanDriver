@@ -23,11 +23,13 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .destroy = destroy,
     };
 
+    const code = info.p_code[0..@divExact(info.code_size, 4)];
+
     self.* = .{
         .interface = interface,
         .module = spv.Module.init(
             allocator,
-            info.p_code[0..@divExact(info.code_size, 4)],
+            code,
             .{
                 .use_simd_vectors_specializations = !std.process.hasEnvVarConstant(lib.NO_SHADER_SIMD_ENV_NAME),
             },

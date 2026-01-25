@@ -25,16 +25,11 @@ pub fn initCompute(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipel
     _ = allocator;
     _ = cache;
 
-    var stages: vk.ShaderStageFlags = .{};
-    for (info.p_stages[0..info.stage_count]) |stage| {
-        stages = stages.merge(stage orelse continue);
-    }
-
     return .{
         .owner = device,
         .vtable = undefined,
         .bind_point = .compute,
-        .stages = stages,
+        .stages = info.stage.stage,
     };
 }
 
@@ -43,8 +38,10 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
     _ = cache;
 
     var stages: vk.ShaderStageFlags = .{};
-    for (info.p_stages[0..info.stage_count]) |stage| {
-        stages = stages.merge(stage orelse continue);
+    if (info.p_stages) |p_stages| {
+        for (p_stages[0..info.stage_count]) |stage| {
+            stages = stages.merge(stage.stage);
+        }
     }
 
     return .{

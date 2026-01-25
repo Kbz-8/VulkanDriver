@@ -1,5 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
+const lib = @import("lib.zig");
 
 const NonDispatchable = @import("NonDispatchable.zig");
 
@@ -19,8 +20,12 @@ pub const VTable = struct {
 };
 
 pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.ShaderModuleCreateInfo) VkError!Self {
-    _ = allocator;
-    _ = info;
+    if (std.process.hasEnvVarConstant(lib.DRIVER_LOG_SPIRV_ENV_NAME)) {
+        logShaderModule(allocator, info) catch |e| {
+            std.log.scoped(.ShaderModule).err("Failed to disassemble SPIR-V module to readable text: {s}", .{@errorName(e)});
+        };
+    }
+
     return .{
         .owner = device,
         .vtable = undefined,
@@ -29,4 +34,36 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Shade
 
 pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
     self.vtable.destroy(self, allocator);
+}
+
+fn logShaderModule(allocator: std.mem.Allocator, info: *const vk.ShaderModuleCreateInfo) !void {
+    std.log.scoped(.ShaderModule).info("Logging SPIR-V module", .{});
+
+    var process = std.process.Child.init(&[_][]const u8{ "spirv-dis", "--no-color", "/home/kbz8/Documents/Code/Zig/SPIRV-Interpreter/example/shader.spv" }, allocator);
+
+    process.stdout_behavior = .Pipe;
+    process.stderr_behavior = .Pipe;
+    process.stdin_behavior = .Pipe;
+
+    var stdout: std.ArrayList(u8) = .empty;
+    defer stdout.deinit(allocator);
+    var stderr: std.ArrayList(u8) = .empty;
+    defer stderr.deinit(allocator);
+
+    try process.spawn();
+    errdefer {
+        _ = process.kill() catch {};
+    }
+
+    if (process.stdin) |stdin| {
+        _ = try stdin.write(@ptrCast(@alignCast(info.p_code[0..@divExact(info.code_size, 4)])));
+    }
+    try process.collectOutput(allocator, &stdout, &stderr, 1024 * 1024);
+    _ = try process.wait();
+
+    if (stderr.items.len != 0) {
+        std.log.scoped(.ShaderModule).err("Failed to disassemble SPIR-V module to readable text.\nError:\n{s}", .{stderr.items});
+    } else if (stdout.items.len != 0) {
+        std.log.scoped(.ShaderModule).info("{s}\n{d}", .{ stdout.items, stdout.items.len });
+    }
 }
