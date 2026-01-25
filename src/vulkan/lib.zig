@@ -51,7 +51,7 @@ pub const DRIVER_DEBUG_ALLOCATOR_ENV_NAME = "STROLL_DEBUG_ALLOCATOR";
 pub const DRIVER_LOGS_ENV_NAME = "STROLL_LOGS_LEVEL";
 
 /// Default driver name
-pub const DRIVER_NAME = "Unnamed Driver";
+pub const DRIVER_NAME = "Unnamed Stroll Driver";
 /// Default Vulkan version
 pub const VULKAN_VERSION = vk.makeApiVersion(0, 1, 0, 0);
 

@@ -14,6 +14,8 @@ pub const ObjectType: vk.ObjectType = .pipeline;
 owner: *Device,
 
 vtable: *const VTable,
+bind_point: vk.PipelineBindPoint,
+stages: vk.ShaderStageFlags,
 
 pub const VTable = struct {
     destroy: *const fn (*Self, std.mem.Allocator) void,
@@ -22,20 +24,34 @@ pub const VTable = struct {
 pub fn initCompute(device: *Device, allocator: std.mem.Allocator, cache: ?*PipelineCache, info: *const vk.ComputePipelineCreateInfo) VkError!Self {
     _ = allocator;
     _ = cache;
-    _ = info;
+
+    var stages: vk.ShaderStageFlags = .{};
+    for (info.p_stages[0..info.stage_count]) |stage| {
+        stages = stages.merge(stage orelse continue);
+    }
+
     return .{
         .owner = device,
         .vtable = undefined,
+        .bind_point = .compute,
+        .stages = stages,
     };
 }
 
 pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*PipelineCache, info: *const vk.GraphicsPipelineCreateInfo) VkError!Self {
     _ = allocator;
     _ = cache;
-    _ = info;
+
+    var stages: vk.ShaderStageFlags = .{};
+    for (info.p_stages[0..info.stage_count]) |stage| {
+        stages = stages.merge(stage orelse continue);
+    }
+
     return .{
         .owner = device,
         .vtable = undefined,
+        .bind_point = .graphics,
+        .stages = stages,
     };
 }
 

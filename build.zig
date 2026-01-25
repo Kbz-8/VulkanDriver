@@ -130,6 +130,13 @@ fn customSoft(b: *std.Build, lib: *std.Build.Step.Compile) !void {
     const cpuinfo = b.lazyDependency("cpuinfo", .{}) orelse return error.UnresolvedDependency;
     lib.addSystemIncludePath(cpuinfo.path("include"));
     lib.linkLibrary(cpuinfo.artifact("cpuinfo"));
+
+    const spv = b.dependency("SPIRV_Interpreter", .{
+        .@"no-example" = true,
+        .@"no-test" = true,
+        .@"use-llvm" = true,
+    }).module("spv");
+    lib.root_module.addImport("spv", spv);
 }
 
 fn addCTest(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, vulkan_headers: *std.Build.Dependency, impl: *const ImplementationDesc, impl_lib: *std.Build.Step.Compile) !*std.Build.Step.Compile {

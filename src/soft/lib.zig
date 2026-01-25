@@ -40,6 +40,8 @@ pub const VULKAN_VERSION = vk.makeApiVersion(0, 1, 0, 0);
 pub const DRIVER_VERSION = vk.makeApiVersion(0, 0, 0, 1);
 pub const DEVICE_ID = 0x600DCAFE;
 
+pub const NO_SHADER_SIMD_ENV_NAME = "STROLL_SOFT_NO_SIMD";
+
 /// Generic system memory.
 pub const MEMORY_TYPE_GENERIC_BIT = 0;
 
