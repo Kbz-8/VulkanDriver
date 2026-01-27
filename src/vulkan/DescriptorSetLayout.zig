@@ -30,5 +30,8 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Descr
 }
 
 pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
+    if (self.bindings) |bindings| {
+        allocator.free(bindings);
+    }
     self.vtable.destroy(self, allocator);
 }

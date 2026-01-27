@@ -741,6 +741,7 @@ pub export fn strollCreateComputePipelines(p_device: vk.Device, p_cache: vk.Pipe
     defer entryPointEndLogTrace();
 
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const cache = if (p_cache == .null_handle) null else NonDispatchable(PipelineCache).fromHandleObject(p_cache) catch |err| return toVkResult(err);
 
@@ -772,6 +773,7 @@ pub export fn strollCreateComputePipelines(p_device: vk.Device, p_cache: vk.Pipe
             global_res = local_res;
         }
     }
+
     return global_res;
 }
 

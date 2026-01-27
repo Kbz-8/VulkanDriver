@@ -50,8 +50,6 @@ pub const VULKAN_VENDOR_ID = @typeInfo(vk.VendorId).@"enum".fields[@typeInfo(vk.
 pub const DRIVER_DEBUG_ALLOCATOR_ENV_NAME = "STROLL_DEBUG_ALLOCATOR";
 pub const DRIVER_LOGS_ENV_NAME = "STROLL_LOGS_LEVEL";
 
-pub const DRIVER_LOG_SPIRV_ENV_NAME = "STROLL_LOG_SPIRV";
-
 /// Default driver name
 pub const DRIVER_NAME = "Unnamed Stroll Driver";
 /// Default Vulkan version

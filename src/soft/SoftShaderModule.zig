@@ -27,13 +27,9 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 
     self.* = .{
         .interface = interface,
-        .module = spv.Module.init(
-            allocator,
-            code,
-            .{
-                .use_simd_vectors_specializations = !std.process.hasEnvVarConstant(lib.NO_SHADER_SIMD_ENV_NAME),
-            },
-        ) catch |err| switch (err) {
+        .module = spv.Module.init(allocator, code, .{
+            .use_simd_vectors_specializations = !std.process.hasEnvVarConstant(lib.NO_SHADER_SIMD_ENV_NAME),
+        }) catch |err| switch (err) {
             spv.Module.ModuleError.OutOfMemory => return VkError.OutOfHostMemory,
             else => return VkError.ValidationFailed,
         },

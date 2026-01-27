@@ -13,3 +13,4 @@ scripts/__pycache__/
 *.xml
 *.html
 *.pyc
+*.spv

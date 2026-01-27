@@ -5,6 +5,10 @@
     .minimum_zig_version = "0.15.2",
 
     .dependencies = .{
+        //.SPIRV_Tools = .{
+        //    .url = "git+https://git.kbz8.me/kbz_8/SPIRV-Toolz#2eed675251bbcf21ef34368d289be49d83bce781",
+        //    .hash = "SPIRV_Tools-2026.1.0-7hzMwUeVAAA2Q60MBfoAvZypYnJ9Rzf-hxUkZAaJAo57",
+        //},
         .compile_commands = .{
             .url = "git+https://github.com/the-argus/zig-compile-commands#f74e2d13e43fafab3a71e19557a0e1cfbf0f2e1b",
             .hash = "zig_compile_commands-0.0.1-OZg5-a3CAACM-h32Kjb1obTMqrKGs9YoDhorVZ8-LGle",
@@ -34,9 +38,8 @@
             .hash = "zigrc-1.0.0-lENlWzvQAACulrbkL9PVhWjFsWSkYhi7AmfSbCM-2Xlh",
         },
         .SPIRV_Interpreter = .{
-            .url = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#e21d26d9975b96a222b70648ceeea9e473e9657f",
-            .hash = "SPIRV_Interpreter-0.0.1-ajmpn2tAAwCBI0oWa3VKlYX3MEM0OxN4iXQ-PwO6_Vhx",
-            //.path = "../SPIRV-Interpreter",
+            .url = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#57de432d0b43f050b5117a7c6add09e3906664fd",
+            .hash = "SPIRV_Interpreter-0.0.1-ajmpnyg_AwCeuAEr4KMaBqdCWA2IUsT8Q3mGuUo1PZ2b",
         },
         .cpuinfo = .{
             .url = "git+https://github.com/Kbz-8/cpuinfo#4883954cfcec3f6c9ca9c4aaddfc26107e08726f",

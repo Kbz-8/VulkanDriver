@@ -32,6 +32,7 @@ pub fn build(b: *std.Build) !void {
 
     const zdt = b.dependency("zdt", .{}).module("zdt");
     const zigrc = b.dependency("zigrc", .{}).module("zigrc");
+    //const spv_tools = b.dependency("SPIRV_Tools", .{}).module("zigrc");
     const vulkan_headers = b.dependency("vulkan_headers", .{});
     const vulkan_utility_libraries = b.dependency("vulkan_utility_libraries", .{});
 
