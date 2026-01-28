@@ -20,7 +20,7 @@ jobs:
     - name: Install system dependencies
       run: |
         apt update
-        apt install -y libgl1 libwayland-egl1 libwayland-cursor0
+        apt install -y libgl1 libwayland-egl1 libwayland-cursor0 clang
 
     - name: Building
       run: zig build
@@ -46,7 +46,7 @@ jobs:
       shell: bash
       run: |
         source $HOME/.cargo/env
-        cargo binstall dioxus-cli --no-confirm --force --version 0.7.2
+        cargo binstall dioxus-cli --no-confirm --force --version 0.7.3
         echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
     - name: Install deqp-runner
