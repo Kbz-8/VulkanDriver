@@ -255,16 +255,18 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
         },
     }));
 
-    const mustpass_override = blk: {
-        if (b.args) |args| {
-            for (args) |arg| {
-                if (std.mem.startsWith(u8, arg, "--mustpass-list")) {
-                    break :blk arg["--mustpass-list=".len..];
-                }
+    var mustpass_override: ?[]const u8 = null;
+    var jobs_count: ?usize = null;
+
+    if (b.args) |args| {
+        for (args) |arg| {
+            if (std.mem.startsWith(u8, arg, "--mustpass-list")) {
+                mustpass_override = arg["--mustpass-list=".len..];
+            } else if (std.mem.startsWith(u8, arg, "-j")) {
+                jobs_count = try std.fmt.parseInt(usize, arg["-j".len..], 10);
             }
         }
-        break :blk null;
-    };
+    }
 
     const mustpass_path = try cts.path(
         if (mustpass_override) |override|
@@ -287,6 +289,9 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
     run.addArg(b.fmt("{s}{s}", .{ cache_path, mustpass_path }));
     run.addArg("--output");
     run.addArg("./cts");
+    if (jobs_count) |count| {
+        run.addArg(b.fmt("-j{d}", .{count}));
+    }
     run.addArg("--");
     run.addArg(b.fmt("--deqp-archive-dir={s}{s}", .{ cache_path, try cts.path("").getPath3(b, null).toString(b.allocator) }));
     run.addArg(b.fmt("--deqp-vk-library-path={s}", .{b.getInstallPath(.lib, impl_lib.out_lib_filename)}));

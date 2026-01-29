@@ -22,7 +22,7 @@ zig build
 ```
 
 Then ensure thy Vulkan loader is pointed toward the ICD manifest.
-The precise ritual varies by system — consult the tomes of your operating system, or wander the web’s endless mausoleum of documentation.
+The precise ritual varies by system — consult the tomes of your operating system, or wander the web's endless mausoleum of documentation.
 
 Use at your own risk. If thy machine shudders, weeps, or attempts to flee — know that it was warned.
 \
