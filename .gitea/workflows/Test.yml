@@ -20,7 +20,7 @@ jobs:
     - name: Install system dependencies
       run: |
         apt update
-        apt install -y libgl1 libwayland-egl1 libwayland-cursor0 clang
+        apt install -y libgl1 libwayland-egl1 libwayland-cursor0 clang libwayland-server0
 
     - name: Building
       run: zig build
@@ -61,7 +61,7 @@ jobs:
         which deqp-runner && deqp-runner --version || echo "deqp-runner not found"
 
     - name: Run Vulkan CTS
-      run: zig build cts-soft
+      run: zig build cts-soft -- -j4
       continue-on-error: true
 
     - name: Verify tests

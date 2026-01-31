@@ -17,7 +17,7 @@ jobs:
     - name: Install system dependencies
       run: |
         apt update
-        apt install -y libgl1 libwayland-egl1 libwayland-cursor0 clang
+        apt install -y libgl1 libwayland-egl1 libwayland-cursor0 clang libwayland-server0
 
     - name: Building
       run: zig build

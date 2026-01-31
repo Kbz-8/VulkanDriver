@@ -58,20 +58,7 @@ pub const VULKAN_VERSION = vk.makeApiVersion(0, 1, 0, 0);
 /// Maximum number of descriptor sets per pipeline
 pub const VULKAN_MAX_DESCRIPTOR_SETS = 32;
 
-/// From the Vulkan 1.3.274 spec:
-///
-///    VUID-VkPipelineLayoutCreateInfo-pPushConstantRanges-00292
-///
-///    "Any two elements of pPushConstantRanges must not include the same
-///    stage in stageFlags"
-///
-/// and
-///
-///    VUID-VkPushConstantRange-stageFlags-requiredbitmask
-///
-///    "stageFlags must not be 0"
-///
-/// This means that the number of push constant ranges is effectively bounded
+/// The number of push constant ranges is effectively bounded
 /// by the number of possible shader stages.  Not the number of stages that can
 /// be compiled together (a pipeline layout can be used in multiple pipelnes
 /// wth different sets of shaders) but the total number of stage bits supported
