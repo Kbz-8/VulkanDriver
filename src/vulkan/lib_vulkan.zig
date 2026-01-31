@@ -800,7 +800,8 @@ pub export fn strollCreateDescriptorSetLayout(p_device: vk.Device, info: *const 
         return .error_validation_failed;
     }
 
-    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    // Device scoped because we're reference counting and layout may not be destroyed when vkDestroyDescriptorSetLayout is called
+    const allocator = VulkanAllocator.init(callbacks, .device).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const layout = device.createDescriptorSetLayout(allocator, info) catch |err| return toVkResult(err);
     p_layout.* = (NonDispatchable(DescriptorSetLayout).wrap(allocator, layout) catch |err| return toVkResult(err)).toVkHandle(vk.DescriptorSetLayout);
