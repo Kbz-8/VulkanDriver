@@ -3,12 +3,6 @@ name: Build
 on:
   push:
     branches: [ "master" ]
-    paths-ignore:
-      - '.gitea/workflows/*.yml'
-      - '!.gitea/workflows/Build.yml'
-      - '.gitignore'
-      - 'LICENSE'
-      - 'README.md'
   pull_request:
     branches: [ "master" ]
 
