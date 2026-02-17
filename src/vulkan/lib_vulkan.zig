@@ -943,7 +943,8 @@ pub export fn strollCreatePipelineLayout(p_device: vk.Device, info: *const vk.Pi
         return .error_validation_failed;
     }
 
-    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    // Device scoped because we're reference counting and layout may not be destroyed when vkDestroyPipelineLayout is called
+    const allocator = VulkanAllocator.init(callbacks, .device).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const layout = device.createPipelineLayout(allocator, info) catch |err| return toVkResult(err);
     p_layout.* = (NonDispatchable(PipelineLayout).wrap(allocator, layout) catch |err| return toVkResult(err)).toVkHandle(vk.PipelineLayout);
@@ -1589,15 +1590,17 @@ pub export fn strollUpdateDescriptorSets(p_device: vk.Device, write_count: u32, 
     entryPointBeginLogTrace(.vkUpdateDescriptorSets);
     defer entryPointEndLogTrace();
 
-    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return errorLogger(err);
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
 
-    notImplementedWarning();
+    for (writes, 0..write_count) |write, _| {
+        const set = NonDispatchable(DescriptorSet).fromHandleObject(write.dst_set) catch |err| return errorLogger(err);
+        set.write(write) catch |err| return errorLogger(err);
+    }
 
-    _ = device;
-    _ = write_count;
-    _ = writes;
-    _ = copy_count;
-    _ = copies;
+    for (copies, 0..copy_count) |copy, _| {
+        const set = NonDispatchable(DescriptorSet).fromHandleObject(copy.dst_set) catch |err| return errorLogger(err);
+        set.copy(copy) catch |err| return errorLogger(err);
+    }
 }
 
 pub export fn strollWaitForFences(p_device: vk.Device, count: u32, p_fences: [*]const vk.Fence, waitForAll: vk.Bool32, timeout: u64) callconv(vk.vulkan_call_conv) vk.Result {

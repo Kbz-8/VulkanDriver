@@ -2,7 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const lib = @import("lib.zig");
 
-const NonDispatchable = @import("NonDispatchable.zig");
+const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
 const DescriptorSetLayout = @import("DescriptorSetLayout.zig");
 
 const VkError = @import("error_set.zig").VkError;
@@ -16,7 +16,7 @@ owner: *Device,
 
 set_count: usize,
 
-set_layouts: [lib.VULKAN_MAX_DESCRIPTOR_SETS]*DescriptorSetLayout,
+set_layouts: [lib.VULKAN_MAX_DESCRIPTOR_SETS]?*DescriptorSetLayout,
 
 dynamic_descriptor_offsets: [lib.VULKAN_MAX_DESCRIPTOR_SETS]usize,
 
@@ -46,17 +46,31 @@ pub const VTable = struct {
 
 pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.PipelineLayoutCreateInfo) VkError!Self {
     _ = allocator;
-    _ = info;
-    return .{
+    var self: Self = .{
         .owner = device,
-        .set_count = 0,
-        .set_layouts = undefined,
+        .set_count = info.set_layout_count,
+        .set_layouts = [_]?*DescriptorSetLayout{null} ** lib.VULKAN_MAX_DESCRIPTOR_SETS,
         .dynamic_descriptor_offsets = [_]usize{0} ** lib.VULKAN_MAX_DESCRIPTOR_SETS,
-        .push_ranges_count = 0,
+        .push_ranges_count = info.push_constant_range_count,
         .push_ranges = undefined,
         .ref_count = std.atomic.Value(usize).init(1),
         .vtable = undefined,
     };
+
+    if (info.p_set_layouts) |set_layouts| {
+        var dynamic_descriptor_count: usize = 0;
+        for (set_layouts, 0..info.set_layout_count) |handle, i| {
+            self.dynamic_descriptor_offsets[i] = dynamic_descriptor_count;
+            if (handle != .null_handle) {
+                const layout = try NonDispatchable(DescriptorSetLayout).fromHandleObject(handle);
+                self.set_layouts[i] = layout;
+                layout.ref();
+                dynamic_descriptor_count += layout.dynamic_descriptor_count;
+            }
+        }
+    }
+
+    return self;
 }
 
 pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
@@ -64,6 +78,11 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
 }
 
 pub inline fn drop(self: *Self, allocator: std.mem.Allocator) void {
+    for (self.set_layouts) |set_layout| {
+        if (set_layout) |layout| {
+            layout.unref(allocator);
+        }
+    }
     self.vtable.destroy(self, allocator);
 }
 

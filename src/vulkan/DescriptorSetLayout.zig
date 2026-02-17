@@ -29,6 +29,7 @@ heap: []u8,
 bindings: []BindingLayout,
 
 dynamic_offset_count: usize,
+dynamic_descriptor_count: usize,
 
 /// Shader stages affected by this descriptor set
 stages: vk.ShaderStageFlags,
@@ -113,6 +114,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Descr
         .heap = heap,
         .bindings = bindings,
         .dynamic_offset_count = 0,
+        .dynamic_descriptor_count = 0,
         .stages = stages,
         .ref_count = std.atomic.Value(usize).init(1),
         .vtable = undefined,
