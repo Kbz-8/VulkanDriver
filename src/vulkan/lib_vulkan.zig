@@ -1707,12 +1707,8 @@ pub export fn strollCmdBindPipeline(p_cmd: vk.CommandBuffer, bind_point: vk.Pipe
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = bind_point;
-    _ = p_pipeline;
+    const pipeline = Dispatchable(Pipeline).fromHandleObject(p_pipeline) catch |err| return errorLogger(err);
+    cmd.bindPipeline(bind_point, pipeline) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdBindVertexBuffers(p_cmd: vk.CommandBuffer, first: u32, count: u32, p_buffers: [*]const vk.Buffer, offsets: [*]const vk.DeviceSize) callconv(vk.vulkan_call_conv) void {

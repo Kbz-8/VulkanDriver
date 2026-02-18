@@ -3,6 +3,7 @@ const vk = @import("vulkan");
 
 const Buffer = @import("Buffer.zig");
 const Image = @import("Image.zig");
+const Pipeline = @import("Pipeline.zig");
 
 pub const CommandType = enum {
     BindPipeline,
@@ -20,6 +21,7 @@ pub const CommandType = enum {
 
 pub const CommandBindPipeline = struct {
     bind_point: vk.PipelineBindPoint,
+    pipeline: *Pipeline,
 };
 pub const CommandBindVertexBuffer = struct {
     buffers: []*const Buffer,

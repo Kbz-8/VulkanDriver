@@ -2,24 +2,38 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 
+const SoftDevice = @import("../SoftDevice.zig");
 const SoftImage = @import("../SoftImage.zig");
+const SoftPipeline = @import("../SoftPipeline.zig");
+
+const ComputeRoutines = @import("ComputeRoutines.zig");
 
 const cmd = base.commands;
 const VkError = base.VkError;
 
 const Self = @This();
 
-pub fn init() Self {
-    return .{};
+compute_routine: ComputeRoutines,
+
+pub fn init(device: *SoftDevice) Self {
+    return .{
+        .compute_routine = .init(device),
+    };
 }
 
 pub fn deinit(self: *Self) void {
-    _ = self;
+    self.compute_routine.destroy();
 }
 
 pub fn dispatch(self: *Self, command: *const cmd.Command) VkError!void {
-    _ = self;
     switch (command.*) {
+        .BindPipeline => |data| {
+            if (data.bind_point == .compute) {
+                self.compute_routine.bindPipeline(@alignCast(@fieldParentPtr("interface", data.pipeline)));
+            } else {
+                // TODO
+            }
+        },
         .ClearColorImage => |data| try clearColorImage(&data),
         .CopyBuffer => |data| try copyBuffer(&data),
         .CopyImage => |data| try copyImage(&data),

@@ -13,6 +13,7 @@ const Buffer = @import("Buffer.zig");
 const CommandPool = @import("CommandPool.zig");
 const Event = @import("Event.zig");
 const Image = @import("Image.zig");
+const Pipeline = @import("Pipeline.zig");
 
 const COMMAND_BUFFER_BASE_CAPACITY = 256;
 
@@ -39,6 +40,7 @@ vtable: *const VTable,
 dispatch_table: *const DispatchTable,
 
 pub const DispatchTable = struct {
+    bindPipeline: *const fn (*Self, vk.PipelineBindPoint, *Pipeline) VkError!void,
     begin: *const fn (*Self, *const vk.CommandBufferBeginInfo) VkError!void,
     clearColorImage: *const fn (*Self, *Image, vk.ImageLayout, *const vk.ClearColorValue, vk.ImageSubresourceRange) VkError!void,
     copyBuffer: *const fn (*Self, *Buffer, *Buffer, []const vk.BufferCopy) VkError!void,
@@ -133,31 +135,41 @@ fn cleanCommandList(self: *Self) void {
 
 // Commands ====================================================================================================
 
+pub inline fn bindPipeline(self: *Self, bind_point: vk.PipelineBindPoint, pipeline: *Pipeline) VkError!void {
+    const allocator = self.host_allocator.allocator();
+    try self.dispatch_table.bindPipeline(self, bind_point, pipeline);
+    self.commands.append(allocator, .{ .BindPipeline = .{
+        .bind_point = bind_point,
+        .pipeline = pipeline,
+    } }) catch return VkError.OutOfHostMemory;
+}
+
 pub inline fn clearColorImage(self: *Self, image: *Image, layout: vk.ImageLayout, color: *const vk.ClearColorValue, ranges: []const vk.ImageSubresourceRange) VkError!void {
     const allocator = self.host_allocator.allocator();
     for (ranges) |range| {
+        try self.dispatch_table.clearColorImage(self, image, layout, color, range);
         self.commands.append(allocator, .{ .ClearColorImage = .{
             .image = image,
             .layout = layout,
             .clear_color = color.*,
             .range = range,
         } }) catch return VkError.OutOfHostMemory;
-        try self.dispatch_table.clearColorImage(self, image, layout, color, range);
     }
 }
 
 pub inline fn copyBuffer(self: *Self, src: *Buffer, dst: *Buffer, regions: []const vk.BufferCopy) VkError!void {
     const allocator = self.host_allocator.allocator();
+    try self.dispatch_table.copyBuffer(self, src, dst, regions);
     self.commands.append(allocator, .{ .CopyBuffer = .{
         .src = src,
         .dst = dst,
         .regions = allocator.dupe(vk.BufferCopy, regions) catch return VkError.OutOfHostMemory,
     } }) catch return VkError.OutOfHostMemory;
-    try self.dispatch_table.copyBuffer(self, src, dst, regions);
 }
 
 pub inline fn copyImage(self: *Self, src: *Image, src_layout: vk.ImageLayout, dst: *Image, dst_layout: vk.ImageLayout, regions: []const vk.ImageCopy) VkError!void {
     const allocator = self.host_allocator.allocator();
+    try self.dispatch_table.copyImage(self, src, src_layout, dst, dst_layout, regions);
     self.commands.append(allocator, .{ .CopyImage = .{
         .src = src,
         .src_layout = src_layout,
@@ -165,29 +177,28 @@ pub inline fn copyImage(self: *Self, src: *Image, src_layout: vk.ImageLayout, ds
         .dst_layout = dst_layout,
         .regions = allocator.dupe(vk.ImageCopy, regions) catch return VkError.OutOfHostMemory,
     } }) catch return VkError.OutOfHostMemory;
-    try self.dispatch_table.copyImage(self, src, src_layout, dst, dst_layout, regions);
 }
 
 pub inline fn copyImageToBuffer(self: *Self, src: *Image, src_layout: vk.ImageLayout, dst: *Buffer, regions: []const vk.BufferImageCopy) VkError!void {
     const allocator = self.host_allocator.allocator();
+    try self.dispatch_table.copyImageToBuffer(self, src, src_layout, dst, regions);
     self.commands.append(allocator, .{ .CopyImageToBuffer = .{
         .src = src,
         .src_layout = src_layout,
         .dst = dst,
         .regions = allocator.dupe(vk.BufferImageCopy, regions) catch return VkError.OutOfHostMemory,
     } }) catch return VkError.OutOfHostMemory;
-    try self.dispatch_table.copyImageToBuffer(self, src, src_layout, dst, regions);
 }
 
 pub inline fn fillBuffer(self: *Self, buffer: *Buffer, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) VkError!void {
     const allocator = self.host_allocator.allocator();
+    try self.dispatch_table.fillBuffer(self, buffer, offset, size, data);
     self.commands.append(allocator, .{ .FillBuffer = .{
         .buffer = buffer,
         .offset = offset,
         .size = if (size == vk.WHOLE_SIZE) buffer.size else size,
         .data = data,
     } }) catch return VkError.OutOfHostMemory;
-    try self.dispatch_table.fillBuffer(self, buffer, offset, size, data);
 }
 
 pub inline fn resetEvent(self: *Self, event: *Event, stage: vk.PipelineStageFlags) VkError!void {

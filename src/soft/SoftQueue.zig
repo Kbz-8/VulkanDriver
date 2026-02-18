@@ -97,7 +97,7 @@ fn taskRunner(self: *Self, info: Interface.SubmitInfo, p_fence: ?*base.Fence, ru
         command_buffers.deinit(soft_device.device_allocator.allocator());
     }
 
-    var device = Device.init();
+    var device = Device.init(soft_device);
     defer device.deinit();
 
     loop: for (info.command_buffers.items) |command_buffer| {

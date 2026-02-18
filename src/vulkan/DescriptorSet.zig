@@ -32,6 +32,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, layout: *DescriptorSe
         .vtable = undefined,
     };
 }
+
 pub inline fn copy(self: *Self, copy_data: vk.CopyDescriptorSet) VkError!void {
     try self.vtable.copy(self, copy_data);
 }

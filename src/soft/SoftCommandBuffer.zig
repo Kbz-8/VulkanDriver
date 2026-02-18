@@ -22,6 +22,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 
     interface.dispatch_table = &.{
         .begin = begin,
+        .bindPipeline = bindPipeline,
         .clearColorImage = clearColorImage,
         .copyBuffer = copyBuffer,
         .copyImage = copyImage,
@@ -63,6 +64,16 @@ pub fn reset(interface: *Interface, flags: vk.CommandBufferResetFlags) VkError!v
 }
 
 // Commands ====================================================================================================
+
+pub fn bindPipeline(interface: *Interface, bind_point: vk.PipelineBindPoint, pipeline: *base.Pipeline) VkError!void {
+    _ = interface;
+    _ = pipeline;
+
+    if (bind_point != .graphics and bind_point != .compute) {
+        std.log.warn("Software driver does not support bind point {s}", .{@tagName(bind_point)});
+        return VkError.ValidationFailed;
+    }
+}
 
 pub fn clearColorImage(interface: *Interface, image: *base.Image, layout: vk.ImageLayout, color: *const vk.ClearColorValue, range: vk.ImageSubresourceRange) VkError!void {
     // No-op
