@@ -1,24 +1,18 @@
 const std = @import("std");
 const vk = @import("vulkan");
+const lib = @import("lib.zig");
 
 const Buffer = @import("Buffer.zig");
 const Image = @import("Image.zig");
 const Pipeline = @import("Pipeline.zig");
+const DescriptorSet = @import("DescriptorSet.zig");
 
-pub const CommandType = enum {
-    BindPipeline,
-    BindVertexBuffer,
-    ClearColorImage,
-    CopyBuffer,
-    CopyImage,
-    CopyImageToBuffer,
-    Draw,
-    DrawIndexed,
-    DrawIndexedIndirect,
-    DrawIndirect,
-    FillBuffer,
+pub const CommandBindDescriptorSets = struct {
+    bind_point: vk.PipelineBindPoint,
+    first_set: u32,
+    sets: [lib.VULKAN_MAX_DESCRIPTOR_SETS]?*DescriptorSet,
+    dynamic_offsets: []const u32,
 };
-
 pub const CommandBindPipeline = struct {
     bind_point: vk.PipelineBindPoint,
     pipeline: *Pipeline,
@@ -84,7 +78,8 @@ pub const CommandFillBuffer = struct {
     data: u32,
 };
 
-pub const Command = union(CommandType) {
+pub const Command = union(enum) {
+    BindDescriptorSets: CommandBindDescriptorSets,
     BindPipeline: CommandBindPipeline,
     BindVertexBuffer: CommandBindVertexBuffer,
     ClearColorImage: CommandClearColorImage,

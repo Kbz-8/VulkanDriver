@@ -56,7 +56,7 @@ pub const DRIVER_NAME = "Unnamed Stroll Driver";
 pub const VULKAN_VERSION = vk.makeApiVersion(0, 1, 0, 0);
 
 /// Maximum number of descriptor sets per pipeline
-pub const VULKAN_MAX_DESCRIPTOR_SETS = 32;
+pub const VULKAN_MAX_DESCRIPTOR_SETS = 4;
 
 /// The number of push constant ranges is effectively bounded
 /// by the number of possible shader stages.  Not the number of stages that can

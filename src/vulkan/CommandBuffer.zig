@@ -1,5 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
+const lib = @import("lib.zig");
 
 const cmd = @import("commands.zig");
 
@@ -14,6 +15,7 @@ const CommandPool = @import("CommandPool.zig");
 const Event = @import("Event.zig");
 const Image = @import("Image.zig");
 const Pipeline = @import("Pipeline.zig");
+const DescriptorSet = @import("DescriptorSet.zig");
 
 const COMMAND_BUFFER_BASE_CAPACITY = 256;
 
@@ -40,6 +42,7 @@ vtable: *const VTable,
 dispatch_table: *const DispatchTable,
 
 pub const DispatchTable = struct {
+    bindDescriptorSets: *const fn (*Self, vk.PipelineBindPoint, u32, [lib.VULKAN_MAX_DESCRIPTOR_SETS]?*DescriptorSet, []const u32) VkError!void,
     bindPipeline: *const fn (*Self, vk.PipelineBindPoint, *Pipeline) VkError!void,
     begin: *const fn (*Self, *const vk.CommandBufferBeginInfo) VkError!void,
     clearColorImage: *const fn (*Self, *Image, vk.ImageLayout, *const vk.ClearColorValue, vk.ImageSubresourceRange) VkError!void,
@@ -134,6 +137,23 @@ fn cleanCommandList(self: *Self) void {
 }
 
 // Commands ====================================================================================================
+
+pub inline fn bindDescriptorSets(self: *Self, bind_point: vk.PipelineBindPoint, first_set: u32, sets: []const vk.DescriptorSet, dynamic_offsets: []const u32) VkError!void {
+    const allocator = self.host_allocator.allocator();
+
+    var inner_sets = [_]?*DescriptorSet{null} ** lib.VULKAN_MAX_DESCRIPTOR_SETS;
+    for (sets, inner_sets[0..sets.len]) |set, *inner_set| {
+        inner_set.* = try NonDispatchable(DescriptorSet).fromHandleObject(set);
+    }
+
+    try self.dispatch_table.bindDescriptorSets(self, bind_point, first_set, inner_sets, dynamic_offsets);
+    self.commands.append(allocator, .{ .BindDescriptorSets = .{
+        .bind_point = bind_point,
+        .first_set = first_set,
+        .sets = inner_sets,
+        .dynamic_offsets = dynamic_offsets,
+    } }) catch return VkError.OutOfHostMemory;
+}
 
 pub inline fn bindPipeline(self: *Self, bind_point: vk.PipelineBindPoint, pipeline: *Pipeline) VkError!void {
     const allocator = self.host_allocator.allocator();

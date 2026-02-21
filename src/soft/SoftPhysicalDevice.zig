@@ -52,7 +52,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkEr
         .max_sampler_allocation_count = 4096,
         .buffer_image_granularity = 131072,
         .sparse_address_space_size = 0,
-        .max_bound_descriptor_sets = 4,
+        .max_bound_descriptor_sets = base.VULKAN_MAX_DESCRIPTOR_SETS,
         .max_per_stage_descriptor_samplers = 16,
         .max_per_stage_descriptor_uniform_buffers = 12,
         .max_per_stage_descriptor_storage_buffers = 4,

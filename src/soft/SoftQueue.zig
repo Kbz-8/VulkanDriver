@@ -61,7 +61,7 @@ pub fn submit(interface: *Interface, infos: []Interface.SubmitInfo, p_fence: ?*b
     defer self.lock.unlockShared();
 
     for (infos) |info| {
-        // Cloning info to keep them alive until commands dispatch end
+        // Cloning info to keep them alive until command execution ends
         const cloned_info: Interface.SubmitInfo = .{
             .command_buffers = info.command_buffers.clone(allocator) catch return VkError.OutOfDeviceMemory,
         };
@@ -100,10 +100,10 @@ fn taskRunner(self: *Self, info: Interface.SubmitInfo, p_fence: ?*base.Fence, ru
     var device = Device.init(soft_device);
     defer device.deinit();
 
-    loop: for (info.command_buffers.items) |command_buffer| {
-        command_buffer.submit() catch continue :loop;
+    for (info.command_buffers.items) |command_buffer| {
+        command_buffer.submit() catch continue;
         for (command_buffer.commands.items) |command| {
-            device.dispatch(&command) catch |err| base.errors.errorLoggerContext(err, "the software command dispatcher");
+            device.execute(&command) catch |err| base.errors.errorLoggerContext(err, "the software command dispatcher");
         }
     }
 

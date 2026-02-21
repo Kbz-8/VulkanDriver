@@ -1674,17 +1674,9 @@ pub export fn strollCmdBindDescriptorSets(
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+    cmd.bindDescriptorSets(bind_point, first, sets[0..count], dynamic_offsets[0..dynamic_offset_count]) catch |err| return errorLogger(err);
 
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = bind_point;
     _ = layout;
-    _ = first;
-    _ = count;
-    _ = sets;
-    _ = dynamic_offsets;
-    _ = dynamic_offset_count;
 }
 
 pub export fn strollCmdBindIndexBuffer(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer, offset: vk.DeviceSize, index_type: vk.IndexType) callconv(vk.vulkan_call_conv) void {

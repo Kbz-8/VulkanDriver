@@ -22,6 +22,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 
     interface.dispatch_table = &.{
         .begin = begin,
+        .bindDescriptorSets = bindDescriptorSets,
         .bindPipeline = bindPipeline,
         .clearColorImage = clearColorImage,
         .copyBuffer = copyBuffer,
@@ -64,6 +65,15 @@ pub fn reset(interface: *Interface, flags: vk.CommandBufferResetFlags) VkError!v
 }
 
 // Commands ====================================================================================================
+
+pub fn bindDescriptorSets(interface: *Interface, bind_point: vk.PipelineBindPoint, first_set: u32, sets: [base.VULKAN_MAX_DESCRIPTOR_SETS]?*base.DescriptorSet, dynamic_offsets: []const u32) VkError!void {
+    // No-op
+    _ = interface;
+    _ = bind_point;
+    _ = first_set;
+    _ = sets;
+    _ = dynamic_offsets;
+}
 
 pub fn bindPipeline(interface: *Interface, bind_point: vk.PipelineBindPoint, pipeline: *base.Pipeline) VkError!void {
     _ = interface;
