@@ -4,11 +4,12 @@ const base = @import("base");
 
 const RefCounter = base.RefCounter;
 
-const Device = @import("device/Device.zig");
+const ExecutionDevice = @import("device/Device.zig");
 const Dispatchable = base.Dispatchable;
 
 const CommandBuffer = base.CommandBuffer;
 const SoftDevice = @import("SoftDevice.zig");
+const SoftCommandBuffer = @import("SoftCommandBuffer.zig");
 
 const VkError = base.VkError;
 
@@ -97,14 +98,13 @@ fn taskRunner(self: *Self, info: Interface.SubmitInfo, p_fence: ?*base.Fence, ru
         command_buffers.deinit(soft_device.device_allocator.allocator());
     }
 
-    var device = Device.init(soft_device);
-    defer device.deinit();
+    var execution_device: ExecutionDevice = .init;
+    execution_device.setup(soft_device);
+    defer execution_device.deinit();
 
     for (info.command_buffers.items) |command_buffer| {
-        command_buffer.submit() catch continue;
-        for (command_buffer.commands.items) |command| {
-            device.execute(&command) catch |err| base.errors.errorLoggerContext(err, "the software command dispatcher");
-        }
+        const soft_command_buffer: *SoftCommandBuffer = @alignCast(@fieldParentPtr("interface", command_buffer));
+        soft_command_buffer.execute(&execution_device) catch |err| base.errors.errorLoggerContext(err, "the software execution device");
     }
 
     if (p_fence) |fence| {

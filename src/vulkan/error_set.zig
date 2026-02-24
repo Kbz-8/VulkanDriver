@@ -50,6 +50,10 @@ pub const VkError = error{
     IncompatibleShaderBinaryExt,
     PipelineBinaryMissingKhr,
     NotEnoughSpaceKhr,
+    // ====== Internal errors
+    InvalidHandleDrv,
+    InvalidPipelineDrv,
+    InvalidDeviceMemoryDrv,
 };
 
 pub inline fn errorLogger(err: VkError) void {
@@ -80,7 +84,6 @@ pub inline fn toVkResult(err: VkError) vk.Result {
         VkError.TooManyObjects => .error_too_many_objects,
         VkError.FormatNotSupported => .error_format_not_supported,
         VkError.FragmentedPool => .error_fragmented_pool,
-        VkError.Unknown => .error_unknown,
         VkError.ValidationFailed => .error_validation_failed,
         VkError.OutOfPoolMemory => .error_out_of_pool_memory,
         VkError.InvalidExternalHandle => .error_invalid_external_handle,
@@ -111,5 +114,7 @@ pub inline fn toVkResult(err: VkError) vk.Result {
         VkError.IncompatibleShaderBinaryExt => .incompatible_shader_binary_ext,
         VkError.PipelineBinaryMissingKhr => .pipeline_binary_missing_khr,
         VkError.NotEnoughSpaceKhr => .error_not_enough_space_khr,
+        VkError.InvalidHandleDrv => .error_validation_failed,
+        else => .error_unknown,
     };
 }

@@ -15,9 +15,23 @@ const SoftShaderModule = @import("SoftShaderModule.zig");
 const Self = @This();
 pub const Interface = base.Pipeline;
 
-interface: Interface,
+const Shader = struct {
+    module: *SoftShaderModule,
+    runtimes: []spv.Runtime,
+    entry: []const u8,
+};
 
-runtimes: []spv.Runtime,
+const Stages = enum {
+    vertex,
+    tessellation_control,
+    tessellation_evaluation,
+    geometry,
+    fragment,
+    compute,
+};
+
+interface: Interface,
+stages: std.EnumMap(Stages, Shader),
 
 pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: ?*base.PipelineCache, info: *const vk.ComputePipelineCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
@@ -33,19 +47,31 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
     const module = try NonDispatchable(ShaderModule).fromHandleObject(info.stage.module);
     const soft_module: *SoftShaderModule = @alignCast(@fieldParentPtr("interface", module));
 
-    const runtimes = allocator.alloc(spv.Runtime, soft_device.workers.getIdCount()) catch return VkError.OutOfHostMemory;
-    errdefer allocator.free(runtimes);
-
-    for (runtimes) |*runtime| {
-        runtime.* = spv.Runtime.init(allocator, &soft_module.module) catch |err| {
-            std.log.scoped(.SpvRuntimeInit).err("SPIR-V Runtime failed to initialize, {s}", .{@errorName(err)});
-            return VkError.Unknown;
-        };
-    }
+    const device_allocator = soft_device.device_allocator.allocator();
 
     self.* = .{
         .interface = interface,
-        .runtimes = runtimes,
+        .stages = std.EnumMap(Stages, Shader).init(.{
+            .compute = .{
+                .module = blk: {
+                    soft_module.ref();
+                    break :blk soft_module;
+                },
+                .runtimes = blk: {
+                    const runtimes = device_allocator.alloc(spv.Runtime, soft_device.workers.getIdCount()) catch return VkError.OutOfHostMemory;
+                    errdefer device_allocator.free(runtimes);
+
+                    for (runtimes) |*runtime| {
+                        runtime.* = spv.Runtime.init(device_allocator, &soft_module.module) catch |err| {
+                            std.log.scoped(.SpvRuntimeInit).err("SPIR-V Runtime failed to initialize, {s}", .{@errorName(err)});
+                            return VkError.Unknown;
+                        };
+                    }
+                    break :blk runtimes;
+                },
+                .entry = allocator.dupe(u8, std.mem.span(info.stage.p_name)) catch return VkError.OutOfHostMemory,
+            },
+        }),
     };
     return self;
 }
@@ -74,16 +100,24 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
 
     self.* = .{
         .interface = interface,
-        .runtimes = runtimes,
+        .stages = std.enums.EnumMap(Stages, Shader).init(.{}),
     };
     return self;
 }
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    for (self.runtimes) |*runtime| {
-        runtime.deinit(allocator);
+    const soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", interface.owner));
+    const device_allocator = soft_device.device_allocator.allocator();
+
+    var it = self.stages.iterator();
+    while (it.next()) |stage| {
+        stage.value.module.unref(allocator);
+        for (stage.value.runtimes) |*runtime| {
+            runtime.deinit(device_allocator);
+        }
+        device_allocator.free(stage.value.runtimes);
+        allocator.free(stage.value.entry);
     }
-    allocator.free(self.runtimes);
     allocator.destroy(self);
 }

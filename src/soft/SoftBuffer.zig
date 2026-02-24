@@ -46,3 +46,35 @@ pub fn getMemoryRequirements(interface: *Interface, requirements: *vk.MemoryRequ
         requirements.alignment = @max(requirements.alignment, lib.MIN_UNIFORM_BUFFER_ALIGNMENT);
     }
 }
+
+pub fn copyBuffer(self: *const Self, dst: *Self, regions: []const vk.BufferCopy) VkError!void {
+    for (regions) |region| {
+        const src_memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
+        const dst_memory = if (dst.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
+
+        const src_map: []u8 = @as([*]u8, @ptrCast(try src_memory.map(region.src_offset, region.size)))[0..region.size];
+        const dst_map: []u8 = @as([*]u8, @ptrCast(try dst_memory.map(region.dst_offset, region.size)))[0..region.size];
+
+        @memcpy(dst_map, src_map);
+
+        src_memory.unmap();
+        dst_memory.unmap();
+    }
+}
+
+pub fn fillBuffer(self: *Self, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) VkError!void {
+    const memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
+    var memory_map: []u32 = @as([*]u32, @ptrCast(@alignCast(try memory.map(offset, size))))[0..size];
+
+    var bytes = if (size == vk.WHOLE_SIZE) memory.size - offset else size;
+
+    var i: usize = 0;
+    while (bytes >= 4) : ({
+        bytes -= 4;
+        i += 1;
+    }) {
+        memory_map[i] = data;
+    }
+
+    memory.unmap();
+}

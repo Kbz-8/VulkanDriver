@@ -132,6 +132,9 @@ fn customSoft(b: *std.Build, lib: *std.Build.Step.Compile) !void {
     lib.addSystemIncludePath(cpuinfo.path("include"));
     lib.linkLibrary(cpuinfo.artifact("cpuinfo"));
 
+    const interface = b.lazyDependency("interface", .{}) orelse return error.UnresolvedDependency;
+    lib.root_module.addImport("interface", interface.module("interface"));
+
     const spv = b.dependency("SPIRV_Interpreter", .{
         .@"no-example" = true,
         .@"no-test" = true,

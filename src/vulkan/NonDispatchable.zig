@@ -42,11 +42,11 @@ pub fn NonDispatchable(comptime T: type) type {
         pub inline fn fromHandle(vk_handle: anytype) VkError!*Self {
             const handle = @intFromEnum(vk_handle);
             if (handle == 0) {
-                return VkError.ValidationFailed;
+                return VkError.InvalidHandleDrv;
             }
             const non_dispatchable: *Self = @ptrFromInt(handle);
             if (non_dispatchable.object_type != T.ObjectType) {
-                return VkError.ValidationFailed;
+                return VkError.InvalidHandleDrv;
             }
             return non_dispatchable;
         }

@@ -13,6 +13,10 @@ pub const Interface = base.ShaderModule;
 interface: Interface,
 module: spv.Module,
 
+/// Pipelines need SPIR-V module reference so shader module may not
+/// be destroy on call to `vkDestroyShaderModule`
+ref_count: std.atomic.Value(usize),
+
 pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const vk.ShaderModuleCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
@@ -33,12 +37,27 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
             spv.Module.ModuleError.OutOfMemory => return VkError.OutOfHostMemory,
             else => return VkError.ValidationFailed,
         },
+        .ref_count = std.atomic.Value(usize).init(1),
     };
     return self;
 }
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    self.unref(allocator);
+}
+
+pub inline fn drop(self: *Self, allocator: std.mem.Allocator) void {
     self.module.deinit(allocator);
     allocator.destroy(self);
+}
+
+pub inline fn ref(self: *Self) void {
+    _ = self.ref_count.fetchAdd(1, .monotonic);
+}
+
+pub inline fn unref(self: *Self, allocator: std.mem.Allocator) void {
+    if (self.ref_count.fetchSub(1, .release) == 1) {
+        self.drop(allocator);
+    }
 }

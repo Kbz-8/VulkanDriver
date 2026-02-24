@@ -79,11 +79,11 @@ pub inline fn getClearFormat(self: *Self) vk.Format {
         .r32g32b32a32_sfloat;
 }
 
-pub inline fn getPixelSize(self: *Self) usize {
+pub inline fn getPixelSize(self: *const Self) usize {
     return lib.vku.vkuFormatTexelBlockSize(@intCast(@intFromEnum(self.format)));
 }
 
-pub inline fn getTotalSize(self: *Self) usize {
+pub inline fn getTotalSize(self: *const Self) usize {
     const pixel_size = self.getPixelSize();
     return self.extent.width * self.extent.height * self.extent.depth * pixel_size;
 }
@@ -92,7 +92,7 @@ pub inline fn getFormatPixelSize(format: vk.Format) usize {
     return lib.vku.vkuFormatTexelBlockSize(@intCast(@intFromEnum(format)));
 }
 
-pub inline fn getFormatTotalSize(self: *Self, format: vk.Format) usize {
+pub inline fn getFormatTotalSize(self: *const Self, format: vk.Format) usize {
     const pixel_size = self.getFormatPixelSize(format);
     return self.extent.width * self.extent.height * self.extent.depth * pixel_size;
 }

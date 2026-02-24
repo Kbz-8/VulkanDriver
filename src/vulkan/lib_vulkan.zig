@@ -1429,7 +1429,7 @@ pub export fn strollGetPipelineCacheData(p_device: vk.Device, p_cache: vk.Pipeli
     _ = size;
     _ = data;
 
-    return .error_unknown;
+    return .success;
 }
 
 pub export fn strollGetQueryPoolResults(
@@ -1699,7 +1699,7 @@ pub export fn strollCmdBindPipeline(p_cmd: vk.CommandBuffer, bind_point: vk.Pipe
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-    const pipeline = Dispatchable(Pipeline).fromHandleObject(p_pipeline) catch |err| return errorLogger(err);
+    const pipeline = NonDispatchable(Pipeline).fromHandleObject(p_pipeline) catch |err| return errorLogger(err);
     cmd.bindPipeline(bind_point, pipeline) catch |err| return errorLogger(err);
 }
 
@@ -1860,13 +1860,7 @@ pub export fn strollCmdDispatch(p_cmd: vk.CommandBuffer, group_count_x: u32, gro
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = group_count_x;
-    _ = group_count_y;
-    _ = group_count_z;
+    cmd.dispatch(group_count_x, group_count_y, group_count_z) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdDispatchIndirect(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer, offset: vk.DeviceSize) callconv(vk.vulkan_call_conv) void {
