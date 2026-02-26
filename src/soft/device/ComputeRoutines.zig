@@ -9,6 +9,7 @@ const SoftDevice = @import("../SoftDevice.zig");
 const SoftPipeline = @import("../SoftPipeline.zig");
 
 const VkError = base.VkError;
+const SpvRuntimeError = spv.Runtime.RuntimeError;
 
 const Self = @This();
 
@@ -19,7 +20,7 @@ const RunData = struct {
     group_count_x: usize,
     group_count_y: usize,
     group_count_z: usize,
-    subgroups_per_workgroup: usize,
+    invocations_per_workgroup: usize,
     pipeline: *SoftPipeline,
 };
 
@@ -47,13 +48,23 @@ pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count
     const spv_module = &shader.module.module;
     self.batch_size = shader.runtimes.len;
 
-    const invocations_per_subgroup = 4;
     const invocations_per_workgroup = spv_module.local_size_x * spv_module.local_size_y * spv_module.local_size_z;
-    const subgroups_per_workgroup = @divTrunc(invocations_per_workgroup + invocations_per_subgroup - 1, invocations_per_subgroup);
 
-    var wg: std.Thread.WaitGroup = .{};
+    //var wg: std.Thread.WaitGroup = .{};
     for (0..@min(self.batch_size, group_count)) |batch_id| {
-        self.device.workers.spawnWg(&wg, runWrapper, .{
+        //self.device.workers.spawnWg(&wg, runWrapper, .{
+        //    RunData{
+        //        .self = self,
+        //        .batch_id = batch_id,
+        //        .group_count = group_count,
+        //        .group_count_x = @as(usize, @intCast(group_count_x)),
+        //        .group_count_y = @as(usize, @intCast(group_count_y)),
+        //        .group_count_z = @as(usize, @intCast(group_count_z)),
+        //        .invocations_per_workgroup = invocations_per_workgroup,
+        //        .pipeline = pipeline,
+        //    },
+        //});
+        runWrapper(
             RunData{
                 .self = self,
                 .batch_id = batch_id,
@@ -61,12 +72,12 @@ pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count
                 .group_count_x = @as(usize, @intCast(group_count_x)),
                 .group_count_y = @as(usize, @intCast(group_count_y)),
                 .group_count_z = @as(usize, @intCast(group_count_z)),
-                .subgroups_per_workgroup = subgroups_per_workgroup,
+                .invocations_per_workgroup = invocations_per_workgroup,
                 .pipeline = pipeline,
             },
-        });
+        );
     }
-    self.device.workers.waitAndWork(&wg);
+    //self.device.workers.waitAndWork(&wg);
 }
 
 fn runWrapper(data: RunData) void {
@@ -86,6 +97,8 @@ inline fn run(data: RunData) !void {
 
     const entry = try rt.getEntryPointByName(shader.entry);
 
+    try data.self.syncDescriptorSets(allocator, rt, true);
+
     var group_index: usize = data.batch_id;
     while (group_index < data.group_count) : (group_index += data.self.batch_size) {
         var modulo: usize = group_index;
@@ -98,41 +111,33 @@ inline fn run(data: RunData) !void {
         modulo -= group_y * data.group_count_x;
         const group_x = modulo;
 
-        try setupWorkgroupBuiltins(
-            data.self,
-            rt,
-            .{
-                @as(u32, @intCast(data.group_count_x)),
-                @as(u32, @intCast(data.group_count_y)),
-                @as(u32, @intCast(data.group_count_z)),
-            },
-            .{
+        try setupWorkgroupBuiltins(data.self, rt, .{
+            @as(u32, @intCast(data.group_count_x)),
+            @as(u32, @intCast(data.group_count_y)),
+            @as(u32, @intCast(data.group_count_z)),
+        }, .{
+            @as(u32, @intCast(group_x)),
+            @as(u32, @intCast(group_y)),
+            @as(u32, @intCast(group_z)),
+        });
+
+        for (0..data.invocations_per_workgroup) |i| {
+            try setupSubgroupBuiltins(data.self, rt, .{
                 @as(u32, @intCast(group_x)),
                 @as(u32, @intCast(group_y)),
                 @as(u32, @intCast(group_z)),
-            },
-        );
-
-        for (0..data.subgroups_per_workgroup) |i| {
-            try setupSubgroupBuiltins(
-                data.self,
-                rt,
-                .{
-                    @as(u32, @intCast(group_x)),
-                    @as(u32, @intCast(group_y)),
-                    @as(u32, @intCast(group_z)),
-                },
-                i,
-            );
-            try data.self.syncDescriptorSets(allocator, rt, true);
+            }, i);
 
             rt.callEntryPoint(allocator, entry) catch |err| switch (err) {
-                spv.Runtime.RuntimeError.OutOfBounds => {},
+                // Some errors can be ignored
+                SpvRuntimeError.OutOfBounds,
+                SpvRuntimeError.Killed,
+                => {},
                 else => return err,
             };
-
-            try data.self.syncDescriptorSets(allocator, rt, false);
         }
+
+        try data.self.syncDescriptorSets(allocator, rt, false);
     }
 }
 
@@ -170,11 +175,11 @@ fn syncDescriptorSets(self: *Self, allocator: std.mem.Allocator, rt: *spv.Runtim
 fn setupWorkgroupBuiltins(
     self: *Self,
     rt: *spv.Runtime,
-    group_count: [3]u32,
-    group_id: [3]u32,
+    group_count: @Vector(3, u32),
+    group_id: @Vector(3, u32),
 ) spv.Runtime.RuntimeError!void {
     const spv_module = &self.state.pipeline.?.stages.getPtrAssertContains(.compute).module.module;
-    const workgroup_size = [3]u32{
+    const workgroup_size = @Vector(3, u32){
         spv_module.local_size_x,
         spv_module.local_size_y,
         spv_module.local_size_z,
@@ -188,21 +193,17 @@ fn setupWorkgroupBuiltins(
 fn setupSubgroupBuiltins(
     self: *Self,
     rt: *spv.Runtime,
-    group_id: [3]u32,
+    group_id: @Vector(3, u32),
     local_invocation_index: usize,
 ) spv.Runtime.RuntimeError!void {
     const spv_module = &self.state.pipeline.?.stages.getPtrAssertContains(.compute).module.module;
-    const workgroup_size = [3]u32{
+    const workgroup_size = @Vector(3, u32){
         spv_module.local_size_x,
         spv_module.local_size_y,
         spv_module.local_size_z,
     };
-    const local_base = [3]u32{
-        workgroup_size[0] * group_id[0],
-        workgroup_size[1] * group_id[1],
-        workgroup_size[2] * group_id[2],
-    };
-    var local_invocation = [3]u32{ 0, 0, 0 };
+    const local_base = workgroup_size * group_id;
+    var local_invocation = @Vector(3, u32){ 0, 0, 0 };
 
     var idx: u32 = @intCast(local_invocation_index);
     local_invocation[2] = @divTrunc(idx, workgroup_size[0] * workgroup_size[1]);
@@ -211,11 +212,7 @@ fn setupSubgroupBuiltins(
     idx -= local_invocation[1] * workgroup_size[0];
     local_invocation[0] = idx;
 
-    const global_invocation_index = [3]u32{
-        local_base[0] + local_invocation[0],
-        local_base[1] + local_invocation[1],
-        local_base[2] + local_invocation[2],
-    };
+    const global_invocation_index = local_base + local_invocation;
 
     rt.writeBuiltIn(std.mem.asBytes(&global_invocation_index), .GlobalInvocationId) catch {};
 }

@@ -52,8 +52,8 @@ pub fn copyBuffer(self: *const Self, dst: *Self, regions: []const vk.BufferCopy)
         const src_memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
         const dst_memory = if (dst.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
 
-        const src_map: []u8 = @as([*]u8, @ptrCast(try src_memory.map(region.src_offset, region.size)))[0..region.size];
-        const dst_map: []u8 = @as([*]u8, @ptrCast(try dst_memory.map(region.dst_offset, region.size)))[0..region.size];
+        const src_map: []u8 = @as([*]u8, @ptrCast(try src_memory.map(self.interface.offset + region.src_offset, region.size)))[0..region.size];
+        const dst_map: []u8 = @as([*]u8, @ptrCast(try dst_memory.map(dst.interface.offset + region.dst_offset, region.size)))[0..region.size];
 
         @memcpy(dst_map, src_map);
 

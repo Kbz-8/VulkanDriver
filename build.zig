@@ -90,6 +90,8 @@ pub fn build(b: *std.Build) !void {
 
         lib.step.dependOn(&icd_file.step);
         const lib_install = b.addInstallArtifact(lib, .{});
+        const install_step = b.step(impl.name, b.fmt("Build libvulkan_{s}", .{impl.name}));
+        install_step.dependOn(&lib_install.step);
 
         const lib_tests = b.addTest(.{ .root_module = lib_mod });
 

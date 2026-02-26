@@ -40,7 +40,7 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
 }
 
 pub inline fn bindMemory(self: *Self, memory: *DeviceMemory, offset: vk.DeviceSize) VkError!void {
-    if (offset >= self.size or !self.allowed_memory_types.isSet(memory.memory_type_index)) {
+    if (offset > memory.size or !self.allowed_memory_types.isSet(memory.memory_type_index)) {
         return VkError.ValidationFailed;
     }
     self.memory = memory;
