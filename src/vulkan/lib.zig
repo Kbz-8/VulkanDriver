@@ -104,12 +104,8 @@ pub inline fn getLogVerboseLevel() LogVerboseLevel {
         .Standard;
 }
 
-pub fn unsupported(comptime fmt: []const u8, args: anytype) void {
-    if (builtin.mode == std.builtin.OptimizeMode.Debug) {
-        std.debug.panic("UNSUPPORTED " ++ fmt, args);
-    } else {
-        std.log.scoped(.UNSUPPORTED).warn(fmt, args);
-    }
+pub inline fn unsupported(comptime fmt: []const u8, args: anytype) void {
+    std.log.scoped(.UNSUPPORTED).warn(fmt, args);
 }
 
 comptime {
