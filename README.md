@@ -52,7 +52,7 @@ vkBindBufferMemory                             | ✅ Implemented
 vkBindImageMemory                              | ✅ Implemented
 vkCmdBeginQuery                                | ⚙️ WIP
 vkCmdBeginRenderPass                           | ⚙️ WIP
-vkCmdBindDescriptorSets                        | ⚙️ WIP
+vkCmdBindDescriptorSets                        | ✅ Implemented
 vkCmdBindIndexBuffer                           | ⚙️ WIP
 vkCmdBindPipeline                              | ⚙️ WIP
 vkCmdBindVertexBuffers                         | ⚙️ WIP
@@ -65,7 +65,7 @@ vkCmdCopyBufferToImage                         | ⚙️ WIP
 vkCmdCopyImage                                 | ⚙️ WIP
 vkCmdCopyImageToBuffer                         | ⚙️ WIP
 vkCmdCopyQueryPoolResults                      | ⚙️ WIP
-vkCmdDispatch                                  | ⚙️ WIP
+vkCmdDispatch                                  | ✅ Implemented
 vkCmdDispatchIndirect                          | ⚙️ WIP
 vkCmdDraw                                      | ⚙️ WIP
 vkCmdDrawIndexed                               | ⚙️ WIP
@@ -97,9 +97,9 @@ vkCmdWriteTimestamp                            | ⚙️ WIP
 vkCreateBuffer                                 | ✅ Implemented
 vkCreateBufferView                             | ⚙️ WIP
 vkCreateCommandPool                            | ✅ Implemented
-vkCreateComputePipelines                       | ⚙️ WIP
-vkCreateDescriptorPool                         | ⚙️ WIP
-vkCreateDescriptorSetLayout                    | ⚙️ WIP
+vkCreateComputePipelines                       | ✅ Implemented
+vkCreateDescriptorPool                         | ✅ Implemented
+vkCreateDescriptorSetLayout                    | ✅ Implemented
 vkCreateDevice                                 | ✅ Implemented
 vkCreateEvent                                  | ⚙️ WIP
 vkCreateFence                                  | ✅ Implemented
@@ -118,8 +118,8 @@ vkCreateShaderModule                           | ⚙️ WIP
 vkDestroyBuffer                                | ✅ Implemented
 vkDestroyBufferView                            | ⚙️ WIP
 vkDestroyCommandPool                           | ✅ Implemented
-vkDestroyDescriptorPool                        | ⚙️ WIP
-vkDestroyDescriptorSetLayout                   | ⚙️ WIP
+vkDestroyDescriptorPool                        | ✅ Implemented
+vkDestroyDescriptorSetLayout                   | ✅ Implemented
 vkDestroyDevice                                | ✅ Implemented
 vkDestroyEvent                                 | ⚙️ WIP
 vkDestroyFence                                 | ✅ Implemented
@@ -127,7 +127,7 @@ vkDestroyFramebuffer                           | ⚙️ WIP
 vkDestroyImage                                 | ✅ Implemented
 vkDestroyImageView                             | ✅ Implemented
 vkDestroyInstance                              | ✅ Implemented
-vkDestroyPipeline                              | ⚙️ WIP
+vkDestroyPipeline                              | ✅ Implemented
 vkDestroyPipelineCache                         | ⚙️ WIP
 vkDestroyPipelineLayout                        | ⚙️ WIP
 vkDestroyQueryPool                             | ⚙️ WIP
@@ -135,7 +135,7 @@ vkDestroyRenderPass                            | ⚙️ WIP
 vkDestroySampler                               | ⚙️ WIP
 vkDestroySemaphore                             | ⚙️ WIP
 vkDestroyShaderModule                          | ⚙️ WIP
-vkDeviceWaitIdle                               | ⚙️ WIP
+vkDeviceWaitIdle                               | ✅ Implemented
 vkEndCommandBuffer                             | ✅ Implemented
 vkEnumerateDeviceExtensionProperties           | ⚙️ WIP
 vkEnumerateDeviceLayerProperties               | ⚙️ WIP
@@ -144,7 +144,7 @@ vkEnumerateInstanceLayerProperties             | ⚙️ WIP
 vkEnumeratePhysicalDevices                     | ✅ Implemented
 vkFlushMappedMemoryRanges                      | ⚙️ WIP
 vkFreeCommandBuffers                           | ✅ Implemented
-vkFreeDescriptorSets                           | ⚙️ WIP
+vkFreeDescriptorSets                           | ✅ Implemented
 vkFreeMemory                                   | ✅ Implemented
 vkGetBufferMemoryRequirements                  | ✅ Implemented
 vkGetDeviceMemoryCommitment                    | ⚙️ WIP
