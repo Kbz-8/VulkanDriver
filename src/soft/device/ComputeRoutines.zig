@@ -50,21 +50,9 @@ pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count
 
     const invocations_per_workgroup = spv_module.local_size_x * spv_module.local_size_y * spv_module.local_size_z;
 
-    //var wg: std.Thread.WaitGroup = .{};
+    var wg: std.Thread.WaitGroup = .{};
     for (0..@min(self.batch_size, group_count)) |batch_id| {
-        //self.device.workers.spawnWg(&wg, runWrapper, .{
-        //    RunData{
-        //        .self = self,
-        //        .batch_id = batch_id,
-        //        .group_count = group_count,
-        //        .group_count_x = @as(usize, @intCast(group_count_x)),
-        //        .group_count_y = @as(usize, @intCast(group_count_y)),
-        //        .group_count_z = @as(usize, @intCast(group_count_z)),
-        //        .invocations_per_workgroup = invocations_per_workgroup,
-        //        .pipeline = pipeline,
-        //    },
-        //});
-        runWrapper(
+        self.device.workers.spawnWg(&wg, runWrapper, .{
             RunData{
                 .self = self,
                 .batch_id = batch_id,
@@ -75,9 +63,21 @@ pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count
                 .invocations_per_workgroup = invocations_per_workgroup,
                 .pipeline = pipeline,
             },
-        );
+        });
+        //runWrapper(
+        //    RunData{
+        //        .self = self,
+        //        .batch_id = batch_id,
+        //        .group_count = group_count,
+        //        .group_count_x = @as(usize, @intCast(group_count_x)),
+        //        .group_count_y = @as(usize, @intCast(group_count_y)),
+        //        .group_count_z = @as(usize, @intCast(group_count_z)),
+        //        .invocations_per_workgroup = invocations_per_workgroup,
+        //        .pipeline = pipeline,
+        //    },
+        //);
     }
-    //self.device.workers.waitAndWork(&wg);
+    self.device.workers.waitAndWork(&wg);
 }
 
 fn runWrapper(data: RunData) void {
@@ -97,7 +97,7 @@ inline fn run(data: RunData) !void {
 
     const entry = try rt.getEntryPointByName(shader.entry);
 
-    try data.self.syncDescriptorSets(allocator, rt, true);
+    try data.self.writeDescriptorSets(rt);
 
     var group_index: usize = data.batch_id;
     while (group_index < data.group_count) : (group_index += data.self.batch_size) {
@@ -135,13 +135,12 @@ inline fn run(data: RunData) !void {
                 => {},
                 else => return err,
             };
+            try rt.flushDescriptorSets(allocator);
         }
-
-        try data.self.syncDescriptorSets(allocator, rt, false);
     }
 }
 
-fn syncDescriptorSets(self: *Self, allocator: std.mem.Allocator, rt: *spv.Runtime, write: bool) !void {
+fn writeDescriptorSets(self: *Self, rt: *spv.Runtime) !void {
     sets: for (self.state.sets[0..], 0..) |set, set_index| {
         if (set == null)
             continue :sets;
@@ -151,20 +150,11 @@ fn syncDescriptorSets(self: *Self, allocator: std.mem.Allocator, rt: *spv.Runtim
                 .buffer => |buffer_data| if (buffer_data.object) |buffer| {
                     const memory = if (buffer.interface.memory) |memory| memory else continue :bindings;
                     const map: []u8 = @as([*]u8, @ptrCast(try memory.map(buffer_data.offset, buffer_data.size)))[0..buffer_data.size];
-                    if (write) {
-                        try rt.writeDescriptorSet(
-                            allocator,
-                            map,
-                            @as(u32, @intCast(set_index)),
-                            @as(u32, @intCast(binding_index)),
-                        );
-                    } else {
-                        try rt.readDescriptorSet(
-                            map,
-                            @as(u32, @intCast(set_index)),
-                            @as(u32, @intCast(binding_index)),
-                        );
-                    }
+                    try rt.writeDescriptorSet(
+                        map,
+                        @as(u32, @intCast(set_index)),
+                        @as(u32, @intCast(binding_index)),
+                    );
                 },
                 else => {},
             }
