@@ -12,6 +12,11 @@ jobs:
     if: "!contains(github.event.head_commit.message, 'ci skip')"
 
     steps:
+    - name: Debug DNS and HTTPS reachability
+      run: |
+        getent hosts git.kbz8.me || true
+        curl -vkI https://git.kbz8.me/ || true
+        wget -S --spider https://git.kbz8.me/ || true
     - uses: actions/checkout@v4
     - uses: mlugg/setup-zig@v2
     - uses: actions/setup-node@v6
