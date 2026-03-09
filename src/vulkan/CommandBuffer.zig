@@ -37,17 +37,19 @@ vtable: *const VTable,
 dispatch_table: *const DispatchTable,
 
 pub const DispatchTable = struct {
+    begin: *const fn (*Self, *const vk.CommandBufferBeginInfo) VkError!void,
     bindDescriptorSets: *const fn (*Self, vk.PipelineBindPoint, u32, [lib.VULKAN_MAX_DESCRIPTOR_SETS]?*DescriptorSet, []const u32) VkError!void,
     bindPipeline: *const fn (*Self, vk.PipelineBindPoint, *Pipeline) VkError!void,
-    begin: *const fn (*Self, *const vk.CommandBufferBeginInfo) VkError!void,
     clearColorImage: *const fn (*Self, *Image, vk.ImageLayout, *const vk.ClearColorValue, vk.ImageSubresourceRange) VkError!void,
     copyBuffer: *const fn (*Self, *Buffer, *Buffer, []const vk.BufferCopy) VkError!void,
+    copyBufferToImage: *const fn (*Self, *Buffer, *Image, vk.ImageLayout, []const vk.BufferImageCopy) VkError!void,
     copyImage: *const fn (*Self, *Image, vk.ImageLayout, *Image, vk.ImageLayout, []const vk.ImageCopy) VkError!void,
     copyImageToBuffer: *const fn (*Self, *Image, vk.ImageLayout, *Buffer, []const vk.BufferImageCopy) VkError!void,
     dispatch: *const fn (*Self, u32, u32, u32) VkError!void,
     dispatchIndirect: *const fn (*Self, *Buffer, vk.DeviceSize) VkError!void,
     end: *const fn (*Self) VkError!void,
     fillBuffer: *const fn (*Self, *Buffer, vk.DeviceSize, vk.DeviceSize, u32) VkError!void,
+    pipelineBarrier: *const fn (*Self, vk.PipelineStageFlags, vk.PipelineStageFlags, vk.DependencyFlags, []const vk.MemoryBarrier, []const vk.BufferMemoryBarrier, []const vk.ImageMemoryBarrier) VkError!void,
     reset: *const fn (*Self, vk.CommandBufferResetFlags) VkError!void,
     resetEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
     setEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
@@ -117,6 +119,15 @@ pub inline fn submit(self: *Self) VkError!void {
     self.transitionState(.Pending, &.{ .Pending, .Executable }) catch return VkError.ValidationFailed;
 }
 
+pub inline fn finish(self: *Self) VkError!void {
+    if (self.begin_info) |begin_info| {
+        if (!begin_info.flags.one_time_submit_bit) {
+            self.transitionState(.Invalid, &.{.Pending}) catch return VkError.ValidationFailed;
+        }
+    }
+    self.transitionState(.Executable, &.{.Pending}) catch return VkError.ValidationFailed;
+}
+
 // Commands ====================================================================================================
 
 pub inline fn bindDescriptorSets(self: *Self, bind_point: vk.PipelineBindPoint, first_set: u32, sets: []const vk.DescriptorSet, dynamic_offsets: []const u32) VkError!void {
@@ -141,6 +152,10 @@ pub inline fn copyBuffer(self: *Self, src: *Buffer, dst: *Buffer, regions: []con
     try self.dispatch_table.copyBuffer(self, src, dst, regions);
 }
 
+pub inline fn copyBufferToImage(self: *Self, src: *Buffer, dst: *Image, dst_layout: vk.ImageLayout, regions: []const vk.BufferImageCopy) VkError!void {
+    try self.dispatch_table.copyBufferToImage(self, src, dst, dst_layout, regions);
+}
+
 pub inline fn copyImage(self: *Self, src: *Image, src_layout: vk.ImageLayout, dst: *Image, dst_layout: vk.ImageLayout, regions: []const vk.ImageCopy) VkError!void {
     try self.dispatch_table.copyImage(self, src, src_layout, dst, dst_layout, regions);
 }
@@ -159,6 +174,10 @@ pub inline fn dispatchIndirect(self: *Self, buffer: *Buffer, offset: vk.DeviceSi
 
 pub inline fn fillBuffer(self: *Self, buffer: *Buffer, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) VkError!void {
     try self.dispatch_table.fillBuffer(self, buffer, offset, size, data);
+}
+
+pub inline fn pipelineBarrier(self: *Self, src_stage: vk.PipelineStageFlags, dst_stage: vk.PipelineStageFlags, dependency: vk.DependencyFlags, memory_barriers: []const vk.MemoryBarrier, buffer_barriers: []const vk.BufferMemoryBarrier, image_barriers: []const vk.ImageMemoryBarrier) VkError!void {
+    try self.dispatch_table.pipelineBarrier(self, src_stage, dst_stage, dependency, memory_barriers, buffer_barriers, image_barriers);
 }
 
 pub inline fn resetEvent(self: *Self, event: *Event, stage: vk.PipelineStageFlags) VkError!void {

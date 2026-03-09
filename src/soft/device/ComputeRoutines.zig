@@ -64,18 +64,6 @@ pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count
                 .pipeline = pipeline,
             },
         });
-        //runWrapper(
-        //    RunData{
-        //        .self = self,
-        //        .batch_id = batch_id,
-        //        .group_count = group_count,
-        //        .group_count_x = @as(usize, @intCast(group_count_x)),
-        //        .group_count_y = @as(usize, @intCast(group_count_y)),
-        //        .group_count_z = @as(usize, @intCast(group_count_z)),
-        //        .invocations_per_workgroup = invocations_per_workgroup,
-        //        .pipeline = pipeline,
-        //    },
-        //);
     }
     self.device.workers.waitAndWork(&wg);
 }

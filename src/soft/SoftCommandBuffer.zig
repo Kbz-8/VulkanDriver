@@ -43,12 +43,14 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .bindPipeline = bindPipeline,
         .clearColorImage = clearColorImage,
         .copyBuffer = copyBuffer,
+        .copyBufferToImage = copyBufferToImage,
         .copyImage = copyImage,
         .copyImageToBuffer = copyImageToBuffer,
         .dispatch = dispatch,
         .dispatchIndirect = dispatchIndirect,
         .end = end,
         .fillBuffer = fillBuffer,
+        .pipelineBarrier = pipelineBarrier,
         .reset = reset,
         .resetEvent = resetEvent,
         .setEvent = setEvent,
@@ -74,11 +76,12 @@ pub fn execute(self: *Self, device: *ExecutionDevice) VkError!void {
     for (self.commands.items) |command| {
         try command.vtable.execute(command.ptr, device);
     }
+    try self.interface.finish();
 }
 
 pub fn begin(interface: *Interface, _: *const vk.CommandBufferBeginInfo) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    self.command_allocator.deinit();
+    _ = self.command_allocator.reset(.free_all);
 }
 
 pub fn end(interface: *Interface) VkError!void {
@@ -90,8 +93,7 @@ pub fn reset(interface: *Interface, _: vk.CommandBufferResetFlags) VkError!void 
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     const allocator = self.command_allocator.allocator();
     self.commands.clearAndFree(allocator);
-    if (!self.command_allocator.reset(.{ .retain_with_limit = 16_384 }))
-        return VkError.OutOfHostMemory;
+    _ = self.command_allocator.reset(.free_all);
 }
 
 // Commands ====================================================================================================
@@ -206,6 +208,36 @@ pub fn copyBuffer(interface: *Interface, src: *base.Buffer, dst: *base.Buffer, r
     self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
 }
 
+pub fn copyBufferToImage(interface: *Interface, src: *base.Buffer, dst: *base.Image, dst_layout: vk.ImageLayout, regions: []const vk.BufferImageCopy) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        src: *const SoftBuffer,
+        dst: *SoftImage,
+        dst_layout: vk.ImageLayout,
+        regions: []const vk.BufferImageCopy,
+
+        pub fn execute(impl: *const Impl, _: *ExecutionDevice) VkError!void {
+            for (impl.regions[0..]) |region| {
+                try impl.dst.copyFromBuffer(impl.src, region);
+            }
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .src = @alignCast(@fieldParentPtr("interface", src)),
+        .dst_layout = dst_layout,
+        .dst = @alignCast(@fieldParentPtr("interface", dst)),
+        .regions = allocator.dupe(vk.BufferImageCopy, regions) catch return VkError.OutOfHostMemory, // Will be freed on cmdbuf reset or destroy
+    };
+    self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
+}
+
 pub fn copyImage(interface: *Interface, src: *base.Image, src_layout: vk.ImageLayout, dst: *base.Image, dst_layout: vk.ImageLayout, regions: []const vk.ImageCopy) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     const allocator = self.command_allocator.allocator();
@@ -249,7 +281,9 @@ pub fn copyImageToBuffer(interface: *Interface, src: *base.Image, src_layout: vk
         regions: []const vk.BufferImageCopy,
 
         pub fn execute(impl: *const Impl, _: *ExecutionDevice) VkError!void {
-            try impl.src.copyImageToBuffer(impl.src_layout, impl.dst, impl.regions);
+            for (impl.regions[0..]) |region| {
+                try impl.dst.copyToBuffer(impl.dst, region);
+            }
         }
     };
 
@@ -346,6 +380,31 @@ pub fn fillBuffer(interface: *Interface, buffer: *base.Buffer, offset: vk.Device
         .data = data,
     };
     self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
+}
+
+pub fn pipelineBarrier(interface: *Interface, src_stage: vk.PipelineStageFlags, dst_stage: vk.PipelineStageFlags, dependency: vk.DependencyFlags, memory_barriers: []const vk.MemoryBarrier, buffer_barriers: []const vk.BufferMemoryBarrier, image_barriers: []const vk.ImageMemoryBarrier) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        pub fn execute(_: *const Impl, _: *ExecutionDevice) VkError!void {
+            // TODO: implement synchronization for rasterizations stages
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{};
+    self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
+
+    _ = src_stage;
+    _ = dst_stage;
+    _ = dependency;
+    _ = memory_barriers;
+    _ = buffer_barriers;
+    _ = image_barriers;
 }
 
 pub fn resetEvent(interface: *Interface, event: *base.Event, stage: vk.PipelineStageFlags) VkError!void {

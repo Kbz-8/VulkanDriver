@@ -1806,14 +1806,7 @@ pub export fn strollCmdCopyBufferToImage(p_cmd: vk.CommandBuffer, p_src: vk.Buff
     const src = NonDispatchable(Buffer).fromHandleObject(p_src) catch |err| return errorLogger(err);
     const dst = NonDispatchable(Image).fromHandleObject(p_dst) catch |err| return errorLogger(err);
 
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = src;
-    _ = dst;
-    _ = layout;
-    _ = count;
-    _ = regions;
+    cmd.copyBufferToImage(src, dst, layout, regions[0..count]) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdCopyImage(p_cmd: vk.CommandBuffer, p_src: vk.Image, src_layout: vk.ImageLayout, p_dst: vk.Image, dst_layout: vk.ImageLayout, count: u32, regions: [*]const vk.ImageCopy) callconv(vk.vulkan_call_conv) void {
@@ -2009,19 +2002,14 @@ pub export fn strollCmdPipelineBarrier(
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = src_stage_mask;
-    _ = dst_stage_mask;
-    _ = dependency_flags;
-    _ = memory_barrier_count;
-    _ = memory_barriers;
-    _ = buffer_memory_barrier_count;
-    _ = buffer_memory_barriers;
-    _ = image_memory_barrier_count;
-    _ = image_memory_barriers;
+    cmd.pipelineBarrier(
+        src_stage_mask,
+        dst_stage_mask,
+        dependency_flags,
+        memory_barriers[0..memory_barrier_count],
+        buffer_memory_barriers[0..buffer_memory_barrier_count],
+        image_memory_barriers[0..image_memory_barrier_count],
+    ) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdPushConstants(p_cmd: vk.CommandBuffer, layout: vk.PipelineLayout, flags: vk.ShaderStageFlags, offset: u32, size: u32, values: *const anyopaque) callconv(vk.vulkan_call_conv) void {

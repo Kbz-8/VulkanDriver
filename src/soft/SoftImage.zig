@@ -68,39 +68,52 @@ pub fn copyImage(self: *const Self, self_layout: vk.ImageLayout, dst: *Self, dst
     std.log.scoped(.commandExecutor).warn("FIXME: implement image to image copy", .{});
 }
 
-pub fn copyImageToBuffer(self: *const Self, self_layout: vk.ImageLayout, dst: *SoftBuffer, regions: []const vk.BufferImageCopy) VkError!void {
-    _ = self_layout;
-    for (regions) |region| {
-        const src_memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
-        const dst_memory = if (dst.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
+pub fn copyToBuffer(self: *const Self, dst: *SoftBuffer, region: vk.BufferImageCopy) VkError!void {
+    const dst_size = dst.interface.size - region.buffer_offset;
+    const dst_memory = if (dst.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
+    const dst_map: []u8 = @as([*]u8, @ptrCast(try dst_memory.map(region.buffer_offset, dst_size)))[0..dst_size];
+    try self.copy(
+        null,
+        dst_map,
+        @intCast(region.buffer_row_length),
+        @intCast(region.buffer_image_height),
+        region.image_subresource,
+        region.image_offset,
+        region.image_extent,
+    );
+}
 
-        const pixel_size: u32 = @intCast(self.interface.getPixelSize());
-        const image_row_pitch: u32 = self.interface.extent.width * pixel_size;
-        const image_size: u32 = @intCast(self.interface.getTotalSize());
+pub fn copyFromBuffer(self: *const Self, src: *SoftBuffer, region: vk.BufferImageCopy) VkError!void {
+    const src_size = src.interface.size - region.buffer_offset;
+    const src_memory = if (src.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
+    const src_map: []u8 = @as([*]u8, @ptrCast(try src_memory.map(region.buffer_offset, src_size)))[0..src_size];
+    try self.copy(
+        src_map,
+        null,
+        @intCast(region.buffer_row_length),
+        @intCast(region.buffer_image_height),
+        region.image_subresource,
+        region.image_offset,
+        region.image_extent,
+    );
+}
 
-        const buffer_row_length: u32 = if (region.buffer_row_length != 0) region.buffer_row_length else region.image_extent.width;
-        const buffer_row_pitch: u32 = buffer_row_length * pixel_size;
-        const buffer_size: u32 = buffer_row_pitch * region.image_extent.height * region.image_extent.depth;
-
-        const src_map: []u8 = @as([*]u8, @ptrCast(try src_memory.map(0, image_size)))[0..image_size];
-        const dst_map: []u8 = @as([*]u8, @ptrCast(try dst_memory.map(region.buffer_offset, buffer_size)))[0..buffer_size];
-
-        const row_size = region.image_extent.width * pixel_size;
-        for (0..self.interface.extent.depth) |z| {
-            for (0..self.interface.extent.height) |y| {
-                const z_as_u32: u32 = @intCast(z);
-                const y_as_u32: u32 = @intCast(y);
-
-                const src_offset = ((@as(u32, @intCast(region.image_offset.z)) + z_as_u32) * self.interface.extent.height + @as(u32, @intCast(region.image_offset.y)) + y_as_u32) * image_row_pitch + @as(u32, @intCast(region.image_offset.x)) * pixel_size;
-                const dst_offset = (z_as_u32 * buffer_row_length * region.image_extent.height + y_as_u32 * buffer_row_length) * pixel_size;
-
-                const src_slice = src_map[src_offset..(src_offset + row_size)];
-                const dst_slice = dst_map[dst_offset..(dst_offset + row_size)];
-                @memcpy(dst_slice, src_slice);
-            }
-        }
-
-        src_memory.unmap();
-        dst_memory.unmap();
-    }
+pub fn copy(
+    self: *Self,
+    src_memory: ?[]const u8,
+    dst_memory: ?[]u8,
+    row_len: usize,
+    image_height: usize,
+    image_subresource: vk.ImageSubresourceLayers,
+    image_copy_offset: vk.Offset3D,
+    image_copy_extent: vk.Extent3D,
+) VkError!void {
+    _ = self;
+    _ = src_memory;
+    _ = dst_memory;
+    _ = row_len;
+    _ = image_height;
+    _ = image_subresource;
+    _ = image_copy_offset;
+    _ = image_copy_extent;
 }
