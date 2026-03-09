@@ -45,7 +45,7 @@ zig build cdb
 Name                                           | Status
 -----------------------------------------------|--------
 vkAllocateCommandBuffers                       | ✅ Implemented
-vkAllocateDescriptorSets                       | ⚙️ WIP
+vkAllocateDescriptorSets                       | ✅ Implemented
 vkAllocateMemory                               | ✅ Implemented
 vkBeginCommandBuffer                           | ✅ Implemented
 vkBindBufferMemory                             | ✅ Implemented
@@ -54,7 +54,7 @@ vkCmdBeginQuery                                | ⚙️ WIP
 vkCmdBeginRenderPass                           | ⚙️ WIP
 vkCmdBindDescriptorSets                        | ✅ Implemented
 vkCmdBindIndexBuffer                           | ⚙️ WIP
-vkCmdBindPipeline                              | ⚙️ WIP
+vkCmdBindPipeline                              | ✅ Implemented
 vkCmdBindVertexBuffers                         | ⚙️ WIP
 vkCmdBlitImage                                 | ⚙️ WIP
 vkCmdClearAttachments                          | ⚙️ wip
@@ -114,7 +114,7 @@ vkCreateQueryPool                              | ⚙️ WIP
 vkCreateRenderPass                             | ⚙️ WIP
 vkCreateSampler                                | ⚙️ WIP
 vkCreateSemaphore                              | ⚙️ WIP
-vkCreateShaderModule                           | ⚙️ WIP
+vkCreateShaderModule                           | ✅ Implemented
 vkDestroyBuffer                                | ✅ Implemented
 vkDestroyBufferView                            | ⚙️ WIP
 vkDestroyCommandPool                           | ✅ Implemented
@@ -134,7 +134,7 @@ vkDestroyQueryPool                             | ⚙️ WIP
 vkDestroyRenderPass                            | ⚙️ WIP
 vkDestroySampler                               | ⚙️ WIP
 vkDestroySemaphore                             | ⚙️ WIP
-vkDestroyShaderModule                          | ⚙️ WIP
+vkDestroyShaderModule                          | ✅ Implemented
 vkDeviceWaitIdle                               | ✅ Implemented
 vkEndCommandBuffer                             | ✅ Implemented
 vkEnumerateDeviceExtensionProperties           | ⚙️ WIP
@@ -142,7 +142,7 @@ vkEnumerateDeviceLayerProperties               | ⚙️ WIP
 vkEnumerateInstanceExtensionProperties         | ⚙️ WIP
 vkEnumerateInstanceLayerProperties             | ⚙️ WIP
 vkEnumeratePhysicalDevices                     | ✅ Implemented
-vkFlushMappedMemoryRanges                      | ⚙️ WIP
+vkFlushMappedMemoryRanges                      | ✅ Implemented
 vkFreeCommandBuffers                           | ✅ Implemented
 vkFreeDescriptorSets                           | ✅ Implemented
 vkFreeMemory                                   | ✅ Implemented
@@ -166,7 +166,7 @@ vkGetPhysicalDeviceSparseImageFormatProperties | ⚙️ WIP
 vkGetPipelineCacheData                         | ⚙️ WIP
 vkGetQueryPoolResults                          | ⚙️ WIP
 vkGetRenderAreaGranularity                     | ⚙️ WIP
-vkInvalidateMappedMemoryRanges                 | ⚙️ WIP
+vkInvalidateMappedMemoryRanges                 | ✅ Implemented
 vkMapMemory                                    | ✅ Implemented
 vkMergePipelineCaches                          | ⚙️ WIP
 vkQueueBindSparse                              | ⚙️ WIP
@@ -179,7 +179,7 @@ vkResetEvent                                   | ⚙️ WIP
 vkResetFences                                  | ✅ Implemented
 vkSetEvent                                     | ⚙️ WIP
 vkUnmapMemory                                  | ✅ Implemented
-vkUpdateDescriptorSets                         | ⚙️ WIP
+vkUpdateDescriptorSets                         | ✅ Implemented
 vkWaitForFences                                | ✅ Implemented
 </details>
 

@@ -46,6 +46,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .copyImage = copyImage,
         .copyImageToBuffer = copyImageToBuffer,
         .dispatch = dispatch,
+        .dispatchIndirect = dispatchIndirect,
         .end = end,
         .fillBuffer = fillBuffer,
         .reset = reset,
@@ -285,6 +286,36 @@ pub fn dispatch(interface: *Interface, group_count_x: u32, group_count_y: u32, g
         .group_count_x = group_count_x,
         .group_count_y = group_count_y,
         .group_count_z = group_count_z,
+    };
+    self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
+}
+
+pub fn dispatchIndirect(interface: *Interface, buffer: *base.Buffer, offset: vk.DeviceSize) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        buffer: *SoftBuffer,
+        offset: vk.DeviceSize,
+
+        pub fn execute(impl: *const Impl, device: *ExecutionDevice) VkError!void {
+            const size = 3 * @sizeOf(u32);
+            const memory = if (impl.buffer.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
+            const map: []u32 = @as([*]u32, @ptrCast(@alignCast(try memory.map(impl.offset, size))))[0..3];
+
+            std.debug.print("{any}\n", .{map});
+
+            try device.compute_routines.dispatch(map[0], map[1], map[2]);
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .buffer = @alignCast(@fieldParentPtr("interface", buffer)),
+        .offset = offset,
     };
     self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
 }

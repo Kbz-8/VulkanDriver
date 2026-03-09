@@ -1869,12 +1869,7 @@ pub export fn strollCmdDispatchIndirect(p_cmd: vk.CommandBuffer, p_buffer: vk.Bu
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
     const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = buffer;
-    _ = offset;
+    cmd.dispatchIndirect(buffer, offset) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdDraw(p_cmd: vk.CommandBuffer, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32) callconv(vk.vulkan_call_conv) void {

@@ -45,6 +45,7 @@ pub const DispatchTable = struct {
     copyImage: *const fn (*Self, *Image, vk.ImageLayout, *Image, vk.ImageLayout, []const vk.ImageCopy) VkError!void,
     copyImageToBuffer: *const fn (*Self, *Image, vk.ImageLayout, *Buffer, []const vk.BufferImageCopy) VkError!void,
     dispatch: *const fn (*Self, u32, u32, u32) VkError!void,
+    dispatchIndirect: *const fn (*Self, *Buffer, vk.DeviceSize) VkError!void,
     end: *const fn (*Self) VkError!void,
     fillBuffer: *const fn (*Self, *Buffer, vk.DeviceSize, vk.DeviceSize, u32) VkError!void,
     reset: *const fn (*Self, vk.CommandBufferResetFlags) VkError!void,
@@ -150,6 +151,10 @@ pub inline fn copyImageToBuffer(self: *Self, src: *Image, src_layout: vk.ImageLa
 
 pub inline fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count_z: u32) VkError!void {
     try self.dispatch_table.dispatch(self, group_count_x, group_count_y, group_count_z);
+}
+
+pub inline fn dispatchIndirect(self: *Self, buffer: *Buffer, offset: vk.DeviceSize) VkError!void {
+    try self.dispatch_table.dispatchIndirect(self, buffer, offset);
 }
 
 pub inline fn fillBuffer(self: *Self, buffer: *Buffer, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) VkError!void {
