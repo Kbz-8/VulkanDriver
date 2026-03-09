@@ -83,7 +83,7 @@ pub fn copyToBuffer(self: *const Self, dst: *SoftBuffer, region: vk.BufferImageC
     );
 }
 
-pub fn copyFromBuffer(self: *const Self, src: *SoftBuffer, region: vk.BufferImageCopy) VkError!void {
+pub fn copyFromBuffer(self: *const Self, src: *const SoftBuffer, region: vk.BufferImageCopy) VkError!void {
     const src_size = src.interface.size - region.buffer_offset;
     const src_memory = if (src.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
     const src_map: []u8 = @as([*]u8, @ptrCast(try src_memory.map(region.buffer_offset, src_size)))[0..src_size];
@@ -99,7 +99,7 @@ pub fn copyFromBuffer(self: *const Self, src: *SoftBuffer, region: vk.BufferImag
 }
 
 pub fn copy(
-    self: *Self,
+    self: *const Self,
     src_memory: ?[]const u8,
     dst_memory: ?[]u8,
     row_len: usize,

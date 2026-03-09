@@ -73,10 +73,11 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 
 pub fn execute(self: *Self, device: *ExecutionDevice) VkError!void {
     self.interface.submit() catch return;
+    defer self.interface.finish() catch {};
+
     for (self.commands.items) |command| {
         try command.vtable.execute(command.ptr, device);
     }
-    try self.interface.finish();
 }
 
 pub fn begin(interface: *Interface, _: *const vk.CommandBufferBeginInfo) VkError!void {
@@ -282,7 +283,7 @@ pub fn copyImageToBuffer(interface: *Interface, src: *base.Image, src_layout: vk
 
         pub fn execute(impl: *const Impl, _: *ExecutionDevice) VkError!void {
             for (impl.regions[0..]) |region| {
-                try impl.dst.copyToBuffer(impl.dst, region);
+                try impl.src.copyToBuffer(impl.dst, region);
             }
         }
     };

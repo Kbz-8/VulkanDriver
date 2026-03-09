@@ -114,6 +114,7 @@ pub inline fn submit(self: *Self) VkError!void {
     if (self.begin_info) |begin_info| {
         if (!begin_info.flags.simultaneous_use_bit) {
             self.transitionState(.Pending, &.{.Executable}) catch return VkError.ValidationFailed;
+            return;
         }
     }
     self.transitionState(.Pending, &.{ .Pending, .Executable }) catch return VkError.ValidationFailed;
@@ -123,6 +124,7 @@ pub inline fn finish(self: *Self) VkError!void {
     if (self.begin_info) |begin_info| {
         if (!begin_info.flags.one_time_submit_bit) {
             self.transitionState(.Invalid, &.{.Pending}) catch return VkError.ValidationFailed;
+            return;
         }
     }
     self.transitionState(.Executable, &.{.Pending}) catch return VkError.ValidationFailed;
