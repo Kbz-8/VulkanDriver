@@ -1,0 +1,6 @@
+services:
+  ubuntu-shell:
+    build: .
+    mem_limit: ${MEM_LIMIT:-8g}
+    stdin_open: true
+    tty: true
