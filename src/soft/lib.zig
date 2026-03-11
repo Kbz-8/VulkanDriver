@@ -41,6 +41,7 @@ pub const DRIVER_VERSION = vk.makeApiVersion(0, 0, 0, 1);
 pub const DEVICE_ID = 0x600DCAFE;
 
 pub const NO_SHADER_SIMD_ENV_NAME = "STROLL_SOFT_NO_SIMD";
+pub const SINGLE_THREAD_COMPUTE_EXECUTION_ENV_NAME = "STROLL_SINGLE_THREAD_COMPUTE_EXECUTION";
 
 /// Generic system memory.
 pub const MEMORY_TYPE_GENERIC_BIT = 0;

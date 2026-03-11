@@ -104,12 +104,7 @@ fn taskRunner(self: *Self, info: Interface.SubmitInfo, p_fence: ?*base.Fence, ru
 
     for (info.command_buffers.items) |command_buffer| {
         const soft_command_buffer: *SoftCommandBuffer = @alignCast(@fieldParentPtr("interface", command_buffer));
-        soft_command_buffer.execute(&execution_device) catch |err| {
-            base.errors.errorLoggerContext(err, "the software execution device");
-            if (@errorReturnTrace()) |trace| {
-                std.debug.dumpStackTrace(trace.*);
-            }
-        };
+        soft_command_buffer.execute(&execution_device);
     }
 
     if (p_fence) |fence| {

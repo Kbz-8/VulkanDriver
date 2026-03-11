@@ -35,7 +35,13 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
             .use_simd_vectors_specializations = !std.process.hasEnvVarConstant(lib.NO_SHADER_SIMD_ENV_NAME),
         }) catch |err| switch (err) {
             spv.Module.ModuleError.OutOfMemory => return VkError.OutOfHostMemory,
-            else => return VkError.ValidationFailed,
+            else => {
+                std.log.scoped(.@"SPIR-V module").err("module creation catched a '{s}'", .{@errorName(err)});
+                if (@errorReturnTrace()) |trace| {
+                    std.debug.dumpStackTrace(trace.*);
+                }
+                return VkError.ValidationFailed;
+            },
         },
         .ref_count = std.atomic.Value(usize).init(1),
     };

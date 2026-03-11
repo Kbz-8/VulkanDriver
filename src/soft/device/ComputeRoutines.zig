@@ -2,6 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 const spv = @import("spv");
+const lib = @import("../lib.zig");
 
 const PipelineState = @import("PipelineState.zig");
 
@@ -52,18 +53,35 @@ pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count
 
     var wg: std.Thread.WaitGroup = .{};
     for (0..@min(self.batch_size, group_count)) |batch_id| {
-        self.device.workers.spawnWg(&wg, runWrapper, .{
-            RunData{
-                .self = self,
-                .batch_id = batch_id,
-                .group_count = group_count,
-                .group_count_x = @as(usize, @intCast(group_count_x)),
-                .group_count_y = @as(usize, @intCast(group_count_y)),
-                .group_count_z = @as(usize, @intCast(group_count_z)),
-                .invocations_per_workgroup = invocations_per_workgroup,
-                .pipeline = pipeline,
-            },
-        });
+        if (std.process.hasEnvVarConstant(lib.SINGLE_THREAD_COMPUTE_EXECUTION_ENV_NAME)) {
+            @branchHint(.cold); // Should only be reached for debugging
+
+            runWrapper(
+                RunData{
+                    .self = self,
+                    .batch_id = batch_id,
+                    .group_count = group_count,
+                    .group_count_x = @as(usize, @intCast(group_count_x)),
+                    .group_count_y = @as(usize, @intCast(group_count_y)),
+                    .group_count_z = @as(usize, @intCast(group_count_z)),
+                    .invocations_per_workgroup = invocations_per_workgroup,
+                    .pipeline = pipeline,
+                },
+            );
+        } else {
+            self.device.workers.spawnWg(&wg, runWrapper, .{
+                RunData{
+                    .self = self,
+                    .batch_id = batch_id,
+                    .group_count = group_count,
+                    .group_count_x = @as(usize, @intCast(group_count_x)),
+                    .group_count_y = @as(usize, @intCast(group_count_y)),
+                    .group_count_z = @as(usize, @intCast(group_count_z)),
+                    .invocations_per_workgroup = invocations_per_workgroup,
+                    .pipeline = pipeline,
+                },
+            });
+        }
     }
     self.device.workers.waitAndWork(&wg);
 }
@@ -135,14 +153,17 @@ fn writeDescriptorSets(self: *Self, rt: *spv.Runtime) !void {
 
         bindings: for (set.?.descriptors[0..], 0..) |binding, binding_index| {
             switch (binding) {
-                .buffer => |buffer_data| if (buffer_data.object) |buffer| {
-                    const memory = if (buffer.interface.memory) |memory| memory else continue :bindings;
-                    const map: []u8 = @as([*]u8, @ptrCast(try memory.map(buffer_data.offset, buffer_data.size)))[0..buffer_data.size];
-                    try rt.writeDescriptorSet(
-                        map,
-                        @as(u32, @intCast(set_index)),
-                        @as(u32, @intCast(binding_index)),
-                    );
+                .buffer => |buffer_data_array| for (buffer_data_array, 0..) |buffer_data, descriptor_index| {
+                    if (buffer_data.object) |buffer| {
+                        const memory = if (buffer.interface.memory) |memory| memory else continue :bindings;
+                        const map: []u8 = @as([*]u8, @ptrCast(try memory.map(buffer_data.offset, buffer_data.size)))[0..buffer_data.size];
+                        try rt.writeDescriptorSet(
+                            map,
+                            @as(u32, @intCast(set_index)),
+                            @as(u32, @intCast(binding_index)),
+                            @as(u32, @intCast(descriptor_index)),
+                        );
+                    }
                 },
                 else => {},
             }

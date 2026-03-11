@@ -71,18 +71,24 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     allocator.destroy(self);
 }
 
-pub fn execute(self: *Self, device: *ExecutionDevice) VkError!void {
+pub fn execute(self: *Self, device: *ExecutionDevice) void {
     self.interface.submit() catch return;
     defer self.interface.finish() catch {};
 
     for (self.commands.items) |command| {
-        try command.vtable.execute(command.ptr, device);
+        command.vtable.execute(command.ptr, device) catch |err| {
+            base.errors.errorLoggerContext(err, "the software execution device");
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpStackTrace(trace.*);
+            }
+            return; // Should we return or continue ? Maybe device lost ?
+        };
     }
 }
 
 pub fn begin(interface: *Interface, _: *const vk.CommandBufferBeginInfo) VkError!void {
-    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    _ = self.command_allocator.reset(.free_all);
+    // No-op
+    _ = interface;
 }
 
 pub fn end(interface: *Interface) VkError!void {
