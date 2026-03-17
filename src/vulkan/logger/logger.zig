@@ -24,12 +24,18 @@ pub inline fn getManager() *ThreadSafeManager {
 }
 
 pub inline fn fixme(comptime format: []const u8, args: anytype) void {
+    if (lib.getLogVerboseLevel() == .None) {
+        return;
+    }
     getManager().get().disableIndent();
     defer getManager().get().enableIndent();
     nestedFixme(format, args);
 }
 
 pub inline fn nestedFixme(comptime format: []const u8, args: anytype) void {
+    if (lib.getLogVerboseLevel() == .None) {
+        return;
+    }
     std.log.scoped(.FIXME).warn("FIXME: " ++ format, args);
 }
 

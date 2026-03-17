@@ -32,7 +32,6 @@ pub fn build(b: *std.Build) !void {
 
     const zdt = b.dependency("zdt", .{}).module("zdt");
     const zigrc = b.dependency("zigrc", .{}).module("zigrc");
-    //const spv_tools = b.dependency("SPIRV_Tools", .{}).module("zigrc");
     const vulkan_headers = b.dependency("vulkan_headers", .{});
     const vulkan_utility_libraries = b.dependency("vulkan_utility_libraries", .{});
 
@@ -143,6 +142,12 @@ fn customSoft(b: *std.Build, lib: *std.Build.Step.Compile) !void {
         .@"use-llvm" = true,
     }).module("spv");
     lib.root_module.addImport("spv", spv);
+
+    const debug_allocator_option = b.option(bool, "debug-allocator", "debug device allocator") orelse false;
+
+    const options = b.addOptions();
+    options.addOption(bool, "debug_allocator", debug_allocator_option);
+    lib.root_module.addOptions("config", options);
 }
 
 fn addCTest(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, vulkan_headers: *std.Build.Dependency, impl: *const ImplementationDesc, impl_lib: *std.Build.Step.Compile) !*std.Build.Step.Compile {

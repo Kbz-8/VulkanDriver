@@ -1,5 +1,6 @@
 const std = @import("std");
 const DebugStack = @import("DebugStack.zig");
+const lib = @import("../lib.zig");
 
 const Self = @This();
 
@@ -14,6 +15,9 @@ pub const init: Self = .{
 };
 
 pub fn indent(self: *Self) void {
+    if (lib.getLogVerboseLevel() == .None) {
+        return;
+    }
     const new_indent_level, const has_overflown = @addWithOverflow(self.indent_level, 1);
     if (has_overflown == 0) {
         self.indent_level = new_indent_level;
@@ -21,6 +25,9 @@ pub fn indent(self: *Self) void {
 }
 
 pub fn unindent(self: *Self) void {
+    if (lib.getLogVerboseLevel() == .None) {
+        return;
+    }
     const new_indent_level, const has_overflown = @subWithOverflow(self.indent_level, 1);
     if (has_overflown == 0) {
         self.indent_level = new_indent_level;
