@@ -65,9 +65,7 @@ jobs:
       continue-on-error: true
 
     - name: Verify tests
-      run: |
-        sleep 50m;
-        ls cts | grep "results.csv";
+      run: ls cts | grep "results.csv";
 
     - name: Cloning CTS viewer
       run: git clone https://git.kbz8.me/kbz_8/VulkanCTSViewer.git
