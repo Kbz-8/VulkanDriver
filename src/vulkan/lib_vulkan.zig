@@ -1957,12 +1957,10 @@ pub export fn strollCmdExecuteCommands(p_cmd: vk.CommandBuffer, count: u32, p_cm
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = count;
-    _ = p_cmds;
+    for (p_cmds, 0..count) |p_sec_cmd, _| {
+        const sec_cmd = Dispatchable(CommandBuffer).fromHandleObject(p_sec_cmd) catch |err| return errorLogger(err);
+        cmd.executeCommands(sec_cmd) catch |err| return errorLogger(err);
+    }
 }
 
 pub export fn strollCmdFillBuffer(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) callconv(vk.vulkan_call_conv) void {

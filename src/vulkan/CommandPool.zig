@@ -72,9 +72,8 @@ pub fn freeCommandBuffers(self: *Self, cmds: []*Dispatchable(CommandBuffer)) VkE
     // Ugly method but it works well
     var len: usize = 0;
     for (cmds) |cmd| {
-        if (std.mem.indexOf(*Dispatchable(CommandBuffer), self.buffers.items, &[_]*Dispatchable(CommandBuffer){cmd})) |i| {
+        if (std.mem.indexOfScalar(*Dispatchable(CommandBuffer), self.buffers.items, cmd)) |i| {
             const save = self.buffers.orderedRemove(i);
-            // Append the now free command buffer at the end of the pool
             self.buffers.appendAssumeCapacity(save);
             len += 1;
         }
@@ -82,8 +81,6 @@ pub fn freeCommandBuffers(self: *Self, cmds: []*Dispatchable(CommandBuffer)) VkE
     const new_first_free_buffer_index, const has_overflown = @subWithOverflow(self.first_free_buffer_index, len);
     if (has_overflown == 0) {
         self.first_free_buffer_index = new_first_free_buffer_index;
-    } else {
-        std.log.scoped(.CommandPool).warn("Avoided an underflow. This should not happen, please fill an issue.", .{});
     }
 }
 

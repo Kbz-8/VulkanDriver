@@ -53,9 +53,8 @@ pub const SubmitInfo = struct {
     }
 
     fn deinitBlob(allocator: std.mem.Allocator, self: *std.ArrayList(SubmitInfo)) void {
-        for (self.items) |submit_info| {
-            const command_buffers = &submit_info.command_buffers;
-            @constCast(command_buffers).deinit(allocator);
+        for (self.items) |*submit_info| {
+            submit_info.command_buffers.deinit(allocator);
         }
         self.deinit(allocator);
     }

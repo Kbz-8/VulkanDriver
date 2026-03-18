@@ -50,7 +50,7 @@ pub const VkError = error{
     IncompatibleShaderBinaryExt,
     PipelineBinaryMissingKhr,
     NotEnoughSpaceKhr,
-    // ====== Internal errors
+    // == Set of internal errors for better debugging. They map to VK_UNKNOWN_ERROR
     InvalidHandleDrv,
     InvalidPipelineDrv,
     InvalidDeviceMemoryDrv,

@@ -48,6 +48,7 @@ pub const DispatchTable = struct {
     dispatch: *const fn (*Self, u32, u32, u32) VkError!void,
     dispatchIndirect: *const fn (*Self, *Buffer, vk.DeviceSize) VkError!void,
     end: *const fn (*Self) VkError!void,
+    executeCommands: *const fn (*Self, *Self) VkError!void,
     fillBuffer: *const fn (*Self, *Buffer, vk.DeviceSize, vk.DeviceSize, u32) VkError!void,
     pipelineBarrier: *const fn (*Self, vk.PipelineStageFlags, vk.PipelineStageFlags, vk.DependencyFlags, []const vk.MemoryBarrier, []const vk.BufferMemoryBarrier, []const vk.ImageMemoryBarrier) VkError!void,
     reset: *const fn (*Self, vk.CommandBufferResetFlags) VkError!void,
@@ -99,6 +100,7 @@ pub inline fn begin(self: *Self, info: *const vk.CommandBufferBeginInfo) VkError
 pub inline fn end(self: *Self) VkError!void {
     self.transitionState(.Executable, &.{.Recording}) catch return VkError.ValidationFailed;
     try self.dispatch_table.end(self);
+    self.begin_info = null;
 }
 
 pub inline fn reset(self: *Self, flags: vk.CommandBufferResetFlags) VkError!void {
@@ -133,6 +135,7 @@ pub inline fn finish(self: *Self) VkError!void {
 // Commands ====================================================================================================
 
 pub inline fn bindDescriptorSets(self: *Self, bind_point: vk.PipelineBindPoint, first_set: u32, sets: []const vk.DescriptorSet, dynamic_offsets: []const u32) VkError!void {
+    std.debug.assert(sets.len < lib.VULKAN_MAX_DESCRIPTOR_SETS);
     var inner_sets = [_]?*DescriptorSet{null} ** lib.VULKAN_MAX_DESCRIPTOR_SETS;
     for (sets, inner_sets[0..sets.len]) |set, *inner_set| {
         inner_set.* = try NonDispatchable(DescriptorSet).fromHandleObject(set);
@@ -172,6 +175,10 @@ pub inline fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, grou
 
 pub inline fn dispatchIndirect(self: *Self, buffer: *Buffer, offset: vk.DeviceSize) VkError!void {
     try self.dispatch_table.dispatchIndirect(self, buffer, offset);
+}
+
+pub inline fn executeCommands(self: *Self, commands: *Self) VkError!void {
+    try self.dispatch_table.executeCommands(self, commands);
 }
 
 pub inline fn fillBuffer(self: *Self, buffer: *Buffer, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) VkError!void {

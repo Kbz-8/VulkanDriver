@@ -49,6 +49,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .dispatch = dispatch,
         .dispatchIndirect = dispatchIndirect,
         .end = end,
+        .executeCommands = executeCommands,
         .fillBuffer = fillBuffer,
         .pipelineBarrier = pipelineBarrier,
         .reset = reset,
@@ -69,6 +70,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     allocator.destroy(self);
+    _ = self.command_allocator.reset(.free_all);
 }
 
 pub fn execute(self: *Self, device: *ExecutionDevice) void {
@@ -98,8 +100,7 @@ pub fn end(interface: *Interface) VkError!void {
 
 pub fn reset(interface: *Interface, _: vk.CommandBufferResetFlags) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    const allocator = self.command_allocator.allocator();
-    self.commands.clearAndFree(allocator);
+    self.commands.clearAndFree(self.command_allocator.allocator());
     _ = self.command_allocator.reset(.free_all);
 }
 
@@ -345,9 +346,6 @@ pub fn dispatchIndirect(interface: *Interface, buffer: *base.Buffer, offset: vk.
             const size = 3 * @sizeOf(u32);
             const memory = if (impl.buffer.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
             const map: []u32 = @as([*]u32, @ptrCast(@alignCast(try memory.map(impl.offset, size))))[0..3];
-
-            std.debug.print("{any}\n", .{map});
-
             try device.compute_routines.dispatch(map[0], map[1], map[2]);
         }
     };
@@ -357,6 +355,28 @@ pub fn dispatchIndirect(interface: *Interface, buffer: *base.Buffer, offset: vk.
     cmd.* = .{
         .buffer = @alignCast(@fieldParentPtr("interface", buffer)),
         .offset = offset,
+    };
+    self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
+}
+
+pub fn executeCommands(interface: *Interface, commands: *Interface) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        cmd: *Self,
+
+        pub fn execute(impl: *const Impl, device: *ExecutionDevice) VkError!void {
+            impl.cmd.execute(device);
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .cmd = @alignCast(@fieldParentPtr("interface", commands)),
     };
     self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
 }
@@ -397,7 +417,7 @@ pub fn pipelineBarrier(interface: *Interface, src_stage: vk.PipelineStageFlags, 
         const Impl = @This();
 
         pub fn execute(_: *const Impl, _: *ExecutionDevice) VkError!void {
-            // TODO: implement synchronization for rasterizations stages
+            // TODO: implement synchronization for rasterization stages
         }
     };
 
