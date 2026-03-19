@@ -52,24 +52,29 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
     self.* = .{
         .interface = interface,
         .stages = std.EnumMap(Stages, Shader).init(.{
-            .compute = .{
-                .module = blk: {
-                    soft_module.ref();
-                    break :blk soft_module;
-                },
-                .runtimes = blk: {
-                    const runtimes = device_allocator.alloc(spv.Runtime, soft_device.workers.getIdCount()) catch return VkError.OutOfHostMemory;
-                    errdefer device_allocator.free(runtimes);
+            .compute = blk: {
+                var shader: Shader = undefined;
+                soft_module.ref();
+                shader.module = soft_module;
 
+                const runtimes = device_allocator.alloc(spv.Runtime, soft_device.workers.getIdCount()) catch return VkError.OutOfHostMemory;
+                errdefer {
                     for (runtimes) |*runtime| {
-                        runtime.* = spv.Runtime.init(device_allocator, &soft_module.module) catch |err| {
-                            std.log.scoped(.SpvRuntimeInit).err("SPIR-V Runtime failed to initialize, {s}", .{@errorName(err)});
-                            return VkError.Unknown;
-                        };
+                        runtime.deinit(device_allocator);
                     }
-                    break :blk runtimes;
-                },
-                .entry = allocator.dupe(u8, std.mem.span(info.stage.p_name)) catch return VkError.OutOfHostMemory,
+                    device_allocator.free(runtimes);
+                }
+
+                for (runtimes) |*runtime| {
+                    runtime.* = spv.Runtime.init(device_allocator, &soft_module.module) catch |err| {
+                        std.log.scoped(.SpvRuntimeInit).err("SPIR-V Runtime failed to initialize, {s}", .{@errorName(err)});
+                        return VkError.Unknown;
+                    };
+                }
+
+                shader.runtimes = runtimes;
+                shader.entry = device_allocator.dupe(u8, std.mem.span(info.stage.p_name)) catch return VkError.OutOfHostMemory;
+                break :blk shader;
             },
         }),
     };
@@ -117,7 +122,7 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
             runtime.deinit(device_allocator);
         }
         device_allocator.free(stage.value.runtimes);
-        allocator.free(stage.value.entry);
+        device_allocator.free(stage.value.entry);
     }
     allocator.destroy(self);
 }
