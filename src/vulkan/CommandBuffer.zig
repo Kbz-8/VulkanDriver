@@ -91,7 +91,8 @@ pub inline fn begin(self: *Self, info: *const vk.CommandBufferBeginInfo) VkError
     if (!self.pool.flags.reset_command_buffer_bit) {
         self.transitionState(.Recording, &.{.Initial}) catch return VkError.ValidationFailed;
     } else {
-        self.transitionState(.Recording, &.{ .Initial, .Executable, .Invalid }) catch return VkError.ValidationFailed;
+        try self.reset(.{});
+        self.transitionState(.Recording, &.{ .Initial, .Recording, .Executable, .Invalid }) catch return VkError.ValidationFailed;
     }
     try self.dispatch_table.begin(self, info);
     self.begin_info = info.*;
