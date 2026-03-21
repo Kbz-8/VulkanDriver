@@ -14,3 +14,4 @@ scripts/__pycache__/
 *.html
 *.pyc
 *.spv
+*_table_dump.txt

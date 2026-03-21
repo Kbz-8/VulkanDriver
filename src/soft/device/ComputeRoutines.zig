@@ -29,11 +29,19 @@ device: *SoftDevice,
 state: *PipelineState,
 batch_size: usize,
 
+invocation_index: std.atomic.Value(usize),
+
+early_dump: ?u32,
+final_dump: ?u32,
+
 pub fn init(device: *SoftDevice, state: *PipelineState) Self {
     return .{
         .device = device,
         .state = state,
         .batch_size = 0,
+        .invocation_index = .init(0),
+        .early_dump = std.process.parseEnvVarInt(lib.DUMP_EARLY_RESULT_TABLE_ENV_NAME, u32, 10) catch null,
+        .final_dump = std.process.parseEnvVarInt(lib.DUMP_FINAL_RESULT_TABLE_ENV_NAME, u32, 10) catch null,
     };
 }
 
@@ -50,6 +58,8 @@ pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count
     self.batch_size = shader.runtimes.len;
 
     const invocations_per_workgroup = spv_module.local_size_x * spv_module.local_size_y * spv_module.local_size_z;
+
+    self.invocation_index.store(0, .monotonic);
 
     var wg: std.Thread.WaitGroup = .{};
     for (0..@min(self.batch_size, group_count)) |batch_id| {
@@ -128,11 +138,18 @@ inline fn run(data: RunData) !void {
         });
 
         for (0..data.invocations_per_workgroup) |i| {
+            const invocation_index = data.self.invocation_index.fetchAdd(1, .monotonic);
+
             try setupSubgroupBuiltins(data.self, rt, .{
                 @as(u32, @intCast(group_x)),
                 @as(u32, @intCast(group_y)),
                 @as(u32, @intCast(group_z)),
             }, i);
+
+            if (data.self.early_dump != null and data.self.early_dump.? == invocation_index) {
+                @branchHint(.cold);
+                try dumpResultsTable(allocator, rt, true);
+            }
 
             rt.callEntryPoint(allocator, entry) catch |err| switch (err) {
                 // Some errors can be ignored
@@ -141,9 +158,27 @@ inline fn run(data: RunData) !void {
                 => {},
                 else => return err,
             };
+
+            if (data.self.final_dump != null and data.self.final_dump.? == invocation_index) {
+                @branchHint(.cold);
+                try dumpResultsTable(allocator, rt, false);
+            }
+
             try rt.flushDescriptorSets(allocator);
         }
     }
+}
+
+inline fn dumpResultsTable(allocator: std.mem.Allocator, rt: *spv.Runtime, is_early: bool) !void {
+    @branchHint(.cold);
+    const file = try std.fs.cwd().createFile(
+        std.fmt.comptimePrint("{s}_compute_result_table_dump.txt", .{if (is_early) "early" else "final"}),
+        .{ .truncate = true },
+    );
+    defer file.close();
+    var buffer = [_]u8{0} ** 1024;
+    var writer = file.writer(buffer[0..]);
+    try rt.dumpResultsTable(allocator, &writer.interface);
 }
 
 fn writeDescriptorSets(self: *Self, rt: *spv.Runtime) !void {

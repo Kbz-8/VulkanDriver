@@ -59,8 +59,8 @@
             .lazy = true,
         },
         .SPIRV_Interpreter = .{
-            .url = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#fe47277468c694b10153282761efd3d6f90d8f6a",
-            .hash = "SPIRV_Interpreter-0.0.1-ajmpn2u-AwAPdrXzLzxHPezx3Kkb63hkecdY0oPEJ2ad",
+            .url = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#569d7fda01340f2fc195d868df7d3fc583f900bd",
+            .hash = "SPIRV_Interpreter-0.0.1-ajmpn3PFAwD7uWTP4W8ULr8mLWlV5BiqvfOIsLyYjDij",
         },
     },
 

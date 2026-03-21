@@ -299,6 +299,8 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
     run.addArg(b.fmt("{s}{s}", .{ cache_path, mustpass_path }));
     run.addArg("--output");
     run.addArg("./cts");
+    run.addArg("--timeout");
+    run.addArg("300");
     if (jobs_count) |count| {
         run.addArg(b.fmt("-j{d}", .{count}));
     }
