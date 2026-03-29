@@ -22,8 +22,8 @@
             .hash = "N-V-__8AAE42fwC1FFw26LNZ8AaSuGMdgG4vfYkfV_227sET",
         },
         .zdt = .{
-            .url = "git+https://codeberg.org/FObersteiner/zdt#e03e31e0754cd246428a2b83ff1ecfdc576e675e",
-            .hash = "zdt-0.9.1-xr0_vAbYEQAMT-Frvn6R4o3-QWdSqtr_RBrkazmcywth",
+            .url = "git+https://codeberg.org/FObersteiner/zdt?ref=v0.8.3-zig_0.15#d68b181f4401466527d7eb3d7c08bc94b43f2ca3",
+            .hash = "zdt-0.8.3-xr0_vLTNEQB917nKguiLool244ldWllKbhI7Nupl6kmP",
         },
         .cts_bin = .{
             .url = "git+https://git.kbz8.me/kbz_8/Vulkan-CTS-bin#19ce2da05f8176348064a9fc6688847e5f76a46e",
