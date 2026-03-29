@@ -10,7 +10,7 @@ It was forged for my own learning and amusement alone. Pray, do not wield it in 
 
 ## Purpose
 
-To understand Vulkan — not as a humble API mere mortals call upon, but as a labyrinthine system where one may craft a driver by hand.
+To understand Vulkan - not as a humble API mere mortals call upon, but as a labyrinthine system where one may craft a driver by hand.
 It does not seek to produce a performant or production-worthy driver. \
 *The gods are merciful, but not that merciful.*
 
@@ -22,9 +22,9 @@ zig build
 ```
 
 Then ensure thy Vulkan loader is pointed toward the ICD manifest.
-The precise ritual varies by system — consult the tomes of your operating system, or wander the web's endless mausoleum of documentation.
+The precise ritual varies by system - consult the tomes of your operating system, or wander the web's endless mausoleum of documentation.
 
-Use at your own risk. If thy machine shudders, weeps, or attempts to flee — know that it was warned.
+Use at your own risk. If thy machine shudders, weeps, or attempts to flee - know that it was warned.
 \
 \
 Thou may also conjure forth a tome of compile commands by doing thus:
