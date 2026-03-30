@@ -70,6 +70,18 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
                         std.log.scoped(.SpvRuntimeInit).err("SPIR-V Runtime failed to initialize, {s}", .{@errorName(err)});
                         return VkError.Unknown;
                     };
+                    if (info.stage.p_specialization_info) |specialization| {
+                        if (specialization.p_map_entries) |map| {
+                            const data: []const u8 = @as([*]const u8, @ptrCast(@alignCast(specialization.p_data)))[0..specialization.data_size];
+                            for (map[0..], 0..specialization.map_entry_count) |entry, _| {
+                                runtime.addSpecializationInfo(device_allocator, .{
+                                    .id = @intCast(entry.constant_id),
+                                    .offset = @intCast(entry.offset),
+                                    .size = @intCast(entry.size),
+                                }, data) catch return VkError.OutOfHostMemory;
+                            }
+                        }
+                    }
                 }
 
                 shader.runtimes = runtimes;
