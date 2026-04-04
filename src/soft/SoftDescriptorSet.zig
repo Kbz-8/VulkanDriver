@@ -22,6 +22,7 @@ const DescriptorBuffer = struct {
 const Descriptor = union(enum) {
     buffer: []DescriptorBuffer,
     image: struct {},
+    unsupported: struct {},
 };
 
 interface: Interface,
@@ -113,6 +114,9 @@ pub fn write(interface: *Interface, write_data: vk.WriteDescriptorSet) VkError!v
                 }
             }
         },
-        else => base.unsupported("descriptor type {s} for writting", .{@tagName(write_data.descriptor_type)}),
+        else => {
+            self.descriptors[write_data.dst_binding] = .{ .unsupported = .{} };
+            base.unsupported("descriptor type {s} for writting", .{@tagName(write_data.descriptor_type)});
+        },
     }
 }
