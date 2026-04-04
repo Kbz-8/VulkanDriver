@@ -9,16 +9,22 @@ const Alignment = std.mem.Alignment;
 
 const Self = @This();
 
+const FallbackAllocator = struct {
+    pub inline fn allocator(_: @This()) std.mem.Allocator {
+        return std.heap.smp_allocator;
+    }
+};
+
 callbacks: ?vk.AllocationCallbacks,
 scope: vk.SystemAllocationScope,
-fallback_allocator: std.heap.ThreadSafeAllocator,
+fallback_allocator: FallbackAllocator,
 
 pub fn init(callbacks: ?*const vk.AllocationCallbacks, scope: vk.SystemAllocationScope) Self {
     const deref_callbacks = if (callbacks) |c| c.* else null;
     return .{
         .callbacks = deref_callbacks,
         .scope = scope,
-        .fallback_allocator = .{ .child_allocator = std.heap.c_allocator },
+        .fallback_allocator = .{},
     };
 }
 

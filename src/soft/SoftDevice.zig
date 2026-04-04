@@ -35,8 +35,14 @@ pub const Interface = base.Device;
 
 const SpawnError = std.Thread.SpawnError;
 
+const DeviceAllocator = struct {
+    pub inline fn allocator(_: @This()) std.mem.Allocator {
+        return std.heap.smp_allocator;
+    }
+};
+
 interface: Interface,
-device_allocator: if (config.debug_allocator) std.heap.DebugAllocator(.{}) else std.heap.ThreadSafeAllocator,
+device_allocator: if (config.debug_allocator) std.heap.DebugAllocator(.{}) else DeviceAllocator,
 workers: std.Thread.Pool,
 blitter: Blitter,
 
@@ -77,7 +83,7 @@ pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocato
 
     self.* = .{
         .interface = interface,
-        .device_allocator = if (config.debug_allocator) .init else .{ .child_allocator = std.heap.c_allocator }, // TODO: better device allocator
+        .device_allocator = if (config.debug_allocator) .init else .{},
         .workers = undefined,
         .blitter = .init,
     };
@@ -100,9 +106,8 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void
         if (!self.device_allocator.detectLeaks()) {
             std.log.scoped(.vkDestroyDevice).debug("No device memory leaks detected", .{});
         }
+        allocator.destroy(self);
     }
-
-    allocator.destroy(self);
 }
 
 pub fn allocateMemory(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.MemoryAllocateInfo) VkError!*base.DeviceMemory {

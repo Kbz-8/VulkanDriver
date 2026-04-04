@@ -129,12 +129,12 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 
     var it = self.stages.iterator();
     while (it.next()) |stage| {
-        stage.value.module.unref(allocator);
         for (stage.value.runtimes) |*runtime| {
             runtime.deinit(device_allocator);
         }
         device_allocator.free(stage.value.runtimes);
         device_allocator.free(stage.value.entry);
+        stage.value.module.unref(allocator);
     }
     allocator.destroy(self);
 }

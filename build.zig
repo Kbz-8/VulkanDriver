@@ -19,6 +19,12 @@ const implementations = [_]ImplementationDesc{
     },
 };
 
+const RunningMode = enum {
+    normal,
+    gdb,
+    valgrind,
+};
+
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -104,11 +110,13 @@ pub fn build(b: *std.Build) !void {
         try targets.append(b.allocator, lib);
         _ = zcc.createStep(b, "cdb", try targets.toOwnedSlice(b.allocator));
 
-        (try addCTestRunner(b, &impl, c_test, false)).dependOn(&lib_install.step);
-        (try addCTestRunner(b, &impl, c_test, true)).dependOn(&lib_install.step);
+        (try addCTestRunner(b, &impl, c_test, .normal)).dependOn(&lib_install.step);
+        (try addCTestRunner(b, &impl, c_test, .gdb)).dependOn(&lib_install.step);
+        (try addCTestRunner(b, &impl, c_test, .valgrind)).dependOn(&lib_install.step);
 
-        (try addCTS(b, target, &impl, lib, false)).dependOn(&lib_install.step);
-        (try addCTS(b, target, &impl, lib, true)).dependOn(&lib_install.step);
+        (try addCTS(b, target, &impl, lib, .normal)).dependOn(&lib_install.step);
+        (try addCTS(b, target, &impl, lib, .gdb)).dependOn(&lib_install.step);
+        (try addCTS(b, target, &impl, lib, .valgrind)).dependOn(&lib_install.step);
 
         (try addMultithreadedCTS(b, target, &impl, lib)).dependOn(&lib_install.step);
     }
@@ -180,20 +188,37 @@ fn addCTest(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.built
     return exe;
 }
 
-fn addCTestRunner(b: *std.Build, impl: *const ImplementationDesc, exe: *std.Build.Step.Compile, comptime gdb: bool) !*std.Build.Step {
+fn addCTestRunner(b: *std.Build, impl: *const ImplementationDesc, exe: *std.Build.Step.Compile, comptime mode: RunningMode) !*std.Build.Step {
     const run = b.addRunArtifact(exe);
-    if (gdb) {
-        try run.argv.insert(b.allocator, 0, .{ .bytes = b.fmt("gdb", .{}) }); // Hacky
+    switch (mode) {
+        .gdb => try run.argv.insert(b.allocator, 0, .{ .bytes = b.fmt("gdb", .{}) }), // Hacky
+        .valgrind => try run.argv.insert(b.allocator, 0, .{ .bytes = b.fmt("valgrind", .{}) }),
+        else => {},
     }
     run.step.dependOn(&exe.step);
 
-    const run_step = b.step(b.fmt("test-c-{s}{s}", .{ impl.name, if (gdb) "-gdb" else "" }), b.fmt("Run libvulkan_{s} C test{s}", .{ impl.name, if (gdb) " within GDB" else "" }));
+    const run_step = b.step(
+        b.fmt("test-c-{s}{s}", .{
+            impl.name, switch (mode) {
+                .normal => "",
+                .gdb => "-gdb",
+                .valgrind => "-valgrind",
+            },
+        }),
+        b.fmt("Run libvulkan_{s} C tests{s}", .{
+            impl.name, switch (mode) {
+                .normal => "",
+                .gdb => " within GDB",
+                .valgrind => " within Valgrind",
+            },
+        }),
+    );
     run_step.dependOn(&run.step);
 
     return &run.step;
 }
 
-fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *std.Build.Step.Compile, comptime gdb: bool) !*std.Build.Step {
+fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *std.Build.Step.Compile, comptime mode: RunningMode) !*std.Build.Step {
     const cts = b.dependency("cts_bin", .{});
 
     const cts_exe_name = cts.path(b.fmt("deqp-vk-{s}", .{
@@ -212,12 +237,23 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
 
     const cts_exe_path = try cts_exe_name.getPath3(b, null).toString(b.allocator);
 
-    const run = b.addSystemCommand(&[_][]const u8{if (gdb) "gdb" else cts_exe_path});
+    const run = b.addSystemCommand(&[_][]const u8{switch (mode) {
+        .normal => cts_exe_path,
+        .gdb => "gdb",
+        .valgrind => "valgrind",
+    }});
     run.step.dependOn(&impl_lib.step);
 
-    if (gdb) {
-        run.addArg("--args");
-        run.addArg(cts_exe_path);
+    switch (mode) {
+        .gdb => {
+            run.addArg("--args");
+            run.addArg(cts_exe_path);
+        },
+        .valgrind => {
+            run.addArg("--track-origins=yes");
+            run.addArg(cts_exe_path);
+        },
+        else => {},
     }
 
     run.addArg(b.fmt("--deqp-archive-dir={s}", .{try cts.path("").getPath3(b, null).toString(b.allocator)}));
@@ -237,7 +273,22 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
         run.addArg(b.fmt("--deqp-caselist-file={s}", .{mustpass}));
     }
 
-    const run_step = b.step(b.fmt("raw-cts-{s}{s}", .{ impl.name, if (gdb) "-gdb" else "" }), b.fmt("Run Vulkan conformance tests for libvulkan_{s}{s}", .{ impl.name, if (gdb) " within GDB" else "" }));
+    const run_step = b.step(
+        b.fmt("raw-cts-{s}{s}", .{
+            impl.name, switch (mode) {
+                .normal => "",
+                .gdb => "-gdb",
+                .valgrind => "-valgrind",
+            },
+        }),
+        b.fmt("Run Vulkan conformance tests for libvulkan_{s}{s}", .{
+            impl.name, switch (mode) {
+                .normal => "",
+                .gdb => " within GDB",
+                .valgrind => " within Valgrind",
+            },
+        }),
+    );
     run_step.dependOn(&run.step);
 
     return &run.step;
