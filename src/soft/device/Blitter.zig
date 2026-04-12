@@ -4,6 +4,8 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 
+const VkError = base.VkError;
+
 pub const SoftImage = @import("../SoftImage.zig");
 pub const SoftImageView = @import("../SoftImageView.zig");
 
@@ -15,8 +17,8 @@ pub const init: Self = .{
     .blit_mutex = .{},
 };
 
-pub fn clear(self: *Self, pixel: vk.ClearValue, format: vk.Format, dest: *SoftImage, view_format: vk.Format, range: vk.ImageSubresourceRange, area: ?vk.Rect2D) void {
-    const dst_format = base.Image.formatFromAspect(view_format, range.aspect_mask);
+pub fn clear(self: *Self, pixel: vk.ClearValue, format: vk.Format, dest: *SoftImage, view_format: vk.Format, range: vk.ImageSubresourceRange, area: ?vk.Rect2D) VkError!void {
+    const dst_format = base.format.fromAspect(view_format, range.aspect_mask);
     if (dst_format == .undefined) {
         return;
     }
@@ -40,13 +42,13 @@ pub fn clear(self: *Self, pixel: vk.ClearValue, format: vk.Format, dest: *SoftIm
         }
     }
 
-    if (self.fastClear(clamped_pixel, format, dest, dst_format, range, area)) {
+    if (try self.fastClear(clamped_pixel, format, dest, dst_format, range, area)) {
         return;
     }
     base.logger.fixme("implement slow clear", .{});
 }
 
-fn fastClear(self: *Self, clear_value: vk.ClearValue, clear_format: vk.Format, dest: *SoftImage, view_format: vk.Format, range: vk.ImageSubresourceRange, render_area: ?vk.Rect2D) bool {
+fn fastClear(self: *Self, clear_value: vk.ClearValue, clear_format: vk.Format, dest: *SoftImage, view_format: vk.Format, range: vk.ImageSubresourceRange, render_area: ?vk.Rect2D) VkError!bool {
     _ = self;
     _ = render_area;
     _ = range;
@@ -90,7 +92,7 @@ fn fastClear(self: *Self, clear_value: vk.ClearValue, clear_format: vk.Format, d
     }
 
     if (dest.interface.memory) |memory| {
-        const image_size = dest.interface.getTotalSize();
+        const image_size = try dest.interface.getTotalSize();
         const memory_map = memory.map(dest.interface.memory_offset, image_size) catch return false;
         defer memory.unmap();
 

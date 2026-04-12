@@ -624,7 +624,7 @@ pub export fn strollAllocateCommandBuffers(p_device: vk.Device, info: *const vk.
 }
 
 pub export fn strollAllocateDescriptorSets(p_device: vk.Device, info: *const vk.DescriptorSetAllocateInfo, p_sets: [*]vk.DescriptorSet) callconv(vk.vulkan_call_conv) vk.Result {
-    entryPointBeginLogTrace(.vkAllocateCommandBuffers);
+    entryPointBeginLogTrace(.vkAllocateDescriptorSets);
     defer entryPointEndLogTrace();
 
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
@@ -1385,7 +1385,7 @@ pub export fn strollGetImageMemoryRequirements(p_device: vk.Device, p_image: vk.
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
 
     const image = NonDispatchable(Image).fromHandleObject(p_image) catch |err| return errorLogger(err);
-    image.getMemoryRequirements(requirements);
+    image.getMemoryRequirements(requirements) catch |err| return errorLogger(err);
 }
 
 pub export fn strollGetImageSparseMemoryRequirements(p_device: vk.Device, p_image: vk.Image, requirements: *vk.SparseImageMemoryRequirements) callconv(vk.vulkan_call_conv) void {

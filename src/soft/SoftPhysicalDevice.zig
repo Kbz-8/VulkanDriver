@@ -515,7 +515,7 @@ pub fn getFormatProperties(interface: *Interface, format: vk.Format) VkError!vk.
         else => {},
     }
 
-    if (base.Image.formatSupportsColorAttachemendBlend(format)) {
+    if (base.format.supportsColorAttachemendBlend(format)) {
         properties.optimal_tiling_features.color_attachment_blend_bit = true;
     }
 

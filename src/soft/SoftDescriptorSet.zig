@@ -5,8 +5,12 @@ const base = @import("base");
 const VkError = base.VkError;
 const Device = base.Device;
 const Buffer = base.Buffer;
+const ImageView = base.ImageView;
 
 const SoftBuffer = @import("SoftBuffer.zig");
+const SoftImage = @import("SoftImage.zig");
+const SoftImageView = @import("SoftImageView.zig");
+const SoftSampler = @import("SoftSampler.zig");
 
 const NonDispatchable = base.NonDispatchable;
 
@@ -19,9 +23,19 @@ const DescriptorBuffer = struct {
     size: vk.DeviceSize,
 };
 
+const DescriptorTexture = struct {
+    sampler: ?*SoftSampler,
+    view: ?*SoftImageView,
+};
+
+const DescriptorImage = struct {
+    object: ?*SoftImage,
+};
+
 const Descriptor = union(enum) {
     buffer: []DescriptorBuffer,
-    image: struct {},
+    texture: []DescriptorTexture,
+    image: []DescriptorImage,
     unsupported: struct {},
 };
 
@@ -49,6 +63,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, layout: *base.
         for (layout.bindings) |binding| {
             const struct_size: usize = switch (binding.descriptor_type) {
                 .storage_buffer, .storage_buffer_dynamic => @sizeOf(DescriptorBuffer),
+                .storage_image, .input_attachment => @sizeOf(DescriptorImage),
                 else => 0,
             };
 
@@ -68,6 +83,9 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, layout: *base.
         switch (binding.descriptor_type) {
             .storage_buffer, .storage_buffer_dynamic => descriptor.* = .{
                 .buffer = local_allocator.alloc(DescriptorBuffer, binding.array_size) catch return VkError.OutOfHostMemory,
+            },
+            .storage_image, .input_attachment => descriptor.* = .{
+                .image = local_allocator.alloc(DescriptorImage, binding.array_size) catch return VkError.OutOfHostMemory,
             },
             else => {},
         }
@@ -111,6 +129,16 @@ pub fn write(interface: *Interface, write_data: vk.WriteDescriptorSet) VkError!v
                     if (desc.size == vk.WHOLE_SIZE) {
                         desc.size = if (buffer.memory) |memory| memory.size - desc.offset else return VkError.InvalidDeviceMemoryDrv;
                     }
+                }
+            }
+        },
+        .storage_image, .input_attachment => {
+            for (write_data.p_image_info, 0..write_data.descriptor_count) |image_info, i| {
+                const desc = &self.descriptors[write_data.dst_binding].image[i];
+                desc.* = .{ .object = null };
+                if (image_info.image_view != .null_handle) {
+                    const image_view = try NonDispatchable(ImageView).fromHandleObject(image_info.image_view);
+                    desc.object = @as(*SoftImage, @alignCast(@fieldParentPtr("interface", image_view.image)));
                 }
             }
         },

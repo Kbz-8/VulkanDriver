@@ -175,7 +175,7 @@ pub fn clearColorImage(interface: *Interface, image: *base.Image, layout: vk.Ima
         range: vk.ImageSubresourceRange,
 
         pub fn execute(impl: *const Impl, _: *ExecutionDevice) VkError!void {
-            impl.image.clearRange(impl.clear_color, impl.range);
+            try impl.image.clearRange(impl.clear_color, impl.range);
         }
     };
 
