@@ -246,7 +246,7 @@ pub fn copyBufferToImage(interface: *Interface, src: *base.Buffer, dst: *base.Im
     self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
 }
 
-pub fn copyImage(interface: *Interface, src: *base.Image, src_layout: vk.ImageLayout, dst: *base.Image, dst_layout: vk.ImageLayout, regions: []const vk.ImageCopy) VkError!void {
+pub fn copyImage(interface: *Interface, src: *base.Image, _: vk.ImageLayout, dst: *base.Image, _: vk.ImageLayout, regions: []const vk.ImageCopy) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     const allocator = self.command_allocator.allocator();
 
@@ -254,13 +254,13 @@ pub fn copyImage(interface: *Interface, src: *base.Image, src_layout: vk.ImageLa
         const Impl = @This();
 
         src: *const SoftImage,
-        src_layout: vk.ImageLayout,
         dst: *SoftImage,
-        dst_layout: vk.ImageLayout,
         regions: []const vk.ImageCopy,
 
         pub fn execute(impl: *const Impl, _: *ExecutionDevice) VkError!void {
-            try impl.src.copyImage(impl.src_layout, impl.dst, impl.dst_layout, impl.regions);
+            for (impl.regions[0..]) |region| {
+                try impl.src.copyToImage(impl.dst, region);
+            }
         }
     };
 
@@ -268,9 +268,7 @@ pub fn copyImage(interface: *Interface, src: *base.Image, src_layout: vk.ImageLa
     errdefer allocator.destroy(cmd);
     cmd.* = .{
         .src = @alignCast(@fieldParentPtr("interface", src)),
-        .src_layout = src_layout,
         .dst = @alignCast(@fieldParentPtr("interface", dst)),
-        .dst_layout = dst_layout,
         .regions = allocator.dupe(vk.ImageCopy, regions) catch return VkError.OutOfHostMemory, // Will be freed on cmdbuf reset or destroy
     };
     self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;

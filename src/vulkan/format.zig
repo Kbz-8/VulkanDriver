@@ -86,3 +86,7 @@ pub inline fn sliceMemSize(format: vk.Format, width: usize, height: usize) usize
     // To be updated for compressed formats handling
     return pitchMemSize(format, width) * height;
 }
+
+pub inline fn isDepthAndStencil(format: vk.Format) bool {
+    return lib.vku.vkuFormatIsDepthAndStencil(@intCast(@intFromEnum(format)));
+}

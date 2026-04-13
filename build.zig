@@ -119,6 +119,20 @@ pub fn build(b: *std.Build) !void {
         (try addCTS(b, target, &impl, lib, .valgrind)).dependOn(&lib_install.step);
 
         (try addMultithreadedCTS(b, target, &impl, lib)).dependOn(&lib_install.step);
+
+        const impl_autodoc_test = b.addObject(.{
+            .name = "lib",
+            .root_module = lib_mod,
+        });
+
+        const impl_install_docs = b.addInstallDirectory(.{
+            .source_dir = impl_autodoc_test.getEmittedDocs(),
+            .install_dir = .prefix,
+            .install_subdir = b.fmt("docs-{s}", .{impl.name}),
+        });
+
+        const impl_docs_step = b.step(b.fmt("docs-{s}", .{impl.name}), b.fmt("Build and install the documentation for lib_vulkan_{s}", .{impl.name}));
+        impl_docs_step.dependOn(&impl_install_docs.step);
     }
 
     const autodoc_test = b.addObject(.{

@@ -59,13 +59,149 @@ pub fn clearRange(self: *Self, color: vk.ClearColorValue, range: vk.ImageSubreso
     try self.clear(.{ .color = color }, clear_format, self.interface.format, range, null);
 }
 
-pub fn copyImage(self: *const Self, self_layout: vk.ImageLayout, dst: *Self, dst_layout: vk.ImageLayout, regions: []const vk.ImageCopy) VkError!void {
-    _ = self;
-    _ = self_layout;
-    _ = dst;
-    _ = dst_layout;
-    _ = regions;
-    std.log.scoped(.commandExecutor).warn("FIXME: implement image to image copy", .{});
+/// Based on SwiftShader vk::Image::copyTo
+pub fn copyToImage(self: *const Self, dst: *Self, region: vk.ImageCopy) VkError!void {
+    const combined_depth_stencil_aspect: vk.ImageAspectFlags = .{
+        .depth_bit = true,
+        .stencil_bit = true,
+    };
+
+    if (region.src_subresource.aspect_mask == combined_depth_stencil_aspect and
+        region.dst_subresource.aspect_mask == combined_depth_stencil_aspect)
+    {
+        var single_aspect_region = region;
+
+        single_aspect_region.src_subresource.aspect_mask = .{ .depth_bit = true };
+        single_aspect_region.dst_subresource.aspect_mask = .{ .depth_bit = true };
+        try self.copyToImageSingleAspect(dst, single_aspect_region);
+
+        single_aspect_region.src_subresource.aspect_mask = .{ .stencil_bit = true };
+        single_aspect_region.dst_subresource.aspect_mask = .{ .stencil_bit = true };
+        try self.copyToImageSingleAspect(dst, single_aspect_region);
+    } else {
+        try self.copyToImageSingleAspect(dst, region);
+    }
+}
+
+/// Based on SwiftShader vk::Image::copySingleAspectTo
+pub fn copyToImageSingleAspect(self: *const Self, dst: *Self, region: vk.ImageCopy) VkError!void {
+    if (!(region.src_subresource.aspect_mask == vk.ImageAspectFlags{ .color_bit = true } or
+        region.src_subresource.aspect_mask == vk.ImageAspectFlags{ .depth_bit = true } or
+        region.src_subresource.aspect_mask == vk.ImageAspectFlags{ .stencil_bit = true }))
+    {
+        base.unsupported("src subresource aspectMask {f}", .{region.src_subresource.aspect_mask});
+        return VkError.ValidationFailed;
+    }
+
+    if (!(region.dst_subresource.aspect_mask == vk.ImageAspectFlags{ .color_bit = true } or
+        region.dst_subresource.aspect_mask == vk.ImageAspectFlags{ .depth_bit = true } or
+        region.dst_subresource.aspect_mask == vk.ImageAspectFlags{ .stencil_bit = true }))
+    {
+        base.unsupported("dst subresource aspectMask {f}", .{region.dst_subresource.aspect_mask});
+        return VkError.ValidationFailed;
+    }
+
+    const src_format = self.interface.formatFromAspect(region.src_subresource.aspect_mask);
+    const bytes_per_block = base.format.texelSize(src_format);
+
+    const src_extent = self.getMipLevelExtent(region.src_subresource.mip_level);
+    const dst_extent = dst.getMipLevelExtent(region.src_subresource.mip_level);
+
+    const one_is_3D = (self.interface.image_type == .@"3d") != (dst.interface.image_type == .@"3d");
+    const both_are_3D = (self.interface.image_type == .@"3d") and (dst.interface.image_type == .@"3d");
+
+    const src_row_pitch_bytes = self.getRowPitchMemSizeForMipLevel(region.src_subresource.aspect_mask, region.src_subresource.mip_level);
+    const src_depth_pitch_bytes = self.getSliceMemSizeForMipLevel(region.src_subresource.aspect_mask, region.src_subresource.mip_level);
+    const dst_row_pitch_bytes = dst.getRowPitchMemSizeForMipLevel(region.dst_subresource.aspect_mask, region.dst_subresource.mip_level);
+    const dst_depth_pitch_bytes = dst.getSliceMemSizeForMipLevel(region.dst_subresource.aspect_mask, region.dst_subresource.mip_level);
+
+    const src_array_pitch = self.getLayerSize(region.src_subresource.aspect_mask);
+    const dst_array_pitch = dst.getLayerSize(region.dst_subresource.aspect_mask);
+
+    const src_layer_pitch = if (self.interface.image_type == .@"3d") src_depth_pitch_bytes else src_array_pitch;
+    const dst_layer_pitch = if (dst.interface.image_type == .@"3d") dst_depth_pitch_bytes else dst_array_pitch;
+
+    // If one image is 3D, extent.depth must match the layer count. If both images are 2D,
+    // depth is 1 but the source and destination subresource layer count must match.
+    const layer_count = if (one_is_3D) region.extent.depth else region.src_subresource.layer_count;
+
+    // Copies between 2D and 3D images are treated as layers, so only use depth as the slice count when both images are 3D.
+    const slice_count = if (both_are_3D) region.extent.depth else self.interface.samples.toInt();
+
+    const is_single_slice = (slice_count == 1);
+    const is_single_row = (region.extent.height == 1) and is_single_slice;
+
+    // In order to copy multiple rows using a single memcpy call, we
+    // have to make sure that we need to copy the entire row and that
+    // both source and destination rows have the same size in bytes
+    const is_entire_row = (region.extent.width == src_extent.width) and (region.extent.width == dst_extent.width);
+
+    // In order to copy multiple slices using a single memcpy call, we
+    // have to make sure that we need to copy the entire slice and that
+    // both source and destination slices have the same size in bytes
+    const is_entire_slice = is_entire_row and
+        (region.extent.height == src_extent.height) and
+        (region.extent.height == dst_extent.height) and
+        (src_depth_pitch_bytes == dst_depth_pitch_bytes);
+
+    const src_texel_offset = try self.getTexelMemoryOffset(region.src_offset, .{
+        .aspect_mask = region.src_subresource.aspect_mask,
+        .mip_level = region.src_subresource.mip_level,
+        .array_layer = region.src_subresource.base_array_layer,
+    });
+    const src_size = try self.interface.getTotalSizeForAspect(region.src_subresource.aspect_mask) - src_texel_offset;
+    const src_memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
+    var src_map: []u8 = @as([*]u8, @ptrCast(try src_memory.map(self.interface.memory_offset + src_texel_offset, src_size)))[0..src_size];
+
+    const dst_texel_offset = try self.getTexelMemoryOffset(region.dst_offset, .{
+        .aspect_mask = region.dst_subresource.aspect_mask,
+        .mip_level = region.dst_subresource.mip_level,
+        .array_layer = region.dst_subresource.base_array_layer,
+    });
+    const dst_size = try dst.interface.getTotalSizeForAspect(region.dst_subresource.aspect_mask) - dst_texel_offset;
+    const dst_memory = if (dst.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
+    var dst_map: []u8 = @as([*]u8, @ptrCast(try dst_memory.map(self.interface.memory_offset + dst_texel_offset, dst_size)))[0..dst_size];
+
+    for (0..layer_count) |_| {
+        if (is_single_row) {
+            const copy_size = region.extent.width * bytes_per_block;
+            @memcpy(dst_map[0..copy_size], src_map[0..copy_size]);
+        } else if (is_entire_row and is_single_slice) {
+            const copy_size = region.extent.height * src_row_pitch_bytes;
+            @memcpy(dst_map[0..copy_size], src_map[0..copy_size]);
+        } else if (is_entire_slice) {
+            const copy_size = slice_count * src_depth_pitch_bytes;
+            @memcpy(dst_map[0..copy_size], src_map[0..copy_size]);
+        } else if (is_entire_row) {
+            const slice_size = region.extent.height * src_row_pitch_bytes;
+            var src_slice_memory = src_map[0..];
+            var dst_slice_memory = dst_map[0..];
+
+            for (0..slice_count) |_| {
+                @memcpy(dst_slice_memory[0..slice_size], src_slice_memory[0..slice_size]);
+                src_slice_memory = src_slice_memory[src_depth_pitch_bytes..];
+                dst_slice_memory = dst_slice_memory[dst_depth_pitch_bytes..];
+            }
+        } else {
+            const row_size = region.extent.width * bytes_per_block;
+            var src_slice_memory = src_map[0..];
+            var dst_slice_memory = dst_map[0..];
+
+            for (0..slice_count) |_| {
+                var src_row_memory = src_slice_memory[0..];
+                var dst_row_memory = dst_slice_memory[0..];
+
+                for (0..region.extent.height) |_| {
+                    @memcpy(dst_row_memory[0..row_size], src_row_memory[0..row_size]);
+                    src_row_memory = src_row_memory[src_row_pitch_bytes..];
+                    dst_row_memory = dst_row_memory[dst_row_pitch_bytes..];
+                }
+            }
+        }
+
+        src_map = src_map[src_layer_pitch..];
+        dst_map = dst_map[dst_layer_pitch..];
+    }
 }
 
 pub fn copyToBuffer(self: *const Self, dst: *SoftBuffer, region: vk.BufferImageCopy) VkError!void {
@@ -135,11 +271,7 @@ pub fn copy(
         .mip_level = image_subresource.mip_level,
         .array_layer = image_subresource.base_array_layer,
     });
-    const image_size = self.getLayerSize(image_subresource.aspect_mask) - self.getTexelMemoryOffsetInSubresource(image_offset, .{
-        .aspect_mask = image_subresource.aspect_mask,
-        .mip_level = image_subresource.mip_level,
-        .array_layer = image_subresource.base_array_layer,
-    });
+    const image_size = try self.interface.getTotalSizeForAspect(image_subresource.aspect_mask) - image_texel_offset;
     const image_memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
     const image_map: []u8 = @as([*]u8, @ptrCast(try image_memory.map(self.interface.memory_offset + image_texel_offset, image_size)))[0..image_size];
 
