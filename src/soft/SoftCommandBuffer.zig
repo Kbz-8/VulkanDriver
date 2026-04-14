@@ -41,6 +41,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .begin = begin,
         .bindDescriptorSets = bindDescriptorSets,
         .bindPipeline = bindPipeline,
+        .blitImage = blitImage,
         .clearColorImage = clearColorImage,
         .copyBuffer = copyBuffer,
         .copyBufferToImage = copyBufferToImage,
@@ -162,7 +163,37 @@ pub fn bindPipeline(interface: *Interface, bind_point: vk.PipelineBindPoint, pip
     self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
 }
 
-pub fn clearColorImage(interface: *Interface, image: *base.Image, layout: vk.ImageLayout, color: *const vk.ClearColorValue, range: vk.ImageSubresourceRange) VkError!void {
+pub fn blitImage(interface: *Interface, src: *base.Image, _: vk.ImageLayout, dst: *base.Image, _: vk.ImageLayout, regions: []const vk.ImageBlit, filter: vk.Filter) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        src: *const SoftImage,
+        dst: *SoftImage,
+        regions: []const vk.ImageBlit,
+        filter: vk.Filter,
+
+        pub fn execute(impl: *const Impl, device: *ExecutionDevice) VkError!void {
+            for (impl.regions[0..]) |region| {
+                try device.blitter.blitRegion(impl.src, impl.dst, region);
+            }
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .src = @alignCast(@fieldParentPtr("interface", src)),
+        .dst = @alignCast(@fieldParentPtr("interface", dst)),
+        .regions = allocator.dupe(vk.ImageBlit, regions) catch return VkError.OutOfHostMemory, // Will be freed on cmdbuf reset or destroy
+        .filter = filter,
+    };
+    self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
+}
+
+pub fn clearColorImage(interface: *Interface, image: *base.Image, _: vk.ImageLayout, color: *const vk.ClearColorValue, range: vk.ImageSubresourceRange) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     const allocator = self.command_allocator.allocator();
 
@@ -170,12 +201,12 @@ pub fn clearColorImage(interface: *Interface, image: *base.Image, layout: vk.Ima
         const Impl = @This();
 
         image: *SoftImage,
-        layout: vk.ImageLayout,
         clear_color: vk.ClearColorValue,
         range: vk.ImageSubresourceRange,
 
-        pub fn execute(impl: *const Impl, _: *ExecutionDevice) VkError!void {
-            try impl.image.clearRange(impl.clear_color, impl.range);
+        pub fn execute(impl: *const Impl, device: *ExecutionDevice) VkError!void {
+            const clear_format = try impl.image.getClearFormat();
+            try device.blitter.clear(.{ .color = impl.clear_color }, clear_format, impl.image, impl.image.interface.format, impl.range, null);
         }
     };
 
@@ -183,7 +214,6 @@ pub fn clearColorImage(interface: *Interface, image: *base.Image, layout: vk.Ima
     errdefer allocator.destroy(cmd);
     cmd.* = .{
         .image = @alignCast(@fieldParentPtr("interface", image)),
-        .layout = layout,
         .clear_color = color.*,
         .range = range,
     };

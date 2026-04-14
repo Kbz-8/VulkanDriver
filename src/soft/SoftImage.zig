@@ -42,21 +42,13 @@ pub fn getMemoryRequirements(_: *Interface, requirements: *vk.MemoryRequirements
     requirements.alignment = lib.MEMORY_REQUIREMENTS_IMAGE_ALIGNMENT;
 }
 
-inline fn clear(self: *Self, pixel: vk.ClearValue, format: vk.Format, view_format: vk.Format, range: vk.ImageSubresourceRange, area: ?vk.Rect2D) VkError!void {
-    const soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", self.interface.owner));
-    try soft_device.blitter.clear(pixel, format, self, view_format, range, area);
-}
-
-pub fn clearRange(self: *Self, color: vk.ClearColorValue, range: vk.ImageSubresourceRange) VkError!void {
-    std.debug.assert(range.aspect_mask == vk.ImageAspectFlags{ .color_bit = true });
-
-    const clear_format: vk.Format = if (base.vku.vkuFormatIsSINT(@intCast(@intFromEnum(self.interface.format))))
+pub fn getClearFormat(self: *Self) VkError!vk.Format {
+    return if (base.vku.vkuFormatIsSINT(@intCast(@intFromEnum(self.interface.format))))
         .r32g32b32a32_sint
     else if (base.vku.vkuFormatIsUINT(@intCast(@intFromEnum(self.interface.format))))
         .r32g32b32a32_uint
     else
         .r32g32b32a32_sfloat;
-    try self.clear(.{ .color = color }, clear_format, self.interface.format, range, null);
 }
 
 /// Based on SwiftShader vk::Image::copyTo
@@ -311,13 +303,13 @@ pub fn copy(
     }
 }
 
-fn getTexelMemoryOffsetInSubresource(self: *const Self, offset: vk.Offset3D, subresource: vk.ImageSubresource) usize {
+pub fn getTexelMemoryOffsetInSubresource(self: *const Self, offset: vk.Offset3D, subresource: vk.ImageSubresource) usize {
     return @as(usize, @intCast(offset.z)) * self.getSliceMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level) +
         @as(usize, @intCast(offset.y)) * self.getRowPitchMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level) +
         @as(usize, @intCast(offset.x)) * base.format.texelSize(base.format.fromAspect(self.interface.format, subresource.aspect_mask));
 }
 
-fn getTexelMemoryOffset(self: *const Self, offset: vk.Offset3D, subresource: vk.ImageSubresource) VkError!usize {
+pub fn getTexelMemoryOffset(self: *const Self, offset: vk.Offset3D, subresource: vk.ImageSubresource) VkError!usize {
     return self.getTexelMemoryOffsetInSubresource(offset, subresource) + try self.getSubresourceOffset(subresource.aspect_mask, subresource.mip_level, subresource.array_layer);
 }
 
@@ -372,7 +364,7 @@ fn getTotalSizeForAspect(interface: *const Interface, aspect_mask: vk.ImageAspec
     return size * self.interface.array_layers;
 }
 
-fn getLayerSize(self: *const Self, aspect_mask: vk.ImageAspectFlags) usize {
+pub fn getLayerSize(self: *const Self, aspect_mask: vk.ImageAspectFlags) usize {
     var size: usize = 0;
     for (0..self.interface.mip_levels) |mip_level| {
         size += self.getMultiSampledLevelSize(aspect_mask, @intCast(mip_level));
@@ -380,15 +372,15 @@ fn getLayerSize(self: *const Self, aspect_mask: vk.ImageAspectFlags) usize {
     return size;
 }
 
-inline fn getMultiSampledLevelSize(self: *const Self, aspect_mask: vk.ImageAspectFlags, mip_level: u32) usize {
+pub inline fn getMultiSampledLevelSize(self: *const Self, aspect_mask: vk.ImageAspectFlags, mip_level: u32) usize {
     return self.getMipLevelSize(aspect_mask, mip_level) * self.interface.samples.toInt();
 }
 
-inline fn getMipLevelSize(self: *const Self, aspect_mask: vk.ImageAspectFlags, mip_level: u32) usize {
+pub inline fn getMipLevelSize(self: *const Self, aspect_mask: vk.ImageAspectFlags, mip_level: u32) usize {
     return self.getSliceMemSizeForMipLevel(aspect_mask, mip_level) * self.getMipLevelExtent(mip_level).depth;
 }
 
-fn getMipLevelExtent(self: *const Self, mip_level: u32) vk.Extent3D {
+pub fn getMipLevelExtent(self: *const Self, mip_level: u32) vk.Extent3D {
     var extent: vk.Extent3D = .{
         .width = self.interface.extent.width >> @intCast(mip_level),
         .height = self.interface.extent.height >> @intCast(mip_level),
@@ -402,13 +394,13 @@ fn getMipLevelExtent(self: *const Self, mip_level: u32) vk.Extent3D {
     return extent;
 }
 
-fn getSliceMemSizeForMipLevel(self: *const Self, aspect_mask: vk.ImageAspectFlags, mip_level: u32) usize {
+pub fn getSliceMemSizeForMipLevel(self: *const Self, aspect_mask: vk.ImageAspectFlags, mip_level: u32) usize {
     const mip_extent = self.getMipLevelExtent(mip_level);
     const format = self.interface.formatFromAspect(aspect_mask);
     return base.format.sliceMemSize(format, mip_extent.width, mip_extent.height);
 }
 
-fn getRowPitchMemSizeForMipLevel(self: *const Self, aspect_mask: vk.ImageAspectFlags, mip_level: u32) usize {
+pub fn getRowPitchMemSizeForMipLevel(self: *const Self, aspect_mask: vk.ImageAspectFlags, mip_level: u32) usize {
     const mip_extent = self.getMipLevelExtent(mip_level);
     const format = self.interface.formatFromAspect(aspect_mask);
     return base.format.pitchMemSize(format, mip_extent.width);

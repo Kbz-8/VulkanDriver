@@ -1735,16 +1735,7 @@ pub export fn strollCmdBlitImage(
     const src = NonDispatchable(Image).fromHandleObject(p_src_image) catch |err| return errorLogger(err);
     const dst = NonDispatchable(Image).fromHandleObject(p_dst_image) catch |err| return errorLogger(err);
 
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = src;
-    _ = src_layout;
-    _ = dst;
-    _ = dst_layout;
-    _ = count;
-    _ = regions;
-    _ = filter;
+    cmd.blitImage(src, src_layout, dst, dst_layout, regions[0..count], filter) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdClearAttachments(p_cmd: vk.CommandBuffer, attachment_count: u32, attachments: [*]const vk.ClearAttachment, rect_count: u32, rects: [*]const vk.ClearRect) callconv(vk.vulkan_call_conv) void {

@@ -11,11 +11,7 @@ pub const SoftImageView = @import("../SoftImageView.zig");
 
 const Self = @This();
 
-blit_mutex: std.Thread.Mutex,
-
-pub const init: Self = .{
-    .blit_mutex = .{},
-};
+pub const init: Self = .{};
 
 pub fn clear(self: *Self, pixel: vk.ClearValue, format: vk.Format, dest: *SoftImage, view_format: vk.Format, range: vk.ImageSubresourceRange, area: ?vk.Rect2D) VkError!void {
     const dst_format = base.format.fromAspect(view_format, range.aspect_mask);
@@ -103,4 +99,10 @@ fn fastClear(self: *Self, clear_value: vk.ClearValue, clear_format: vk.Format, d
         return true;
     }
     return false;
+}
+
+pub fn blitRegion(_: *Self, src: *const SoftImage, dst: *SoftImage, region: vk.ImageBlit) VkError!void {
+    _ = src;
+    _ = dst;
+    _ = region;
 }

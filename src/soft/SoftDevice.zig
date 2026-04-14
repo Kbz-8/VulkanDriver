@@ -5,7 +5,6 @@ const builtin = @import("builtin");
 const config = @import("config");
 
 const SoftQueue = @import("SoftQueue.zig");
-const Blitter = @import("device/Blitter.zig");
 
 pub const SoftBinarySemaphore = @import("SoftBinarySemaphore.zig");
 pub const SoftBuffer = @import("SoftBuffer.zig");
@@ -44,7 +43,6 @@ const DeviceAllocator = struct {
 interface: Interface,
 device_allocator: if (config.debug_allocator) std.heap.DebugAllocator(.{}) else DeviceAllocator,
 workers: std.Thread.Pool,
-blitter: Blitter,
 
 pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
@@ -85,7 +83,6 @@ pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocato
         .interface = interface,
         .device_allocator = if (config.debug_allocator) .init else .{},
         .workers = undefined,
-        .blitter = .init,
     };
 
     self.workers.init(.{ .allocator = self.device_allocator.allocator() }) catch |err| return switch (err) {
