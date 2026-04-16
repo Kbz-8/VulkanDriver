@@ -91,7 +91,7 @@ pub const LogVerboseLevel = enum {
     TooMuch,
 };
 
-pub inline fn getLogVerboseLevel() LogVerboseLevel {
+pub fn getLogVerboseLevel() LogVerboseLevel {
     const allocator = std.heap.c_allocator;
     const level = std.process.getEnvVarOwned(allocator, DRIVER_LOGS_ENV_NAME) catch return .None;
     defer allocator.free(level);

@@ -101,8 +101,125 @@ fn fastClear(self: *Self, clear_value: vk.ClearValue, clear_format: vk.Format, d
     return false;
 }
 
-pub fn blitRegion(_: *Self, src: *const SoftImage, dst: *SoftImage, region: vk.ImageBlit) VkError!void {
-    _ = src;
-    _ = dst;
-    _ = region;
+pub fn blitRegion(_: *Self, src: *const SoftImage, dst: *SoftImage, region: vk.ImageBlit, filter: vk.Filter) VkError!void {
+    var dst_offset_0 = region.dst_offsets[0];
+    var dst_offset_1 = region.dst_offsets[1];
+    var src_offset_0 = region.src_offsets[0];
+    var src_offset_1 = region.src_offsets[1];
+
+    if (dst_offset_0.x > dst_offset_1.x) {
+        std.mem.swap(i32, &src_offset_0.x, &src_offset_1.x);
+        std.mem.swap(i32, &dst_offset_0.x, &dst_offset_1.x);
+    }
+
+    if (dst_offset_0.y > dst_offset_1.y) {
+        std.mem.swap(i32, &src_offset_0.y, &src_offset_1.y);
+        std.mem.swap(i32, &dst_offset_0.y, &dst_offset_1.y);
+    }
+
+    if (dst_offset_0.z > dst_offset_1.z) {
+        std.mem.swap(i32, &src_offset_0.z, &src_offset_1.z);
+        std.mem.swap(i32, &dst_offset_0.z, &dst_offset_1.z);
+    }
+
+    const src_extent = src.getMipLevelExtent(region.src_subresource.mip_level);
+
+    _ = src_extent;
+
+    const width_ratio = @as(f32, @floatFromInt(src_offset_1.x - src_offset_0.x)) / @as(f32, @floatFromInt(dst_offset_1.x - dst_offset_0.x));
+    const height_ratio = @as(f32, @floatFromInt(src_offset_1.y - src_offset_0.y)) / @as(f32, @floatFromInt(dst_offset_1.y - dst_offset_0.y));
+    const depth_ratio = @as(f32, @floatFromInt(src_offset_1.z - src_offset_0.z)) / @as(f32, @floatFromInt(dst_offset_1.z - dst_offset_0.z));
+    const x0 = @as(f32, @floatFromInt(src_offset_0.x)) + (0.5 - @as(f32, @floatFromInt(dst_offset_0.x))) * width_ratio;
+    const y0 = @as(f32, @floatFromInt(src_offset_0.y)) + (0.5 - @as(f32, @floatFromInt(dst_offset_0.y))) * height_ratio;
+    const z0 = @as(f32, @floatFromInt(src_offset_0.z)) + (0.5 - @as(f32, @floatFromInt(dst_offset_0.z))) * depth_ratio;
+
+    _ = x0;
+    _ = y0;
+    _ = z0;
+
+    const src_format = base.format.fromAspect(src.interface.format, region.src_subresource.aspect_mask);
+    const dst_format = base.format.fromAspect(dst.interface.format, region.dst_subresource.aspect_mask);
+
+    const apply_filter = (filter != .nearest);
+    const allow_srgb_conversion = apply_filter or base.format.isSrgb(src_format) != base.format.isSrgb(dst_format);
+
+    _ = allow_srgb_conversion;
 }
+
+// State state(srcFormat, dstFormat, src->getSampleCount(), dst->getSampleCount(),
+//             Options{ doFilter, allowSRGBConversion });
+// state.clampToEdge = (region.srcOffsets[0].x < 0) ||
+//                     (region.srcOffsets[0].y < 0) ||
+//                     (static_cast<uint32_t>(region.srcOffsets[1].x) > srcExtent.width) ||
+//                     (static_cast<uint32_t>(region.srcOffsets[1].y) > srcExtent.height) ||
+//                     (doFilter && ((x0 < 0.5f) || (y0 < 0.5f)));
+// state.filter3D = (region.srcOffsets[1].z - region.srcOffsets[0].z) !=
+//                  (region.dstOffsets[1].z - region.dstOffsets[0].z);
+//
+// auto blitRoutine = getBlitRoutine(state);
+// if(!blitRoutine)
+// {
+//     return;
+// }
+//
+// BlitData data = {
+//     nullptr,                                                                                 // source
+//     nullptr,                                                                                 // dest
+//     assert_cast<uint32_t>(src->rowPitchBytes(srcAspect, region.srcSubresource.mipLevel)),    // sPitchB
+//     assert_cast<uint32_t>(dst->rowPitchBytes(dstAspect, region.dstSubresource.mipLevel)),    // dPitchB
+//     assert_cast<uint32_t>(src->slicePitchBytes(srcAspect, region.srcSubresource.mipLevel)),  // sSliceB
+//     assert_cast<uint32_t>(dst->slicePitchBytes(dstAspect, region.dstSubresource.mipLevel)),  // dSliceB
+//
+//     x0,
+//     y0,
+//     z0,
+//     widthRatio,
+//     heightRatio,
+//     depthRatio,
+//
+//     region.dstOffsets[0].x,  // x0d
+//     region.dstOffsets[1].x,  // x1d
+//     region.dstOffsets[0].y,  // y0d
+//     region.dstOffsets[1].y,  // y1d
+//     region.dstOffsets[0].z,  // z0d
+//     region.dstOffsets[1].z,  // z1d
+//
+//     static_cast<int>(srcExtent.width),   // sWidth
+//     static_cast<int>(srcExtent.height),  // sHeight
+//     static_cast<int>(srcExtent.depth),   // sDepth
+//
+//     false,  // filter3D
+// };
+//
+// VkImageSubresource srcSubres = {
+//     region.srcSubresource.aspectMask,
+//     region.srcSubresource.mipLevel,
+//     region.srcSubresource.baseArrayLayer
+// };
+//
+// VkImageSubresource dstSubres = {
+//     region.dstSubresource.aspectMask,
+//     region.dstSubresource.mipLevel,
+//     region.dstSubresource.baseArrayLayer
+// };
+//
+// VkImageSubresourceRange dstSubresRange = {
+//     region.dstSubresource.aspectMask,
+//     region.dstSubresource.mipLevel,
+//     1,  // levelCount
+//     region.dstSubresource.baseArrayLayer,
+//     region.dstSubresource.layerCount
+// };
+//
+// uint32_t lastLayer = src->getLastLayerIndex(dstSubresRange);
+//
+// for(; dstSubres.arrayLayer <= lastLayer; srcSubres.arrayLayer++, dstSubres.arrayLayer++)
+// {
+//     data.source = src->getTexelPointer({ 0, 0, 0 }, srcSubres);
+//     data.dest = dst->getTexelPointer({ 0, 0, 0 }, dstSubres);
+//
+//     ASSERT(data.source < src->end());
+//     ASSERT(data.dest < dst->end());
+//
+//     blitRoutine(&data);
+// }

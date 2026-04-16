@@ -25,12 +25,6 @@ Then ensure thy Vulkan loader is pointed toward the ICD manifest.
 The precise ritual varies by system - consult the tomes of your operating system, or wander the web's endless mausoleum of documentation.
 
 Use at your own risk. If thy machine shudders, weeps, or attempts to flee - know that it was warned.
-\
-\
-Thou may also conjure forth a tome of compile commands by doing thus:
-```
-zig build cdb
-```
 
 ## Vulkan 1.0 specification
 
@@ -61,12 +55,12 @@ vkCmdClearAttachments                          | ⚙️ wip
 vkCmdClearColorImage                           | ⚙️ WIP
 vkCmdClearDepthStencilImage                    | ⚙️ WIP
 vkCmdCopyBuffer                                | ✅ Implemented
-vkCmdCopyBufferToImage                         | ⚙️ WIP
-vkCmdCopyImage                                 | ⚙️ WIP
-vkCmdCopyImageToBuffer                         | ⚙️ WIP
+vkCmdCopyBufferToImage                         | ✅ Implemented
+vkCmdCopyImage                                 | ✅ Implemented
+vkCmdCopyImageToBuffer                         | ✅ Implemented
 vkCmdCopyQueryPoolResults                      | ⚙️ WIP
 vkCmdDispatch                                  | ✅ Implemented
-vkCmdDispatchIndirect                          | ⚙️ WIP
+vkCmdDispatchIndirect                          | ✅ Implemented
 vkCmdDraw                                      | ⚙️ WIP
 vkCmdDrawIndexed                               | ⚙️ WIP
 vkCmdDrawIndexedIndirect                       | ⚙️ WIP
@@ -109,7 +103,7 @@ vkCreateImage                                  | ✅ Implemented
 vkCreateImageView                              | ✅ Implemented
 vkCreateInstance                               | ✅ Implemented
 vkCreatePipelineCache                          | ⚙️ WIP
-vkCreatePipelineLayout                         | ⚙️ WIP
+vkCreatePipelineLayout                         | ✅ Implemented
 vkCreateQueryPool                              | ⚙️ WIP
 vkCreateRenderPass                             | ⚙️ WIP
 vkCreateSampler                                | ⚙️ WIP
@@ -129,7 +123,7 @@ vkDestroyImageView                             | ✅ Implemented
 vkDestroyInstance                              | ✅ Implemented
 vkDestroyPipeline                              | ✅ Implemented
 vkDestroyPipelineCache                         | ⚙️ WIP
-vkDestroyPipelineLayout                        | ⚙️ WIP
+vkDestroyPipelineLayout                        | ✅ Implemented
 vkDestroyQueryPool                             | ⚙️ WIP
 vkDestroyRenderPass                            | ⚙️ WIP
 vkDestroySampler                               | ⚙️ WIP
@@ -157,8 +151,8 @@ vkGetImageSparseMemoryRequirements             | ⚙️ WIP
 vkGetImageSubresourceLayout                    | ⚙️ WIP
 vkGetInstanceProcAddr                          | ✅ Implemented
 vkGetPhysicalDeviceFeatures                    | ✅ Implemented
-vkGetPhysicalDeviceFormatProperties            | ⚙️ WIP
-vkGetPhysicalDeviceImageFormatProperties       | ⚙️ WIP
+vkGetPhysicalDeviceFormatProperties            | ✅ Implemented
+vkGetPhysicalDeviceImageFormatProperties       | ✅ Implemented
 vkGetPhysicalDeviceMemoryProperties            | ✅ Implemented
 vkGetPhysicalDeviceProperties                  | ✅ Implemented
 vkGetPhysicalDeviceQueueFamilyProperties       | ✅ Implemented
@@ -173,8 +167,8 @@ vkQueueBindSparse                              | ⚙️ WIP
 vkQueueSubmit                                  | ✅ Implemented
 vkQueueWaitIdle                                | ✅ Implemented
 vkResetCommandBuffer                           | ✅ Implemented
-vkResetCommandPool                             | ⚙️ WIP
-vkResetDescriptorPool                          | ⚙️ WIP
+vkResetCommandPool                             | ✅ Implemented
+vkResetDescriptorPool                          | ✅ Implemented
 vkResetEvent                                   | ⚙️ WIP
 vkResetFences                                  | ✅ Implemented
 vkSetEvent                                     | ⚙️ WIP

@@ -90,3 +90,31 @@ pub inline fn sliceMemSize(format: vk.Format, width: usize, height: usize) usize
 pub inline fn isDepthAndStencil(format: vk.Format) bool {
     return lib.vku.vkuFormatIsDepthAndStencil(@intCast(@intFromEnum(format)));
 }
+
+pub inline fn isSrgb(format: vk.Format) bool {
+    return lib.vku.vkuFormatIsSRGB(@intCast(@intFromEnum(format)));
+}
+
+pub inline fn isSfloat(format: vk.Format) bool {
+    return lib.vku.vkuFormatIsSFLOAT(@intCast(@intFromEnum(format)));
+}
+
+pub inline fn isSint(format: vk.Format) bool {
+    return lib.vku.vkuFormatIsSINT(@intCast(@intFromEnum(format)));
+}
+
+pub inline fn isSnorm(format: vk.Format) bool {
+    return lib.vku.vkuFormatIsSNORM(@intCast(@intFromEnum(format)));
+}
+
+pub inline fn isUfloat(format: vk.Format) bool {
+    return lib.vku.vkuFormatIsUFLOAT(@intCast(@intFromEnum(format)));
+}
+
+pub inline fn isUint(format: vk.Format) bool {
+    return lib.vku.vkuFormatIsUINT(@intCast(@intFromEnum(format)));
+}
+
+pub inline fn isUnorm(format: vk.Format) bool {
+    return lib.vku.vkuFormatIsUNORM(@intCast(@intFromEnum(format)));
+}

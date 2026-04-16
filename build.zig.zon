@@ -2,28 +2,20 @@
     .name = .VulkanDriver,
     .version = "0.0.1",
     .fingerprint = 0x52cb73649f1107de,
-    .minimum_zig_version = "0.15.2",
+    .minimum_zig_version = "0.16.0",
 
     .dependencies = .{
-        .compile_commands = .{
-            .url = "git+https://github.com/the-argus/zig-compile-commands#f74e2d13e43fafab3a71e19557a0e1cfbf0f2e1b",
-            .hash = "zig_compile_commands-0.0.1-OZg5-a3CAACM-h32Kjb1obTMqrKGs9YoDhorVZ8-LGle",
-        },
         .vulkan_headers = .{
             .url = "git+https://github.com/KhronosGroup/Vulkan-Headers?ref=v1.4.330#ee3b5caaa7e372715873c7b9c390ee1c3ca5db25",
             .hash = "N-V-__8AAFXYAQKsK51AAGXB9HziPDFjS_DVUq6_QHVxHrBM",
         },
         .vulkan_zig = .{
-            .url = "git+https://github.com/catmeow72/vulkan-zig/#8961518db28f88d2cf09ea68e146923de2cfa7f0",
-            .hash = "vulkan-0.0.0-r7Ytx6hBAwD8X_TN32qlkzul4riK6vFvjtK9fZfRvALg",
+            .url = "git+https://github.com/Snektron/vulkan-zig#be16fc99f7f794cba90334978c6c5aadeda8094f",
+            .hash = "vulkan-0.0.0-r7Ytx-V9AwCwHxS2TaZ-KJCp_3axidu3ASZUg3B512-k",
         },
         .vulkan_utility_libraries = .{
             .url = "git+https://github.com/KhronosGroup/Vulkan-Utility-Libraries.git#ba452bad58bb4d4c64d7fbd872bf69f70141510e",
             .hash = "N-V-__8AAE42fwC1FFw26LNZ8AaSuGMdgG4vfYkfV_227sET",
-        },
-        .zdt = .{
-            .url = "git+https://codeberg.org/FObersteiner/zdt?ref=v0.8.3-zig_0.15#d68b181f4401466527d7eb3d7c08bc94b43f2ca3",
-            .hash = "zdt-0.8.3-xr0_vLTNEQB917nKguiLool244ldWllKbhI7Nupl6kmP",
         },
         .cts_bin = .{
             .url = "git+https://git.kbz8.me/kbz_8/Vulkan-CTS-bin#19ce2da05f8176348064a9fc6688847e5f76a46e",
@@ -59,8 +51,8 @@
             .lazy = true,
         },
         .SPIRV_Interpreter = .{
-            .url = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#9f586ae9c0414dbcd5545b258733a78b5301fee8",
-            .hash = "SPIRV_Interpreter-0.0.1-ajmpnxCFBADEKjJFMVvGhAEs1Nr-lrsHXDd5uYnUxYor",
+            .url = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#4bd688cf07ea7d71c18a02153bb197e7b1e3cd82",
+            .hash = "SPIRV_Interpreter-0.0.1-ajmpn1aKBACoxQzshafHCjoUx6OfuFcyt1dumaerdtDo",
         },
     },
 

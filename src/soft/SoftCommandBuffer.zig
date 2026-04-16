@@ -177,7 +177,7 @@ pub fn blitImage(interface: *Interface, src: *base.Image, _: vk.ImageLayout, dst
 
         pub fn execute(impl: *const Impl, device: *ExecutionDevice) VkError!void {
             for (impl.regions[0..]) |region| {
-                try device.blitter.blitRegion(impl.src, impl.dst, region);
+                try device.blitter.blitRegion(impl.src, impl.dst, region, impl.filter);
             }
         }
     };

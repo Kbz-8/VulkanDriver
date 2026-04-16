@@ -1517,28 +1517,18 @@ pub export fn strollResetCommandPool(p_device: vk.Device, p_pool: vk.CommandPool
 
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
     const pool = NonDispatchable(CommandPool).fromHandleObject(p_pool) catch |err| return toVkResult(err);
-
-    notImplementedWarning();
-
-    _ = pool;
-    _ = flags;
-
-    return .error_unknown;
+    pool.reset(flags) catch |err| return toVkResult(err);
+    return .success;
 }
 
-pub export fn strollResetDescriptorPool(p_device: vk.Device, p_pool: vk.DescriptorPool, flags: vk.CommandPoolResetFlags) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn strollResetDescriptorPool(p_device: vk.Device, p_pool: vk.DescriptorPool, flags: vk.DescriptorPoolResetFlags) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkResetDescriptorPool);
     defer entryPointEndLogTrace();
 
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
     const pool = NonDispatchable(DescriptorPool).fromHandleObject(p_pool) catch |err| return toVkResult(err);
-
-    notImplementedWarning();
-
-    _ = pool;
-    _ = flags;
-
-    return .error_unknown;
+    pool.reset(flags) catch |err| return toVkResult(err);
+    return .success;
 }
 
 pub export fn strollResetEvent(p_device: vk.Device, p_event: vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {

@@ -72,15 +72,6 @@ pub inline fn getMemoryRequirements(self: *Self, requirements: *vk.MemoryRequire
     try self.vtable.getMemoryRequirements(self, requirements);
 }
 
-pub inline fn getClearFormat(self: *Self) vk.Format {
-    return if (lib.vku.vkuFormatIsSINT(@intCast(@intFromEnum(self.format))))
-        .r32g32b32a32_sint
-    else if (lib.vku.vkuFormatIsUINT(@intCast(@intFromEnum(self.format))))
-        .r32g32b32a32_uint
-    else
-        .r32g32b32a32_sfloat;
-}
-
 pub inline fn getTexelSize(self: *const Self) usize {
     return lib.format.texelSize(self.format);
 }

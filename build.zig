@@ -1,6 +1,5 @@
 const std = @import("std");
 const Step = std.Build.Step;
-const zcc = @import("compile_commands");
 const builtin = @import("builtin");
 
 const ImplementationDesc = struct {
@@ -33,10 +32,8 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = b.path("src/vulkan/lib.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
     });
 
-    const zdt = b.dependency("zdt", .{}).module("zdt");
     const zigrc = b.dependency("zigrc", .{}).module("zigrc");
     const vulkan_headers = b.dependency("vulkan_headers", .{});
     const vulkan_utility_libraries = b.dependency("vulkan_utility_libraries", .{});
@@ -45,15 +42,12 @@ pub fn build(b: *std.Build) !void {
         .registry = vulkan_headers.path("registry/vk.xml"),
     }).module("vulkan-zig");
 
-    base_mod.addImport("zdt", zdt);
     base_mod.addImport("zigrc", zigrc);
     base_mod.addImport("vulkan", vulkan);
     base_mod.addSystemIncludePath(vulkan_headers.path("include"));
     base_mod.addSystemIncludePath(vulkan_utility_libraries.path("include"));
 
     for (implementations) |impl| {
-        var targets = std.ArrayList(*std.Build.Step.Compile){};
-
         const lib_mod = b.createModule(.{
             .root_source_file = b.path(impl.root_source_file),
             .target = target,
@@ -106,10 +100,6 @@ pub fn build(b: *std.Build) !void {
 
         const c_test = addCTest(b, target, optimize, vulkan_headers, &impl, lib) catch continue;
 
-        try targets.append(b.allocator, c_test);
-        try targets.append(b.allocator, lib);
-        _ = zcc.createStep(b, "cdb", try targets.toOwnedSlice(b.allocator));
-
         (try addCTestRunner(b, &impl, c_test, .normal)).dependOn(&lib_install.step);
         (try addCTestRunner(b, &impl, c_test, .gdb)).dependOn(&lib_install.step);
         (try addCTestRunner(b, &impl, c_test, .valgrind)).dependOn(&lib_install.step);
@@ -152,8 +142,8 @@ pub fn build(b: *std.Build) !void {
 
 fn customSoft(b: *std.Build, lib: *std.Build.Step.Compile) !void {
     const cpuinfo = b.lazyDependency("cpuinfo", .{}) orelse return error.UnresolvedDependency;
-    lib.addSystemIncludePath(cpuinfo.path("include"));
-    lib.linkLibrary(cpuinfo.artifact("cpuinfo"));
+    lib.root_module.addSystemIncludePath(cpuinfo.path("include"));
+    lib.root_module.linkLibrary(cpuinfo.artifact("cpuinfo"));
 
     const interface = b.lazyDependency("interface", .{}) orelse return error.UnresolvedDependency;
     lib.root_module.addImport("interface", interface.module("interface"));
@@ -213,14 +203,16 @@ fn addCTestRunner(b: *std.Build, impl: *const ImplementationDesc, exe: *std.Buil
 
     const run_step = b.step(
         b.fmt("test-c-{s}{s}", .{
-            impl.name, switch (mode) {
+            impl.name,
+            switch (mode) {
                 .normal => "",
                 .gdb => "-gdb",
                 .valgrind => "-valgrind",
             },
         }),
         b.fmt("Run libvulkan_{s} C tests{s}", .{
-            impl.name, switch (mode) {
+            impl.name,
+            switch (mode) {
                 .normal => "",
                 .gdb => " within GDB",
                 .valgrind => " within Valgrind",
@@ -289,14 +281,16 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
 
     const run_step = b.step(
         b.fmt("raw-cts-{s}{s}", .{
-            impl.name, switch (mode) {
+            impl.name,
+            switch (mode) {
                 .normal => "",
                 .gdb => "-gdb",
                 .valgrind => "-valgrind",
             },
         }),
         b.fmt("Run Vulkan conformance tests for libvulkan_{s}{s}", .{
-            impl.name, switch (mode) {
+            impl.name,
+            switch (mode) {
                 .normal => "",
                 .gdb => " within GDB",
                 .valgrind => " within Valgrind",
@@ -312,16 +306,10 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
     const cts = b.dependency("cts_bin", .{});
 
     // Some systems may need a manual path management to get to packages (e.g. Github Actions)
-    const cache_path = blk: {
-        if (std.process.getEnvVarOwned(b.allocator, "ZIG_GLOBAL_CACHE_DIR")) |cache_path| {
-            break :blk b.fmt("{s}/../", .{cache_path});
-        } else |err| switch (err) {
-            error.EnvironmentVariableNotFound => {
-                break :blk "";
-            },
-            else => unreachable,
-        }
-    };
+    const cache_path = if (std.zig.EnvVar.get(.ZIG_GLOBAL_CACHE_DIR, &b.graph.environ_map)) |cache_path|
+        b.fmt("{s}/../", .{cache_path})
+    else
+        "";
 
     const cts_exe_name = cts.path(b.fmt("deqp-vk-{s}", .{
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {

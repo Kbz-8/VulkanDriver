@@ -3,7 +3,6 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const zdt = @import("zdt");
 const root = @import("root");
 const lib = @import("../lib.zig");
 
@@ -39,7 +38,7 @@ pub inline fn nestedFixme(comptime format: []const u8, args: anytype) void {
     std.log.scoped(.FIXME).warn("FIXME: " ++ format, args);
 }
 
-pub fn log(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), comptime format: []const u8, args: anytype) void {
+pub fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), comptime format: []const u8, args: anytype) void {
     if (lib.getLogVerboseLevel() == .None) {
         return;
     }

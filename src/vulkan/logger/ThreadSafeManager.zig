@@ -4,14 +4,18 @@ const Manager = @import("Manager.zig");
 const Self = @This();
 
 managers: std.AutoArrayHashMapUnmanaged(std.Thread.Id, Manager),
-allocator: std.heap.ThreadSafeAllocator,
-mutex: std.Thread.Mutex,
+allocator: std.mem.Allocator,
+mutex: std.Io.Mutex,
+io: std.Io,
 
-pub const init: Self = .{
-    .managers = .empty,
-    .allocator = .{ .child_allocator = std.heap.c_allocator },
-    .mutex = .{},
-};
+pub fn init(io: std.Io, allocator: std.mem.Allocator) Self {
+    return .{
+        .managers = .empty,
+        .allocator = allocator,
+        .mutex = .init,
+        .io = io,
+    };
+}
 
 pub fn get(self: *Self) *Manager {
     const allocator = self.allocator.allocator();
@@ -23,17 +27,14 @@ pub fn get(self: *Self) *Manager {
 }
 
 pub fn deinit(self: *Self) void {
-    {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    self.mutex.lockUncancelable();
+    defer self.mutex.unlock();
 
-        if (self.managers.getPtr(std.Thread.getCurrentId())) |manager| {
-            manager.deinit();
-            _ = self.managers.orderedRemove(std.Thread.getCurrentId());
-        }
+    if (self.managers.getPtr(std.Thread.getCurrentId())) |manager| {
+        manager.deinit();
+        _ = self.managers.orderedRemove(std.Thread.getCurrentId());
     }
     if (self.managers.count() == 0) {
-        self.managers.deinit(self.allocator.allocator());
-        self.* = .init;
+        self.managers.deinit(self.allocator);
     }
 }

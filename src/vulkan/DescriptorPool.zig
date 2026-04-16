@@ -21,6 +21,7 @@ pub const VTable = struct {
     allocateDescriptorSet: *const fn (*Self, *DescriptorSetLayout) VkError!*DescriptorSet,
     destroy: *const fn (*Self, std.mem.Allocator) void,
     freeDescriptorSet: *const fn (*Self, *DescriptorSet) VkError!void,
+    reset: *const fn (*Self, vk.DescriptorPoolResetFlags) VkError!void,
 };
 
 pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.DescriptorPoolCreateInfo) VkError!Self {
@@ -42,4 +43,8 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
 
 pub inline fn freeDescriptorSet(self: *Self, set: *DescriptorSet) VkError!void {
     try self.vtable.freeDescriptorSet(self, set);
+}
+
+pub inline fn reset(self: *Self, flags: vk.DescriptorPoolResetFlags) VkError!void {
+    try self.vtable.reset(self, flags);
 }

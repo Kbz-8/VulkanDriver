@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const vk = @import("vulkan");
+const config = @import("config");
 
 const logger = @import("lib.zig").logger;
 
@@ -21,7 +22,15 @@ comptime {
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .instance;
 
+const DeviceAllocator = struct {
+    pub inline fn allocator(_: @This()) std.mem.Allocator {
+        return std.heap.smp_allocator;
+    }
+};
+
 physical_devices: std.ArrayList(*Dispatchable(PhysicalDevice)),
+threaded: std.Io.Threaded,
+allocator: if (config.debug_allocator) std.heap.DebugAllocator(.{}) else DeviceAllocator,
 dispatch_table: *const DispatchTable,
 vtable: *const VTable,
 
