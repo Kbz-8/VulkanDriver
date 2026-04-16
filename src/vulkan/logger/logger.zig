@@ -1,4 +1,4 @@
-//! A driver-global logger that stack in memory all same-indent `debug` logs
+//! A instance-level logger that stack in memory all same-indent `debug` logs
 //! and only displays them in reverse order if a non-debug log is requested
 
 const std = @import("std");
@@ -70,10 +70,6 @@ pub fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), compti
         .info, .debug => stdout_file,
         .warn, .err => stderr_file,
     };
-
-    var timezone = zdt.Timezone.tzLocal(std.heap.page_allocator) catch zdt.Timezone.UTC;
-    defer timezone.deinit();
-    const now = zdt.Datetime.now(.{ .tz = &timezone }) catch zdt.Datetime{};
 
     var fmt_buffer = std.mem.zeroes([4096]u8);
     var fmt_writer = std.Io.Writer.fixed(&fmt_buffer);

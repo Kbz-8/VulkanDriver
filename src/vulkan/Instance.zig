@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 const vk = @import("vulkan");
 const config = @import("config");
 
-const logger = @import("lib.zig").logger;
+const ThreadSafeLoggerManager = @import("logger/ThreadSafeManager.zig");
 
 const VkError = @import("error_set.zig").VkError;
 const Dispatchable = @import("Dispatchable.zig").Dispatchable;
@@ -31,6 +31,7 @@ const DeviceAllocator = struct {
 physical_devices: std.ArrayList(*Dispatchable(PhysicalDevice)),
 threaded: std.Io.Threaded,
 allocator: if (config.debug_allocator) std.heap.DebugAllocator(.{}) else DeviceAllocator,
+logger: ThreadSafeLoggerManager,
 dispatch_table: *const DispatchTable,
 vtable: *const VTable,
 
@@ -46,11 +47,20 @@ pub const DispatchTable = struct {
 pub fn init(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) VkError!Self {
     _ = allocator;
     _ = infos;
-    return .{
+
+    var self: Self = .{
         .physical_devices = .empty,
+        .threaded = undefined,
+        .allocator = if (config.debug_allocator) .init else .{},
+        .logger = undefined,
         .dispatch_table = undefined,
         .vtable = undefined,
     };
+
+    self.threaded = .init(self.allocator.allocator(), .{});
+    self.logger = .init(self.threaded.io(), self.allocator.allocator());
+
+    return self;
 }
 
 /// Dummy for docs creation and stuff
