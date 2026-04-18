@@ -62,10 +62,10 @@ pub fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), compti
 
     const now = std.Io.Timestamp.now(io, .cpu_process).toMilliseconds();
 
-    const now_ms = @mod(now, std.time.ms_per_s);
-    const now_sec = @mod(@divTrunc(now, std.time.ms_per_s), std.time.s_per_min);
-    const now_min = @mod(@divTrunc(now, std.time.ms_per_min), 60);
-    const now_hour = @mod(@divTrunc(now, std.time.ms_per_hour), 24);
+    const now_ms: u16 = @intCast(@mod(now, std.time.ms_per_s));
+    const now_sec: u8 = @intCast(@mod(@divTrunc(now, std.time.ms_per_s), std.time.s_per_min));
+    const now_min: u8 = @intCast(@mod(@divTrunc(now, std.time.ms_per_min), 60));
+    const now_hour: u8 = @intCast(@mod(@divTrunc(now, std.time.ms_per_hour), 24));
 
     var fmt_buffer = std.mem.zeroes([4096]u8);
     var fmt_writer = std.Io.Writer.fixed(&fmt_buffer);
@@ -93,7 +93,7 @@ pub fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), compti
             writer.print(root.DRIVER_NAME, .{}) catch continue;
         }
         term.setColor(.yellow) catch {};
-        writer.print(" {d}:{d}:{d}.{d}", .{ now_hour, now_min, now_sec, now_ms }) catch continue;
+        writer.print(" {d}:{d}:{d}.{d:0>3}", .{ now_hour, now_min, now_sec, now_ms }) catch continue;
         term.setColor(.magenta) catch {};
         writer.print("]", .{}) catch continue;
 

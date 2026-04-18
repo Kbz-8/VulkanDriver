@@ -51,7 +51,6 @@ pub fn build(b: *std.Build) !void {
         const lib_mod = b.createModule(.{
             .root_source_file = b.path(impl.root_source_file),
             .target = target,
-            .link_libc = true,
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "base", .module = base_mod },
@@ -273,9 +272,9 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
 
     run.addArg("run");
     run.addArg("--deqp");
-    run.addArg(b.fmt("{s}{s}", .{ cache_path, cts_exe_path }));
+    run.addArg(cts_exe_path);
     run.addArg("--caselist");
-    run.addArg(b.fmt("{s}{s}", .{ cache_path, mustpass_path }));
+    run.addArg(mustpass_path);
     run.addArg("--output");
     run.addArg("./cts");
     run.addArg("--timeout");

@@ -35,15 +35,26 @@ early_dump: ?u32,
 final_dump: ?u32,
 
 pub fn init(device: *SoftDevice, state: *PipelineState) Self {
+    const early_dumb_env_var = base.env.getEnvVar(lib.DUMP_EARLY_RESULT_TABLE_ENV_NAME);
+    const final_dumb_env_var = base.env.getEnvVar(lib.DUMP_FINAL_RESULT_TABLE_ENV_NAME);
+
     return .{
         .device = device,
         .state = state,
         .batch_size = 0,
         .invocation_index = .init(0),
-        //.early_dump = std.process.parseEnvVarInt(lib.DUMP_EARLY_RESULT_TABLE_ENV_NAME, u32, 10) catch null,
-        //.final_dump = std.process.parseEnvVarInt(lib.DUMP_FINAL_RESULT_TABLE_ENV_NAME, u32, 10) catch null,
-        .early_dump = null,
-        .final_dump = null,
+        .early_dump = blk: {
+            if (early_dumb_env_var) |val| {
+                break :blk std.fmt.parseInt(u32, std.mem.span(val.ptr), 10) catch null;
+            }
+            break :blk null;
+        },
+        .final_dump = blk: {
+            if (final_dumb_env_var) |val| {
+                break :blk std.fmt.parseInt(u32, std.mem.span(val.ptr), 10) catch null;
+            }
+            break :blk null;
+        },
     };
 }
 
@@ -65,35 +76,35 @@ pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count
 
     var wg: std.Io.Group = .init;
     for (0..@min(self.batch_size, group_count)) |batch_id| {
-        //if (std.process.hasEnvVarConstant(lib.SINGLE_THREAD_COMPUTE_EXECUTION_ENV_NAME)) {
-        //    @branchHint(.cold); // Should only be reached for debugging
+        if (base.env.hasEnvVar(lib.SINGLE_THREAD_COMPUTE_EXECUTION_ENV_NAME)) {
+            @branchHint(.cold); // Should only be reached for debugging
 
-        //    runWrapper(
-        //        RunData{
-        //            .self = self,
-        //            .batch_id = batch_id,
-        //            .group_count = group_count,
-        //            .group_count_x = @as(usize, @intCast(group_count_x)),
-        //            .group_count_y = @as(usize, @intCast(group_count_y)),
-        //            .group_count_z = @as(usize, @intCast(group_count_z)),
-        //            .invocations_per_workgroup = invocations_per_workgroup,
-        //            .pipeline = pipeline,
-        //        },
-        //    );
-        //} else {
-        wg.async(self.device.interface.io(), runWrapper, .{
-            RunData{
-                .self = self,
-                .batch_id = batch_id,
-                .group_count = group_count,
-                .group_count_x = @as(usize, @intCast(group_count_x)),
-                .group_count_y = @as(usize, @intCast(group_count_y)),
-                .group_count_z = @as(usize, @intCast(group_count_z)),
-                .invocations_per_workgroup = invocations_per_workgroup,
-                .pipeline = pipeline,
-            },
-        });
-        //}
+            runWrapper(
+                RunData{
+                    .self = self,
+                    .batch_id = batch_id,
+                    .group_count = group_count,
+                    .group_count_x = @as(usize, @intCast(group_count_x)),
+                    .group_count_y = @as(usize, @intCast(group_count_y)),
+                    .group_count_z = @as(usize, @intCast(group_count_z)),
+                    .invocations_per_workgroup = invocations_per_workgroup,
+                    .pipeline = pipeline,
+                },
+            );
+        } else {
+            wg.async(self.device.interface.io(), runWrapper, .{
+                RunData{
+                    .self = self,
+                    .batch_id = batch_id,
+                    .group_count = group_count,
+                    .group_count_x = @as(usize, @intCast(group_count_x)),
+                    .group_count_y = @as(usize, @intCast(group_count_y)),
+                    .group_count_z = @as(usize, @intCast(group_count_z)),
+                    .invocations_per_workgroup = invocations_per_workgroup,
+                    .pipeline = pipeline,
+                },
+            });
+        }
     }
     wg.await(self.device.interface.io()) catch return VkError.DeviceLost;
 }
@@ -109,6 +120,7 @@ fn runWrapper(data: RunData) void {
 
 inline fn run(data: RunData) !void {
     const allocator = data.self.device.device_allocator.allocator();
+    const io = data.self.device.interface.io();
 
     const shader = data.pipeline.stages.getPtrAssertContains(.compute);
     const rt = &shader.runtimes[data.batch_id];
@@ -150,7 +162,7 @@ inline fn run(data: RunData) !void {
 
             if (data.self.early_dump != null and data.self.early_dump.? == invocation_index) {
                 @branchHint(.cold);
-                try dumpResultsTable(allocator, rt, true);
+                try dumpResultsTable(allocator, io, rt, true);
             }
 
             rt.callEntryPoint(allocator, entry) catch |err| switch (err) {
@@ -163,7 +175,7 @@ inline fn run(data: RunData) !void {
 
             if (data.self.final_dump != null and data.self.final_dump.? == invocation_index) {
                 @branchHint(.cold);
-                try dumpResultsTable(allocator, rt, false);
+                try dumpResultsTable(allocator, io, rt, false);
             }
 
             try rt.flushDescriptorSets(allocator);
@@ -171,19 +183,17 @@ inline fn run(data: RunData) !void {
     }
 }
 
-inline fn dumpResultsTable(allocator: std.mem.Allocator, rt: *spv.Runtime, is_early: bool) !void {
+inline fn dumpResultsTable(allocator: std.mem.Allocator, io: std.Io, rt: *spv.Runtime, is_early: bool) !void {
     @branchHint(.cold);
-    _ = allocator;
-    _ = rt;
-    _ = is_early;
-    //const file = try std.fs.cwd().createFile(
-    //    std.fmt.comptimePrint("{s}_compute_result_table_dump.txt", .{if (is_early) "early" else "final"}),
-    //    .{ .truncate = true },
-    //);
-    //defer file.close();
-    //var buffer = [_]u8{0} ** 1024;
-    //var writer = file.writer(buffer[0..]);
-    //try rt.dumpResultsTable(allocator, &writer.interface);
+    const file = try std.Io.Dir.cwd().createFile(
+        io,
+        std.fmt.comptimePrint("{s}_compute_result_table_dump.txt", .{if (is_early) "early" else "final"}),
+        .{ .truncate = true },
+    );
+    defer file.close(io);
+    var buffer = [_]u8{0} ** 1024;
+    var writer = file.writer(io, buffer[0..]);
+    try rt.dumpResultsTable(allocator, &writer.interface);
 }
 
 fn writeDescriptorSets(self: *Self, rt: *spv.Runtime) !void {
