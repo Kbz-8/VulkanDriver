@@ -32,13 +32,14 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
     self.* = .{
         .interface = interface,
         .module = spv.Module.init(allocator, code, .{
-            .use_simd_vectors_specializations = !std.process.hasEnvVarConstant(lib.NO_SHADER_SIMD_ENV_NAME),
+            //.use_simd_vectors_specializations = !std.process.hasEnvVarConstant(lib.NO_SHADER_SIMD_ENV_NAME),
+            .use_simd_vectors_specializations = true,
         }) catch |err| switch (err) {
             spv.Module.ModuleError.OutOfMemory => return VkError.OutOfHostMemory,
             else => {
                 std.log.scoped(.@"SPIR-V module").err("module creation catched a '{s}'", .{@errorName(err)});
                 if (@errorReturnTrace()) |trace| {
-                    std.debug.dumpStackTrace(trace.*);
+                    std.debug.dumpErrorReturnTrace(trace);
                 }
                 return VkError.ValidationFailed;
             },

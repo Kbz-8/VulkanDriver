@@ -31,7 +31,7 @@ pool: *CommandPool,
 state: State,
 begin_info: ?vk.CommandBufferBeginInfo,
 host_allocator: VulkanAllocator,
-state_mutex: std.Thread.Mutex,
+state_mutex: std.Io.Mutex,
 
 vtable: *const VTable,
 dispatch_table: *const DispatchTable,
@@ -69,7 +69,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Comma
         .state = .Initial,
         .begin_info = null,
         .host_allocator = VulkanAllocator.from(allocator).cloneWithScope(.object),
-        .state_mutex = .{},
+        .state_mutex = .init,
         .vtable = undefined,
         .dispatch_table = undefined,
     };
@@ -79,8 +79,11 @@ inline fn transitionState(self: *Self, target: State, from_allowed: []const Stat
     if (!std.EnumSet(State).initMany(from_allowed).contains(self.state)) {
         return error.NotAllowed;
     }
-    self.state_mutex.lock();
-    defer self.state_mutex.unlock();
+    const io = self.owner.io();
+
+    self.state_mutex.lockUncancelable(io);
+    defer self.state_mutex.unlock(io);
+
     self.state = target;
 }
 

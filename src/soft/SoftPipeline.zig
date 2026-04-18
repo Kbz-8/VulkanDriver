@@ -10,6 +10,7 @@ const NonDispatchable = base.NonDispatchable;
 const ShaderModule = base.ShaderModule;
 
 const SoftDevice = @import("SoftDevice.zig");
+const SoftInstance = @import("SoftInstance.zig");
 const SoftShaderModule = @import("SoftShaderModule.zig");
 
 const Self = @This();
@@ -49,6 +50,16 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
 
     const device_allocator = soft_device.device_allocator.allocator();
 
+    const instance: *SoftInstance = @alignCast(@fieldParentPtr("interface", device.instance));
+    const runtimes_count = switch (instance.threaded.async_limit) {
+        .nothing => 1,
+        .unlimited => std.Thread.getCpuCount() catch 1, // If we cannot get the CPU count, fallback on single runtime
+        else => |count| blk: {
+            const cpu_count: usize = std.Thread.getCpuCount() catch break :blk @intFromEnum(count);
+            break :blk if (@intFromEnum(count) >= cpu_count) cpu_count else @intFromEnum(count);
+        },
+    };
+
     self.* = .{
         .interface = interface,
         .stages = std.EnumMap(Stages, Shader).init(.{
@@ -57,7 +68,7 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
                 soft_module.ref();
                 shader.module = soft_module;
 
-                const runtimes = device_allocator.alloc(spv.Runtime, soft_device.workers.getIdCount()) catch return VkError.OutOfHostMemory;
+                const runtimes = device_allocator.alloc(spv.Runtime, runtimes_count) catch return VkError.OutOfHostMemory;
                 errdefer {
                     for (runtimes) |*runtime| {
                         runtime.deinit(device_allocator);
@@ -103,9 +114,17 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
         .destroy = destroy,
     };
 
-    const soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", device));
+    const instance: *SoftInstance = @alignCast(@fieldParentPtr("interface", device.instance));
+    const runtimes_count = switch (instance.threaded.async_limit) {
+        .nothing => 1,
+        .unlimited => std.Thread.getCpuCount() catch 1, // If we cannot get the CPU count, fallback on single runtime
+        else => |count| blk: {
+            const cpu_count: usize = std.Thread.getCpuCount() catch break :blk @intFromEnum(count);
+            break :blk if (@intFromEnum(count) >= cpu_count) cpu_count else @intFromEnum(count);
+        },
+    };
 
-    const runtimes = allocator.alloc(spv.Runtime, soft_device.workers.getIdCount()) catch return VkError.OutOfHostMemory;
+    const runtimes = allocator.alloc(spv.Runtime, runtimes_count) catch return VkError.OutOfHostMemory;
     errdefer allocator.free(runtimes);
 
     //for (runtimes) |*runtime| {

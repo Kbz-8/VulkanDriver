@@ -13,7 +13,7 @@ props: vk.PhysicalDeviceProperties,
 mem_props: vk.PhysicalDeviceMemoryProperties,
 features: vk.PhysicalDeviceFeatures,
 queue_family_props: std.ArrayList(vk.QueueFamilyProperties),
-instance: *const Instance,
+instance: *Instance,
 dispatch_table: *const DispatchTable,
 
 pub const DispatchTable = struct {
@@ -25,7 +25,7 @@ pub const DispatchTable = struct {
     release: *const fn (*Self, std.mem.Allocator) VkError!void,
 };
 
-pub fn init(allocator: std.mem.Allocator, instance: *const Instance) VkError!Self {
+pub fn init(allocator: std.mem.Allocator, instance: *Instance) VkError!Self {
     _ = allocator;
     return .{
         .props = .{

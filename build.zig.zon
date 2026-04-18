@@ -26,8 +26,8 @@
             .hash = "zigrc-1.0.0-lENlWzvQAACulrbkL9PVhWjFsWSkYhi7AmfSbCM-2Xlh",
         },
         .cpuinfo = .{
-            .url = "git+https://github.com/Kbz-8/cpuinfo#4883954cfcec3f6c9ca9c4aaddfc26107e08726f",
-            .hash = "cpuinfo-0.0.1-RLgIQTLRMgF4dLo8AJ-HvnpFsJe6jmXCJjMWWjil6RF1",
+            .url = "git+https://github.com/Kbz-8/cpuinfo.git#c9bea4f6c166a495ee0ce117821f9627d4aed118",
+            .hash = "cpuinfo-0.0.1-RLgIQYrTMgGqfQMOd1nAa2EuglXOh5gR9bNzwMzQTemt",
             .lazy = true,
         },
         .volk = .{
@@ -43,11 +43,6 @@
         .stb = .{
             .url = "git+https://github.com/nothings/stb#f1c79c02822848a9bed4315b12c8c8f3761e1296",
             .hash = "N-V-__8AABQ7TgCnPlp8MP4YA8znrjd6E-ZjpF1rvrS8J_2I",
-            .lazy = true,
-        },
-        .interface = .{
-            .url = "git+https://github.com/nilslice/zig-interface#8c0fe8fa9fd0702eee43f50cb75dce1cc5a7e1f4",
-            .hash = "interface-0.0.2-GFlWJ1mcAQARS-V4xJ7qDt5_cutxOHSEz6H9yiK-Sw0A",
             .lazy = true,
         },
         .SPIRV_Interpreter = .{

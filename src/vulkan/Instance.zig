@@ -3,8 +3,6 @@ const builtin = @import("builtin");
 const vk = @import("vulkan");
 const config = @import("config");
 
-const ThreadSafeLoggerManager = @import("logger/ThreadSafeManager.zig");
-
 const VkError = @import("error_set.zig").VkError;
 const Dispatchable = @import("Dispatchable.zig").Dispatchable;
 const PhysicalDevice = @import("PhysicalDevice.zig");
@@ -29,15 +27,13 @@ const DeviceAllocator = struct {
 };
 
 physical_devices: std.ArrayList(*Dispatchable(PhysicalDevice)),
-threaded: std.Io.Threaded,
-allocator: if (config.debug_allocator) std.heap.DebugAllocator(.{}) else DeviceAllocator,
-logger: ThreadSafeLoggerManager,
 dispatch_table: *const DispatchTable,
 vtable: *const VTable,
 
 pub const VTable = struct {
     releasePhysicalDevices: *const fn (*Self, std.mem.Allocator) VkError!void,
     requestPhysicalDevices: *const fn (*Self, std.mem.Allocator) VkError!void,
+    io: *const fn (*Self) std.Io,
 };
 
 pub const DispatchTable = struct {
@@ -47,20 +43,11 @@ pub const DispatchTable = struct {
 pub fn init(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) VkError!Self {
     _ = allocator;
     _ = infos;
-
-    var self: Self = .{
+    return .{
         .physical_devices = .empty,
-        .threaded = undefined,
-        .allocator = if (config.debug_allocator) .init else .{},
-        .logger = undefined,
         .dispatch_table = undefined,
         .vtable = undefined,
     };
-
-    self.threaded = .init(self.allocator.allocator(), .{});
-    self.logger = .init(self.threaded.io(), self.allocator.allocator());
-
-    return self;
 }
 
 /// Dummy for docs creation and stuff
@@ -104,9 +91,6 @@ pub fn releasePhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError
 }
 
 pub fn requestPhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError!void {
-    logger.getManager().get().indent();
-    defer logger.getManager().get().unindent();
-
     try self.vtable.requestPhysicalDevices(self, allocator);
     if (self.physical_devices.items.len == 0) {
         std.log.scoped(.vkCreateInstance).err("No VkPhysicalDevice found", .{});
@@ -115,4 +99,8 @@ pub fn requestPhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError
     for (self.physical_devices.items) |physical_device| {
         std.log.scoped(.vkCreateInstance).debug("Found VkPhysicalDevice named {s}", .{physical_device.object.props.device_name});
     }
+}
+
+pub fn io(self: *Self) std.Io {
+    return self.vtable.io(self);
 }

@@ -18,6 +18,7 @@ pub const SoftEvent = @import("SoftEvent.zig");
 pub const SoftFence = @import("SoftFence.zig");
 pub const SoftFramebuffer = @import("SoftFramebuffer.zig");
 pub const SoftImage = @import("SoftImage.zig");
+pub const SoftInstance = @import("SoftInstance.zig");
 pub const SoftImageView = @import("SoftImageView.zig");
 pub const SoftPipeline = @import("SoftPipeline.zig");
 pub const SoftPipelineCache = @import("SoftPipelineCache.zig");
@@ -42,13 +43,12 @@ const DeviceAllocator = struct {
 
 interface: Interface,
 device_allocator: if (config.debug_allocator) std.heap.DebugAllocator(.{}) else DeviceAllocator,
-workers: std.Thread.Pool,
 
-pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!*Self {
+pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
 
-    var interface = try Interface.init(allocator, physical_device, info);
+    var interface = try Interface.init(allocator, instance, physical_device, info);
 
     interface.vtable = &.{
         .createQueue = SoftQueue.create,
@@ -82,12 +82,6 @@ pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocato
     self.* = .{
         .interface = interface,
         .device_allocator = if (config.debug_allocator) .init else .{},
-        .workers = undefined,
-    };
-
-    self.workers.init(.{ .allocator = self.device_allocator.allocator() }) catch |err| return switch (err) {
-        SpawnError.OutOfMemory, SpawnError.LockedMemoryLimitExceeded => VkError.OutOfDeviceMemory,
-        else => VkError.Unknown,
     };
 
     try self.interface.createQueues(allocator, info);
@@ -96,7 +90,6 @@ pub fn create(physical_device: *base.PhysicalDevice, allocator: std.mem.Allocato
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    self.workers.deinit();
 
     if (config.debug_allocator) {
         // All device memory allocations should've been freed by now

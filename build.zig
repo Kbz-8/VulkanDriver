@@ -47,6 +47,8 @@ pub fn build(b: *std.Build) !void {
     base_mod.addSystemIncludePath(vulkan_headers.path("include"));
     base_mod.addSystemIncludePath(vulkan_utility_libraries.path("include"));
 
+    const use_llvm = b.option(bool, "use-llvm", "use llvm") orelse (b.release_mode != .off);
+
     for (implementations) |impl| {
         const lib_mod = b.createModule(.{
             .root_source_file = b.path(impl.root_source_file),
@@ -65,7 +67,7 @@ pub fn build(b: *std.Build) !void {
             .name = b.fmt("vulkan_{s}", .{impl.name}),
             .root_module = lib_mod,
             .linkage = .dynamic,
-            .use_llvm = true, // Fixes some random bugs happenning with custom backend. Investigations needed
+            .use_llvm = use_llvm,
         });
 
         if (impl.custom) |custom| {
@@ -144,9 +146,6 @@ fn customSoft(b: *std.Build, lib: *std.Build.Step.Compile) !void {
     const cpuinfo = b.lazyDependency("cpuinfo", .{}) orelse return error.UnresolvedDependency;
     lib.root_module.addSystemIncludePath(cpuinfo.path("include"));
     lib.root_module.linkLibrary(cpuinfo.artifact("cpuinfo"));
-
-    const interface = b.lazyDependency("interface", .{}) orelse return error.UnresolvedDependency;
-    lib.root_module.addImport("interface", interface.module("interface"));
 
     const spv = b.dependency("SPIRV_Interpreter", .{
         .@"no-example" = true,

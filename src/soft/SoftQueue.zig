@@ -17,7 +17,7 @@ const Self = @This();
 pub const Interface = base.Queue;
 
 interface: Interface,
-lock: std.Thread.RwLock,
+lock: std.Io.RwLock,
 
 pub fn create(allocator: std.mem.Allocator, device: *base.Device, index: u32, family_index: u32, flags: vk.DeviceQueueCreateFlags) VkError!*Interface {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
@@ -33,7 +33,7 @@ pub fn create(allocator: std.mem.Allocator, device: *base.Device, index: u32, fa
 
     self.* = .{
         .interface = interface,
-        .lock = .{},
+        .lock = .init,
     };
     return &self.interface;
 }
@@ -56,10 +56,11 @@ pub fn submit(interface: *Interface, infos: []Interface.SubmitInfo, p_fence: ?*b
     const soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", interface.owner));
 
     const allocator = soft_device.device_allocator.allocator();
+    const io = soft_device.interface.io();
 
     // Lock here to avoid acquiring it in `waitIdle` before runners start
-    self.lock.lockShared();
-    defer self.lock.unlockShared();
+    self.lock.lockShared(io) catch return VkError.DeviceLost;
+    defer self.lock.unlockShared(io);
 
     for (infos) |info| {
         // Cloning info to keep them alive until command execution ends
@@ -68,19 +69,23 @@ pub fn submit(interface: *Interface, infos: []Interface.SubmitInfo, p_fence: ?*b
         };
         const runners_counter = allocator.create(RefCounter) catch return VkError.OutOfDeviceMemory;
         runners_counter.* = .init;
-        soft_device.workers.spawn(Self.taskRunner, .{ self, cloned_info, p_fence, runners_counter }) catch return VkError.Unknown;
+        _ = soft_device.interface.io().async(Self.taskRunner, .{ self, cloned_info, p_fence, runners_counter });
     }
 }
 
 pub fn waitIdle(interface: *Interface) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    self.lock.lock();
-    defer self.lock.unlock();
+    const io = interface.owner.io();
+
+    self.lock.lock(io) catch return VkError.DeviceLost;
+    defer self.lock.unlock(io);
 }
 
 fn taskRunner(self: *Self, info: Interface.SubmitInfo, p_fence: ?*base.Fence, runners_counter: *RefCounter) void {
-    self.lock.lockShared();
-    defer self.lock.unlockShared();
+    const io = self.interface.owner.io();
+
+    self.lock.lockShared(io) catch return;
+    defer self.lock.unlockShared(io);
 
     runners_counter.ref();
     defer {

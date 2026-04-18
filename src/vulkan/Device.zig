@@ -1,8 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
 
-const logger = @import("lib.zig").logger;
-
 const Dispatchable = @import("Dispatchable.zig").Dispatchable;
 const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
 const VulkanAllocator = @import("VulkanAllocator.zig");
@@ -23,6 +21,7 @@ const Event = @import("Event.zig");
 const Fence = @import("Fence.zig");
 const Framebuffer = @import("Framebuffer.zig");
 const Image = @import("Image.zig");
+const Instance = @import("Instance.zig");
 const ImageView = @import("ImageView.zig");
 const Pipeline = @import("Pipeline.zig");
 const PipelineCache = @import("PipelineCache.zig");
@@ -35,6 +34,7 @@ const ShaderModule = @import("ShaderModule.zig");
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .device;
 
+instance: *Instance,
 physical_device: *const PhysicalDevice,
 queues: std.AutoArrayHashMapUnmanaged(u32, std.ArrayList(*Dispatchable(Queue))),
 host_allocator: VulkanAllocator,
@@ -71,9 +71,10 @@ pub const DispatchTable = struct {
     destroy: *const fn (*Self, std.mem.Allocator) VkError!void,
 };
 
-pub fn init(allocator: std.mem.Allocator, physical_device: *const PhysicalDevice, info: *const vk.DeviceCreateInfo) VkError!Self {
+pub fn init(allocator: std.mem.Allocator, instance: *Instance, physical_device: *const PhysicalDevice, info: *const vk.DeviceCreateInfo) VkError!Self {
     _ = info;
     return .{
+        .instance = instance,
         .physical_device = physical_device,
         .queues = .empty,
         .host_allocator = VulkanAllocator.from(allocator).clone(),
@@ -99,12 +100,13 @@ pub fn createQueues(self: *Self, allocator: std.mem.Allocator, info: *const vk.D
 
         const queue = try self.vtable.createQueue(allocator, self, queue_info.queue_family_index, @intCast(family_ptr.items.len), queue_info.flags);
 
-        logger.getManager().get().indent();
-        defer logger.getManager().get().unindent();
-
         const dispatchable_queue = try Dispatchable(Queue).wrap(allocator, queue);
         family_ptr.append(allocator, dispatchable_queue) catch return VkError.OutOfHostMemory;
     }
+}
+
+pub fn io(self: *const Self) std.Io {
+    return self.instance.io();
 }
 
 pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) VkError!void {

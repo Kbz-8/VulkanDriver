@@ -18,9 +18,14 @@ const ExecutionDevice = @import("device/Device.zig");
 const Self = @This();
 pub const Interface = base.CommandBuffer;
 
-const Command = InterfaceFactory(.{
-    .execute = fn (*ExecutionDevice) VkError!void,
-}, null);
+const Command = struct {
+    const VTable = struct {
+        execute: *const fn (*anyopaque, *ExecutionDevice) VkError!void,
+    };
+
+    ptr: *anyopaque,
+    vtable: *const VTable,
+};
 
 interface: Interface,
 
@@ -79,10 +84,10 @@ pub fn execute(self: *Self, device: *ExecutionDevice) void {
     defer self.interface.finish() catch {};
 
     for (self.commands.items) |command| {
-        command.vtable.execute(command.ptr, device) catch |err| {
+        command.vtable.execute(@ptrCast(command.ptr), device) catch |err| {
             base.errors.errorLoggerContext(err, "the software execution device");
             if (@errorReturnTrace()) |trace| {
-                std.debug.dumpStackTrace(trace.*);
+                std.debug.dumpErrorReturnTrace(trace);
             }
             return; // Should we return or continue ? Maybe device lost ?
         };
@@ -119,7 +124,8 @@ pub fn bindDescriptorSets(interface: *Interface, bind_point: vk.PipelineBindPoin
         sets: [base.VULKAN_MAX_DESCRIPTOR_SETS]?*base.DescriptorSet,
         dynamic_offsets: []const u32,
 
-        pub fn execute(impl: *const Impl, device: *ExecutionDevice) VkError!void {
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
             for (impl.first_set.., impl.sets[0..]) |i, set| {
                 if (set == null)
                     break;
@@ -136,7 +142,7 @@ pub fn bindDescriptorSets(interface: *Interface, bind_point: vk.PipelineBindPoin
         .sets = sets,
         .dynamic_offsets = dynamic_offsets,
     };
-    self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
 pub fn bindPipeline(interface: *Interface, bind_point: vk.PipelineBindPoint, pipeline: *base.Pipeline) VkError!void {
@@ -149,7 +155,8 @@ pub fn bindPipeline(interface: *Interface, bind_point: vk.PipelineBindPoint, pip
         bind_point: vk.PipelineBindPoint,
         pipeline: *SoftPipeline,
 
-        pub fn execute(impl: *const Impl, device: *ExecutionDevice) VkError!void {
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
             device.pipeline_states[@intCast(@intFromEnum(impl.bind_point))].pipeline = impl.pipeline;
         }
     };
@@ -160,7 +167,7 @@ pub fn bindPipeline(interface: *Interface, bind_point: vk.PipelineBindPoint, pip
         .bind_point = bind_point,
         .pipeline = @alignCast(@fieldParentPtr("interface", pipeline)),
     };
-    self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
 pub fn blitImage(interface: *Interface, src: *base.Image, _: vk.ImageLayout, dst: *base.Image, _: vk.ImageLayout, regions: []const vk.ImageBlit, filter: vk.Filter) VkError!void {
@@ -175,7 +182,8 @@ pub fn blitImage(interface: *Interface, src: *base.Image, _: vk.ImageLayout, dst
         regions: []const vk.ImageBlit,
         filter: vk.Filter,
 
-        pub fn execute(impl: *const Impl, device: *ExecutionDevice) VkError!void {
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
             for (impl.regions[0..]) |region| {
                 try device.blitter.blitRegion(impl.src, impl.dst, region, impl.filter);
             }
@@ -190,7 +198,7 @@ pub fn blitImage(interface: *Interface, src: *base.Image, _: vk.ImageLayout, dst
         .regions = allocator.dupe(vk.ImageBlit, regions) catch return VkError.OutOfHostMemory, // Will be freed on cmdbuf reset or destroy
         .filter = filter,
     };
-    self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
 pub fn clearColorImage(interface: *Interface, image: *base.Image, _: vk.ImageLayout, color: *const vk.ClearColorValue, range: vk.ImageSubresourceRange) VkError!void {
@@ -204,7 +212,8 @@ pub fn clearColorImage(interface: *Interface, image: *base.Image, _: vk.ImageLay
         clear_color: vk.ClearColorValue,
         range: vk.ImageSubresourceRange,
 
-        pub fn execute(impl: *const Impl, device: *ExecutionDevice) VkError!void {
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
             const clear_format = try impl.image.getClearFormat();
             try device.blitter.clear(.{ .color = impl.clear_color }, clear_format, impl.image, impl.image.interface.format, impl.range, null);
         }
@@ -217,7 +226,7 @@ pub fn clearColorImage(interface: *Interface, image: *base.Image, _: vk.ImageLay
         .clear_color = color.*,
         .range = range,
     };
-    self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
 pub fn copyBuffer(interface: *Interface, src: *base.Buffer, dst: *base.Buffer, regions: []const vk.BufferCopy) VkError!void {
@@ -231,7 +240,8 @@ pub fn copyBuffer(interface: *Interface, src: *base.Buffer, dst: *base.Buffer, r
         dst: *SoftBuffer,
         regions: []const vk.BufferCopy,
 
-        pub fn execute(impl: *const Impl, _: *ExecutionDevice) VkError!void {
+        pub fn execute(context: *anyopaque, _: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
             try impl.src.copyBuffer(impl.dst, impl.regions);
         }
     };
@@ -243,7 +253,7 @@ pub fn copyBuffer(interface: *Interface, src: *base.Buffer, dst: *base.Buffer, r
         .dst = @alignCast(@fieldParentPtr("interface", dst)),
         .regions = allocator.dupe(vk.BufferCopy, regions) catch return VkError.OutOfHostMemory, // Will be freed on cmdbuf reset or destroy
     };
-    self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
 pub fn copyBufferToImage(interface: *Interface, src: *base.Buffer, dst: *base.Image, dst_layout: vk.ImageLayout, regions: []const vk.BufferImageCopy) VkError!void {
@@ -258,7 +268,8 @@ pub fn copyBufferToImage(interface: *Interface, src: *base.Buffer, dst: *base.Im
         dst_layout: vk.ImageLayout,
         regions: []const vk.BufferImageCopy,
 
-        pub fn execute(impl: *const Impl, _: *ExecutionDevice) VkError!void {
+        pub fn execute(context: *anyopaque, _: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
             for (impl.regions[0..]) |region| {
                 try impl.dst.copyFromBuffer(impl.src, region);
             }
@@ -273,7 +284,7 @@ pub fn copyBufferToImage(interface: *Interface, src: *base.Buffer, dst: *base.Im
         .dst = @alignCast(@fieldParentPtr("interface", dst)),
         .regions = allocator.dupe(vk.BufferImageCopy, regions) catch return VkError.OutOfHostMemory, // Will be freed on cmdbuf reset or destroy
     };
-    self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
 pub fn copyImage(interface: *Interface, src: *base.Image, _: vk.ImageLayout, dst: *base.Image, _: vk.ImageLayout, regions: []const vk.ImageCopy) VkError!void {
@@ -287,7 +298,8 @@ pub fn copyImage(interface: *Interface, src: *base.Image, _: vk.ImageLayout, dst
         dst: *SoftImage,
         regions: []const vk.ImageCopy,
 
-        pub fn execute(impl: *const Impl, _: *ExecutionDevice) VkError!void {
+        pub fn execute(context: *anyopaque, _: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
             for (impl.regions[0..]) |region| {
                 try impl.src.copyToImage(impl.dst, region);
             }
@@ -301,7 +313,7 @@ pub fn copyImage(interface: *Interface, src: *base.Image, _: vk.ImageLayout, dst
         .dst = @alignCast(@fieldParentPtr("interface", dst)),
         .regions = allocator.dupe(vk.ImageCopy, regions) catch return VkError.OutOfHostMemory, // Will be freed on cmdbuf reset or destroy
     };
-    self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
 pub fn copyImageToBuffer(interface: *Interface, src: *base.Image, src_layout: vk.ImageLayout, dst: *base.Buffer, regions: []const vk.BufferImageCopy) VkError!void {
@@ -316,7 +328,8 @@ pub fn copyImageToBuffer(interface: *Interface, src: *base.Image, src_layout: vk
         dst: *SoftBuffer,
         regions: []const vk.BufferImageCopy,
 
-        pub fn execute(impl: *const Impl, _: *ExecutionDevice) VkError!void {
+        pub fn execute(context: *anyopaque, _: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
             for (impl.regions[0..]) |region| {
                 try impl.src.copyToBuffer(impl.dst, region);
             }
@@ -331,7 +344,7 @@ pub fn copyImageToBuffer(interface: *Interface, src: *base.Image, src_layout: vk
         .dst = @alignCast(@fieldParentPtr("interface", dst)),
         .regions = allocator.dupe(vk.BufferImageCopy, regions) catch return VkError.OutOfHostMemory, // Will be freed on cmdbuf reset or destroy
     };
-    self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
 pub fn dispatch(interface: *Interface, group_count_x: u32, group_count_y: u32, group_count_z: u32) VkError!void {
@@ -345,7 +358,8 @@ pub fn dispatch(interface: *Interface, group_count_x: u32, group_count_y: u32, g
         group_count_y: u32,
         group_count_z: u32,
 
-        pub fn execute(impl: *const Impl, device: *ExecutionDevice) VkError!void {
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
             try device.compute_routines.dispatch(impl.group_count_x, impl.group_count_y, impl.group_count_z);
         }
     };
@@ -357,7 +371,7 @@ pub fn dispatch(interface: *Interface, group_count_x: u32, group_count_y: u32, g
         .group_count_y = group_count_y,
         .group_count_z = group_count_z,
     };
-    self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
 pub fn dispatchIndirect(interface: *Interface, buffer: *base.Buffer, offset: vk.DeviceSize) VkError!void {
@@ -370,7 +384,8 @@ pub fn dispatchIndirect(interface: *Interface, buffer: *base.Buffer, offset: vk.
         buffer: *SoftBuffer,
         offset: vk.DeviceSize,
 
-        pub fn execute(impl: *const Impl, device: *ExecutionDevice) VkError!void {
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
             const size = 3 * @sizeOf(u32);
             const memory = if (impl.buffer.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
             const map: []u32 = @as([*]u32, @ptrCast(@alignCast(try memory.map(impl.offset, size))))[0..3];
@@ -384,7 +399,7 @@ pub fn dispatchIndirect(interface: *Interface, buffer: *base.Buffer, offset: vk.
         .buffer = @alignCast(@fieldParentPtr("interface", buffer)),
         .offset = offset,
     };
-    self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
 pub fn executeCommands(interface: *Interface, commands: *Interface) VkError!void {
@@ -396,7 +411,8 @@ pub fn executeCommands(interface: *Interface, commands: *Interface) VkError!void
 
         cmd: *Self,
 
-        pub fn execute(impl: *const Impl, device: *ExecutionDevice) VkError!void {
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
             impl.cmd.execute(device);
         }
     };
@@ -406,7 +422,7 @@ pub fn executeCommands(interface: *Interface, commands: *Interface) VkError!void
     cmd.* = .{
         .cmd = @alignCast(@fieldParentPtr("interface", commands)),
     };
-    self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
 pub fn fillBuffer(interface: *Interface, buffer: *base.Buffer, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) VkError!void {
@@ -421,7 +437,8 @@ pub fn fillBuffer(interface: *Interface, buffer: *base.Buffer, offset: vk.Device
         size: vk.DeviceSize,
         data: u32,
 
-        pub fn execute(impl: *const Impl, _: *ExecutionDevice) VkError!void {
+        pub fn execute(context: *anyopaque, _: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
             try impl.buffer.fillBuffer(impl.offset, impl.size, impl.data);
         }
     };
@@ -434,7 +451,7 @@ pub fn fillBuffer(interface: *Interface, buffer: *base.Buffer, offset: vk.Device
         .size = size,
         .data = data,
     };
-    self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
 pub fn pipelineBarrier(interface: *Interface, src_stage: vk.PipelineStageFlags, dst_stage: vk.PipelineStageFlags, dependency: vk.DependencyFlags, memory_barriers: []const vk.MemoryBarrier, buffer_barriers: []const vk.BufferMemoryBarrier, image_barriers: []const vk.ImageMemoryBarrier) VkError!void {
@@ -444,7 +461,7 @@ pub fn pipelineBarrier(interface: *Interface, src_stage: vk.PipelineStageFlags, 
     const CommandImpl = struct {
         const Impl = @This();
 
-        pub fn execute(_: *const Impl, _: *ExecutionDevice) VkError!void {
+        pub fn execute(_: *anyopaque, _: *ExecutionDevice) VkError!void {
             // TODO: implement synchronization for rasterization stages
         }
     };
@@ -452,7 +469,7 @@ pub fn pipelineBarrier(interface: *Interface, src_stage: vk.PipelineStageFlags, 
     const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(cmd);
     cmd.* = .{};
-    self.commands.append(allocator, Command.from(cmd)) catch return VkError.OutOfHostMemory;
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 
     _ = src_stage;
     _ = dst_stage;

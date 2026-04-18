@@ -11,6 +11,8 @@ const Self = @This();
 pub const Interface = base.Instance;
 
 interface: Interface,
+threaded: std.Io.Threaded,
+allocator: std.mem.Allocator,
 
 fn castExtension(comptime ext: vk.ApiInfo) vk.ExtensionProperties {
     var props: vk.ExtensionProperties = .{
@@ -29,6 +31,9 @@ pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo)
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
 
+    self.allocator = std.heap.smp_allocator;
+    self.threaded = std.Io.Threaded.init(self.allocator, .{});
+
     self.interface = try base.Instance.init(allocator, infos);
     self.interface.dispatch_table = &.{
         .destroy = destroy,
@@ -36,12 +41,14 @@ pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo)
     self.interface.vtable = &.{
         .requestPhysicalDevices = requestPhysicalDevices,
         .releasePhysicalDevices = releasePhysicalDevices,
+        .io = io,
     };
     return &self.interface;
 }
 
 fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    self.threaded.deinit();
     allocator.destroy(self);
 }
 
@@ -59,4 +66,9 @@ fn releasePhysicalDevices(interface: *Interface, allocator: std.mem.Allocator) V
 
     interface.physical_devices.deinit(allocator);
     interface.physical_devices = .empty;
+}
+
+fn io(interface: *Interface) std.Io {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    return self.threaded.io();
 }

@@ -44,22 +44,19 @@ pub const RenderPass = @import("RenderPass.zig");
 pub const Sampler = @import("Sampler.zig");
 pub const ShaderModule = @import("ShaderModule.zig");
 
-fn entryPointBeginLogTrace(comptime scope: @Type(.enum_literal)) void {
+fn entryPointBeginLogTrace(comptime scope: @EnumLiteral()) void {
     std.log.scoped(scope).debug("Calling {s}...", .{@tagName(scope)});
-    logger.getManager().get().indent();
 }
 
-fn entryPointEndLogTrace() void {
-    logger.getManager().get().unindent();
-}
+fn entryPointEndLogTrace() void {}
 
-fn entryPointNotFoundErrorLog(comptime scope: @Type(.enum_literal), name: []const u8) void {
+fn entryPointNotFoundErrorLog(comptime scope: @EnumLiteral(), name: []const u8) void {
     if (lib.getLogVerboseLevel() != .TooMuch) return;
     std.log.scoped(scope).err("Could not find function {s}", .{name});
 }
 
 inline fn notImplementedWarning() void {
-    logger.nestedFixme("function not yet implemented", .{});
+    logger.fixme("function not yet implemented", .{});
 }
 
 fn functionMapEntryPoint(comptime name: []const u8) struct { []const u8, vk.PfnVoidFunction } {
@@ -342,8 +339,6 @@ pub export fn strollEnumerateInstanceVersion(version: *u32) callconv(vk.vulkan_c
 // Instance functions ========================================================================================================================================
 
 pub export fn strollDestroyInstance(p_instance: vk.Instance, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
-    defer logger.getManager().deinit();
-
     entryPointBeginLogTrace(.vkDestroyInstance);
     defer entryPointEndLogTrace();
 

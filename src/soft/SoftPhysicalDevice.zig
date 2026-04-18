@@ -17,7 +17,7 @@ var device_name = [_]u8{0} ** vk.MAX_PHYSICAL_DEVICE_NAME_SIZE;
 
 interface: Interface,
 
-pub fn create(allocator: std.mem.Allocator, instance: *const base.Instance) VkError!*Self {
+pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*Self {
     const command_allocator = VulkanAllocator.from(allocator).cloneWithScope(.command).allocator();
 
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
@@ -224,7 +224,7 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void
 }
 
 pub fn createDevice(interface: *Interface, allocator: std.mem.Allocator, infos: *const vk.DeviceCreateInfo) VkError!*base.Device {
-    const device = try SoftDevice.create(interface, allocator, infos);
+    const device = try SoftDevice.create(interface.instance, interface, allocator, infos);
     return &device.interface;
 }
 

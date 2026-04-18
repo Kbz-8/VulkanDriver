@@ -40,8 +40,10 @@ pub fn init(device: *SoftDevice, state: *PipelineState) Self {
         .state = state,
         .batch_size = 0,
         .invocation_index = .init(0),
-        .early_dump = std.process.parseEnvVarInt(lib.DUMP_EARLY_RESULT_TABLE_ENV_NAME, u32, 10) catch null,
-        .final_dump = std.process.parseEnvVarInt(lib.DUMP_FINAL_RESULT_TABLE_ENV_NAME, u32, 10) catch null,
+        //.early_dump = std.process.parseEnvVarInt(lib.DUMP_EARLY_RESULT_TABLE_ENV_NAME, u32, 10) catch null,
+        //.final_dump = std.process.parseEnvVarInt(lib.DUMP_FINAL_RESULT_TABLE_ENV_NAME, u32, 10) catch null,
+        .early_dump = null,
+        .final_dump = null,
     };
 }
 
@@ -61,46 +63,46 @@ pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count
 
     self.invocation_index.store(0, .monotonic);
 
-    var wg: std.Thread.WaitGroup = .{};
+    var wg: std.Io.Group = .init;
     for (0..@min(self.batch_size, group_count)) |batch_id| {
-        if (std.process.hasEnvVarConstant(lib.SINGLE_THREAD_COMPUTE_EXECUTION_ENV_NAME)) {
-            @branchHint(.cold); // Should only be reached for debugging
+        //if (std.process.hasEnvVarConstant(lib.SINGLE_THREAD_COMPUTE_EXECUTION_ENV_NAME)) {
+        //    @branchHint(.cold); // Should only be reached for debugging
 
-            runWrapper(
-                RunData{
-                    .self = self,
-                    .batch_id = batch_id,
-                    .group_count = group_count,
-                    .group_count_x = @as(usize, @intCast(group_count_x)),
-                    .group_count_y = @as(usize, @intCast(group_count_y)),
-                    .group_count_z = @as(usize, @intCast(group_count_z)),
-                    .invocations_per_workgroup = invocations_per_workgroup,
-                    .pipeline = pipeline,
-                },
-            );
-        } else {
-            self.device.workers.spawnWg(&wg, runWrapper, .{
-                RunData{
-                    .self = self,
-                    .batch_id = batch_id,
-                    .group_count = group_count,
-                    .group_count_x = @as(usize, @intCast(group_count_x)),
-                    .group_count_y = @as(usize, @intCast(group_count_y)),
-                    .group_count_z = @as(usize, @intCast(group_count_z)),
-                    .invocations_per_workgroup = invocations_per_workgroup,
-                    .pipeline = pipeline,
-                },
-            });
-        }
+        //    runWrapper(
+        //        RunData{
+        //            .self = self,
+        //            .batch_id = batch_id,
+        //            .group_count = group_count,
+        //            .group_count_x = @as(usize, @intCast(group_count_x)),
+        //            .group_count_y = @as(usize, @intCast(group_count_y)),
+        //            .group_count_z = @as(usize, @intCast(group_count_z)),
+        //            .invocations_per_workgroup = invocations_per_workgroup,
+        //            .pipeline = pipeline,
+        //        },
+        //    );
+        //} else {
+        wg.async(self.device.interface.io(), runWrapper, .{
+            RunData{
+                .self = self,
+                .batch_id = batch_id,
+                .group_count = group_count,
+                .group_count_x = @as(usize, @intCast(group_count_x)),
+                .group_count_y = @as(usize, @intCast(group_count_y)),
+                .group_count_z = @as(usize, @intCast(group_count_z)),
+                .invocations_per_workgroup = invocations_per_workgroup,
+                .pipeline = pipeline,
+            },
+        });
+        //}
     }
-    self.device.workers.waitAndWork(&wg);
+    wg.await(self.device.interface.io()) catch return VkError.DeviceLost;
 }
 
 fn runWrapper(data: RunData) void {
     @call(.always_inline, run, .{data}) catch |err| {
         std.log.scoped(.@"SPIR-V runtime").err("SPIR-V runtime catched a '{s}'", .{@errorName(err)});
         if (@errorReturnTrace()) |trace| {
-            std.debug.dumpStackTrace(trace.*);
+            std.debug.dumpErrorReturnTrace(trace);
         }
     };
 }
@@ -171,14 +173,17 @@ inline fn run(data: RunData) !void {
 
 inline fn dumpResultsTable(allocator: std.mem.Allocator, rt: *spv.Runtime, is_early: bool) !void {
     @branchHint(.cold);
-    const file = try std.fs.cwd().createFile(
-        std.fmt.comptimePrint("{s}_compute_result_table_dump.txt", .{if (is_early) "early" else "final"}),
-        .{ .truncate = true },
-    );
-    defer file.close();
-    var buffer = [_]u8{0} ** 1024;
-    var writer = file.writer(buffer[0..]);
-    try rt.dumpResultsTable(allocator, &writer.interface);
+    _ = allocator;
+    _ = rt;
+    _ = is_early;
+    //const file = try std.fs.cwd().createFile(
+    //    std.fmt.comptimePrint("{s}_compute_result_table_dump.txt", .{if (is_early) "early" else "final"}),
+    //    .{ .truncate = true },
+    //);
+    //defer file.close();
+    //var buffer = [_]u8{0} ** 1024;
+    //var writer = file.writer(buffer[0..]);
+    //try rt.dumpResultsTable(allocator, &writer.interface);
 }
 
 fn writeDescriptorSets(self: *Self, rt: *spv.Runtime) !void {
