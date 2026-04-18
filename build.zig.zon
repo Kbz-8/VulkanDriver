@@ -21,28 +21,9 @@
             .url = "git+https://git.kbz8.me/kbz_8/Vulkan-CTS-bin#19ce2da05f8176348064a9fc6688847e5f76a46e",
             .hash = "N-V-__8AAHDV0xtS93nAGaYd7YWxBLnvHDEplwIpC29izSGa",
         },
-        .zigrc = .{
-            .url = "https://github.com/Aandreba/zigrc/archive/refs/tags/1.1.0.tar.gz",
-            .hash = "zigrc-1.0.0-lENlWzvQAACulrbkL9PVhWjFsWSkYhi7AmfSbCM-2Xlh",
-        },
         .cpuinfo = .{
             .url = "git+https://github.com/Kbz-8/cpuinfo.git#c9bea4f6c166a495ee0ce117821f9627d4aed118",
             .hash = "cpuinfo-0.0.1-RLgIQYrTMgGqfQMOd1nAa2EuglXOh5gR9bNzwMzQTemt",
-            .lazy = true,
-        },
-        .volk = .{
-            .url = "git+https://github.com/zeux/volk/#8f53cc717f50f142db4736f401d0b61956cd78f9",
-            .hash = "N-V-__8AAPn9BwCBHnaxOC_rffCpFI7QRfi5qBCLvov9EYK3",
-            .lazy = true,
-        },
-        .kvf = .{
-            .url = "git+https://git.kbz8.me/kbz_8/KVF#98b845f876bea94f7bf1b9d30588cf617bf93452",
-            .hash = "N-V-__8AAEGKAgC2cGDnxmAIFKkaICxS_ogfVYWH83Re29zN",
-            .lazy = true,
-        },
-        .stb = .{
-            .url = "git+https://github.com/nothings/stb#f1c79c02822848a9bed4315b12c8c8f3761e1296",
-            .hash = "N-V-__8AABQ7TgCnPlp8MP4YA8znrjd6E-ZjpF1rvrS8J_2I",
             .lazy = true,
         },
         .SPIRV_Interpreter = .{

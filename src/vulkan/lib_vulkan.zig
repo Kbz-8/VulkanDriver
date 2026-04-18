@@ -50,11 +50,6 @@ fn entryPointBeginLogTrace(comptime scope: @EnumLiteral()) void {
 
 fn entryPointEndLogTrace() void {}
 
-fn entryPointNotFoundErrorLog(comptime scope: @EnumLiteral(), name: []const u8) void {
-    if (lib.getLogVerboseLevel() != .TooMuch) return;
-    std.log.scoped(scope).err("Could not find function {s}", .{name});
-}
-
 inline fn notImplementedWarning() void {
     logger.fixme("function not yet implemented", .{});
 }
@@ -248,9 +243,6 @@ pub export fn stroll_icdNegotiateLoaderICDInterfaceVersion(p_version: *u32) call
 }
 
 pub export fn vk_icdGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
-    if (lib.getLogVerboseLevel() == .TooMuch) {
-        entryPointBeginLogTrace(.vk_icdGetInstanceProcAddr);
-    }
     defer entryPointEndLogTrace();
 
     if (p_name == null) return null;
@@ -261,9 +253,6 @@ pub export fn vk_icdGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]c
 }
 
 pub export fn stroll_icdGetPhysicalDeviceProcAddr(_: vk.Instance, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
-    if (lib.getLogVerboseLevel() == .TooMuch) {
-        entryPointBeginLogTrace(.vk_icdGetPhysicalDeviceProcAddr);
-    }
     defer entryPointEndLogTrace();
 
     if (p_name == null) return null;
@@ -271,16 +260,12 @@ pub export fn stroll_icdGetPhysicalDeviceProcAddr(_: vk.Instance, p_name: ?[*:0]
 
     if (physical_device_pfn_map.get(name)) |pfn| return pfn;
 
-    entryPointNotFoundErrorLog(.vk_icdGetPhysicalDeviceProcAddr, name);
     return null;
 }
 
 // Global functions ==========================================================================================================================================
 
 pub export fn vkGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
-    if (lib.getLogVerboseLevel() == .TooMuch) {
-        entryPointBeginLogTrace(.vkGetInstanceProcAddr);
-    }
     defer entryPointEndLogTrace();
 
     if (p_name == null) return null;
@@ -292,7 +277,6 @@ pub export fn vkGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]const
         if (physical_device_pfn_map.get(name)) |pfn| return pfn;
         if (device_pfn_map.get(name)) |pfn| return pfn;
     }
-    entryPointNotFoundErrorLog(.vkGetInstanceProcAddr, name);
     return null;
 }
 
@@ -1317,9 +1301,6 @@ pub export fn strollGetDeviceMemoryCommitment(p_device: vk.Device, p_memory: vk.
 }
 
 pub export fn strollGetDeviceProcAddr(p_device: vk.Device, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
-    if (lib.getLogVerboseLevel() == .TooMuch) {
-        entryPointBeginLogTrace(.vkGetDeviceProcAddr);
-    }
     defer entryPointEndLogTrace();
 
     if (p_name == null) return null;
@@ -1328,7 +1309,6 @@ pub export fn strollGetDeviceProcAddr(p_device: vk.Device, p_name: ?[*:0]const u
     if (p_device == .null_handle) return null;
     if (device_pfn_map.get(name)) |pfn| return pfn;
 
-    entryPointNotFoundErrorLog(.vkGetDeviceProcAddr, name);
     return null;
 }
 

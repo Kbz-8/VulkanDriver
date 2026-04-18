@@ -34,7 +34,6 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
-    const zigrc = b.dependency("zigrc", .{}).module("zigrc");
     const vulkan_headers = b.dependency("vulkan_headers", .{});
     const vulkan_utility_libraries = b.dependency("vulkan_utility_libraries", .{});
 
@@ -42,7 +41,6 @@ pub fn build(b: *std.Build) !void {
         .registry = vulkan_headers.path("registry/vk.xml"),
     }).module("vulkan-zig");
 
-    base_mod.addImport("zigrc", zigrc);
     base_mod.addImport("vulkan", vulkan);
     base_mod.addSystemIncludePath(vulkan_headers.path("include"));
     base_mod.addSystemIncludePath(vulkan_utility_libraries.path("include"));
@@ -100,12 +98,6 @@ pub fn build(b: *std.Build) !void {
         const test_step = b.step(b.fmt("test-{s}", .{impl.name}), b.fmt("Run libvulkan_{s} tests", .{impl.name}));
         test_step.dependOn(&run_tests.step);
 
-        const c_test = addCTest(b, target, optimize, vulkan_headers, &impl, lib) catch continue;
-
-        (try addCTestRunner(b, &impl, c_test, .normal)).dependOn(&lib_install.step);
-        (try addCTestRunner(b, &impl, c_test, .gdb)).dependOn(&lib_install.step);
-        (try addCTestRunner(b, &impl, c_test, .valgrind)).dependOn(&lib_install.step);
-
         (try addCTS(b, target, &impl, lib, .normal)).dependOn(&lib_install.step);
         (try addCTS(b, target, &impl, lib, .gdb)).dependOn(&lib_install.step);
         (try addCTS(b, target, &impl, lib, .valgrind)).dependOn(&lib_install.step);
@@ -159,68 +151,6 @@ fn customSoft(b: *std.Build, lib: *std.Build.Step.Compile) !void {
     const options = b.addOptions();
     options.addOption(bool, "debug_allocator", debug_allocator_option);
     lib.root_module.addOptions("config", options);
-}
-
-fn addCTest(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, vulkan_headers: *std.Build.Dependency, impl: *const ImplementationDesc, impl_lib: *std.Build.Step.Compile) !*std.Build.Step.Compile {
-    const volk = b.lazyDependency("volk", .{}) orelse return error.DepNotFound;
-    const kvf = b.lazyDependency("kvf", .{}) orelse return error.DepNotFound;
-    const stb = b.lazyDependency("stb", .{}) orelse return error.DepNotFound;
-
-    const exe = b.addExecutable(.{
-        .name = b.fmt("c_test_vulkan_{s}", .{impl.name}),
-        .root_module = b.createModule(.{
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-        }),
-    });
-
-    exe.root_module.addSystemIncludePath(volk.path(""));
-    exe.root_module.addSystemIncludePath(kvf.path(""));
-    exe.root_module.addSystemIncludePath(stb.path(""));
-    exe.root_module.addSystemIncludePath(vulkan_headers.path("include"));
-
-    exe.root_module.addCSourceFile(.{
-        .file = b.path("test/c/main.c"),
-        .flags = &.{b.fmt("-DLIBVK=\"{s}\"", .{impl_lib.name})},
-    });
-
-    const install = b.addInstallArtifact(exe, .{});
-    install.step.dependOn(&impl_lib.step);
-
-    return exe;
-}
-
-fn addCTestRunner(b: *std.Build, impl: *const ImplementationDesc, exe: *std.Build.Step.Compile, comptime mode: RunningMode) !*std.Build.Step {
-    const run = b.addRunArtifact(exe);
-    switch (mode) {
-        .gdb => try run.argv.insert(b.allocator, 0, .{ .bytes = b.fmt("gdb", .{}) }), // Hacky
-        .valgrind => try run.argv.insert(b.allocator, 0, .{ .bytes = b.fmt("valgrind", .{}) }),
-        else => {},
-    }
-    run.step.dependOn(&exe.step);
-
-    const run_step = b.step(
-        b.fmt("test-c-{s}{s}", .{
-            impl.name,
-            switch (mode) {
-                .normal => "",
-                .gdb => "-gdb",
-                .valgrind => "-valgrind",
-            },
-        }),
-        b.fmt("Run libvulkan_{s} C tests{s}", .{
-            impl.name,
-            switch (mode) {
-                .normal => "",
-                .gdb => " within GDB",
-                .valgrind => " within Valgrind",
-            },
-        }),
-    );
-    run_step.dependOn(&run.step);
-
-    return &run.step;
 }
 
 fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *std.Build.Step.Compile, comptime mode: RunningMode) !*std.Build.Step {
@@ -305,10 +235,7 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
     const cts = b.dependency("cts_bin", .{});
 
     // Some systems may need a manual path management to get to packages (e.g. Github Actions)
-    const cache_path = if (std.zig.EnvVar.get(.ZIG_GLOBAL_CACHE_DIR, &b.graph.environ_map)) |cache_path|
-        b.fmt("{s}/../", .{cache_path})
-    else
-        "";
+    const cache_path = if (std.zig.EnvVar.get(.ZIG_GLOBAL_CACHE_DIR, &b.graph.environ_map)) |cache_path| cache_path else "";
 
     const cts_exe_name = cts.path(b.fmt("deqp-vk-{s}", .{
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
@@ -360,7 +287,7 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
     run.addArg(b.fmt("--deqp-archive-dir={s}{s}", .{ cache_path, try cts.path("").getPath3(b, null).toString(b.allocator) }));
     run.addArg(b.fmt("--deqp-vk-library-path={s}", .{b.getInstallPath(.lib, impl_lib.out_lib_filename)}));
 
-    const run_step = b.step(b.fmt("cts-{s}", .{impl.name}), b.fmt("Run Vulkan conformance tests in a multithreaded environment for libvulkan_{s}", .{impl.name}));
+    const run_step = b.step(b.fmt("cts-{s}", .{impl.name}), b.fmt("Run Vulkan conformance tests for libvulkan_{s} in a multithreaded environment", .{impl.name}));
     run_step.dependOn(&run.step);
 
     return &run.step;

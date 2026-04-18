@@ -11,6 +11,7 @@ pub const errors = @import("error_set.zig");
 pub const lib_vulkan = @import("lib_vulkan.zig");
 pub const logger = @import("logger.zig");
 pub const format = @import("format.zig");
+pub const env = @import("environment.zig");
 
 pub const Dispatchable = @import("Dispatchable.zig").Dispatchable;
 pub const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
@@ -83,28 +84,6 @@ pub const std_options: std.Options = .{
     .log_level = .debug,
     .logFn = logger.log,
 };
-
-pub const LogVerboseLevel = enum {
-    None,
-    Standard,
-    High,
-    TooMuch,
-};
-
-pub fn getLogVerboseLevel() LogVerboseLevel {
-    //const allocator = std.heap.c_allocator;
-    //const level = std.process.getEnvVarOwned(allocator, DRIVER_LOGS_ENV_NAME) catch return .None;
-    //defer allocator.free(level);
-    //return if (std.mem.eql(u8, level, "none"))
-    //    .None
-    //else if (std.mem.eql(u8, level, "all"))
-    //    .High
-    //else if (std.mem.eql(u8, level, "stupid"))
-    //    .TooMuch
-    //else
-    //    .Standard;
-    return .High;
-}
 
 pub inline fn unsupported(comptime fmt: []const u8, args: anytype) void {
     std.log.scoped(.UNSUPPORTED).warn(fmt, args);
