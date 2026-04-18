@@ -246,9 +246,6 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
 fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *std.Build.Step.Compile) !*std.Build.Step {
     const cts = b.dependency("cts_bin", .{});
 
-    // Some systems may need a manual path management to get to packages (e.g. Github Actions)
-    const cache_path = if (std.zig.EnvVar.get(.ZIG_GLOBAL_CACHE_DIR, &b.graph.environ_map)) |cache_path| cache_path else "";
-
     const cts_exe_name = cts.path(b.fmt("deqp-vk-{s}", .{
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
             .linux => "linux.x86_64",
@@ -283,8 +280,6 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
     const run = b.addSystemCommand(&[_][]const u8{"deqp-runner"});
     run.step.dependOn(&impl_lib.step);
 
-    std.debug.print("test {s}\n", .{mustpass_path});
-
     run.addArg("run");
     run.addArg("--deqp");
     run.addArg(cts_exe_path);
@@ -298,7 +293,7 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
         run.addArg(b.fmt("-j{d}", .{count}));
     }
     run.addArg("--");
-    run.addArg(b.fmt("--deqp-archive-dir={s}{s}", .{ cache_path, try cts.path("").getPath3(b, null).toString(b.allocator) }));
+    run.addArg(b.fmt("--deqp-archive-dir={s}", .{try cts.path("").getPath3(b, null).toString(b.allocator)}));
     run.addArg(b.fmt("--deqp-vk-library-path={s}", .{b.getInstallPath(.lib, impl_lib.out_lib_filename)}));
 
     const run_step = b.step(b.fmt("cts-{s}", .{impl.name}), b.fmt("Run Vulkan conformance tests for libvulkan_{s} in a multithreaded environment", .{impl.name}));
