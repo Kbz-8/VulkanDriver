@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const vk = @import("vulkan");
-const config = @import("config");
+const config = @import("lib.zig").config;
 
 const VkError = @import("error_set.zig").VkError;
 const Dispatchable = @import("Dispatchable.zig").Dispatchable;

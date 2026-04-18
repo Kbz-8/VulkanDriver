@@ -2,7 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 const builtin = @import("builtin");
-const config = @import("config");
+const config = base.config;
 
 const SoftQueue = @import("SoftQueue.zig");
 

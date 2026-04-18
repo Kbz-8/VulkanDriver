@@ -32,7 +32,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
     self.* = .{
         .interface = interface,
         .module = spv.Module.init(allocator, code, .{
-            .use_simd_vectors_specializations = !base.env.hasEnvVar(lib.NO_SHADER_SIMD_ENV_NAME),
+            .use_simd_vectors_specializations = base.config.shaders_simd,
         }) catch |err| switch (err) {
             spv.Module.ModuleError.OutOfMemory => return VkError.OutOfHostMemory,
             else => {

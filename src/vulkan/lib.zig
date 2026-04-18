@@ -11,7 +11,7 @@ pub const errors = @import("error_set.zig");
 pub const lib_vulkan = @import("lib_vulkan.zig");
 pub const logger = @import("logger.zig");
 pub const format = @import("format.zig");
-pub const env = @import("environment.zig");
+pub const config = @import("config");
 
 pub const Dispatchable = @import("Dispatchable.zig").Dispatchable;
 pub const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;

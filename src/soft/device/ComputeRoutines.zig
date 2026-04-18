@@ -35,26 +35,13 @@ early_dump: ?u32,
 final_dump: ?u32,
 
 pub fn init(device: *SoftDevice, state: *PipelineState) Self {
-    const early_dumb_env_var = base.env.getEnvVar(lib.DUMP_EARLY_RESULT_TABLE_ENV_NAME);
-    const final_dumb_env_var = base.env.getEnvVar(lib.DUMP_FINAL_RESULT_TABLE_ENV_NAME);
-
     return .{
         .device = device,
         .state = state,
         .batch_size = 0,
         .invocation_index = .init(0),
-        .early_dump = blk: {
-            if (early_dumb_env_var) |val| {
-                break :blk std.fmt.parseInt(u32, std.mem.span(val.ptr), 10) catch null;
-            }
-            break :blk null;
-        },
-        .final_dump = blk: {
-            if (final_dumb_env_var) |val| {
-                break :blk std.fmt.parseInt(u32, std.mem.span(val.ptr), 10) catch null;
-            }
-            break :blk null;
-        },
+        .early_dump = base.config.compute_dump_early_results_table,
+        .final_dump = base.config.compute_dump_final_results_table,
     };
 }
 
@@ -76,7 +63,7 @@ pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count
 
     var wg: std.Io.Group = .init;
     for (0..@min(self.batch_size, group_count)) |batch_id| {
-        if (base.env.hasEnvVar(lib.SINGLE_THREAD_COMPUTE_EXECUTION_ENV_NAME)) {
+        if (base.config.single_threaded_compute) {
             @branchHint(.cold); // Should only be reached for debugging
 
             runWrapper(

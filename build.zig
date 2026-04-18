@@ -6,7 +6,7 @@ const ImplementationDesc = struct {
     name: []const u8,
     root_source_file: []const u8,
     vulkan_version: std.SemanticVersion,
-    custom: ?*const fn (*std.Build, *std.Build.Step.Compile) anyerror!void = null,
+    custom: ?*const fn (*std.Build, *std.Build.Step.Compile, *std.Build.Step.Options) anyerror!void = null,
 };
 
 const implementations = [_]ImplementationDesc{
@@ -41,11 +41,16 @@ pub fn build(b: *std.Build) !void {
         .registry = vulkan_headers.path("registry/vk.xml"),
     }).module("vulkan-zig");
 
+    const logs_option = b.option(bool, "logs", "Driver logs") orelse false;
+
+    const options = b.addOptions();
+    options.addOption(bool, "logs", logs_option);
+
     base_mod.addImport("vulkan", vulkan);
     base_mod.addSystemIncludePath(vulkan_headers.path("include"));
     base_mod.addSystemIncludePath(vulkan_utility_libraries.path("include"));
 
-    const use_llvm = b.option(bool, "use-llvm", "use llvm") orelse (b.release_mode != .off);
+    const use_llvm = b.option(bool, "use-llvm", "LLVM build") orelse (b.release_mode != .off);
 
     for (implementations) |impl| {
         const lib_mod = b.createModule(.{
@@ -68,7 +73,7 @@ pub fn build(b: *std.Build) !void {
         });
 
         if (impl.custom) |custom| {
-            custom(b, lib) catch continue;
+            custom(b, lib, options) catch continue;
         }
 
         const icd_file = b.addWriteFile(
@@ -118,6 +123,8 @@ pub fn build(b: *std.Build) !void {
         impl_docs_step.dependOn(&impl_install_docs.step);
     }
 
+    base_mod.addOptions("config", options);
+
     const autodoc_test = b.addObject(.{
         .name = "lib",
         .root_module = base_mod,
@@ -133,7 +140,7 @@ pub fn build(b: *std.Build) !void {
     docs_step.dependOn(&install_docs.step);
 }
 
-fn customSoft(b: *std.Build, lib: *std.Build.Step.Compile) !void {
+fn customSoft(b: *std.Build, lib: *std.Build.Step.Compile, options: *std.Build.Step.Options) !void {
     const cpuinfo = b.lazyDependency("cpuinfo", .{}) orelse return error.UnresolvedDependency;
     lib.root_module.addSystemIncludePath(cpuinfo.path("include"));
     lib.root_module.linkLibrary(cpuinfo.artifact("cpuinfo"));
@@ -145,11 +152,17 @@ fn customSoft(b: *std.Build, lib: *std.Build.Step.Compile) !void {
     }).module("spv");
     lib.root_module.addImport("spv", spv);
 
-    const debug_allocator_option = b.option(bool, "debug-allocator", "debug device allocator") orelse false;
+    const debug_allocator_option = b.option(bool, "debug-allocator", "Debug device allocator") orelse false;
+    const shaders_simd_option = b.option(bool, "shader-simd", "Shaders SIMD acceleration") orelse true;
+    const single_threaded_compute_option = b.option(bool, "single-threaded-compute", "Single threaded compute shaders execution") orelse true;
+    const compute_dump_early_results_table_option = b.option(u32, "compute-dump-early-results-table", "Dump compute shaders results table before invocation");
+    const compute_dump_final_results_table_option = b.option(u32, "compute-dump-final-results-table", "Dump compute shaders results table after invocation");
 
-    const options = b.addOptions();
     options.addOption(bool, "debug_allocator", debug_allocator_option);
-    lib.root_module.addOptions("config", options);
+    options.addOption(bool, "shaders_simd", shaders_simd_option);
+    options.addOption(bool, "single_threaded_compute", single_threaded_compute_option);
+    options.addOption(?u32, "compute_dump_early_results_table", compute_dump_early_results_table_option);
+    options.addOption(?u32, "compute_dump_final_results_table", compute_dump_final_results_table_option);
 }
 
 fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *std.Build.Step.Compile, comptime mode: RunningMode) !*std.Build.Step {
