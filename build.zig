@@ -283,6 +283,8 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
     const run = b.addSystemCommand(&[_][]const u8{"deqp-runner"});
     run.step.dependOn(&impl_lib.step);
 
+    std.debug.print("test {s}\n", .{mustpass_path});
+
     run.addArg("run");
     run.addArg("--deqp");
     run.addArg(cts_exe_path);
