@@ -145,14 +145,14 @@ pub fn copyToImageSingleAspect(self: *const Self, dst: *Self, region: vk.ImageCo
     const src_memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
     var src_map: []u8 = @as([*]u8, @ptrCast(try src_memory.map(self.interface.memory_offset + src_texel_offset, src_size)))[0..src_size];
 
-    const dst_texel_offset = try self.getTexelMemoryOffset(region.dst_offset, .{
+    const dst_texel_offset = try dst.getTexelMemoryOffset(region.dst_offset, .{
         .aspect_mask = region.dst_subresource.aspect_mask,
         .mip_level = region.dst_subresource.mip_level,
         .array_layer = region.dst_subresource.base_array_layer,
     });
     const dst_size = try dst.interface.getTotalSizeForAspect(region.dst_subresource.aspect_mask) - dst_texel_offset;
     const dst_memory = if (dst.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
-    var dst_map: []u8 = @as([*]u8, @ptrCast(try dst_memory.map(self.interface.memory_offset + dst_texel_offset, dst_size)))[0..dst_size];
+    var dst_map: []u8 = @as([*]u8, @ptrCast(try dst_memory.map(dst.interface.memory_offset + dst_texel_offset, dst_size)))[0..dst_size];
 
     for (0..layer_count) |_| {
         if (is_single_row) {

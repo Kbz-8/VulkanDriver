@@ -6,15 +6,12 @@ const SoftDescriptorSet = @import("../SoftDescriptorSet.zig");
 const SoftDevice = @import("../SoftDevice.zig");
 const SoftPipeline = @import("../SoftPipeline.zig");
 
-const Blitter = @import("Blitter.zig");
 const ComputeRoutines = @import("ComputeRoutines.zig");
 const PipelineState = @import("PipelineState.zig");
 
 const VkError = base.VkError;
 
 const Self = @This();
-
-blitter: Blitter,
 
 compute_routines: ComputeRoutines,
 
@@ -23,7 +20,6 @@ compute_routines: ComputeRoutines,
 pipeline_states: [2]PipelineState,
 
 pub const init: Self = .{
-    .blitter = .init,
     .compute_routines = undefined,
     .pipeline_states = undefined,
 };

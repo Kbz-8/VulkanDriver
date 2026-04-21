@@ -7,6 +7,8 @@ pub const vku = @cImport({
     @cInclude("vulkan/utility/vk_format_utils.h");
 });
 
+pub const zm = @import("zmath");
+
 pub const errors = @import("error_set.zig");
 pub const lib_vulkan = @import("lib_vulkan.zig");
 pub const logger = @import("logger.zig");

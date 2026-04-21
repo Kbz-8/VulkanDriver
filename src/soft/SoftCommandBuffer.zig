@@ -14,6 +14,7 @@ const SoftPipeline = @import("SoftPipeline.zig");
 const SoftDescriptorSet = @import("SoftDescriptorSet.zig");
 
 const ExecutionDevice = @import("device/Device.zig");
+const blitter = @import("device/blitter.zig");
 
 const Self = @This();
 pub const Interface = base.CommandBuffer;
@@ -182,10 +183,10 @@ pub fn blitImage(interface: *Interface, src: *base.Image, _: vk.ImageLayout, dst
         regions: []const vk.ImageBlit,
         filter: vk.Filter,
 
-        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+        pub fn execute(context: *anyopaque, _: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
             for (impl.regions[0..]) |region| {
-                try device.blitter.blitRegion(impl.src, impl.dst, region, impl.filter);
+                try blitter.blitRegion(impl.src, impl.dst, region, impl.filter);
             }
         }
     };
@@ -212,10 +213,10 @@ pub fn clearColorImage(interface: *Interface, image: *base.Image, _: vk.ImageLay
         clear_color: vk.ClearColorValue,
         range: vk.ImageSubresourceRange,
 
-        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+        pub fn execute(context: *anyopaque, _: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
             const clear_format = try impl.image.getClearFormat();
-            try device.blitter.clear(.{ .color = impl.clear_color }, clear_format, impl.image, impl.image.interface.format, impl.range, null);
+            try blitter.clear(.{ .color = impl.clear_color }, clear_format, impl.image, impl.image.interface.format, impl.range, null);
         }
     };
 

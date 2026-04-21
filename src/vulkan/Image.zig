@@ -91,3 +91,7 @@ pub inline fn formatFromAspect(self: *const Self, aspect_mask: vk.ImageAspectFla
 pub inline fn formatToAspect(self: *const Self, aspect_mask: vk.ImageAspectFlags) vk.ImageAspectFlags {
     return lib.format.toAspect(self.format, aspect_mask);
 }
+
+pub fn getLastLayerIndex(self: *const Self, range: vk.ImageSubresourceRange) u32 {
+    return (if (range.layer_count == vk.REMAINING_ARRAY_LAYERS) self.array_layers else range.base_array_layer + range.layer_count) - 1;
+}

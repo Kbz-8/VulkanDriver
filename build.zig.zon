@@ -26,9 +26,14 @@
             .hash = "cpuinfo-0.0.1-RLgIQYrTMgGqfQMOd1nAa2EuglXOh5gR9bNzwMzQTemt",
             .lazy = true,
         },
+        .zmath = .{
+            .url = "git+https://github.com/zig-gamedev/zmath#3a5955b2b72cd081563fbb084eff05bffd1e3fbb",
+            .hash = "zmath-0.11.0-dev-wjwivdMsAwD-xaLj76YHUq3t9JDH-X16xuMTmnDzqbu2",
+        },
         .SPIRV_Interpreter = .{
             .url = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#664ea9b92bf84bc97ec4a062c171562bf6628263",
             .hash = "SPIRV_Interpreter-0.0.1-ajmpn1qKBACshq_ncUUF-zXJzpdNLRzIAPcWRQL57W8l",
+            .lazy = true,
         },
     },
 

@@ -41,11 +41,14 @@ pub fn build(b: *std.Build) !void {
         .registry = vulkan_headers.path("registry/vk.xml"),
     }).module("vulkan-zig");
 
+    const zmath = b.dependency("zmath", .{}).module("root");
+
     const logs_option = b.option(bool, "logs", "Driver logs") orelse false;
 
     const options = b.addOptions();
     options.addOption(bool, "logs", logs_option);
 
+    base_mod.addImport("zmath", zmath);
     base_mod.addImport("vulkan", vulkan);
     base_mod.addSystemIncludePath(vulkan_headers.path("include"));
     base_mod.addSystemIncludePath(vulkan_utility_libraries.path("include"));
@@ -145,12 +148,12 @@ fn customSoft(b: *std.Build, lib: *std.Build.Step.Compile, options: *std.Build.S
     lib.root_module.addSystemIncludePath(cpuinfo.path("include"));
     lib.root_module.linkLibrary(cpuinfo.artifact("cpuinfo"));
 
-    const spv = b.dependency("SPIRV_Interpreter", .{
+    const spv = b.lazyDependency("SPIRV_Interpreter", .{
         .@"no-example" = true,
         .@"no-test" = true,
         .@"use-llvm" = true,
-    }).module("spv");
-    lib.root_module.addImport("spv", spv);
+    }) orelse return error.UnresolvedDependency;
+    lib.root_module.addImport("spv", spv.module("spv"));
 
     const debug_allocator_option = b.option(bool, "debug-allocator", "Debug device allocator") orelse false;
     const shaders_simd_option = b.option(bool, "shader-simd", "Shaders SIMD acceleration") orelse true;
