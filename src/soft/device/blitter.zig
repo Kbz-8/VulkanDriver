@@ -16,6 +16,27 @@ const State = struct {
     filter: vk.Filter,
     allow_srgb_conversion: bool,
     clamp_to_edge: bool,
+    dst_samples: usize,
+};
+
+const BlitData = struct {
+    src_map: []const u8,
+    dst_map: []u8,
+
+    src_slice_pitch_bytes: usize,
+    src_row_pitch_bytes: usize,
+    dst_slice_pitch_bytes: usize,
+    dst_row_pitch_bytes: usize,
+
+    pos: zm.F32x4,
+    dim: zm.F32x4,
+
+    dst_offset_0: vk.Offset3D,
+    dst_offset_1: vk.Offset3D,
+
+    depth_ratio: f32,
+    height_ratio: f32,
+    width_ratio: f32,
 };
 
 fn computeOffset2D(x: usize, y: usize, pitch_bytes: usize, texel_bytes: usize) usize {
@@ -26,17 +47,15 @@ fn computeOffset3D(x: usize, y: usize, z: usize, slice_bytes: usize, pitch_bytes
     return z * slice_bytes + y * pitch_bytes + x * texel_bytes;
 }
 
-pub fn clear(pixel: vk.ClearValue, format: vk.Format, dest: *SoftImage, view_format: vk.Format, range: vk.ImageSubresourceRange, area: ?vk.Rect2D) VkError!void {
+pub fn clear(pixel: vk.ClearValue, format: vk.Format, dst: *SoftImage, view_format: vk.Format, range: vk.ImageSubresourceRange, area: ?vk.Rect2D) VkError!void {
     const dst_format = base.format.fromAspect(view_format, range.aspect_mask);
     if (dst_format == .undefined) {
         return;
     }
 
-    const view_format_value: c_uint = @intCast(@intFromEnum(view_format));
-
     var clamped_pixel: vk.ClearValue = pixel;
-    if (base.vku.vkuFormatIsSINT(view_format_value) or base.vku.vkuFormatIsUINT(view_format_value)) {
-        const min_value: f32 = if (base.vku.vkuFormatIsSNORM(view_format_value)) -1.0 else 0.0;
+    if (base.format.isSint(view_format) or base.format.isUint(view_format)) {
+        const min_value: f32 = if (base.format.isSnorm(view_format)) -1.0 else 0.0;
 
         if (range.aspect_mask.color_bit) {
             clamped_pixel.color.float_32[0] = std.math.clamp(pixel.color.float_32[0], min_value, 1.0);
@@ -51,69 +70,117 @@ pub fn clear(pixel: vk.ClearValue, format: vk.Format, dest: *SoftImage, view_for
         }
     }
 
-    if (try fastClear(clamped_pixel, format, dest, dst_format, range, area)) {
+    if (try fastClear(clamped_pixel, format, dst, dst_format, range, area)) {
         return;
     }
     base.logger.fixme("implement slow clear", .{});
 }
 
-fn fastClear(clear_value: vk.ClearValue, clear_format: vk.Format, dest: *SoftImage, view_format: vk.Format, range: vk.ImageSubresourceRange, render_area: ?vk.Rect2D) VkError!bool {
-    _ = render_area;
-    _ = range;
-
+fn fastClear(clear_value: vk.ClearValue, clear_format: vk.Format, dst: *SoftImage, view_format: vk.Format, range: vk.ImageSubresourceRange, render_area: ?vk.Rect2D) VkError!bool {
     if (clear_format != .r32g32b32a32_sfloat and clear_format != .d32_sfloat and clear_format != .s8_uint) {
         return false;
     }
 
-    const ClearValue = union {
-        rgba: struct { r: f32, g: f32, b: f32, a: f32 },
-        rgb: [3]f32,
-        d: f32,
-        d_as_u32: u32,
-        s: u32,
-    };
-
-    const c: *const ClearValue = @ptrCast(&clear_value);
+    const r, const g, const b, const a = clear_value.color.float_32;
+    const d = clear_value.depth_stencil.depth;
+    const s = clear_value.depth_stencil.stencil;
 
     var pack: u32 = 0;
     switch (view_format) {
-        .r5g6b5_unorm_pack16 => pack = @as(u16, @intFromFloat(31.0 * c.rgba.b + 0.5)) | (@as(u16, @intFromFloat(63.0 * c.rgba.g + 0.5)) << 5) | (@as(u16, @intFromFloat(31.0 * c.rgba.r + 0.5)) << 11),
-        .b5g6r5_unorm_pack16 => pack = @as(u16, @intFromFloat(31.0 * c.rgba.r + 0.5)) | (@as(u16, @intFromFloat(63.0 * c.rgba.g + 0.5)) << 5) | (@as(u16, @intFromFloat(31.0 * c.rgba.b + 0.5)) << 11),
+        .r5g6b5_unorm_pack16 => pack = @as(u16, @intFromFloat(31.0 * b + 0.5)) |
+            (@as(u16, @intFromFloat(63.0 * g + 0.5)) << 5) |
+            (@as(u16, @intFromFloat(31.0 * r + 0.5)) << 11),
+        .b5g6r5_unorm_pack16 => pack = @as(u16, @intFromFloat(31.0 * r + 0.5)) |
+            (@as(u16, @intFromFloat(63.0 * g + 0.5)) << 5) |
+            (@as(u16, @intFromFloat(31.0 * b + 0.5)) << 11),
 
         .a8b8g8r8_uint_pack32,
         .a8b8g8r8_unorm_pack32,
         .r8g8b8a8_unorm,
-        => pack = (@as(u32, @intFromFloat(255.0 * c.rgba.a + 0.5)) << 24) | (@as(u32, @intFromFloat(255.0 * c.rgba.b + 0.5)) << 16) | (@as(u32, @intFromFloat(255.0 * c.rgba.g + 0.5)) << 8) | @as(u32, @intFromFloat(255.0 * c.rgba.r + 0.5)),
+        => pack = (@as(u32, @intFromFloat(255.0 * a + 0.5)) << 24) |
+            (@as(u32, @intFromFloat(255.0 * b + 0.5)) << 16) |
+            (@as(u32, @intFromFloat(255.0 * g + 0.5)) << 8) |
+            (@as(u32, @intFromFloat(255.0 * r + 0.5))),
 
-        .b8g8r8a8_unorm => pack = (@as(u32, @intFromFloat(255.0 * c.rgba.a + 0.5)) << 24) | (@as(u32, @intFromFloat(255.0 * c.rgba.r + 0.5)) << 16) | (@as(u32, @intFromFloat(255.0 * c.rgba.g + 0.5)) << 8) | @as(u32, @intFromFloat(255.0 * c.rgba.b + 0.5)),
+        .b8g8r8a8_unorm => pack = (@as(u32, @intFromFloat(255.0 * a + 0.5)) << 24) |
+            (@as(u32, @intFromFloat(255.0 * r + 0.5)) << 16) |
+            (@as(u32, @intFromFloat(255.0 * g + 0.5)) << 8) |
+            (@as(u32, @intFromFloat(255.0 * b + 0.5))),
         //.b10g11r11_ufloat_pack32 => pack = R11G11B10F(c.rgb),
         //.e5b9g9r9_ufloat_pack32 => pack = RGB9E5(c.rgb),
         .d32_sfloat => {
             std.debug.assert(clear_format == .d32_sfloat);
-            pack = c.d_as_u32; // float reinterpreted as uint32
+            pack = @bitCast(d); // float reinterpreted as uint32
         },
         .s8_uint => {
             std.debug.assert(clear_format == .s8_uint);
-            pack = @as(u8, @intCast(c.s));
+            pack = @as(u8, @intCast(s));
         },
         else => return false,
     }
 
-    if (dest.interface.memory) |memory| {
-        const image_size = try dest.interface.getTotalSize();
-        const memory_map = memory.map(dest.interface.memory_offset, image_size) catch return false;
-        defer memory.unmap();
+    var subresource: vk.ImageSubresource = .{
+        .aspect_mask = range.aspect_mask,
+        .mip_level = range.base_mip_level,
+        .array_layer = range.base_array_layer,
+    };
+    const last_mip_level = dst.interface.getLastMipLevel(range);
+    const last_layer = dst.interface.getLastLayerIndex(range);
 
-        const memory_map_as_u32: []u32 = @as([*]u32, @ptrCast(@alignCast(memory_map)))[0..@divExact(image_size, 4)];
+    var area: vk.Rect2D = if (render_area) |ra| ra else .{
+        .offset = .{ .x = 0, .y = 0 },
+        .extent = .{ .width = 0, .height = 0 },
+    };
 
-        @memset(memory_map_as_u32, pack);
+    const dst_memory = if (dst.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
 
-        return true;
+    while (subresource.mip_level <= last_mip_level) : (subresource.mip_level += 1) {
+        const dst_slice_pitch_bytes = dst.getSliceMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level);
+        const dst_row_pitch_bytes = dst.getRowPitchMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level);
+        const extent = dst.getMipLevelExtent(subresource.mip_level);
+
+        if (render_area == null) {
+            area.extent.width = extent.width;
+            area.extent.height = extent.height;
+        }
+
+        subresource.array_layer = range.base_array_layer;
+        while (subresource.array_layer <= last_layer) : (subresource.array_layer += 1) {
+            for (0..@intCast(extent.depth)) |depth| {
+                const dst_texel_offset = try dst.getTexelMemoryOffset(.{ .x = area.offset.x, .y = area.offset.y, .z = @intCast(depth) }, subresource);
+                const dst_size = try dst.interface.getTotalSizeForAspect(subresource.aspect_mask) - dst_texel_offset;
+                var dst_map: []u8 = @as([*]u8, @ptrCast(try dst_memory.map(dst.interface.memory_offset + dst_texel_offset, dst_size)))[0..dst_size];
+
+                for (0..dst.interface.samples.toInt()) |_| {
+                    var dst_pixel = dst_map[0..];
+                    switch (base.format.texelSize(view_format)) {
+                        4 => for (0..@intCast(area.extent.height)) |_| {
+                            var dst_pixel_4bytes = std.mem.bytesAsSlice(u32, dst_pixel);
+                            @memset(dst_pixel_4bytes[0..area.extent.width], pack);
+                            dst_pixel = dst_pixel[dst_row_pitch_bytes..];
+                        },
+                        2 => for (0..@intCast(area.extent.height)) |_| {
+                            var dst_pixel_2bytes = std.mem.bytesAsSlice(u16, dst_pixel);
+                            @memset(dst_pixel_2bytes[0..area.extent.width], @as(u16, @truncate(pack)));
+                            dst_pixel = dst_pixel[dst_row_pitch_bytes..];
+                        },
+                        1 => for (0..@intCast(area.extent.height)) |_| {
+                            @memset(dst_pixel[0..area.extent.width], @as(u8, @truncate(pack)));
+                            dst_pixel = dst_pixel[dst_row_pitch_bytes..];
+                        },
+                        else => unreachable,
+                    }
+
+                    dst_map = dst_map[dst_slice_pitch_bytes..];
+                }
+            }
+        }
     }
-    return false;
+
+    return true;
 }
 
-fn sample(src: []const u8, pos: zm.F32x4, dims: zm.F32x4, slice_bytes: usize, pitch_bytes: usize, state: State) zm.F32x4 {
+fn sample(src: []const u8, pos: zm.F32x4, dim: zm.F32x4, slice_bytes: usize, pitch_bytes: usize, state: State) zm.F32x4 {
     var color: zm.F32x4 = .{ 0.0, 0.0, 0.0, 1.0 };
     const src_texel_size = base.format.texelSize(state.src_format);
 
@@ -123,14 +190,52 @@ fn sample(src: []const u8, pos: zm.F32x4, dims: zm.F32x4, slice_bytes: usize, pi
         var z: usize = @intFromFloat(pos[2]);
 
         if (state.clamp_to_edge) {
-            x = std.math.clamp(x, 0, @as(usize, @intFromFloat(dims[0])) - 1);
-            y = std.math.clamp(y, 0, @as(usize, @intFromFloat(dims[1])) - 1);
-            z = std.math.clamp(z, 0, @as(usize, @intFromFloat(dims[2])) - 1);
+            x = std.math.clamp(x, 0, @as(usize, @intFromFloat(dim[0])) - 1);
+            y = std.math.clamp(y, 0, @as(usize, @intFromFloat(dim[1])) - 1);
+            z = std.math.clamp(z, 0, @as(usize, @intFromFloat(dim[2])) - 1);
         }
 
         const src_map = src[computeOffset3D(x, y, z, slice_bytes, pitch_bytes, src_texel_size)..];
 
         color = readFloat4(src_map, state);
+    } else {
+        var x: f32 = pos[0];
+        var y: f32 = pos[1];
+        var z: f32 = pos[2];
+
+        if (state.clamp_to_edge) {
+            x = @min(@max(x, 0.5), dim[0] - 0.5);
+            y = @min(@max(y, 0.5), dim[1] - 0.5);
+            z = @min(@max(z, 0.5), dim[2] - 0.5);
+        }
+
+        const fx0 = x - 0.5;
+        const fy0 = y - 0.5;
+        const fz0 = z - 0.5;
+
+        const ix0: usize = @intCast(@max(@as(i32, @intFromFloat(fx0)), 0));
+        const iy0: usize = @intCast(@max(@as(i32, @intFromFloat(fy0)), 0));
+        const iz0: usize = @intCast(@max(@as(i32, @intFromFloat(fz0)), 0));
+
+        const ix1 = if (ix0 + 1 >= @as(usize, @intFromFloat(dim[0]))) ix0 else ix0 + 1;
+        const iy1 = if (iy0 + 1 >= @as(usize, @intFromFloat(dim[0]))) iy0 else iy0 + 1;
+
+        const sample_0_0 = src[computeOffset3D(ix0, iy0, iz0, slice_bytes, pitch_bytes, src_texel_size)..];
+        const sample_0_1 = src[computeOffset3D(ix1, iy0, iz0, slice_bytes, pitch_bytes, src_texel_size)..];
+        const sample_1_0 = src[computeOffset3D(ix0, iy1, iz0, slice_bytes, pitch_bytes, src_texel_size)..];
+        const sample_1_1 = src[computeOffset3D(ix1, iy1, iz0, slice_bytes, pitch_bytes, src_texel_size)..];
+
+        const pixel_0_0 = readFloat4(sample_0_0, state);
+        const pixel_0_1 = readFloat4(sample_0_1, state);
+        const pixel_1_0 = readFloat4(sample_1_0, state);
+        const pixel_1_1 = readFloat4(sample_1_1, state);
+
+        const fx = zm.f32x4s(fx0 - @as(f32, @floatFromInt(ix0)));
+        const fy = zm.f32x4s(fy0 - @as(f32, @floatFromInt(iy0)));
+        const ix = zm.f32x4s(1.0) - fx;
+        const iy = zm.f32x4s(1.0) - fy;
+
+        color = (pixel_0_0 * ix + pixel_0_1 * fx) * iy + (pixel_1_0 * ix + pixel_1_1 * fx) * fy;
     }
 
     return applyScaleAndClamp(color, state);
@@ -167,8 +272,8 @@ pub fn blitRegion(src: *const SoftImage, dst: *SoftImage, region: vk.ImageBlit, 
     const z0 = @as(f32, @floatFromInt(src_offset_0.z)) + (0.5 - @as(f32, @floatFromInt(dst_offset_0.z))) * depth_ratio;
 
     const src_slice_pitch_bytes = src.getSliceMemSizeForMipLevel(region.src_subresource.aspect_mask, region.src_subresource.mip_level);
-    const dst_slice_pitch_bytes = dst.getSliceMemSizeForMipLevel(region.dst_subresource.aspect_mask, region.dst_subresource.mip_level);
     const src_row_pitch_bytes = src.getRowPitchMemSizeForMipLevel(region.src_subresource.aspect_mask, region.src_subresource.mip_level);
+    const dst_slice_pitch_bytes = dst.getSliceMemSizeForMipLevel(region.dst_subresource.aspect_mask, region.dst_subresource.mip_level);
     const dst_row_pitch_bytes = dst.getRowPitchMemSizeForMipLevel(region.dst_subresource.aspect_mask, region.dst_subresource.mip_level);
 
     const src_format = base.format.fromAspect(src.interface.format, region.src_subresource.aspect_mask);
@@ -176,15 +281,6 @@ pub fn blitRegion(src: *const SoftImage, dst: *SoftImage, region: vk.ImageBlit, 
 
     const apply_filter = (filter != .nearest);
     const allow_srgb_conversion = apply_filter or base.format.isSrgb(src_format) != base.format.isSrgb(dst_format);
-
-    const is_src_int = base.format.isUint(src_format) or base.format.isSint(src_format);
-    const is_dst_int = base.format.isUint(dst_format) or base.format.isSint(dst_format);
-    const are_both_int = is_src_int and is_dst_int;
-
-    if (are_both_int) {
-        base.unsupported("Blit of only integer type images are not supported yet", .{});
-        return;
-    }
 
     var src_subresource = vk.ImageSubresource{
         .aspect_mask = region.src_subresource.aspect_mask,
@@ -215,6 +311,7 @@ pub fn blitRegion(src: *const SoftImage, dst: *SoftImage, region: vk.ImageBlit, 
         .filter = filter,
         .allow_srgb_conversion = allow_srgb_conversion,
         .clamp_to_edge = false,
+        .dst_samples = dst.interface.samples.toInt(),
     };
 
     while (dst_subresource.array_layer <= last_layer) : ({
@@ -227,45 +324,68 @@ pub fn blitRegion(src: *const SoftImage, dst: *SoftImage, region: vk.ImageBlit, 
 
         const dst_texel_offset = try dst.getTexelMemoryOffset(.{ .x = 0, .y = 0, .z = 0 }, dst_subresource);
         const dst_size = try dst.interface.getTotalSizeForAspect(dst_subresource.aspect_mask) - dst_texel_offset;
-        var dst_map: []u8 = @as([*]u8, @ptrCast(try dst_memory.map(dst.interface.memory_offset + dst_texel_offset, dst_size)))[0..dst_size];
+        const dst_map: []u8 = @as([*]u8, @ptrCast(try dst_memory.map(dst.interface.memory_offset + dst_texel_offset, dst_size)))[0..dst_size];
 
-        _ = &src_map;
-        _ = &dst_map;
+        blit(state, .{
+            .src_map = src_map,
+            .dst_map = dst_map,
 
-        for (@intCast(dst_offset_0.z)..@intCast(dst_offset_1.z)) |k| {
-            const z = z0 + @as(f32, @floatFromInt(k)) * depth_ratio;
-            var dst_slice = dst_map[(k * dst_slice_pitch_bytes)..];
+            .src_slice_pitch_bytes = src_slice_pitch_bytes,
+            .src_row_pitch_bytes = src_row_pitch_bytes,
+            .dst_slice_pitch_bytes = dst_slice_pitch_bytes,
+            .dst_row_pitch_bytes = dst_row_pitch_bytes,
 
-            for (@intCast(dst_offset_0.y)..@intCast(dst_offset_1.y)) |j| {
-                const y = y0 + @as(f32, @floatFromInt(j)) * height_ratio;
-                var dst_line = dst_slice[(j * dst_row_pitch_bytes)..];
+            .pos = zm.f32x4(x0, y0, z0, 0.0),
+            .dim = zm.f32x4(@floatFromInt(src_extent.width), @floatFromInt(src_extent.height), @floatFromInt(src_extent.depth), 0.0),
 
-                for (@intCast(dst_offset_0.x)..@intCast(dst_offset_1.x)) |i| {
-                    const x = x0 + @as(f32, @floatFromInt(i)) * width_ratio;
-                    var dst_pixel = dst_line[(i * base.format.texelSize(dst_format))..];
+            .dst_offset_0 = dst_offset_0,
+            .dst_offset_1 = dst_offset_1,
 
-                    if (are_both_int) {
-                        // TODO
-                    } else {
-                        const color = sample(
-                            src_map,
-                            .{ x, y, z, 0.0 },
-                            .{
-                                @floatFromInt(src_extent.width),
-                                @floatFromInt(src_extent.height),
-                                @floatFromInt(src_extent.depth),
-                                0.0,
-                            },
-                            src_slice_pitch_bytes,
-                            src_row_pitch_bytes,
-                            state,
-                        );
-                        for (0..dst.interface.samples.toInt()) |_| {
-                            writeFloat4(color, dst_pixel, state);
-                            if (dst_pixel.len < dst_slice_pitch_bytes)
-                                break;
-                            dst_pixel = dst_pixel[dst_slice_pitch_bytes..];
-                        }
+            .depth_ratio = depth_ratio,
+            .height_ratio = height_ratio,
+            .width_ratio = width_ratio,
+        });
+    }
+}
+
+fn blit(state: State, data: BlitData) void {
+    const is_src_int = base.format.isUint(state.src_format) or base.format.isSint(state.src_format);
+    const is_dst_int = base.format.isUint(state.dst_format) or base.format.isSint(state.dst_format);
+    const are_both_int = is_src_int and is_dst_int;
+
+    if (are_both_int) {
+        base.unsupported("Blit of only integer type images are not supported yet", .{});
+        return;
+    }
+
+    for (@intCast(data.dst_offset_0.z)..@intCast(data.dst_offset_1.z)) |k| {
+        const z = data.pos[2] + @as(f32, @floatFromInt(k)) * data.depth_ratio;
+        var dst_slice = data.dst_map[(k * data.dst_slice_pitch_bytes)..];
+
+        for (@intCast(data.dst_offset_0.y)..@intCast(data.dst_offset_1.y)) |j| {
+            const y = data.pos[1] + @as(f32, @floatFromInt(j)) * data.height_ratio;
+            var dst_line = dst_slice[(j * data.dst_row_pitch_bytes)..];
+
+            for (@intCast(data.dst_offset_0.x)..@intCast(data.dst_offset_1.x)) |i| {
+                const x = data.pos[0] + @as(f32, @floatFromInt(i)) * data.width_ratio;
+                var dst_pixel = dst_line[(i * base.format.texelSize(state.dst_format))..];
+
+                if (are_both_int) {
+                    // TODO
+                } else {
+                    const color = sample(
+                        data.src_map,
+                        .{ x, y, z, 0.0 },
+                        data.dim,
+                        data.src_slice_pitch_bytes,
+                        data.src_row_pitch_bytes,
+                        state,
+                    );
+                    for (0..state.dst_samples) |_| {
+                        writeFloat4(color, dst_pixel, state);
+                        if (dst_pixel.len < data.dst_slice_pitch_bytes)
+                            break;
+                        dst_pixel = dst_pixel[data.dst_slice_pitch_bytes..];
                     }
                 }
             }
@@ -313,11 +433,25 @@ fn writeFloat4(color: zm.F32x4, map: []u8, state: State) void {
         .b8g8r8a8_srgb,
         .b8g8r8a8_unorm,
         => {
-            map[0] = @intFromFloat(color[1] * 255.0);
-            map[1] = @intFromFloat(color[2] * 255.0);
+            map[0] = @intFromFloat(color[2] * 255.0);
+            map[1] = @intFromFloat(color[1] * 255.0);
             map[2] = @intFromFloat(color[0] * 255.0);
             map[3] = @intFromFloat(color[3] * 255.0);
         },
-        else => base.unsupported("Blitter destination format {any}", .{state.src_format}),
+        .a8b8g8r8_unorm_pack32,
+        .r8g8b8a8_unorm,
+        .a8b8g8r8_srgb_pack32,
+        .r8g8b8a8_srgb,
+        .a8b8g8r8_uint_pack32,
+        .r8g8b8a8_uint,
+        .r8g8b8a8_uscaled,
+        .a8b8g8r8_uscaled_pack32,
+        => {
+            map[0] = @intFromFloat(color[0] * 255.0);
+            map[1] = @intFromFloat(color[1] * 255.0);
+            map[2] = @intFromFloat(color[2] * 255.0);
+            map[3] = @intFromFloat(color[3] * 255.0);
+        },
+        else => base.unsupported("Blitter dstination format {any}", .{state.src_format}),
     }
 }

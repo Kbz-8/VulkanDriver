@@ -30,6 +30,7 @@ vtable: *const VTable,
 pub const VTable = struct {
     destroy: *const fn (*Self, std.mem.Allocator) void,
     getMemoryRequirements: *const fn (*Self, *vk.MemoryRequirements) VkError!void,
+    getSubresourceLayout: *const fn (*const Self, vk.ImageSubresource) VkError!vk.SubresourceLayout,
     getTotalSizeForAspect: *const fn (*const Self, vk.ImageAspectFlags) VkError!usize,
 };
 
@@ -94,4 +95,12 @@ pub inline fn formatToAspect(self: *const Self, aspect_mask: vk.ImageAspectFlags
 
 pub fn getLastLayerIndex(self: *const Self, range: vk.ImageSubresourceRange) u32 {
     return (if (range.layer_count == vk.REMAINING_ARRAY_LAYERS) self.array_layers else range.base_array_layer + range.layer_count) - 1;
+}
+
+pub fn getLastMipLevel(self: *const Self, range: vk.ImageSubresourceRange) u32 {
+    return (if (range.level_count == vk.REMAINING_MIP_LEVELS) self.mip_levels else range.base_mip_level + range.level_count) - 1;
+}
+
+pub inline fn getSubresourceLayout(self: *const Self, subresource: vk.ImageSubresource) VkError!vk.SubresourceLayout {
+    return self.vtable.getSubresourceLayout(self, subresource);
 }

@@ -12,6 +12,7 @@ pub const Interface = base.Instance;
 
 interface: Interface,
 threaded: std.Io.Threaded,
+io_impl: std.Io,
 allocator: std.mem.Allocator,
 
 fn castExtension(comptime ext: vk.ApiInfo) vk.ExtensionProperties {
@@ -33,6 +34,7 @@ pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo)
 
     self.allocator = std.heap.smp_allocator;
     self.threaded = std.Io.Threaded.init(self.allocator, .{});
+    self.io_impl = self.threaded.io();
 
     self.interface = try base.Instance.init(allocator, infos);
     self.interface.dispatch_table = &.{
@@ -70,5 +72,5 @@ fn releasePhysicalDevices(interface: *Interface, allocator: std.mem.Allocator) V
 
 fn io(interface: *Interface) std.Io {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    return self.threaded.io();
+    return self.io_impl;
 }

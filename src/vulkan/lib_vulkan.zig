@@ -1384,12 +1384,7 @@ pub export fn strollGetImageSubresourceLayout(p_device: vk.Device, p_image: vk.I
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
 
     const image = NonDispatchable(Image).fromHandleObject(p_image) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = image;
-    _ = subresource;
-    _ = layout;
+    layout.* = image.getSubresourceLayout(subresource.*) catch |err| return errorLogger(err);
 }
 
 pub export fn strollGetPipelineCacheData(p_device: vk.Device, p_cache: vk.PipelineCache, size: *usize, data: *anyopaque) callconv(vk.vulkan_call_conv) vk.Result {

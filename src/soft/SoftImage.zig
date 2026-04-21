@@ -24,6 +24,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
     interface.vtable = &.{
         .destroy = destroy,
         .getMemoryRequirements = getMemoryRequirements,
+        .getSubresourceLayout = getSubresourceLayout,
         .getTotalSizeForAspect = getTotalSizeForAspect,
     };
 
@@ -362,6 +363,27 @@ fn getTotalSizeForAspect(interface: *const Interface, aspect_mask: vk.ImageAspec
         size += self.getLayerSize(.{ .stencil_bit = true });
 
     return size * self.interface.array_layers;
+}
+
+fn getSubresourceLayout(interface: *const Interface, subresource: vk.ImageSubresource) VkError!vk.SubresourceLayout {
+    const self: *const Self = @alignCast(@fieldParentPtr("interface", interface));
+
+    if (subresource.aspect_mask.subtract(.{
+        .color_bit = true,
+        .depth_bit = true,
+        .stencil_bit = true,
+    }).toInt() != 0) {
+        base.unsupported("aspectMask {f}", .{subresource.aspect_mask});
+        return VkError.ValidationFailed;
+    }
+
+    return .{
+        .offset = try self.getSubresourceOffset(subresource.aspect_mask, subresource.mip_level, subresource.array_layer),
+        .size = self.getMultiSampledLevelSize(subresource.aspect_mask, subresource.mip_level),
+        .row_pitch = self.getRowPitchMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level),
+        .array_pitch = self.getSliceMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level),
+        .depth_pitch = self.getLayerSize(subresource.aspect_mask),
+    };
 }
 
 pub fn getLayerSize(self: *const Self, aspect_mask: vk.ImageAspectFlags) usize {
