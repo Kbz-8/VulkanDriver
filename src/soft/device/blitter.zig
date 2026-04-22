@@ -17,6 +17,7 @@ const State = struct {
     allow_srgb_conversion: bool,
     clamp_to_edge: bool,
     dst_samples: usize,
+    filter_3D: bool,
 };
 
 const BlitData = struct {
@@ -184,7 +185,7 @@ fn sample(src: []const u8, pos: zm.F32x4, dim: zm.F32x4, slice_bytes: usize, pit
     var color: zm.F32x4 = .{ 0.0, 0.0, 0.0, 1.0 };
     const src_texel_size = base.format.texelSize(state.src_format);
 
-    if (state.filter != .linear or base.format.isUint(state.src_format)) {
+    if (state.filter == .nearest or base.format.isUint(state.src_format)) {
         var x: usize = @intFromFloat(pos[0]);
         var y: usize = @intFromFloat(pos[1]);
         var z: usize = @intFromFloat(pos[2]);
@@ -218,24 +219,56 @@ fn sample(src: []const u8, pos: zm.F32x4, dim: zm.F32x4, slice_bytes: usize, pit
         const iz0: usize = @intCast(@max(@as(i32, @intFromFloat(fz0)), 0));
 
         const ix1 = if (ix0 + 1 >= @as(usize, @intFromFloat(dim[0]))) ix0 else ix0 + 1;
-        const iy1 = if (iy0 + 1 >= @as(usize, @intFromFloat(dim[0]))) iy0 else iy0 + 1;
+        const iy1 = if (iy0 + 1 >= @as(usize, @intFromFloat(dim[1]))) iy0 else iy0 + 1;
 
-        const sample_0_0 = src[computeOffset3D(ix0, iy0, iz0, slice_bytes, pitch_bytes, src_texel_size)..];
-        const sample_0_1 = src[computeOffset3D(ix1, iy0, iz0, slice_bytes, pitch_bytes, src_texel_size)..];
-        const sample_1_0 = src[computeOffset3D(ix0, iy1, iz0, slice_bytes, pitch_bytes, src_texel_size)..];
-        const sample_1_1 = src[computeOffset3D(ix1, iy1, iz0, slice_bytes, pitch_bytes, src_texel_size)..];
+        if (state.filter_3D) {
+            const iz1 = if (iz0 + 1 >= @as(usize, @intFromFloat(dim[2]))) iz0 else iz0 + 1;
 
-        const pixel_0_0 = readFloat4(sample_0_0, state);
-        const pixel_0_1 = readFloat4(sample_0_1, state);
-        const pixel_1_0 = readFloat4(sample_1_0, state);
-        const pixel_1_1 = readFloat4(sample_1_1, state);
+            const sample_0_0_0 = src[computeOffset3D(ix0, iy0, iz0, slice_bytes, pitch_bytes, src_texel_size)..];
+            const sample_0_1_0 = src[computeOffset3D(ix1, iy0, iz0, slice_bytes, pitch_bytes, src_texel_size)..];
+            const sample_1_0_0 = src[computeOffset3D(ix0, iy1, iz0, slice_bytes, pitch_bytes, src_texel_size)..];
+            const sample_1_1_0 = src[computeOffset3D(ix1, iy1, iz0, slice_bytes, pitch_bytes, src_texel_size)..];
+            const sample_0_0_1 = src[computeOffset3D(ix0, iy0, iz1, slice_bytes, pitch_bytes, src_texel_size)..];
+            const sample_0_1_1 = src[computeOffset3D(ix1, iy0, iz1, slice_bytes, pitch_bytes, src_texel_size)..];
+            const sample_1_0_1 = src[computeOffset3D(ix0, iy1, iz1, slice_bytes, pitch_bytes, src_texel_size)..];
+            const sample_1_1_1 = src[computeOffset3D(ix1, iy1, iz1, slice_bytes, pitch_bytes, src_texel_size)..];
 
-        const fx = zm.f32x4s(fx0 - @as(f32, @floatFromInt(ix0)));
-        const fy = zm.f32x4s(fy0 - @as(f32, @floatFromInt(iy0)));
-        const ix = zm.f32x4s(1.0) - fx;
-        const iy = zm.f32x4s(1.0) - fy;
+            const pixel_0_0_0 = readFloat4(sample_0_0_0, state);
+            const pixel_0_1_0 = readFloat4(sample_0_1_0, state);
+            const pixel_1_0_0 = readFloat4(sample_1_0_0, state);
+            const pixel_1_1_0 = readFloat4(sample_1_1_0, state);
+            const pixel_0_0_1 = readFloat4(sample_0_0_1, state);
+            const pixel_0_1_1 = readFloat4(sample_0_1_1, state);
+            const pixel_1_0_1 = readFloat4(sample_1_0_1, state);
+            const pixel_1_1_1 = readFloat4(sample_1_1_1, state);
 
-        color = (pixel_0_0 * ix + pixel_0_1 * fx) * iy + (pixel_1_0 * ix + pixel_1_1 * fx) * fy;
+            const fx = zm.f32x4s(fx0 - @as(f32, @floatFromInt(ix0)));
+            const fy = zm.f32x4s(fy0 - @as(f32, @floatFromInt(iy0)));
+            const fz = zm.f32x4s(fz0 - @as(f32, @floatFromInt(iz0)));
+            const ix = zm.f32x4s(1.0) - fx;
+            const iy = zm.f32x4s(1.0) - fy;
+            const iz = zm.f32x4s(1.0) - fz;
+
+            color = ((pixel_0_0_0 * ix + pixel_0_1_0 * fx) * iy + (pixel_1_0_0 * ix + pixel_1_1_0 * fx) * fy) * iz +
+                ((pixel_0_0_1 * ix + pixel_0_1_1 * fx) * iy + (pixel_1_0_1 * ix + pixel_1_1_1 * fx) * fy) * fz;
+        } else {
+            const sample_0_0 = src[computeOffset3D(ix0, iy0, iz0, slice_bytes, pitch_bytes, src_texel_size)..];
+            const sample_0_1 = src[computeOffset3D(ix1, iy0, iz0, slice_bytes, pitch_bytes, src_texel_size)..];
+            const sample_1_0 = src[computeOffset3D(ix0, iy1, iz0, slice_bytes, pitch_bytes, src_texel_size)..];
+            const sample_1_1 = src[computeOffset3D(ix1, iy1, iz0, slice_bytes, pitch_bytes, src_texel_size)..];
+
+            const pixel_0_0 = readFloat4(sample_0_0, state);
+            const pixel_0_1 = readFloat4(sample_0_1, state);
+            const pixel_1_0 = readFloat4(sample_1_0, state);
+            const pixel_1_1 = readFloat4(sample_1_1, state);
+
+            const fx = zm.f32x4s(fx0 - @as(f32, @floatFromInt(ix0)));
+            const fy = zm.f32x4s(fy0 - @as(f32, @floatFromInt(iy0)));
+            const ix = zm.f32x4s(1.0) - fx;
+            const iy = zm.f32x4s(1.0) - fy;
+
+            color = (pixel_0_0 * ix + pixel_0_1 * fx) * iy + (pixel_1_0 * ix + pixel_1_1 * fx) * fy;
+        }
     }
 
     return applyScaleAndClamp(color, state);
@@ -310,8 +343,13 @@ pub fn blitRegion(src: *const SoftImage, dst: *SoftImage, region: vk.ImageBlit, 
         .dst_format = dst_format,
         .filter = filter,
         .allow_srgb_conversion = allow_srgb_conversion,
-        .clamp_to_edge = false,
+        .clamp_to_edge = src_offset_0.x < 0 or
+            src_offset_0.y < 0 or
+            @as(u32, @intCast(src_offset_1.x)) > src_extent.width or
+            @as(u32, @intCast(src_offset_1.y)) > src_extent.height or
+            (filter != .nearest and ((x0 < 0.5) or (y0 < 0.5))),
         .dst_samples = dst.interface.samples.toInt(),
+        .filter_3D = (src_offset_1.z - src_offset_0.z) != (dst_offset_1.z - dst_offset_0.z),
     };
 
     while (dst_subresource.array_layer <= last_layer) : ({
@@ -353,11 +391,6 @@ fn blit(state: State, data: BlitData) void {
     const is_dst_int = base.format.isUint(state.dst_format) or base.format.isSint(state.dst_format);
     const are_both_int = is_src_int and is_dst_int;
 
-    if (are_both_int) {
-        base.unsupported("Blit of only integer type images are not supported yet", .{});
-        return;
-    }
-
     for (@intCast(data.dst_offset_0.z)..@intCast(data.dst_offset_1.z)) |k| {
         const z = data.pos[2] + @as(f32, @floatFromInt(k)) * data.depth_ratio;
         var dst_slice = data.dst_map[(k * data.dst_slice_pitch_bytes)..];
@@ -371,16 +404,27 @@ fn blit(state: State, data: BlitData) void {
                 var dst_pixel = dst_line[(i * base.format.texelSize(state.dst_format))..];
 
                 if (are_both_int) {
-                    // TODO
+                    var ix: usize = @intFromFloat(x);
+                    var iy: usize = @intFromFloat(y);
+                    var iz: usize = @intFromFloat(z);
+
+                    if (state.clamp_to_edge) {
+                        ix = std.math.clamp(ix, 0, @as(usize, @intFromFloat(data.dim[0])) - 1);
+                        iy = std.math.clamp(iy, 0, @as(usize, @intFromFloat(data.dim[1])) - 1);
+                        iz = std.math.clamp(iz, 0, @as(usize, @intFromFloat(data.dim[2])) - 1);
+                    }
+
+                    const src_map = data.src_map[computeOffset3D(ix, iy, iz, data.src_slice_pitch_bytes, data.src_row_pitch_bytes, base.format.texelSize(state.src_format))..];
+
+                    const color = readFloat4(src_map, state);
+                    for (0..state.dst_samples) |_| {
+                        writeFloat4(color, dst_pixel, state);
+                        if (dst_pixel.len < data.dst_slice_pitch_bytes)
+                            break;
+                        dst_pixel = dst_pixel[data.dst_slice_pitch_bytes..];
+                    }
                 } else {
-                    const color = sample(
-                        data.src_map,
-                        .{ x, y, z, 0.0 },
-                        data.dim,
-                        data.src_slice_pitch_bytes,
-                        data.src_row_pitch_bytes,
-                        state,
-                    );
+                    const color = sample(data.src_map, .{ x, y, z, 0.0 }, data.dim, data.src_slice_pitch_bytes, data.src_row_pitch_bytes, state);
                     for (0..state.dst_samples) |_| {
                         writeFloat4(color, dst_pixel, state);
                         if (dst_pixel.len < data.dst_slice_pitch_bytes)
@@ -396,11 +440,20 @@ fn blit(state: State, data: BlitData) void {
 fn applyScaleAndClamp(base_color: zm.F32x4, state: State) zm.F32x4 {
     var color: zm.F32x4 = base_color;
 
-    const unscale = base.format.getScale(state.src_format);
     const scale = base.format.getScale(state.dst_format);
 
-    if (std.simd.firstTrue(unscale != scale) != null) {
-        color *= zm.f32x4(scale[0] / unscale[0], scale[1] / unscale[1], scale[2] / unscale[2], scale[3] / unscale[3]);
+    if (base.format.isFloat(state.src_format) and !base.format.isFloat(state.dst_format)) {
+        color = @min(color, scale);
+        color = @max(color, zm.f32x4(
+            if (base.format.isUnsignedComponent(state.dst_format, 0)) 0.0 else -scale[0],
+            if (base.format.isUnsignedComponent(state.dst_format, 1)) 0.0 else -scale[1],
+            if (base.format.isUnsignedComponent(state.dst_format, 2)) 0.0 else -scale[2],
+            if (base.format.isUnsignedComponent(state.dst_format, 3)) 0.0 else -scale[3],
+        ));
+    }
+
+    if (!base.format.isUnsigned(state.src_format) and base.format.isUnsigned(state.dst_format)) {
+        color = @max(color, zm.f32x4s(0.0));
     }
 
     return color;
@@ -422,7 +475,12 @@ fn readFloat4(map: []const u8, state: State) zm.F32x4 {
             c[3] = @as(f32, @floatFromInt(map[3])) / 255.0;
         },
 
-        else => base.unsupported("Blitter source format {any}", .{state.src_format}),
+        .r32_uint => {
+            c[0] = std.mem.bytesToValue(f32, map);
+            c[3] = @as(f32, @floatFromInt(0xFFFFFFFF));
+        },
+
+        else => base.unsupported("Blitter: read from source format {any}", .{state.src_format}),
     }
 
     return c;
@@ -452,6 +510,8 @@ fn writeFloat4(color: zm.F32x4, map: []u8, state: State) void {
             map[2] = @intFromFloat(color[2] * 255.0);
             map[3] = @intFromFloat(color[3] * 255.0);
         },
-        else => base.unsupported("Blitter dstination format {any}", .{state.src_format}),
+        .r32_sfloat => std.mem.bytesAsValue(f32, map).* = color[0],
+        .r32_uint => std.mem.bytesAsValue(u32, map).* = @intFromFloat(color[0]),
+        else => base.unsupported("Blitter: write to destination format {any}", .{state.dst_format}),
     }
 }

@@ -50,8 +50,8 @@ vkCmdBindDescriptorSets                        | ✅ Implemented
 vkCmdBindIndexBuffer                           | ⚙️ WIP
 vkCmdBindPipeline                              | ✅ Implemented
 vkCmdBindVertexBuffers                         | ⚙️ WIP
-vkCmdBlitImage                                 | ⚙️ WIP
-vkCmdClearAttachments                          | ⚙️ wip
+vkCmdBlitImage                                 | ✅ Implemented
+vkCmdClearAttachments                          | ⚙️ WIP
 vkCmdClearColorImage                           | ⚙️ WIP
 vkCmdClearDepthStencilImage                    | ⚙️ WIP
 vkCmdCopyBuffer                                | ✅ Implemented
@@ -70,7 +70,7 @@ vkCmdEndRenderPass                             | ⚙️ WIP
 vkCmdExecuteCommands                           | ⚙️ WIP
 vkCmdFillBuffer                                | ✅ Implemented
 vkCmdNextSubpass                               | ⚙️ WIP
-vkCmdPipelineBarrier                           | ⚙️ WIP
+vkCmdPipelineBarrier                           | ✅ Implemented
 vkCmdPushConstants                             | ⚙️ WIP
 vkCmdResetEvent                                | ⚙️ WIP
 vkCmdResetQueryPool                            | ⚙️ WIP
@@ -148,7 +148,7 @@ vkGetEventStatus                               | ⚙️ WIP
 vkGetFenceStatus                               | ✅ Implemented
 vkGetImageMemoryRequirements                   | ✅ Implemented
 vkGetImageSparseMemoryRequirements             | ⚙️ WIP
-vkGetImageSubresourceLayout                    | ⚙️ WIP
+vkGetImageSubresourceLayout                    | ✅ Implemented
 vkGetInstanceProcAddr                          | ✅ Implemented
 vkGetPhysicalDeviceFeatures                    | ✅ Implemented
 vkGetPhysicalDeviceFormatProperties            | ✅ Implemented
