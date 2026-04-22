@@ -158,12 +158,18 @@ pub fn copyToImageSingleAspect(self: *const Self, dst: *Self, region: vk.ImageCo
     for (0..layer_count) |_| {
         if (is_single_row) {
             const copy_size = region.extent.width * bytes_per_block;
+            if (dst_map.len < copy_size or src_map.len < copy_size)
+                break;
             @memcpy(dst_map[0..copy_size], src_map[0..copy_size]);
         } else if (is_entire_row and is_single_slice) {
             const copy_size = region.extent.height * src_row_pitch_bytes;
+            if (dst_map.len < copy_size or src_map.len < copy_size)
+                break;
             @memcpy(dst_map[0..copy_size], src_map[0..copy_size]);
         } else if (is_entire_slice) {
             const copy_size = slice_count * src_depth_pitch_bytes;
+            if (dst_map.len < copy_size or src_map.len < copy_size)
+                break;
             @memcpy(dst_map[0..copy_size], src_map[0..copy_size]);
         } else if (is_entire_row) {
             const slice_size = region.extent.height * src_row_pitch_bytes;
@@ -171,9 +177,11 @@ pub fn copyToImageSingleAspect(self: *const Self, dst: *Self, region: vk.ImageCo
             var dst_slice_memory = dst_map[0..];
 
             for (0..slice_count) |_| {
+                if (dst_slice_memory.len < slice_size or src_slice_memory.len < slice_size)
+                    break;
                 @memcpy(dst_slice_memory[0..slice_size], src_slice_memory[0..slice_size]);
-                src_slice_memory = src_slice_memory[src_depth_pitch_bytes..];
-                dst_slice_memory = dst_slice_memory[dst_depth_pitch_bytes..];
+                src_slice_memory = if (src_slice_memory.len < src_depth_pitch_bytes) break else src_slice_memory[src_depth_pitch_bytes..];
+                dst_slice_memory = if (dst_slice_memory.len < dst_depth_pitch_bytes) break else dst_slice_memory[dst_depth_pitch_bytes..];
             }
         } else {
             const row_size = region.extent.width * bytes_per_block;
@@ -185,15 +193,17 @@ pub fn copyToImageSingleAspect(self: *const Self, dst: *Self, region: vk.ImageCo
                 var dst_row_memory = dst_slice_memory[0..];
 
                 for (0..region.extent.height) |_| {
+                    if (dst_row_memory.len < row_size or src_row_memory.len < row_size)
+                        break;
                     @memcpy(dst_row_memory[0..row_size], src_row_memory[0..row_size]);
-                    src_row_memory = src_row_memory[src_row_pitch_bytes..];
-                    dst_row_memory = dst_row_memory[dst_row_pitch_bytes..];
+                    src_row_memory = if (src_row_memory.len < src_row_pitch_bytes) break else src_row_memory[src_row_pitch_bytes..];
+                    dst_row_memory = if (dst_row_memory.len < dst_row_pitch_bytes) break else dst_row_memory[dst_row_pitch_bytes..];
                 }
             }
         }
 
-        src_map = src_map[src_layer_pitch..];
-        dst_map = dst_map[dst_layer_pitch..];
+        src_map = if (src_map.len < src_layer_pitch) break else src_map[src_layer_pitch..];
+        dst_map = if (dst_map.len < dst_layer_pitch) break else dst_map[dst_layer_pitch..];
     }
 }
 
@@ -292,15 +302,17 @@ pub fn copy(
             var dst_slice_memory = dst_layer_memory[0..];
 
             for (0..image_extent.height) |_| {
+                if (dst_slice_memory.len < copy_size or src_slice_memory.len < copy_size)
+                    break;
                 @memcpy(dst_slice_memory[0..copy_size], src_slice_memory[0..copy_size]);
-                src_slice_memory = src_slice_memory[src_row_pitch_bytes..];
-                dst_slice_memory = dst_slice_memory[dst_row_pitch_bytes..];
+                src_slice_memory = if (src_slice_memory.len < src_row_pitch_bytes) break else src_slice_memory[src_row_pitch_bytes..];
+                dst_slice_memory = if (dst_slice_memory.len < dst_row_pitch_bytes) break else dst_slice_memory[dst_row_pitch_bytes..];
             }
-            src_layer_memory = src_layer_memory[src_slice_pitch_bytes..];
-            dst_layer_memory = dst_layer_memory[dst_slice_pitch_bytes..];
+            src_layer_memory = if (src_layer_memory.len < src_slice_pitch_bytes) break else src_layer_memory[src_slice_pitch_bytes..];
+            dst_layer_memory = if (dst_layer_memory.len < dst_slice_pitch_bytes) break else dst_layer_memory[dst_slice_pitch_bytes..];
         }
-        src_memory = src_memory[src_layer_size..];
-        dst_memory = dst_memory[dst_layer_size..];
+        src_memory = if (src_memory.len < src_layer_size) break else src_memory[src_layer_size..];
+        dst_memory = if (dst_memory.len < dst_layer_size) break else dst_memory[dst_layer_size..];
     }
 }
 
