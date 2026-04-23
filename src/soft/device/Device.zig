@@ -27,9 +27,9 @@ renderer: Renderer,
 /// .compute = 1
 pipeline_states: [2]PipelineState,
 
-pub fn init(device: *SoftDevice) Self {
-    var self: Self = undefined;
-
+/// Initializating an execution device and
+/// not creating one to avoid dangling pointers
+pub fn init(self: *Self, device: *SoftDevice) void {
     for (self.pipeline_states[0..]) |*state| {
         state.* = .{
             .pipeline = null,
@@ -38,8 +38,6 @@ pub fn init(device: *SoftDevice) Self {
     }
     self.compute = .init(device, &self.pipeline_states[@intFromEnum(vk.PipelineBindPoint.compute)]);
     self.renderer = .init();
-
-    return self;
 }
 
 pub fn deinit(self: *Self) void {

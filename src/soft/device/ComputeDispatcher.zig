@@ -63,9 +63,7 @@ pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count
 
     var wg: std.Io.Group = .init;
     for (0..@min(self.batch_size, group_count)) |batch_id| {
-        if (base.config.single_threaded_compute) {
-            @branchHint(.cold); // Should only be reached for debugging
-
+        if (comptime base.config.single_threaded_compute) {
             runWrapper(
                 RunData{
                     .self = self,
