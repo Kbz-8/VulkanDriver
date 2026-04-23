@@ -1,7 +1,7 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
-const root = @import("lib.zig");
+const lib = @import("lib.zig");
 const cpuinfo = @cImport(@cInclude("cpuinfo.h"));
 
 const SoftDevice = @import("SoftDevice.zig");
@@ -34,9 +34,9 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
         .release = destroy,
     };
 
-    interface.props.api_version = @bitCast(root.VULKAN_VERSION);
-    interface.props.driver_version = @bitCast(root.DRIVER_VERSION);
-    interface.props.device_id = root.DEVICE_ID;
+    interface.props.api_version = @bitCast(lib.VULKAN_VERSION);
+    interface.props.driver_version = @bitCast(lib.DRIVER_VERSION);
+    interface.props.device_id = lib.DEVICE_ID;
     interface.props.device_type = .cpu;
     interface.props.limits = .{
         .max_image_dimension_1d = 4096,
@@ -68,8 +68,8 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
         .max_descriptor_set_sampled_images = 96,
         .max_descriptor_set_storage_images = 24,
         .max_descriptor_set_input_attachments = 4,
-        .max_vertex_input_attributes = 16,
-        .max_vertex_input_bindings = 16,
+        .max_vertex_input_attributes = lib.MAX_VERTEX_INPUT_ATTRIBUTES,
+        .max_vertex_input_bindings = lib.MAX_VERTEX_INPUT_BINDINGS,
         .max_vertex_input_attribute_offset = 2047,
         .max_vertex_input_binding_stride = 2048,
         .max_vertex_output_components = 64,
@@ -207,7 +207,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
         defer command_allocator.free(name);
 
         var writer = std.Io.Writer.fixed(device_name[0 .. vk.MAX_PHYSICAL_DEVICE_NAME_SIZE - 1]);
-        writer.print("{s} [" ++ root.DRIVER_NAME ++ " StrollDriver]", .{name}) catch return VkError.InitializationFailed;
+        writer.print("{s} [" ++ lib.DRIVER_NAME ++ " StrollDriver]", .{name}) catch return VkError.InitializationFailed;
     }
 
     @memcpy(&interface.props.device_name, &device_name);

@@ -55,6 +55,9 @@ pub const MIN_UNIFORM_BUFFER_ALIGNMENT = 256;
 /// Vulkan 1.2 requires buffer offset alignment to be at most 256.
 pub const MIN_STORAGE_BUFFER_ALIGNMENT = 256;
 
+pub const MAX_VERTEX_INPUT_BINDINGS = 16;
+pub const MAX_VERTEX_INPUT_ATTRIBUTES = 32;
+
 pub const std_options = base.std_options;
 
 comptime {

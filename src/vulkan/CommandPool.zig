@@ -99,7 +99,6 @@ pub inline fn reset(self: *Self, flags: vk.CommandPoolResetFlags) VkError!void {
         for (self.buffers.items) |non_dis_cmd| {
             non_dis_cmd.intrusiveDestroy(allocator);
         }
-        self.buffers.shrinkAndFree(allocator, BUFFER_POOL_BASE_CAPACITY);
         self.buffers.clearRetainingCapacity();
     }
 }

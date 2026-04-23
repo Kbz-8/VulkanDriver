@@ -4,7 +4,7 @@ const base = @import("base");
 const spv = @import("spv");
 const lib = @import("../lib.zig");
 
-const PipelineState = @import("PipelineState.zig");
+const PipelineState = @import("Device.zig").PipelineState;
 
 const SoftDevice = @import("../SoftDevice.zig");
 const SoftPipeline = @import("../SoftPipeline.zig");
@@ -45,7 +45,7 @@ pub fn init(device: *SoftDevice, state: *PipelineState) Self {
     };
 }
 
-pub fn destroy(self: *Self) void {
+pub fn deinit(self: *Self) void {
     _ = self;
 }
 

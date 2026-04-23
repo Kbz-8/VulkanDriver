@@ -6,14 +6,15 @@ const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
 const VkError = @import("error_set.zig").VkError;
 const VulkanAllocator = @import("VulkanAllocator.zig");
 
-const Device = @import("Device.zig");
-
 const Buffer = @import("Buffer.zig");
 const CommandPool = @import("CommandPool.zig");
+const DescriptorSet = @import("DescriptorSet.zig");
+const Device = @import("Device.zig");
 const Event = @import("Event.zig");
+const Framebuffer = @import("Framebuffer.zig");
 const Image = @import("Image.zig");
 const Pipeline = @import("Pipeline.zig");
-const DescriptorSet = @import("DescriptorSet.zig");
+const RenderPass = @import("RenderPass.zig");
 
 const State = enum {
     Initial,
@@ -38,8 +39,10 @@ dispatch_table: *const DispatchTable,
 
 pub const DispatchTable = struct {
     begin: *const fn (*Self, *const vk.CommandBufferBeginInfo) VkError!void,
+    beginRenderPass: *const fn (*Self, *RenderPass, *Framebuffer, vk.Rect2D, ?[]const vk.ClearValue) VkError!void,
     bindDescriptorSets: *const fn (*Self, vk.PipelineBindPoint, u32, [lib.VULKAN_MAX_DESCRIPTOR_SETS]?*DescriptorSet, []const u32) VkError!void,
     bindPipeline: *const fn (*Self, vk.PipelineBindPoint, *Pipeline) VkError!void,
+    bindVertexBuffer: *const fn (*Self, usize, *Buffer, usize) VkError!void,
     blitImage: *const fn (*Self, *Image, vk.ImageLayout, *Image, vk.ImageLayout, []const vk.ImageBlit, vk.Filter) VkError!void,
     clearColorImage: *const fn (*Self, *Image, vk.ImageLayout, *const vk.ClearColorValue, vk.ImageSubresourceRange) VkError!void,
     copyBuffer: *const fn (*Self, *Buffer, *Buffer, []const vk.BufferCopy) VkError!void,
@@ -48,7 +51,9 @@ pub const DispatchTable = struct {
     copyImageToBuffer: *const fn (*Self, *Image, vk.ImageLayout, *Buffer, []const vk.BufferImageCopy) VkError!void,
     dispatch: *const fn (*Self, u32, u32, u32) VkError!void,
     dispatchIndirect: *const fn (*Self, *Buffer, vk.DeviceSize) VkError!void,
+    draw: *const fn (*Self, usize, usize, usize, usize) VkError!void,
     end: *const fn (*Self) VkError!void,
+    endRenderPass: *const fn (*Self) VkError!void,
     executeCommands: *const fn (*Self, *Self) VkError!void,
     fillBuffer: *const fn (*Self, *Buffer, vk.DeviceSize, vk.DeviceSize, u32) VkError!void,
     pipelineBarrier: *const fn (*Self, vk.PipelineStageFlags, vk.PipelineStageFlags, vk.DependencyFlags, []const vk.MemoryBarrier, []const vk.BufferMemoryBarrier, []const vk.ImageMemoryBarrier) VkError!void,
@@ -91,7 +96,7 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
     self.vtable.destroy(self, allocator);
 }
 
-pub inline fn begin(self: *Self, info: *const vk.CommandBufferBeginInfo) VkError!void {
+pub fn begin(self: *Self, info: *const vk.CommandBufferBeginInfo) VkError!void {
     if (!self.pool.flags.reset_command_buffer_bit) {
         self.transitionState(.Recording, &.{.Initial}) catch return VkError.ValidationFailed;
     } else {
@@ -102,13 +107,13 @@ pub inline fn begin(self: *Self, info: *const vk.CommandBufferBeginInfo) VkError
     self.begin_info = info.*;
 }
 
-pub inline fn end(self: *Self) VkError!void {
+pub fn end(self: *Self) VkError!void {
     self.transitionState(.Executable, &.{.Recording}) catch return VkError.ValidationFailed;
     try self.dispatch_table.end(self);
     self.begin_info = null;
 }
 
-pub inline fn reset(self: *Self, flags: vk.CommandBufferResetFlags) VkError!void {
+pub fn reset(self: *Self, flags: vk.CommandBufferResetFlags) VkError!void {
     if (!self.pool.flags.reset_command_buffer_bit) {
         return VkError.ValidationFailed;
     }
@@ -117,7 +122,7 @@ pub inline fn reset(self: *Self, flags: vk.CommandBufferResetFlags) VkError!void
     try self.dispatch_table.reset(self, flags);
 }
 
-pub inline fn submit(self: *Self) VkError!void {
+pub fn submit(self: *Self) VkError!void {
     if (self.begin_info) |begin_info| {
         if (!begin_info.flags.simultaneous_use_bit) {
             self.transitionState(.Pending, &.{.Executable}) catch return VkError.ValidationFailed;
@@ -127,7 +132,7 @@ pub inline fn submit(self: *Self) VkError!void {
     self.transitionState(.Pending, &.{ .Pending, .Executable }) catch return VkError.ValidationFailed;
 }
 
-pub inline fn finish(self: *Self) VkError!void {
+pub fn finish(self: *Self) VkError!void {
     if (self.begin_info) |begin_info| {
         if (!begin_info.flags.one_time_submit_bit) {
             self.transitionState(.Invalid, &.{.Pending}) catch return VkError.ValidationFailed;
@@ -139,7 +144,11 @@ pub inline fn finish(self: *Self) VkError!void {
 
 // Commands ====================================================================================================
 
-pub inline fn bindDescriptorSets(self: *Self, bind_point: vk.PipelineBindPoint, first_set: u32, sets: []const vk.DescriptorSet, dynamic_offsets: []const u32) VkError!void {
+pub inline fn beginRenderPass(self: *Self, render_pass: *RenderPass, framebuffer: *Framebuffer, render_area: vk.Rect2D, clear_values: ?[]const vk.ClearValue) VkError!void {
+    try self.dispatch_table.beginRenderPass(self, render_pass, framebuffer, render_area, clear_values);
+}
+
+pub fn bindDescriptorSets(self: *Self, bind_point: vk.PipelineBindPoint, first_set: u32, sets: []const vk.DescriptorSet, dynamic_offsets: []const u32) VkError!void {
     std.debug.assert(sets.len < lib.VULKAN_MAX_DESCRIPTOR_SETS);
     var inner_sets = [_]?*DescriptorSet{null} ** lib.VULKAN_MAX_DESCRIPTOR_SETS;
     for (sets, inner_sets[0..sets.len]) |set, *inner_set| {
@@ -152,11 +161,15 @@ pub inline fn bindPipeline(self: *Self, bind_point: vk.PipelineBindPoint, pipeli
     try self.dispatch_table.bindPipeline(self, bind_point, pipeline);
 }
 
+pub inline fn bindVertexBuffer(self: *Self, index: usize, buffer: *Buffer, offset: usize) VkError!void {
+    try self.dispatch_table.bindVertexBuffer(self, index, buffer, offset);
+}
+
 pub inline fn blitImage(self: *Self, src: *Image, src_layout: vk.ImageLayout, dst: *Image, dst_layout: vk.ImageLayout, regions: []const vk.ImageBlit, filter: vk.Filter) VkError!void {
     try self.dispatch_table.blitImage(self, src, src_layout, dst, dst_layout, regions, filter);
 }
 
-pub inline fn clearColorImage(self: *Self, image: *Image, layout: vk.ImageLayout, color: *const vk.ClearColorValue, ranges: []const vk.ImageSubresourceRange) VkError!void {
+pub fn clearColorImage(self: *Self, image: *Image, layout: vk.ImageLayout, color: *const vk.ClearColorValue, ranges: []const vk.ImageSubresourceRange) VkError!void {
     for (ranges) |range| {
         try self.dispatch_table.clearColorImage(self, image, layout, color, range);
     }
@@ -184,6 +197,14 @@ pub inline fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, grou
 
 pub inline fn dispatchIndirect(self: *Self, buffer: *Buffer, offset: vk.DeviceSize) VkError!void {
     try self.dispatch_table.dispatchIndirect(self, buffer, offset);
+}
+
+pub inline fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize) VkError!void {
+    try self.dispatch_table.draw(self, vertex_count, instance_count, first_vertex, first_instance);
+}
+
+pub inline fn endRenderPass(self: *Self) VkError!void {
+    try self.dispatch_table.endRenderPass(self);
 }
 
 pub inline fn executeCommands(self: *Self, commands: *Self) VkError!void {

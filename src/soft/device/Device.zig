@@ -4,36 +4,45 @@ const base = @import("base");
 
 const SoftDescriptorSet = @import("../SoftDescriptorSet.zig");
 const SoftDevice = @import("../SoftDevice.zig");
+const SoftFramebuffer = @import("../SoftFramebuffer.zig");
 const SoftPipeline = @import("../SoftPipeline.zig");
+const SoftRenderPass = @import("../SoftRenderPass.zig");
 
-const ComputeRoutines = @import("ComputeRoutines.zig");
-const PipelineState = @import("PipelineState.zig");
+const ComputeDispatcher = @import("ComputeDispatcher.zig");
+const Renderer = @import("Renderer.zig");
 
 const VkError = base.VkError;
 
 const Self = @This();
 
-compute_routines: ComputeRoutines,
+pub const PipelineState = struct {
+    pipeline: ?*SoftPipeline,
+    sets: [base.VULKAN_MAX_DESCRIPTOR_SETS]?*SoftDescriptorSet,
+};
+
+compute: ComputeDispatcher,
+renderer: Renderer,
 
 /// .graphics = 0
 /// .compute = 1
 pipeline_states: [2]PipelineState,
 
-pub const init: Self = .{
-    .compute_routines = undefined,
-    .pipeline_states = undefined,
-};
+pub fn init(device: *SoftDevice) Self {
+    var self: Self = undefined;
 
-pub fn setup(self: *Self, device: *SoftDevice) void {
     for (self.pipeline_states[0..]) |*state| {
         state.* = .{
             .pipeline = null,
             .sets = [_]?*SoftDescriptorSet{null} ** base.VULKAN_MAX_DESCRIPTOR_SETS,
         };
     }
-    self.compute_routines = .init(device, &self.pipeline_states[@intFromEnum(vk.PipelineBindPoint.compute)]);
+    self.compute = .init(device, &self.pipeline_states[@intFromEnum(vk.PipelineBindPoint.compute)]);
+    self.renderer = .init();
+
+    return self;
 }
 
 pub fn deinit(self: *Self) void {
-    self.compute_routines.destroy();
+    self.compute.deinit();
+    self.renderer.deinit();
 }

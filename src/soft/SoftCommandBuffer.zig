@@ -3,15 +3,15 @@ const vk = @import("vulkan");
 const base = @import("base");
 const lib = @import("lib.zig");
 
-const InterfaceFactory = @import("interface").Interface;
-
-const VkError = base.VkError;
 const Device = base.Device;
+const VkError = base.VkError;
 
 const SoftBuffer = @import("SoftBuffer.zig");
+const SoftDescriptorSet = @import("SoftDescriptorSet.zig");
+const SoftFramebuffer = @import("SoftFramebuffer.zig");
 const SoftImage = @import("SoftImage.zig");
 const SoftPipeline = @import("SoftPipeline.zig");
-const SoftDescriptorSet = @import("SoftDescriptorSet.zig");
+const SoftRenderPass = @import("SoftRenderPass.zig");
 
 const ExecutionDevice = @import("device/Device.zig");
 const blitter = @import("device/blitter.zig");
@@ -45,8 +45,10 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 
     interface.dispatch_table = &.{
         .begin = begin,
+        .beginRenderPass = beginRenderPass,
         .bindDescriptorSets = bindDescriptorSets,
         .bindPipeline = bindPipeline,
+        .bindVertexBuffer = bindVertexBuffer,
         .blitImage = blitImage,
         .clearColorImage = clearColorImage,
         .copyBuffer = copyBuffer,
@@ -55,7 +57,9 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .copyImageToBuffer = copyImageToBuffer,
         .dispatch = dispatch,
         .dispatchIndirect = dispatchIndirect,
+        .draw = draw,
         .end = end,
+        .endRenderPass = endRenderPass,
         .executeCommands = executeCommands,
         .fillBuffer = fillBuffer,
         .pipelineBarrier = pipelineBarrier,
@@ -113,6 +117,36 @@ pub fn reset(interface: *Interface, _: vk.CommandBufferResetFlags) VkError!void 
 
 // Commands ====================================================================================================
 
+pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, framebuffer: *base.Framebuffer, render_area: vk.Rect2D, clear_values: ?[]const vk.ClearValue) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        render_pass: *SoftRenderPass,
+        framebuffer: *SoftFramebuffer,
+        render_area: vk.Rect2D,
+        clear_values: ?[]const vk.ClearValue,
+
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            device.renderer.render_pass = impl.render_pass;
+            device.renderer.framebuffer = impl.framebuffer;
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .render_pass = @alignCast(@fieldParentPtr("interface", render_pass)),
+        .framebuffer = @alignCast(@fieldParentPtr("interface", framebuffer)),
+        .render_area = render_area,
+        .clear_values = clear_values,
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
 pub fn bindDescriptorSets(interface: *Interface, bind_point: vk.PipelineBindPoint, first_set: u32, sets: [base.VULKAN_MAX_DESCRIPTOR_SETS]?*base.DescriptorSet, dynamic_offsets: []const u32) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     const allocator = self.command_allocator.allocator();
@@ -167,6 +201,37 @@ pub fn bindPipeline(interface: *Interface, bind_point: vk.PipelineBindPoint, pip
     cmd.* = .{
         .bind_point = bind_point,
         .pipeline = @alignCast(@fieldParentPtr("interface", pipeline)),
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn bindVertexBuffer(interface: *Interface, index: usize, buffer: *base.Buffer, offset: usize) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        buffer: *const SoftBuffer,
+        offset: usize,
+        index: usize,
+
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            device.renderer.dynamic_state.vertex_buffers[impl.index] = .{
+                .buffer = impl.buffer,
+                .offset = impl.offset,
+                .size = 0,
+            };
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .buffer = @alignCast(@fieldParentPtr("interface", buffer)),
+        .offset = offset,
+        .index = index,
     };
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
@@ -361,7 +426,7 @@ pub fn dispatch(interface: *Interface, group_count_x: u32, group_count_y: u32, g
 
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
-            try device.compute_routines.dispatch(impl.group_count_x, impl.group_count_y, impl.group_count_z);
+            try device.compute.dispatch(impl.group_count_x, impl.group_count_y, impl.group_count_z);
         }
     };
 
@@ -390,7 +455,7 @@ pub fn dispatchIndirect(interface: *Interface, buffer: *base.Buffer, offset: vk.
             const size = 3 * @sizeOf(u32);
             const memory = if (impl.buffer.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
             const map: []u32 = @as([*]u32, @ptrCast(@alignCast(try memory.map(impl.offset, size))))[0..3];
-            try device.compute_routines.dispatch(map[0], map[1], map[2]);
+            try device.compute.dispatch(map[0], map[1], map[2]);
         }
     };
 
@@ -401,6 +466,50 @@ pub fn dispatchIndirect(interface: *Interface, buffer: *base.Buffer, offset: vk.
         .offset = offset,
     };
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn draw(interface: *Interface, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        vertex_count: usize,
+        first_vertex: usize,
+        instance_count: usize,
+        first_instance: usize,
+
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            _ = impl;
+            _ = device;
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .vertex_count = vertex_count,
+        .first_vertex = first_vertex,
+        .instance_count = instance_count,
+        .first_instance = first_instance,
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn endRenderPass(interface: *Interface) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        pub fn execute(_: *anyopaque, device: *ExecutionDevice) VkError!void {
+            device.renderer.render_pass = null;
+            device.renderer.framebuffer = null;
+        }
+    };
+
+    self.commands.append(allocator, .{ .ptr = undefined, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
 pub fn executeCommands(interface: *Interface, commands: *Interface) VkError!void {

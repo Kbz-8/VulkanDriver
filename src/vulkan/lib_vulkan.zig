@@ -1569,10 +1569,10 @@ pub export fn strollWaitForFences(p_device: vk.Device, count: u32, p_fences: [*]
 
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
 
-    loop: for (p_fences, 0..count) |p_fence, _| {
+    for (p_fences, 0..count) |p_fence, _| {
         const fence = NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err);
         fence.wait(timeout) catch |err| return toVkResult(err);
-        if (waitForAll == .false) break :loop;
+        if (waitForAll == .false) break;
     }
     return .success;
 }
@@ -1612,11 +1612,12 @@ pub export fn strollCmdBeginRenderPass(p_cmd: vk.CommandBuffer, info: *const vk.
     if (info.s_type != .render_pass_begin_info) {
         return errorLogger(VkError.ValidationFailed);
     }
+
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+    const render_pass = NonDispatchable(RenderPass).fromHandleObject(info.render_pass) catch |err| return errorLogger(err);
+    const framebuffer = NonDispatchable(Framebuffer).fromHandleObject(info.framebuffer) catch |err| return errorLogger(err);
+    cmd.beginRenderPass(render_pass, framebuffer, info.render_area, if (info.p_clear_values) |clear_values| clear_values[0..info.clear_value_count] else null) catch |err| return errorLogger(err);
 
-    notImplementedWarning();
-
-    _ = cmd;
     _ = contents;
 }
 
@@ -1668,14 +1669,10 @@ pub export fn strollCmdBindVertexBuffers(p_cmd: vk.CommandBuffer, first: u32, co
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = first;
-    _ = count;
-    _ = p_buffers;
-    _ = offsets;
+    for (p_buffers, offsets, 0..count) |p_buffer, offset, i| {
+        const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
+        cmd.bindVertexBuffer(first + i, buffer, offset) catch |err| return errorLogger(err);
+    }
 }
 
 pub export fn strollCmdBlitImage(
@@ -1821,14 +1818,7 @@ pub export fn strollCmdDraw(p_cmd: vk.CommandBuffer, vertex_count: u32, instance
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = vertex_count;
-    _ = instance_count;
-    _ = first_vertex;
-    _ = first_instance;
+    cmd.draw(vertex_count, instance_count, first_vertex, first_instance) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdDrawIndexed(p_cmd: vk.CommandBuffer, index_count: u32, instance_count: u32, first_index: u32, vertex_offset: u32, first_instance: u32) callconv(vk.vulkan_call_conv) void {
@@ -1897,10 +1887,7 @@ pub export fn strollCmdEndRenderPass(p_cmd: vk.CommandBuffer) callconv(vk.vulkan
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
+    cmd.endRenderPass() catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdExecuteCommands(p_cmd: vk.CommandBuffer, count: u32, p_cmds: [*]const vk.CommandBuffer) callconv(vk.vulkan_call_conv) void {
