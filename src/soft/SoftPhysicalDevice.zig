@@ -656,19 +656,58 @@ pub fn getImageFormatProperties(
     usage: vk.ImageUsageFlags,
     flags: vk.ImageCreateFlags,
 ) VkError!vk.ImageFormatProperties {
-    _ = interface;
-    _ = format;
-    _ = image_type;
-    _ = tiling;
-    _ = usage;
-    _ = flags;
-    return .{
-        .max_extent = undefined,
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    if (!try self.isFormatSupported(format, image_type, tiling, usage))
+        return VkError.FormatNotSupported;
+
+    var properties: vk.ImageFormatProperties = .{
+        .max_extent = .{ .width = 0, .height = 0, .depth = 1 },
         .max_mip_levels = 1,
-        .max_array_layers = 6,
-        .sample_counts = .{ .@"1_bit" = true, .@"4_bit" = true },
-        .max_resource_size = 0,
+        .max_array_layers = lib.MAX_IMAGE_ARRAY_LAYERS,
+        .sample_counts = .{ .@"1_bit" = true },
+        .max_resource_size = std.math.maxInt(u32),
     };
+
+    switch (image_type) {
+        .@"1d" => {
+            properties.max_mip_levels = lib.MAX_IMAGE_LEVELS_1D;
+            properties.max_extent.width = 1 << (lib.MAX_IMAGE_LEVELS_1D - 1);
+            properties.max_extent.height = 1;
+        },
+        .@"2d" => {
+            if (flags.cube_compatible_bit) {
+                properties.max_mip_levels = lib.MAX_IMAGE_LEVELS_CUBE;
+                properties.max_extent.width = 1 << (lib.MAX_IMAGE_LEVELS_CUBE - 1);
+                properties.max_extent.height = 1 << (lib.MAX_IMAGE_LEVELS_CUBE - 1);
+            } else {
+                properties.max_mip_levels = lib.MAX_IMAGE_LEVELS_2D;
+                properties.max_extent.width = 1 << (lib.MAX_IMAGE_LEVELS_2D - 1);
+                properties.max_extent.height = 1 << (lib.MAX_IMAGE_LEVELS_2D - 1);
+
+                const format_properties = try interface.getFormatProperties(format);
+                const format_features = if (tiling == .linear) format_properties.linear_tiling_features else format_properties.optimal_tiling_features;
+                if (format_features.color_attachment_bit or format_features.depth_stencil_attachment_bit) {
+                    properties.sample_counts = .{ .@"1_bit" = true, .@"4_bit" = true };
+                }
+            }
+        },
+        .@"3d" => {
+            properties.max_mip_levels = lib.MAX_IMAGE_LEVELS_3D;
+            properties.max_extent.width = 1 << (lib.MAX_IMAGE_LEVELS_3D - 1);
+            properties.max_extent.height = 1 << (lib.MAX_IMAGE_LEVELS_3D - 1);
+            properties.max_extent.depth = 1 << (lib.MAX_IMAGE_LEVELS_3D - 1);
+            properties.max_array_layers = 1;
+        },
+        else => return VkError.FormatNotSupported,
+    }
+
+    if (tiling == .linear) {
+        properties.max_mip_levels = 1;
+        properties.max_array_layers = 1;
+        properties.sample_counts = .{ .@"1_bit" = true };
+    }
+
+    return properties;
 }
 
 /// Soft does not support sparse images.
@@ -709,4 +748,68 @@ pub fn getSparseImageFormatProperties2(
     _ = usage;
     _ = properties;
     return 0;
+}
+
+fn isFormatSupported(
+    self: *Self,
+    format: vk.Format,
+    image_type: vk.ImageType,
+    tiling: vk.ImageTiling,
+    usage: vk.ImageUsageFlags,
+) VkError!bool {
+    const format_properties = try self.interface.getFormatProperties(format);
+    const format_features = switch (tiling) {
+        .linear => format_properties.linear_tiling_features,
+        .optimal => format_properties.optimal_tiling_features,
+        else => return false,
+    };
+
+    if (!checkFormatUsage(usage, format_features))
+        return false;
+
+    const all_recognized_usages: vk.ImageUsageFlags = .{
+        .sampled_bit = true,
+        .storage_bit = true,
+        .color_attachment_bit = true,
+        .depth_stencil_attachment_bit = true,
+        .input_attachment_bit = true,
+        .transfer_src_bit = true,
+        .transfer_dst_bit = true,
+        .transient_attachment_bit = true,
+    };
+
+    if (usage.subtract(all_recognized_usages).toInt() != 0)
+        return false;
+
+    if (usage.sampled_bit) {
+        if (tiling != .linear and !format_features.sampled_image_bit)
+            return false;
+    }
+
+    if (tiling == .linear) {
+        if (image_type != .@"2d")
+            return false;
+        if (base.format.isDepth(format) or base.format.isStencil(format))
+            return false;
+    }
+
+    return true;
+}
+
+fn checkFormatUsage(usage: vk.ImageUsageFlags, features: vk.FormatFeatureFlags) bool {
+    if (usage.sampled_bit and !features.sampled_image_bit)
+        return false;
+    if (usage.storage_bit and !features.storage_image_bit)
+        return false;
+    if (usage.color_attachment_bit and !features.color_attachment_bit)
+        return false;
+    if (usage.depth_stencil_attachment_bit and !features.depth_stencil_attachment_bit)
+        return false;
+    if (usage.input_attachment_bit and !(features.color_attachment_bit or features.depth_stencil_attachment_bit))
+        return false;
+    if (usage.transfer_src_bit and !features.transfer_src_bit)
+        return false;
+    if (usage.transfer_dst_bit and !features.transfer_dst_bit)
+        return false;
+    return true;
 }

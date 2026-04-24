@@ -58,6 +58,12 @@ pub const MIN_STORAGE_BUFFER_ALIGNMENT = 256;
 pub const MAX_VERTEX_INPUT_BINDINGS = 16;
 pub const MAX_VERTEX_INPUT_ATTRIBUTES = 32;
 
+pub const MAX_IMAGE_LEVELS_1D = 15;
+pub const MAX_IMAGE_LEVELS_2D = 15;
+pub const MAX_IMAGE_LEVELS_3D = 12;
+pub const MAX_IMAGE_LEVELS_CUBE = 15;
+pub const MAX_IMAGE_ARRAY_LAYERS = 2048;
+
 pub const std_options = base.std_options;
 
 comptime {

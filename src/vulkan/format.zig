@@ -92,6 +92,14 @@ pub inline fn isDepthAndStencil(format: vk.Format) bool {
     return lib.vku.vkuFormatIsDepthAndStencil(@intCast(@intFromEnum(format)));
 }
 
+pub inline fn isDepth(format: vk.Format) bool {
+    return lib.vku.vkuFormatHasDepth(@intCast(@intFromEnum(format)));
+}
+
+pub inline fn isStencil(format: vk.Format) bool {
+    return lib.vku.vkuFormatHasStencil(@intCast(@intFromEnum(format)));
+}
+
 pub inline fn isSrgb(format: vk.Format) bool {
     return lib.vku.vkuFormatIsSRGB(@intCast(@intFromEnum(format)));
 }
