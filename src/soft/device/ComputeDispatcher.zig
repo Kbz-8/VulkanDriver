@@ -63,33 +63,21 @@ pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count
 
     var wg: std.Io.Group = .init;
     for (0..@min(self.batch_size, group_count)) |batch_id| {
-        if (comptime base.config.single_threaded_compute) {
-            runWrapper(
-                RunData{
-                    .self = self,
-                    .batch_id = batch_id,
-                    .group_count = group_count,
-                    .group_count_x = @as(usize, @intCast(group_count_x)),
-                    .group_count_y = @as(usize, @intCast(group_count_y)),
-                    .group_count_z = @as(usize, @intCast(group_count_z)),
-                    .invocations_per_workgroup = invocations_per_workgroup,
-                    .pipeline = pipeline,
-                },
-            );
-        } else {
-            wg.async(self.device.interface.io(), runWrapper, .{
-                RunData{
-                    .self = self,
-                    .batch_id = batch_id,
-                    .group_count = group_count,
-                    .group_count_x = @as(usize, @intCast(group_count_x)),
-                    .group_count_y = @as(usize, @intCast(group_count_y)),
-                    .group_count_z = @as(usize, @intCast(group_count_z)),
-                    .invocations_per_workgroup = invocations_per_workgroup,
-                    .pipeline = pipeline,
-                },
-            });
-        }
+        const run_data: RunData = .{
+            .self = self,
+            .batch_id = batch_id,
+            .group_count = group_count,
+            .group_count_x = @as(usize, @intCast(group_count_x)),
+            .group_count_y = @as(usize, @intCast(group_count_y)),
+            .group_count_z = @as(usize, @intCast(group_count_z)),
+            .invocations_per_workgroup = invocations_per_workgroup,
+            .pipeline = pipeline,
+        };
+
+        if (comptime base.config.single_threaded_compute)
+            runWrapper(run_data)
+        else
+            wg.async(self.device.interface.io(), runWrapper, .{run_data});
     }
     wg.await(self.device.interface.io()) catch return VkError.DeviceLost;
 }

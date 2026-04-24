@@ -218,7 +218,7 @@ pub fn bindVertexBuffer(interface: *Interface, index: usize, buffer: *base.Buffe
 
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
-            device.renderer.dynamic_state.vertex_buffers[impl.index] = .{
+            device.pipeline_states[ExecutionDevice.GRAPHICS_PIPELINE_STATE].data.graphics.vertex_buffers[impl.index] = .{
                 .buffer = impl.buffer,
                 .offset = impl.offset,
                 .size = 0,
@@ -482,8 +482,7 @@ pub fn draw(interface: *Interface, vertex_count: usize, instance_count: usize, f
 
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
-            _ = impl;
-            _ = device;
+            device.renderer.drawPrimitive(impl.vertex_count, impl.instance_count, impl.first_vertex, impl.first_instance);
         }
     };
 

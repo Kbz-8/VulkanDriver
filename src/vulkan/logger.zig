@@ -14,16 +14,18 @@ comptime {
 var mutex: std.Io.Mutex = .init;
 
 pub inline fn fixme(comptime format: []const u8, args: anytype) void {
-    if (!lib.config.logs) {
+    if (comptime !lib.config.logs) {
         return;
     }
     std.log.scoped(.FIXME).warn("FIXME: " ++ format, args);
 }
 
 pub fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), comptime format: []const u8, args: anytype) void {
-    if (!lib.config.logs) {
+    if (comptime !lib.config.logs) {
         return;
     }
+
+    const io = std.Options.debug_io;
 
     const scope_name = @tagName(scope);
     const scope_prefix = comptime blk: {
@@ -41,13 +43,6 @@ pub fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), compti
         .warn => .magenta,
         .err => .red,
     };
-
-    const allocator = std.heap.smp_allocator;
-
-    var threaded: std.Io.Threaded = .init(allocator, .{});
-    defer threaded.deinit();
-
-    const io = threaded.io();
 
     const stderr_file = std.Io.File.stderr();
     const stdout_file = std.Io.File.stdout();

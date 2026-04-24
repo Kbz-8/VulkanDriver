@@ -155,12 +155,14 @@ fn customSoft(b: *std.Build, lib: *std.Build.Step.Compile, options: *std.Build.S
     }) orelse return error.UnresolvedDependency;
     lib.root_module.addImport("spv", spv.module("spv"));
 
+    const single_threaded_option = b.option(bool, "single-threaded", "Single threaded runtime mode") orelse false;
     const debug_allocator_option = b.option(bool, "debug-allocator", "Debug device allocator") orelse false;
     const shaders_simd_option = b.option(bool, "shader-simd", "Shaders SIMD acceleration") orelse true;
     const single_threaded_compute_option = b.option(bool, "single-threaded-compute", "Single threaded compute shaders execution") orelse true;
     const compute_dump_early_results_table_option = b.option(u32, "compute-dump-early-results-table", "Dump compute shaders results table before invocation");
     const compute_dump_final_results_table_option = b.option(u32, "compute-dump-final-results-table", "Dump compute shaders results table after invocation");
 
+    options.addOption(bool, "single_threaded", single_threaded_option);
     options.addOption(bool, "debug_allocator", debug_allocator_option);
     options.addOption(bool, "shaders_simd", shaders_simd_option);
     options.addOption(bool, "single_threaded_compute", single_threaded_compute_option);

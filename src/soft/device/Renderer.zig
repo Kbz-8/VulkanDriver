@@ -1,7 +1,12 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
+const zm = @import("zmath");
 const lib = @import("../lib.zig");
+
+const F32x4 = zm.F32x4;
+
+const PipelineState = @import("Device.zig").PipelineState;
 
 const SoftBuffer = @import("../SoftBuffer.zig");
 const SoftDescriptorSet = @import("../SoftDescriptorSet.zig");
@@ -42,22 +47,48 @@ pub const DynamicState = struct {
 
     vertex_input_bindings: [lib.MAX_VERTEX_INPUT_BINDINGS]VertexInputBindingState,
     vertex_input_attributes: [lib.MAX_VERTEX_INPUT_ATTRIBUTES]VertexInputAttributeState,
-
-    vertex_buffers: [lib.MAX_VERTEX_INPUT_BINDINGS]VertexBuffer,
 };
+
+const Vertex = struct {
+    position: F32x4,
+    point_size: f32,
+    index: usize,
+};
+
+device: *SoftDevice,
+state: *PipelineState,
 
 render_pass: ?*SoftRenderPass,
 framebuffer: ?*SoftFramebuffer,
 dynamic_state: DynamicState,
 
-pub fn init() Self {
+pub fn init(device: *SoftDevice, state: *PipelineState) Self {
     return .{
+        .device = device,
+        .state = state,
         .render_pass = null,
         .framebuffer = null,
         .dynamic_state = undefined,
     };
 }
 
+pub fn drawPrimitive(self: *Self, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize) void {
+    const allocator = self.device.device_allocator.allocator();
+
+    const vertices = self.fetchVertexInput(allocator, vertex_count, instance_count, first_vertex, first_instance);
+    _ = vertices;
+}
+
 pub fn deinit(self: *Self) void {
     _ = self;
+}
+
+fn fetchVertexInput(self: *const Self, allocator: std.mem.Allocator, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize) []Vertex {
+    _ = self;
+    _ = allocator;
+    _ = vertex_count;
+    _ = instance_count;
+    _ = first_vertex;
+    _ = first_instance;
+    return undefined;
 }
