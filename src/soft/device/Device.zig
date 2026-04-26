@@ -54,7 +54,7 @@ pub fn init(self: *Self, device: *SoftDevice) void {
         };
     }
     self.compute = .init(device, &self.pipeline_states[@intFromEnum(vk.PipelineBindPoint.compute)]);
-    self.renderer = .init(device, &self.pipeline_states[@intFromEnum(vk.PipelineBindPoint.compute)]);
+    self.renderer = .init(device, &self.pipeline_states[@intFromEnum(vk.PipelineBindPoint.graphics)]);
 }
 
 pub fn deinit(self: *Self) void {

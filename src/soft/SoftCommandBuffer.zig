@@ -482,7 +482,7 @@ pub fn draw(interface: *Interface, vertex_count: usize, instance_count: usize, f
 
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
-            device.renderer.drawPrimitive(impl.vertex_count, impl.instance_count, impl.first_vertex, impl.first_instance);
+            try device.renderer.draw(impl.vertex_count, impl.instance_count, impl.first_vertex, impl.first_instance);
         }
     };
 

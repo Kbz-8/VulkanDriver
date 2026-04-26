@@ -58,10 +58,9 @@ pub fn map(interface: *Interface, offset: vk.DeviceSize, size: vk.DeviceSize) Vk
     if (offset >= self.data.len or (size != vk.WHOLE_SIZE and offset + size > self.data.len)) {
         return VkError.MemoryMapFailed;
     }
-    interface.is_mapped = true;
     return @ptrCast(&self.data[offset]);
 }
 
-pub fn unmap(interface: *Interface) void {
-    interface.is_mapped = false;
+pub fn unmap(_: *Interface) void {
+    // no-op
 }
