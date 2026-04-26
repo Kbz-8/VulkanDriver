@@ -133,6 +133,25 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
             const impl: *Impl = @ptrCast(@alignCast(context));
             device.renderer.render_pass = impl.render_pass;
             device.renderer.framebuffer = impl.framebuffer;
+
+            for (impl.render_pass.interface.attachments, impl.framebuffer.interface.attachments, 0..) |desc, attachment, index| {
+                const image: *SoftImage = @alignCast(@fieldParentPtr("interface", attachment.image));
+                const clear_format = try image.getClearFormat();
+
+                switch (desc.load_op) {
+                    .clear => {
+                        try blitter.clear(
+                            (impl.clear_values orelse return VkError.Unknown)[index],
+                            clear_format,
+                            image,
+                            attachment.format,
+                            attachment.subresource_range,
+                            null,
+                        );
+                    },
+                    else => {},
+                }
+            }
         }
     };
 
@@ -142,7 +161,7 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
         .render_pass = @alignCast(@fieldParentPtr("interface", render_pass)),
         .framebuffer = @alignCast(@fieldParentPtr("interface", framebuffer)),
         .render_area = render_area,
-        .clear_values = clear_values,
+        .clear_values = if (clear_values) |values| allocator.dupe(vk.ClearValue, values) catch return VkError.OutOfHostMemory else null, // Will be freed on cmdbuf reset or destroy
     };
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }

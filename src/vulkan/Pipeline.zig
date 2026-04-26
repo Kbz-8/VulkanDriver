@@ -24,6 +24,16 @@ mode: union(enum) {
             attribute_description: ?[]vk.VertexInputAttributeDescription,
             topology: vk.PrimitiveTopology,
         },
+        viewport_state: struct {
+            viewports: []vk.Viewport,
+            scissor: []vk.Rect2D,
+        },
+        rasterization: struct {
+            polygon_mode: vk.PolygonMode,
+            cull_mode: vk.CullModeFlags,
+            front_face: vk.FrontFace,
+            line_width: f32,
+        },
     },
 },
 
@@ -83,6 +93,30 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
                         break :blk null;
                     },
                     .topology = if (info.p_input_assembly_state) |state| state.topology else return VkError.ValidationFailed,
+                },
+                .viewport_state = .{
+                    .viewports = blk: {
+                        if (info.p_viewport_state) |viewport_state| {
+                            if (viewport_state.p_viewports) |viewports| {
+                                break :blk allocator.dupe(vk.Viewport, viewports[0..viewport_state.viewport_count]) catch return VkError.OutOfHostMemory;
+                            }
+                        }
+                        return VkError.ValidationFailed;
+                    },
+                    .scissor = blk: {
+                        if (info.p_viewport_state) |viewport_state| {
+                            if (viewport_state.p_scissors) |scissors| {
+                                break :blk allocator.dupe(vk.Rect2D, scissors[0..viewport_state.scissor_count]) catch return VkError.OutOfHostMemory;
+                            }
+                        }
+                        return VkError.ValidationFailed;
+                    },
+                },
+                .rasterization = .{
+                    .polygon_mode = if (info.p_rasterization_state) |state| state.polygon_mode else return VkError.ValidationFailed,
+                    .cull_mode = if (info.p_rasterization_state) |state| state.cull_mode else return VkError.ValidationFailed,
+                    .front_face = if (info.p_rasterization_state) |state| state.front_face else return VkError.ValidationFailed,
+                    .line_width = if (info.p_rasterization_state) |state| state.line_width else return VkError.ValidationFailed,
                 },
             },
         },

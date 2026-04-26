@@ -269,7 +269,7 @@ fn sample(src: []const u8, pos: F32x4, dim: F32x4, slice_bytes: usize, pitch_byt
 
         const src_map = src[computeOffset3D(x, y, z, slice_bytes, pitch_bytes, src_texel_size)..];
 
-        color = readFloat4(src_map, state);
+        color = readFloat4(src_map, state.src_format);
     } else {
         var x: f32 = pos[0];
         var y: f32 = pos[1];
@@ -304,14 +304,14 @@ fn sample(src: []const u8, pos: F32x4, dim: F32x4, slice_bytes: usize, pitch_byt
             const sample_1_0_1 = src[computeOffset3D(ix0, iy1, iz1, slice_bytes, pitch_bytes, src_texel_size)..];
             const sample_1_1_1 = src[computeOffset3D(ix1, iy1, iz1, slice_bytes, pitch_bytes, src_texel_size)..];
 
-            const pixel_0_0_0 = readFloat4(sample_0_0_0, state);
-            const pixel_0_1_0 = readFloat4(sample_0_1_0, state);
-            const pixel_1_0_0 = readFloat4(sample_1_0_0, state);
-            const pixel_1_1_0 = readFloat4(sample_1_1_0, state);
-            const pixel_0_0_1 = readFloat4(sample_0_0_1, state);
-            const pixel_0_1_1 = readFloat4(sample_0_1_1, state);
-            const pixel_1_0_1 = readFloat4(sample_1_0_1, state);
-            const pixel_1_1_1 = readFloat4(sample_1_1_1, state);
+            const pixel_0_0_0 = readFloat4(sample_0_0_0, state.src_format);
+            const pixel_0_1_0 = readFloat4(sample_0_1_0, state.src_format);
+            const pixel_1_0_0 = readFloat4(sample_1_0_0, state.src_format);
+            const pixel_1_1_0 = readFloat4(sample_1_1_0, state.src_format);
+            const pixel_0_0_1 = readFloat4(sample_0_0_1, state.src_format);
+            const pixel_0_1_1 = readFloat4(sample_0_1_1, state.src_format);
+            const pixel_1_0_1 = readFloat4(sample_1_0_1, state.src_format);
+            const pixel_1_1_1 = readFloat4(sample_1_1_1, state.src_format);
 
             const fx = zm.f32x4s(fx0 - @as(f32, @floatFromInt(ix0)));
             const fy = zm.f32x4s(fy0 - @as(f32, @floatFromInt(iy0)));
@@ -328,10 +328,10 @@ fn sample(src: []const u8, pos: F32x4, dim: F32x4, slice_bytes: usize, pitch_byt
             const sample_1_0 = src[computeOffset3D(ix0, iy1, iz0, slice_bytes, pitch_bytes, src_texel_size)..];
             const sample_1_1 = src[computeOffset3D(ix1, iy1, iz0, slice_bytes, pitch_bytes, src_texel_size)..];
 
-            const pixel_0_0 = readFloat4(sample_0_0, state);
-            const pixel_0_1 = readFloat4(sample_0_1, state);
-            const pixel_1_0 = readFloat4(sample_1_0, state);
-            const pixel_1_1 = readFloat4(sample_1_1, state);
+            const pixel_0_0 = readFloat4(sample_0_0, state.src_format);
+            const pixel_0_1 = readFloat4(sample_0_1, state.src_format);
+            const pixel_1_0 = readFloat4(sample_1_0, state.src_format);
+            const pixel_1_1 = readFloat4(sample_1_1, state.src_format);
 
             const fx = zm.f32x4s(fx0 - @as(f32, @floatFromInt(ix0)));
             const fy = zm.f32x4s(fy0 - @as(f32, @floatFromInt(iy0)));
@@ -468,9 +468,9 @@ fn blit(state: State, data: BlitData) void {
     var clear_color_f: ?F32x4 = null;
     if (state.clear) {
         if (are_both_int) {
-            clear_color_i = readInt4(data.src_map, state);
+            clear_color_i = readInt4(data.src_map, state.src_format);
         } else {
-            clear_color_f = applyScaleAndClamp(readFloat4(data.src_map, state), state);
+            clear_color_f = applyScaleAndClamp(readFloat4(data.src_map, state.src_format), state);
         }
     }
 
@@ -488,12 +488,12 @@ fn blit(state: State, data: BlitData) void {
 
                 if (clear_color_i) |color| {
                     for (0..state.dst_samples) |_| {
-                        writeInt4(color, dst_pixel, state);
+                        writeInt4(color, dst_pixel, state.dst_format);
                         dst_pixel = if (dst_pixel.len < data.dst_slice_pitch_bytes) break else dst_pixel[data.dst_slice_pitch_bytes..];
                     }
                 } else if (clear_color_f) |color| {
                     for (0..state.dst_samples) |_| {
-                        writeFloat4(color, dst_pixel, state);
+                        writeFloat4(color, dst_pixel, state.dst_format);
                         dst_pixel = if (dst_pixel.len < data.dst_slice_pitch_bytes) break else dst_pixel[data.dst_slice_pitch_bytes..];
                     }
                 } else if (are_both_int) {
@@ -509,15 +509,15 @@ fn blit(state: State, data: BlitData) void {
 
                     const src_map = data.src_map[computeOffset3D(ix, iy, iz, data.src_slice_pitch_bytes, data.src_row_pitch_bytes, base.format.texelSize(state.src_format))..];
 
-                    const color = readInt4(src_map, state);
+                    const color = readInt4(src_map, state.src_format);
                     for (0..state.dst_samples) |_| {
-                        writeInt4(color, dst_pixel, state);
+                        writeInt4(color, dst_pixel, state.dst_format);
                         dst_pixel = if (dst_pixel.len < data.dst_slice_pitch_bytes) break else dst_pixel[data.dst_slice_pitch_bytes..];
                     }
                 } else {
                     const color = sample(data.src_map, .{ x, y, z, 0.0 }, data.dim, data.src_slice_pitch_bytes, data.src_row_pitch_bytes, state);
                     for (0..state.dst_samples) |_| {
-                        writeFloat4(color, dst_pixel, state);
+                        writeFloat4(color, dst_pixel, state.dst_format);
                         dst_pixel = if (dst_pixel.len < data.dst_slice_pitch_bytes) break else dst_pixel[data.dst_slice_pitch_bytes..];
                     }
                 }
@@ -548,10 +548,10 @@ fn applyScaleAndClamp(base_color: F32x4, state: State) F32x4 {
     return color;
 }
 
-fn readFloat4(map: []const u8, state: State) F32x4 {
+pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
     var c: F32x4 = .{ 0.0, 0.0, 0.0, 1.0 };
 
-    switch (state.src_format) {
+    switch (src_format) {
         .r8_snorm,
         .r8_unorm,
         => c[0] = @as(f32, @floatFromInt(map[0])) / 255.0,
@@ -584,14 +584,14 @@ fn readFloat4(map: []const u8, state: State) F32x4 {
 
         .r32g32b32a32_sfloat => c = std.mem.bytesToValue(F32x4, map),
 
-        else => base.unsupported("Blitter: read float from source format {any}", .{state.src_format}),
+        else => base.unsupported("Blitter: read float from source format {any}", .{src_format}),
     }
 
     return c;
 }
 
-fn writeFloat4(color: F32x4, map: []u8, state: State) void {
-    switch (state.dst_format) {
+pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
+    switch (dst_format) {
         .r8_snorm,
         .r8_unorm,
         => map[0] = @intFromFloat(@round(color[0] * 255.0)),
@@ -634,14 +634,14 @@ fn writeFloat4(color: F32x4, map: []u8, state: State) void {
 
         .r32g32b32a32_sfloat => std.mem.bytesAsValue(F32x4, map).* = color,
 
-        else => base.unsupported("Blitter: write float to destination format {any}", .{state.dst_format}),
+        else => base.unsupported("Blitter: write float to destination format {any}", .{dst_format}),
     }
 }
 
-fn readInt4(map: []const u8, state: State) U32x4 {
+pub fn readInt4(map: []const u8, src_format: vk.Format) U32x4 {
     var c: U32x4 = .{ 0.0, 0.0, 0.0, 1.0 };
 
-    switch (state.src_format) {
+    switch (src_format) {
         .r8_sint,
         .r8_uint,
         => c[0] = map[0],
@@ -674,14 +674,14 @@ fn readInt4(map: []const u8, state: State) U32x4 {
         .r32g32b32a32_uint,
         => c = std.mem.bytesToValue(U32x4, map),
 
-        else => base.unsupported("Blitter: read int from source format {any}", .{state.src_format}),
+        else => base.unsupported("Blitter: read int from source format {any}", .{src_format}),
     }
 
     return c;
 }
 
-fn writeInt4(color: U32x4, map: []u8, state: State) void {
-    switch (state.dst_format) {
+pub fn writeInt4(color: U32x4, map: []u8, dst_format: vk.Format) void {
+    switch (dst_format) {
         .r8_sint,
         .r8_uint,
         => map[0] = @truncate(color[0]),
@@ -716,6 +716,6 @@ fn writeInt4(color: U32x4, map: []u8, state: State) void {
         .r32g32b32a32_uint,
         => std.mem.bytesAsValue(U32x4, map).* = color,
 
-        else => base.unsupported("Blitter: write int to destination format {any}", .{state.dst_format}),
+        else => base.unsupported("Blitter: write int to destination format {any}", .{dst_format}),
     }
 }
