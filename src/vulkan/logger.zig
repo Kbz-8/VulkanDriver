@@ -55,12 +55,13 @@ pub fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), compti
     file.lock(io, .exclusive) catch {};
     defer file.unlock(io);
 
-    const now = std.Io.Timestamp.now(io, .cpu_process).toMilliseconds();
+    const now = std.Io.Timestamp.now(io, .cpu_process).toMicroseconds();
 
-    const now_ms: u16 = @intCast(@mod(now, std.time.ms_per_s));
-    const now_sec: u8 = @intCast(@mod(@divTrunc(now, std.time.ms_per_s), std.time.s_per_min));
-    const now_min: u8 = @intCast(@mod(@divTrunc(now, std.time.ms_per_min), 60));
-    const now_hour: u8 = @intCast(@mod(@divTrunc(now, std.time.ms_per_hour), 24));
+    const now_us: u16 = @intCast(@mod(now, 1000));
+    const now_ms: u16 = @intCast(@mod(@divTrunc(now, 1000), std.time.ms_per_s));
+    const now_sec: u8 = @intCast(@mod(@divTrunc(now, std.time.us_per_s), std.time.s_per_min));
+    const now_min: u8 = @intCast(@mod(@divTrunc(now, std.time.us_per_min), 60));
+    const now_hour: u8 = @intCast(@mod(@divTrunc(now, std.time.us_per_hour), 24));
 
     var fmt_buffer = std.mem.zeroes([4096]u8);
     var fmt_writer = std.Io.Writer.fixed(&fmt_buffer);
@@ -82,15 +83,15 @@ pub fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), compti
         };
 
         term.setColor(.magenta) catch {};
-        writer.print("[StrollDriver ", .{}) catch continue;
+        writer.writeAll("[StrollDriver") catch continue;
         if (!builtin.is_test) {
             term.setColor(.cyan) catch {};
-            writer.print(root.DRIVER_NAME, .{}) catch continue;
+            writer.writeAll(" " ++ root.DRIVER_NAME ++ " ") catch continue;
         }
         term.setColor(.yellow) catch {};
-        writer.print(" {d}:{d}:{d}.{d:0>3}", .{ now_hour, now_min, now_sec, now_ms }) catch continue;
+        writer.print("{d}:{d}:{d}.{d:0>3}.{d:0>3}", .{ now_hour, now_min, now_sec, now_ms, now_us }) catch continue;
         term.setColor(.magenta) catch {};
-        writer.print("]", .{}) catch continue;
+        writer.writeAll("]") catch continue;
 
         term.setColor(.cyan) catch {};
         writer.print("[Thread {d: >8}]", .{std.Thread.getCurrentId()}) catch continue;

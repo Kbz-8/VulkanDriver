@@ -11,6 +11,18 @@ const PipelineCache = @import("PipelineCache.zig");
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .pipeline;
 
+const DynamicState = struct {
+    viewport: bool = false,
+    scissor: bool = false,
+    line_width: bool = false,
+    depth_bias: bool = false,
+    blend_constants: bool = false,
+    depth_bounds: bool = false,
+    stencil_compare_mask: bool = false,
+    stencil_write_mask: bool = false,
+    stencil_reference: bool = false,
+};
+
 owner: *Device,
 
 vtable: *const VTable,
@@ -25,8 +37,8 @@ mode: union(enum) {
             topology: vk.PrimitiveTopology,
         },
         viewport_state: struct {
-            viewports: []vk.Viewport,
-            scissor: []vk.Rect2D,
+            viewports: ?[]vk.Viewport,
+            scissor: ?[]vk.Rect2D,
         },
         rasterization: struct {
             polygon_mode: vk.PolygonMode,
@@ -34,6 +46,7 @@ mode: union(enum) {
             front_face: vk.FrontFace,
             line_width: f32,
         },
+        dynamic_state: DynamicState,
     },
 },
 
@@ -101,7 +114,7 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
                                 break :blk allocator.dupe(vk.Viewport, viewports[0..viewport_state.viewport_count]) catch return VkError.OutOfHostMemory;
                             }
                         }
-                        return VkError.ValidationFailed;
+                        break :blk null;
                     },
                     .scissor = blk: {
                         if (info.p_viewport_state) |viewport_state| {
@@ -109,7 +122,7 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
                                 break :blk allocator.dupe(vk.Rect2D, scissors[0..viewport_state.scissor_count]) catch return VkError.OutOfHostMemory;
                             }
                         }
-                        return VkError.ValidationFailed;
+                        break :blk null;
                     },
                 },
                 .rasterization = .{
@@ -117,6 +130,30 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
                     .cull_mode = if (info.p_rasterization_state) |state| state.cull_mode else return VkError.ValidationFailed,
                     .front_face = if (info.p_rasterization_state) |state| state.front_face else return VkError.ValidationFailed,
                     .line_width = if (info.p_rasterization_state) |state| state.line_width else return VkError.ValidationFailed,
+                },
+                .dynamic_state = blk: {
+                    var state: DynamicState = .{};
+
+                    if (info.p_dynamic_state) |dynamic_state| {
+                        if (dynamic_state.p_dynamic_states) |states| {
+                            for (states[0..], 0..dynamic_state.dynamic_state_count) |info_state, _| {
+                                switch (info_state) {
+                                    .viewport => state.viewport = true,
+                                    .scissor => state.scissor = true,
+                                    .line_width => state.line_width = true,
+                                    .depth_bias => state.depth_bias = true,
+                                    .blend_constants => state.blend_constants = true,
+                                    .depth_bounds => state.depth_bounds = true,
+                                    .stencil_compare_mask => state.stencil_compare_mask = true,
+                                    .stencil_write_mask => state.stencil_write_mask = true,
+                                    .stencil_reference => state.stencil_reference = true,
+                                    else => return VkError.Unknown,
+                                }
+                            }
+                        }
+                    }
+
+                    break :blk state;
                 },
             },
         },

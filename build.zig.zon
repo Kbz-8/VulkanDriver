@@ -31,10 +31,14 @@
             .hash = "zmath-0.11.0-dev-wjwivdMsAwD-xaLj76YHUq3t9JDH-X16xuMTmnDzqbu2",
         },
         .SPIRV_Interpreter = .{
-            .url = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#5b7380eea014dce11587597d44681640a3a3583b",
-            .hash = "SPIRV_Interpreter-0.0.1-ajmpnwaZBAA5PJz7wTcWkWPywJAJF672vYjuCZKO4t9j",
+            .url = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#9cdb683f3f24cf82774f1bf31b8c51d3863a9cfe",
+            .hash = "SPIRV_Interpreter-0.0.1-ajmpn1SyBAC5RYKryNkL2llgGFKcLPFGhCmxcraJ2eSL",
             .lazy = true,
         },
+        //.SPIRV_Interpreter = .{
+        //    .path = "../SPIRV-Interpreter",
+        //    .lazy = true,
+        //},
     },
 
     .paths = .{

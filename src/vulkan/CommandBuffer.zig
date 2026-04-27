@@ -60,6 +60,7 @@ pub const DispatchTable = struct {
     reset: *const fn (*Self, vk.CommandBufferResetFlags) VkError!void,
     resetEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
     setEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
+    setViewport: *const fn (*Self, u32, []const vk.Viewport) VkError!void,
     waitEvents: *const fn (*Self, []*const Event, vk.PipelineStageFlags, vk.PipelineStageFlags, []const vk.MemoryBarrier, []const vk.BufferMemoryBarrier, []const vk.ImageMemoryBarrier) VkError!void,
 };
 
@@ -225,6 +226,10 @@ pub inline fn resetEvent(self: *Self, event: *Event, stage: vk.PipelineStageFlag
 
 pub inline fn setEvent(self: *Self, event: *Event, stage: vk.PipelineStageFlags) VkError!void {
     try self.dispatch_table.setEvent(self, event, stage);
+}
+
+pub inline fn setViewport(self: *Self, first: u32, viewports: []const vk.Viewport) VkError!void {
+    try self.dispatch_table.setViewport(self, first, viewports);
 }
 
 pub inline fn waitEvents(self: *Self, events: []*const Event, src_stage: vk.PipelineStageFlags, dst_stage: vk.PipelineStageFlags, memory_barriers: []const vk.MemoryBarrier, buffer_barriers: []const vk.BufferMemoryBarrier, image_barriers: []const vk.ImageMemoryBarrier) VkError!void {

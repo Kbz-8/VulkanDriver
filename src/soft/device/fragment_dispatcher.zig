@@ -41,6 +41,18 @@ inline fn run(data: RunData) !void {
 
     var invocation_index: usize = data.batch_id;
     while (invocation_index < data.fragment_count) : (invocation_index += data.batch_size) {
+        const fragment: *Renderer.Fragment = &data.draw_call.fragments[invocation_index];
+
+        for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
+            const result_word = rt.getResultByLocation(@intCast(location), .input) catch |err| switch (err) {
+                SpvRuntimeError.NotFound => continue,
+                else => return err,
+            };
+            if (result_word != 0) {
+                try rt.writeInput(fragment.inputs[location], result_word);
+            }
+        }
+
         rt.callEntryPoint(allocator, entry) catch |err| switch (err) {
             // Some errors can be safely ignored
             SpvRuntimeError.OutOfBounds,
@@ -49,8 +61,7 @@ inline fn run(data: RunData) !void {
             else => return err,
         };
 
-        const output: *F32x4 = &data.draw_call.fragments[invocation_index].color;
-        try rt.readOutput(std.mem.asBytes(output), output_result);
-        output.* = std.math.clamp(output.*, zm.f32x4s(0.0), zm.f32x4s(1.0));
+        try rt.readOutput(std.mem.asBytes(&fragment.color), output_result);
+        fragment.color = std.math.clamp(fragment.color, zm.f32x4s(0.0), zm.f32x4s(1.0));
     }
 }

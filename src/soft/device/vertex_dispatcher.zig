@@ -12,6 +12,7 @@ const SoftPipeline = @import("../SoftPipeline.zig");
 const VkError = base.VkError;
 
 pub const RunData = struct {
+    allocator: std.mem.Allocator,
     renderer: *Renderer,
     pipeline: *SoftPipeline,
     batch_id: usize,
@@ -45,20 +46,22 @@ inline fn run(data: RunData) !void {
             else => return err,
         };
 
-        for (data.pipeline.interface.mode.graphics.input_assembly.attribute_description orelse return) |attribute| {
-            const location_result = try rt.getResultByLocation(attribute.location, .input);
+        if (data.pipeline.interface.mode.graphics.input_assembly.attribute_description) |attributes| {
+            for (attributes) |attribute| {
+                const location_result = try rt.getResultByLocation(attribute.location, .input);
 
-            const binding_info = (data.pipeline.interface.mode.graphics.input_assembly.binding_description orelse return)[attribute.binding];
+                const binding_info = (data.pipeline.interface.mode.graphics.input_assembly.binding_description orelse return)[attribute.binding];
 
-            const vertex_buffer = data.renderer.state.data.graphics.vertex_buffers[attribute.binding];
-            const buffer = vertex_buffer.buffer;
-            const buffer_memory_size = base.format.texelSize(attribute.format);
-            const buffer_memory = if (buffer.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
-            const offset = buffer.interface.offset + (binding_info.stride * invocation_index) + attribute.offset;
+                const vertex_buffer = data.renderer.state.data.graphics.vertex_buffers[attribute.binding];
+                const buffer = vertex_buffer.buffer;
+                const buffer_memory_size = base.format.texelSize(attribute.format);
+                const buffer_memory = if (buffer.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
+                const offset = buffer.interface.offset + (binding_info.stride * invocation_index) + attribute.offset;
 
-            const buffer_memory_map: []u8 = @as([*]u8, @ptrCast(@alignCast(try buffer_memory.map(offset, buffer_memory_size))))[0..buffer_memory_size];
+                const buffer_memory_map: []u8 = @as([*]u8, @ptrCast(@alignCast(try buffer_memory.map(offset, buffer_memory_size))))[0..buffer_memory_size];
 
-            try rt.writeInput(buffer_memory_map, location_result);
+                try rt.writeInput(buffer_memory_map, location_result);
+            }
         }
 
         rt.callEntryPoint(allocator, entry) catch |err| switch (err) {
@@ -69,8 +72,21 @@ inline fn run(data: RunData) !void {
             else => return err,
         };
 
-        const output: *F32x4 = &data.draw_call.vertices[(data.instance_index * data.vertex_count) + invocation_index];
-        try rt.readBuiltIn(std.mem.asBytes(output), .Position);
+        const output: *Renderer.Vertex = &data.draw_call.vertices[(data.instance_index * data.vertex_count) + invocation_index];
+        try rt.readBuiltIn(std.mem.asBytes(&output.position), .Position);
+
+        for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
+            const result_word = rt.getResultByLocation(@intCast(location), .output) catch |err| switch (err) {
+                SpvRuntimeError.NotFound => continue,
+                else => return err,
+            };
+            if (result_word == 0)
+                continue;
+            const value = rt.results[result_word].getConstValue() catch continue;
+            const needed_size = try value.getPlainMemorySize();
+            output.outputs[location] = data.allocator.alloc(u8, needed_size) catch return VkError.OutOfDeviceMemory;
+            try rt.readOutput(output.outputs[location].?, result_word);
+        }
     }
 }
 

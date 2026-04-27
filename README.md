@@ -61,7 +61,7 @@ vkCmdCopyImageToBuffer                         | ✅ Implemented
 vkCmdCopyQueryPoolResults                      | ⚙️ WIP
 vkCmdDispatch                                  | ✅ Implemented
 vkCmdDispatchIndirect                          | ✅ Implemented
-vkCmdDraw                                      | ⚙️ WIP
+vkCmdDraw                                      | ✅ Implemented
 vkCmdDrawIndexed                               | ⚙️ WIP
 vkCmdDrawIndexedIndirect                       | ⚙️ WIP
 vkCmdDrawIndirect                              | ⚙️ WIP

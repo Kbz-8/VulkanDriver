@@ -66,6 +66,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .reset = reset,
         .resetEvent = resetEvent,
         .setEvent = setEvent,
+        .setViewport = setViewport,
         .waitEvents = waitEvents,
     };
 
@@ -619,6 +620,31 @@ pub fn setEvent(interface: *Interface, event: *base.Event, stage: vk.PipelineSta
     _ = interface;
     _ = event;
     _ = stage;
+}
+
+pub fn setViewport(interface: *Interface, first: u32, viewports: []const vk.Viewport) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        first: u32,
+        viewports: []const vk.Viewport,
+
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            device.renderer.dynamic_state.viewports = impl.viewports; // Unsafe
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .first = first,
+        .viewports = allocator.dupe(vk.Viewport, viewports) catch return VkError.OutOfHostMemory, // Will be freed on cmdbuf reset or destroy
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
 pub fn waitEvents(interface: *Interface, events: []*const base.Event, src_stage: vk.PipelineStageFlags, dst_stage: vk.PipelineStageFlags, memory_barriers: []const vk.MemoryBarrier, buffer_barriers: []const vk.BufferMemoryBarrier, image_barriers: []const vk.ImageMemoryBarrier) VkError!void {

@@ -6,7 +6,7 @@ const ImplementationDesc = struct {
     name: []const u8,
     root_source_file: []const u8,
     vulkan_version: std.SemanticVersion,
-    custom: ?*const fn (*std.Build, *std.Build.Step.Compile, *std.Build.Step.Options) anyerror!void = null,
+    custom: ?*const fn (*std.Build, *std.Build.Step.Compile, *std.Build.Step.Options, bool) anyerror!void = null,
 };
 
 const implementations = [_]ImplementationDesc{
@@ -76,7 +76,7 @@ pub fn build(b: *std.Build) !void {
         });
 
         if (impl.custom) |custom| {
-            custom(b, lib, options) catch continue;
+            custom(b, lib, options, use_llvm) catch continue;
         }
 
         const icd_file = b.addWriteFile(
@@ -143,7 +143,7 @@ pub fn build(b: *std.Build) !void {
     docs_step.dependOn(&install_docs.step);
 }
 
-fn customSoft(b: *std.Build, lib: *std.Build.Step.Compile, options: *std.Build.Step.Options) !void {
+fn customSoft(b: *std.Build, lib: *std.Build.Step.Compile, options: *std.Build.Step.Options, use_llvm: bool) !void {
     const cpuinfo = b.lazyDependency("cpuinfo", .{}) orelse return error.UnresolvedDependency;
     lib.root_module.addSystemIncludePath(cpuinfo.path("include"));
     lib.root_module.linkLibrary(cpuinfo.artifact("cpuinfo"));
@@ -151,7 +151,7 @@ fn customSoft(b: *std.Build, lib: *std.Build.Step.Compile, options: *std.Build.S
     const spv = b.lazyDependency("SPIRV_Interpreter", .{
         .@"no-example" = true,
         .@"no-test" = true,
-        .@"use-llvm" = true,
+        .@"use-llvm" = use_llvm,
     }) orelse return error.UnresolvedDependency;
     lib.root_module.addImport("spv", spv.module("spv"));
 

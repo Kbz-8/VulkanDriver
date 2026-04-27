@@ -3,6 +3,7 @@ const vk = @import("vulkan");
 const base = @import("base");
 const zm = base.zm;
 const lib = @import("../lib.zig");
+const spv = @import("spv");
 
 pub const F32x4 = zm.F32x4;
 
@@ -32,18 +33,24 @@ pub const VertexBuffer = struct {
 };
 
 pub const DynamicState = struct {
-    viewport: vk.Viewport,
-    scissor: vk.Rect2D,
-    line_width: f32,
+    viewports: ?[]const vk.Viewport,
+    scissor: ?[]vk.Rect2D,
+    line_width: ?f32,
+};
+
+pub const Vertex = struct {
+    position: F32x4,
+    outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]?[]u8,
 };
 
 pub const Fragment = struct {
     position: F32x4,
     color: F32x4,
+    inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][]u8,
 };
 
 pub const DrawCall = struct {
-    vertices: []F32x4,
+    vertices: []Vertex,
     fragments: []Fragment,
 };
 
@@ -60,11 +67,17 @@ pub fn init(device: *SoftDevice, state: *PipelineState) Self {
         .state = state,
         .render_pass = null,
         .framebuffer = null,
-        .dynamic_state = undefined,
+        .dynamic_state = .{
+            .viewports = null,
+            .scissor = null,
+            .line_width = null,
+        },
     };
 }
 
 pub fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize) VkError!void {
+    const io = self.device.interface.io();
+
     const render_target_view: *base.ImageView = (self.framebuffer orelse return).interface.attachments[0];
     const render_target: *SoftImage = @alignCast(@fieldParentPtr("interface", render_target_view.image));
     const render_target_memory = if (render_target.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
@@ -73,20 +86,32 @@ pub fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_verte
     defer arena.deinit();
     const allocator = arena.allocator();
 
+    const timer = std.Io.Timestamp.now(io, .real);
+    defer if (comptime base.config.logs) {
+        const duration = timer.untilNow(io, .real);
+        const ms = duration.toMicroseconds();
+        std.log.scoped(.SoftwareRenderer).debug("Drawcall stats:\n>   Took {d}us\n>   Allocated {d} KB", .{ ms, @divTrunc(arena.queryCapacity(), 1000) });
+    };
+
     var draw_call: DrawCall = .{
-        .vertices = allocator.alloc(F32x4, vertex_count * instance_count) catch return VkError.OutOfDeviceMemory,
+        .vertices = allocator.alloc(Vertex, vertex_count * instance_count) catch return VkError.OutOfDeviceMemory,
         .fragments = undefined,
     };
 
-    self.vertexShaderStage(&draw_call, vertex_count, instance_count) catch |err| {
+    for (draw_call.vertices) |*vertex| {
+        vertex.outputs = [_]?[]u8{null} ** spv.SPIRV_MAX_OUTPUT_LOCATIONS;
+    }
+
+    self.vertexShaderStage(allocator, &draw_call, vertex_count, instance_count) catch |err| {
         std.log.scoped(.@"Vertex stage").err("catched a '{s}'", .{@errorName(err)});
         if (@errorReturnTrace()) |trace| {
             std.debug.dumpErrorReturnTrace(trace);
         }
     };
 
-    self.primitiveAssemblyStage(&draw_call);
+    try self.primitiveAssemblyStage(&draw_call);
     try self.rasterizationStage(allocator, &draw_call);
+
     self.fragmentShaderStage(&draw_call) catch |err| {
         std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
         if (@errorReturnTrace()) |trace| {
@@ -121,7 +146,7 @@ pub fn deinit(self: *Self) void {
     _ = self;
 }
 
-fn vertexShaderStage(self: *Self, draw_call: *DrawCall, vertex_count: usize, instance_count: usize) !void {
+fn vertexShaderStage(self: *Self, allocator: std.mem.Allocator, draw_call: *DrawCall, vertex_count: usize, instance_count: usize) !void {
     const pipeline = self.state.pipeline orelse return;
     const batch_size = (pipeline.stages.getPtr(.vertex) orelse return).runtimes.len;
 
@@ -129,6 +154,7 @@ fn vertexShaderStage(self: *Self, draw_call: *DrawCall, vertex_count: usize, ins
     for (0..instance_count) |instance_index| {
         for (0..@min(batch_size, vertex_count)) |batch_id| {
             const run_data: vertex_dispatcher.RunData = .{
+                .allocator = allocator,
                 .renderer = self,
                 .pipeline = pipeline,
                 .batch_id = batch_id,
@@ -144,14 +170,23 @@ fn vertexShaderStage(self: *Self, draw_call: *DrawCall, vertex_count: usize, ins
     wg.await(self.device.interface.io()) catch return VkError.DeviceLost;
 }
 
-fn primitiveAssemblyStage(self: *Self, draw_call: *DrawCall) void {
-    const viewport = (self.state.pipeline orelse return).interface.mode.graphics.viewport_state.viewports[0];
+fn primitiveAssemblyStage(self: *Self, draw_call: *DrawCall) VkError!void {
+    const viewport = blk: {
+        const pipeline_data = &(self.state.pipeline orelse return VkError.InvalidPipelineDrv).interface.mode.graphics;
+        if (pipeline_data.dynamic_state.viewport) {
+            if (self.dynamic_state.viewports) |viewports|
+                break :blk viewports[0];
+        }
+        if (pipeline_data.viewport_state.viewports) |viewports|
+            break :blk viewports[0];
+        return VkError.Unknown;
+    };
 
     for (draw_call.vertices) |*vertex| {
-        const x = vertex[0];
-        const y = vertex[1];
-        const z = vertex[2];
-        const w = vertex[3];
+        const x = vertex.position[0];
+        const y = vertex.position[1];
+        const z = vertex.position[2];
+        const w = vertex.position[3];
 
         // Perspective division.
         const x_ndc = x / w;
@@ -170,7 +205,7 @@ fn primitiveAssemblyStage(self: *Self, draw_call: *DrawCall) void {
         const y_screen = ((p_y / 2.0) * y_ndc) + o_y;
         const z_screen = (p_z * z_ndc) + o_z;
 
-        vertex.* = zm.f32x4(x_screen, y_screen, z_screen, 1.0);
+        vertex.position = zm.f32x4(x_screen, y_screen, z_screen, 1.0);
     }
 }
 
@@ -182,9 +217,9 @@ fn rasterizationStage(self: *Self, allocator: std.mem.Allocator, draw_call: *Dra
     switch (topology) {
         .triangle_list => for (0..@divExact(draw_call.vertices.len, 3)) |triangle_index| {
             const first_vertex = triangle_index * 3;
-            const v0 = draw_call.vertices[first_vertex + 0];
-            const v1 = draw_call.vertices[first_vertex + 1];
-            const v2 = draw_call.vertices[first_vertex + 2];
+            const v0 = &draw_call.vertices[first_vertex + 0];
+            const v1 = &draw_call.vertices[first_vertex + 1];
+            const v2 = &draw_call.vertices[first_vertex + 2];
 
             switch (pipeline_data.rasterization.polygon_mode) {
                 .fill => try rasterizer.drawTriangleFilled(allocator, &fragments, v0, v1, v2),

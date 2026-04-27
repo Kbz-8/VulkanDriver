@@ -856,7 +856,12 @@ pub export fn strollCreateGraphicsPipelines(p_device: vk.Device, p_cache: vk.Pip
         //  error code. The implementation will attempt to create all pipelines, and
         //  only return VK_NULL_HANDLE values for those that actually failed."
         p_pipeline.*, const local_res = blk: {
-            const pipeline = device.createGraphicsPipeline(allocator, cache, info) catch |err| break :blk .{ .null_handle, toVkResult(err) };
+            const pipeline = device.createGraphicsPipeline(allocator, cache, info) catch |err| {
+                if (@errorReturnTrace()) |trace| {
+                    std.debug.dumpErrorReturnTrace(trace);
+                }
+                break :blk .{ .null_handle, toVkResult(err) };
+            };
             const handle = NonDispatchable(Pipeline).wrap(allocator, pipeline) catch |err| {
                 pipeline.destroy(allocator);
                 break :blk .{ .null_handle, toVkResult(err) };
@@ -2133,13 +2138,7 @@ pub export fn strollCmdSetViewport(p_cmd: vk.CommandBuffer, first: u32, count: u
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = first;
-    _ = count;
-    _ = viewports;
+    cmd.setViewport(first, viewports[0..count]) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdUpdateBuffer(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer, offset: vk.DeviceSize, size: vk.DeviceSize, data: *const anyopaque) callconv(vk.vulkan_call_conv) void {
