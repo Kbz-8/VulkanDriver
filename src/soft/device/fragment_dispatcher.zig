@@ -48,9 +48,7 @@ inline fn run(data: RunData) !void {
                 SpvRuntimeError.NotFound => continue,
                 else => return err,
             };
-            if (result_word != 0) {
-                try rt.writeInput(fragment.inputs[location], result_word);
-            }
+            try rt.writeInput(fragment.inputs[location], result_word);
         }
 
         rt.callEntryPoint(allocator, entry) catch |err| switch (err) {

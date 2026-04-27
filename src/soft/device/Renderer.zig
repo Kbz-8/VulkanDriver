@@ -40,7 +40,10 @@ pub const DynamicState = struct {
 
 pub const Vertex = struct {
     position: F32x4,
-    outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]?[]u8,
+    outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]?struct {
+        interpolation_type: enum { smooth, flat, noperspective },
+        blob: []u8,
+    },
 };
 
 pub const Fragment = struct {
@@ -99,7 +102,7 @@ pub fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_verte
     };
 
     for (draw_call.vertices) |*vertex| {
-        vertex.outputs = [_]?[]u8{null} ** spv.SPIRV_MAX_OUTPUT_LOCATIONS;
+        @memset(vertex.outputs[0..], null);
     }
 
     self.vertexShaderStage(allocator, &draw_call, vertex_count, instance_count) catch |err| {
@@ -215,27 +218,102 @@ fn rasterizationStage(self: *Self, allocator: std.mem.Allocator, draw_call: *Dra
     const pipeline_data = (self.state.pipeline orelse return VkError.InvalidHandleDrv).interface.mode.graphics;
     const topology = pipeline_data.input_assembly.topology;
     switch (topology) {
-        .triangle_list => for (0..@divExact(draw_call.vertices.len, 3)) |triangle_index| {
+        .triangle_list => for (0..@divTrunc(draw_call.vertices.len, 3)) |triangle_index| {
             const first_vertex = triangle_index * 3;
             const v0 = &draw_call.vertices[first_vertex + 0];
             const v1 = &draw_call.vertices[first_vertex + 1];
             const v2 = &draw_call.vertices[first_vertex + 2];
 
-            switch (pipeline_data.rasterization.polygon_mode) {
-                .fill => try rasterizer.drawTriangleFilled(allocator, &fragments, v0, v1, v2),
-                .line => {
-                    try rasterizer.drawLineBresenham(allocator, &fragments, v0, v1);
-                    try rasterizer.drawLineBresenham(allocator, &fragments, v1, v2);
-                    try rasterizer.drawLineBresenham(allocator, &fragments, v2, v0);
-                },
-                .point => {},
-                else => base.unsupported("polygon mode {any}", .{pipeline_data.rasterization.polygon_mode}),
+            try self.rasterizeTriangle(allocator, &fragments, v0, v1, v2, v0, v1, v2);
+        },
+        .triangle_fan => if (draw_call.vertices.len >= 3) {
+            const v0 = &draw_call.vertices[0];
+            for (1..(draw_call.vertices.len - 1)) |vertex_index| {
+                const v1 = &draw_call.vertices[vertex_index];
+                const v2 = &draw_call.vertices[vertex_index + 1];
+
+                try self.rasterizeTriangle(allocator, &fragments, v0, v1, v2, v0, v1, v2);
+            }
+        },
+        .triangle_strip => if (draw_call.vertices.len >= 3) {
+            for (0..(draw_call.vertices.len - 2)) |vertex_index| {
+                const v0 = &draw_call.vertices[vertex_index + 0];
+                const v1 = &draw_call.vertices[vertex_index + 1];
+                const v2 = &draw_call.vertices[vertex_index + 2];
+
+                if ((vertex_index & 1) == 0) {
+                    try self.rasterizeTriangle(allocator, &fragments, v0, v1, v2, v0, v1, v2);
+                } else {
+                    try self.rasterizeTriangle(allocator, &fragments, v0, v1, v2, v1, v0, v2);
+                }
             }
         },
         else => base.unsupported("primitive topology {any}", .{topology}),
     }
 
     draw_call.fragments = fragments.toOwnedSlice(allocator) catch return VkError.OutOfDeviceMemory;
+}
+
+fn triangleArea2(v0: *const Vertex, v1: *const Vertex, v2: *const Vertex) f32 {
+    const x0 = v0.position[0];
+    const y0 = v0.position[1];
+    const x1 = v1.position[0];
+    const y1 = v1.position[1];
+    const x2 = v2.position[0];
+    const y2 = v2.position[1];
+
+    return ((x1 - x0) * (y2 - y0)) - ((y1 - y0) * (x2 - x0));
+}
+
+fn triangleIsCulled(self: *Self, v0: *const Vertex, v1: *const Vertex, v2: *const Vertex) VkError!bool {
+    const pipeline_data = (self.state.pipeline orelse return VkError.InvalidHandleDrv).interface.mode.graphics;
+    const rasterization = pipeline_data.rasterization;
+    const cull_mode = rasterization.cull_mode;
+
+    if (!cull_mode.front_bit and !cull_mode.back_bit)
+        return false;
+
+    if (cull_mode.front_bit and cull_mode.back_bit)
+        return true;
+
+    const area = triangleArea2(v0, v1, v2);
+    if (area == 0.0)
+        return true;
+
+    const front_face = switch (rasterization.front_face) {
+        .counter_clockwise => area < 0.0,
+        .clockwise => area > 0.0,
+        else => return false,
+    };
+
+    return (cull_mode.front_bit and front_face) or (cull_mode.back_bit and !front_face);
+}
+
+fn rasterizeTriangle(
+    self: *Self,
+    allocator: std.mem.Allocator,
+    fragments: *std.ArrayList(Fragment),
+    v0: *Vertex,
+    v1: *Vertex,
+    v2: *Vertex,
+    cull_v0: *const Vertex,
+    cull_v1: *const Vertex,
+    cull_v2: *const Vertex,
+) VkError!void {
+    if (try self.triangleIsCulled(cull_v0, cull_v1, cull_v2))
+        return;
+
+    const pipeline_data = (self.state.pipeline orelse return VkError.InvalidHandleDrv).interface.mode.graphics;
+    switch (pipeline_data.rasterization.polygon_mode) {
+        .fill => try rasterizer.drawTriangleFilled(allocator, fragments, v0, v1, v2),
+        .line => {
+            try rasterizer.drawLineBresenham(allocator, fragments, v0, v1);
+            try rasterizer.drawLineBresenham(allocator, fragments, v1, v2);
+            try rasterizer.drawLineBresenham(allocator, fragments, v2, v0);
+        },
+        .point => {},
+        else => base.unsupported("polygon mode {any}", .{pipeline_data.rasterization.polygon_mode}),
+    }
 }
 
 fn fragmentShaderStage(self: *Self, draw_call: *DrawCall) !void {

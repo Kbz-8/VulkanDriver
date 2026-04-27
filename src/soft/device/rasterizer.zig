@@ -37,31 +37,31 @@ fn interpolateVertexOutputs(
         const out1 = v1.outputs[location] orelse continue;
         const out2 = v2.outputs[location] orelse continue;
 
-        if (out0.len == 0) {
-            inputs[location] = out0;
+        if (out0.interpolation_type == .flat or out0.blob.len == 0) {
+            inputs[location] = out0.blob;
             continue;
         }
 
-        const len = @min(out0.len, out1.len, out2.len);
+        const len = @min(out0.blob.len, out1.blob.len, out2.blob.len);
         const input = allocator.alloc(u8, len) catch return VkError.OutOfDeviceMemory;
 
         var byte_index: usize = 0;
         while (byte_index + @sizeOf(F32x4) <= len) : (byte_index += @sizeOf(F32x4)) {
-            const value0 = std.mem.bytesToValue(F32x4, out0[byte_index..]);
-            const value1 = std.mem.bytesToValue(F32x4, out1[byte_index..]);
-            const value2 = std.mem.bytesToValue(F32x4, out2[byte_index..]);
+            const value0 = std.mem.bytesToValue(F32x4, out0.blob[byte_index..]);
+            const value1 = std.mem.bytesToValue(F32x4, out1.blob[byte_index..]);
+            const value2 = std.mem.bytesToValue(F32x4, out2.blob[byte_index..]);
             writePacked(F32x4, input[byte_index..], interpolateF32x4(value0, value1, value2, b0, b1, b2));
         }
 
         while (byte_index + @sizeOf(f32) <= len) : (byte_index += @sizeOf(f32)) {
-            const value0 = std.mem.bytesToValue(f32, out0[byte_index..]);
-            const value1 = std.mem.bytesToValue(f32, out1[byte_index..]);
-            const value2 = std.mem.bytesToValue(f32, out2[byte_index..]);
+            const value0 = std.mem.bytesToValue(f32, out0.blob[byte_index..]);
+            const value1 = std.mem.bytesToValue(f32, out1.blob[byte_index..]);
+            const value2 = std.mem.bytesToValue(f32, out2.blob[byte_index..]);
             writePacked(f32, input[byte_index..], (value0 * b0) + (value1 * b1) + (value2 * b2));
         }
 
         if (byte_index < len)
-            @memcpy(input[byte_index..], out0[byte_index..len]);
+            @memcpy(input[byte_index..], out0.blob[byte_index..len]);
 
         inputs[location] = input;
     }

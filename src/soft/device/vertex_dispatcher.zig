@@ -80,12 +80,11 @@ inline fn run(data: RunData) !void {
                 SpvRuntimeError.NotFound => continue,
                 else => return err,
             };
-            if (result_word == 0)
-                continue;
-            const value = rt.results[result_word].getConstValue() catch continue;
-            const needed_size = try value.getPlainMemorySize();
-            output.outputs[location] = data.allocator.alloc(u8, needed_size) catch return VkError.OutOfDeviceMemory;
-            try rt.readOutput(output.outputs[location].?, result_word);
+            output.outputs[location] = .{
+                .interpolation_type = if (rt.hasResultDecoration(result_word, .Flat)) .flat else .smooth, // TODO : handle noperspective
+                .blob = data.allocator.alloc(u8, try rt.getResultMemorySize(result_word)) catch return VkError.OutOfDeviceMemory,
+            };
+            try rt.readOutput(output.outputs[location].?.blob, result_word);
         }
     }
 }
