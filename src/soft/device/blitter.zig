@@ -10,8 +10,8 @@ const VkError = base.VkError;
 pub const SoftImage = @import("../SoftImage.zig");
 pub const SoftImageView = @import("../SoftImageView.zig");
 
-const F32x4 = zm.F32x4;
-const U32x4 = @Vector(4, u32);
+pub const F32x4 = zm.F32x4;
+pub const U32x4 = @Vector(4, u32);
 
 const State = struct {
     src_format: vk.Format,

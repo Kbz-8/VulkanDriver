@@ -8,7 +8,6 @@ const Buffer = base.Buffer;
 const ImageView = base.ImageView;
 
 const SoftBuffer = @import("SoftBuffer.zig");
-const SoftImage = @import("SoftImage.zig");
 const SoftImageView = @import("SoftImageView.zig");
 const SoftSampler = @import("SoftSampler.zig");
 
@@ -29,7 +28,7 @@ const DescriptorTexture = struct {
 };
 
 const DescriptorImage = struct {
-    object: ?*SoftImage,
+    object: ?*SoftImageView,
 };
 
 const Descriptor = union(enum) {
@@ -138,7 +137,7 @@ pub fn write(interface: *Interface, write_data: vk.WriteDescriptorSet) VkError!v
                 desc.* = .{ .object = null };
                 if (image_info.image_view != .null_handle) {
                     const image_view = try NonDispatchable(ImageView).fromHandleObject(image_info.image_view);
-                    desc.object = @as(*SoftImage, @alignCast(@fieldParentPtr("interface", image_view.image)));
+                    desc.object = @as(*SoftImageView, @alignCast(@fieldParentPtr("interface", image_view)));
                 }
             }
         },

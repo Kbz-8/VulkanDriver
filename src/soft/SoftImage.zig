@@ -1,8 +1,11 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
-
 const lib = @import("lib.zig");
+const blitter = @import("device/blitter.zig");
+
+const F32x4 = blitter.F32x4;
+const U32x4 = blitter.U32x4;
 
 const VkError = base.VkError;
 const Device = base.Device;
@@ -314,6 +317,38 @@ pub fn copy(
         src_memory = if (src_memory.len < src_layer_size) break else src_memory[src_layer_size..];
         dst_memory = if (dst_memory.len < dst_layer_size) break else dst_memory[dst_layer_size..];
     }
+}
+
+pub fn readFloat4(self: *Self, offset: vk.Offset3D, subresource: vk.ImageSubresource, format: vk.Format) VkError!F32x4 {
+    const memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
+    const texel_size = base.format.texelSize(format);
+    const texel_offset = try self.getTexelMemoryOffset(offset, subresource);
+    const map: []const u8 = @as([*]u8, @ptrCast(try memory.map(self.interface.memory_offset + texel_offset, texel_size)))[0..texel_size];
+    return blitter.readFloat4(map, format);
+}
+
+pub fn readInt4(self: *Self, offset: vk.Offset3D, subresource: vk.ImageSubresource, format: vk.Format) VkError!U32x4 {
+    const memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
+    const texel_size = base.format.texelSize(format);
+    const texel_offset = try self.getTexelMemoryOffset(offset, subresource);
+    const map: []const u8 = @as([*]u8, @ptrCast(try memory.map(self.interface.memory_offset + texel_offset, texel_size)))[0..texel_size];
+    return blitter.readInt4(map, format);
+}
+
+pub fn writeFloat4(self: *Self, offset: vk.Offset3D, subresource: vk.ImageSubresource, format: vk.Format, pixel: F32x4) VkError!void {
+    const memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
+    const texel_size = base.format.texelSize(format);
+    const texel_offset = try self.getTexelMemoryOffset(offset, subresource);
+    const map: []u8 = @as([*]u8, @ptrCast(try memory.map(self.interface.memory_offset + texel_offset, texel_size)))[0..texel_size];
+    blitter.writeFloat4(pixel, map, format);
+}
+
+pub fn writeInt4(self: *Self, offset: vk.Offset3D, subresource: vk.ImageSubresource, format: vk.Format, pixel: U32x4) VkError!void {
+    const memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
+    const texel_size = base.format.texelSize(format);
+    const texel_offset = try self.getTexelMemoryOffset(offset, subresource);
+    const map: []u8 = @as([*]u8, @ptrCast(try memory.map(self.interface.memory_offset + texel_offset, texel_size)))[0..texel_size];
+    blitter.writeInt4(pixel, map, format);
 }
 
 pub fn getTexelMemoryOffsetInSubresource(self: *const Self, offset: vk.Offset3D, subresource: vk.ImageSubresource) usize {

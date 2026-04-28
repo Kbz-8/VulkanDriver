@@ -189,11 +189,10 @@ fn writeDescriptorSets(self: *Self, rt: *spv.Runtime) !void {
                     }
                 },
                 .image => |image_data_array| for (image_data_array, 0..) |image_data, descriptor_index| {
-                    if (image_data.object) |image| {
-                        const memory = if (image.interface.memory) |memory| memory else continue :bindings;
-                        const map: []u8 = @as([*]u8, @ptrCast(try memory.map(image.interface.memory_offset, try image.interface.getTotalSize())))[0..try image.interface.getTotalSize()];
+                    if (image_data.object) |image_view| {
+                        const addr: usize = @intFromPtr(image_view);
                         try rt.writeDescriptorSet(
-                            map,
+                            std.mem.asBytes(&addr),
                             @as(u32, @intCast(set_index)),
                             @as(u32, @intCast(binding_index)),
                             @as(u32, @intCast(descriptor_index)),

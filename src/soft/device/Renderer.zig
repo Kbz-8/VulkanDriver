@@ -83,7 +83,6 @@ pub fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_verte
 
     const render_target_view: *base.ImageView = (self.framebuffer orelse return).interface.attachments[0];
     const render_target: *SoftImage = @alignCast(@fieldParentPtr("interface", render_target_view.image));
-    const render_target_memory = if (render_target.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
 
     var arena: std.heap.ArenaAllocator = .init(self.device.device_allocator.allocator());
     defer arena.deinit();
@@ -122,10 +121,8 @@ pub fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_verte
         }
     };
 
-    const texel_size = base.format.texelSize(render_target_view.format);
-
     for (draw_call.fragments) |fragment| {
-        const texel_offset = try render_target.getTexelMemoryOffset(
+        try render_target.writeFloat4(
             .{
                 .x = @intFromFloat(fragment.position[0]),
                 .y = @intFromFloat(fragment.position[1]),
@@ -136,9 +133,9 @@ pub fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_verte
                 .mip_level = render_target_view.subresource_range.base_mip_level,
                 .array_layer = render_target_view.subresource_range.base_array_layer,
             },
+            render_target_view.format,
+            fragment.color,
         );
-        const map: []u8 = @as([*]u8, @ptrCast(try render_target_memory.map(render_target.interface.memory_offset + texel_offset, texel_size)))[0..texel_size];
-        blitter.writeFloat4(fragment.color, map, render_target_view.format);
     }
 
     _ = first_vertex;

@@ -3,13 +3,16 @@ const vk = @import("vulkan");
 const base = @import("base");
 const spv = @import("spv");
 
-const VkError = base.VkError;
 const Device = base.Device;
+const VkError = base.VkError;
+const SpvRuntimeError = spv.Runtime.RuntimeError;
 
 const NonDispatchable = base.NonDispatchable;
 const ShaderModule = base.ShaderModule;
 
 const SoftDevice = @import("SoftDevice.zig");
+const SoftImage = @import("SoftImage.zig");
+const SoftImageView = @import("SoftImageView.zig");
 const SoftInstance = @import("SoftInstance.zig");
 const SoftShaderModule = @import("SoftShaderModule.zig");
 
@@ -77,7 +80,16 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
                 const runtimes = runtimes_allocator.alloc(spv.Runtime, runtimes_count) catch return VkError.OutOfHostMemory;
 
                 for (runtimes) |*runtime| {
-                    runtime.* = spv.Runtime.init(runtimes_allocator, &soft_module.module) catch |err| {
+                    runtime.* = spv.Runtime.init(
+                        runtimes_allocator,
+                        &soft_module.module,
+                        .{
+                            .readImageFloat4 = readImageFloat4,
+                            .readImageInt4 = readImageInt4,
+                            .writeImageFloat4 = writeImageFloat4,
+                            .writeImageInt4 = writeImageInt4,
+                        },
+                    ) catch |err| {
                         std.log.scoped(.SpvRuntimeInit).err("SPIR-V Runtime failed to initialize, {s}", .{@errorName(err)});
                         return VkError.Unknown;
                     };
@@ -151,7 +163,16 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
             const runtimes = runtimes_allocator.alloc(spv.Runtime, runtimes_count) catch return VkError.OutOfHostMemory;
 
             for (runtimes) |*runtime| {
-                runtime.* = spv.Runtime.init(runtimes_allocator, &soft_module.module) catch |err| {
+                runtime.* = spv.Runtime.init(
+                    runtimes_allocator,
+                    &soft_module.module,
+                    .{
+                        .readImageFloat4 = readImageFloat4,
+                        .readImageInt4 = readImageInt4,
+                        .writeImageFloat4 = writeImageFloat4,
+                        .writeImageInt4 = writeImageInt4,
+                    },
+                ) catch |err| {
                     std.log.scoped(.SpvRuntimeInit).err("SPIR-V Runtime failed to initialize, {s}", .{@errorName(err)});
                     return VkError.Unknown;
                 };
@@ -205,4 +226,90 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     self.runtimes_allocator.deinit();
     allocator.destroy(self);
+}
+
+fn readImageFloat4(context: *anyopaque, x: i32, y: i32, z: i32) SpvRuntimeError!spv.Runtime.Vec4(f32) {
+    const image_view: *SoftImageView = @ptrCast(@alignCast(context));
+    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
+    const pixel = image.readFloat4(
+        .{
+            .x = x,
+            .y = y,
+            .z = z,
+        },
+        .{
+            .aspect_mask = image_view.interface.subresource_range.aspect_mask,
+            .mip_level = image_view.interface.subresource_range.base_mip_level,
+            .array_layer = image_view.interface.subresource_range.base_array_layer,
+        },
+        image_view.interface.format,
+    ) catch return SpvRuntimeError.Unknown;
+    return .{
+        .x = pixel[0],
+        .y = pixel[1],
+        .z = pixel[2],
+        .w = pixel[3],
+    };
+}
+
+fn readImageInt4(context: *anyopaque, x: i32, y: i32, z: i32) SpvRuntimeError!spv.Runtime.Vec4(u32) {
+    const image_view: *SoftImageView = @ptrCast(@alignCast(context));
+    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
+    const pixel = image.readInt4(
+        .{
+            .x = x,
+            .y = y,
+            .z = z,
+        },
+        .{
+            .aspect_mask = image_view.interface.subresource_range.aspect_mask,
+            .mip_level = image_view.interface.subresource_range.base_mip_level,
+            .array_layer = image_view.interface.subresource_range.base_array_layer,
+        },
+        image_view.interface.format,
+    ) catch return SpvRuntimeError.Unknown;
+    return .{
+        .x = pixel[0],
+        .y = pixel[1],
+        .z = pixel[2],
+        .w = pixel[3],
+    };
+}
+
+fn writeImageFloat4(context: *anyopaque, x: i32, y: i32, z: i32, pixel: spv.Runtime.Vec4(f32)) SpvRuntimeError!void {
+    const image_view: *SoftImageView = @ptrCast(@alignCast(context));
+    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
+    image.writeFloat4(
+        .{
+            .x = x,
+            .y = y,
+            .z = z,
+        },
+        .{
+            .aspect_mask = image_view.interface.subresource_range.aspect_mask,
+            .mip_level = image_view.interface.subresource_range.base_mip_level,
+            .array_layer = image_view.interface.subresource_range.base_array_layer,
+        },
+        image_view.interface.format,
+        .{ pixel.x, pixel.y, pixel.z, pixel.w },
+    ) catch return SpvRuntimeError.Unknown;
+}
+
+fn writeImageInt4(context: *anyopaque, x: i32, y: i32, z: i32, pixel: spv.Runtime.Vec4(u32)) SpvRuntimeError!void {
+    const image_view: *SoftImageView = @ptrCast(@alignCast(context));
+    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
+    image.writeInt4(
+        .{
+            .x = x,
+            .y = y,
+            .z = z,
+        },
+        .{
+            .aspect_mask = image_view.interface.subresource_range.aspect_mask,
+            .mip_level = image_view.interface.subresource_range.base_mip_level,
+            .array_layer = image_view.interface.subresource_range.base_array_layer,
+        },
+        image_view.interface.format,
+        .{ pixel.x, pixel.y, pixel.z, pixel.w },
+    ) catch return SpvRuntimeError.Unknown;
 }
