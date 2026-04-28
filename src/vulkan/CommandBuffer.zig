@@ -44,6 +44,7 @@ pub const DispatchTable = struct {
     bindPipeline: *const fn (*Self, vk.PipelineBindPoint, *Pipeline) VkError!void,
     bindVertexBuffer: *const fn (*Self, usize, *Buffer, usize) VkError!void,
     blitImage: *const fn (*Self, *Image, vk.ImageLayout, *Image, vk.ImageLayout, []const vk.ImageBlit, vk.Filter) VkError!void,
+    clearAttachment: *const fn (*Self, vk.ClearAttachment, vk.ClearRect) VkError!void,
     clearColorImage: *const fn (*Self, *Image, vk.ImageLayout, *const vk.ClearColorValue, vk.ImageSubresourceRange) VkError!void,
     copyBuffer: *const fn (*Self, *Buffer, *Buffer, []const vk.BufferCopy) VkError!void,
     copyBufferToImage: *const fn (*Self, *Buffer, *Image, vk.ImageLayout, []const vk.BufferImageCopy) VkError!void,
@@ -61,7 +62,7 @@ pub const DispatchTable = struct {
     resetEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
     setEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
     setViewport: *const fn (*Self, u32, []const vk.Viewport) VkError!void,
-    waitEvents: *const fn (*Self, []*const Event, vk.PipelineStageFlags, vk.PipelineStageFlags, []const vk.MemoryBarrier, []const vk.BufferMemoryBarrier, []const vk.ImageMemoryBarrier) VkError!void,
+    waitEvent: *const fn (*Self, *Event, vk.PipelineStageFlags, vk.PipelineStageFlags, []const vk.MemoryBarrier, []const vk.BufferMemoryBarrier, []const vk.ImageMemoryBarrier) VkError!void,
 };
 
 pub const VTable = struct {
@@ -170,6 +171,10 @@ pub inline fn blitImage(self: *Self, src: *Image, src_layout: vk.ImageLayout, ds
     try self.dispatch_table.blitImage(self, src, src_layout, dst, dst_layout, regions, filter);
 }
 
+pub fn clearAttachment(self: *Self, attachment: vk.ClearAttachment, rect: vk.ClearRect) VkError!void {
+    try self.dispatch_table.clearAttachment(self, attachment, rect);
+}
+
 pub fn clearColorImage(self: *Self, image: *Image, layout: vk.ImageLayout, color: *const vk.ClearColorValue, ranges: []const vk.ImageSubresourceRange) VkError!void {
     for (ranges) |range| {
         try self.dispatch_table.clearColorImage(self, image, layout, color, range);
@@ -216,7 +221,15 @@ pub inline fn fillBuffer(self: *Self, buffer: *Buffer, offset: vk.DeviceSize, si
     try self.dispatch_table.fillBuffer(self, buffer, offset, size, data);
 }
 
-pub inline fn pipelineBarrier(self: *Self, src_stage: vk.PipelineStageFlags, dst_stage: vk.PipelineStageFlags, dependency: vk.DependencyFlags, memory_barriers: []const vk.MemoryBarrier, buffer_barriers: []const vk.BufferMemoryBarrier, image_barriers: []const vk.ImageMemoryBarrier) VkError!void {
+pub inline fn pipelineBarrier(
+    self: *Self,
+    src_stage: vk.PipelineStageFlags,
+    dst_stage: vk.PipelineStageFlags,
+    dependency: vk.DependencyFlags,
+    memory_barriers: []const vk.MemoryBarrier,
+    buffer_barriers: []const vk.BufferMemoryBarrier,
+    image_barriers: []const vk.ImageMemoryBarrier,
+) VkError!void {
     try self.dispatch_table.pipelineBarrier(self, src_stage, dst_stage, dependency, memory_barriers, buffer_barriers, image_barriers);
 }
 
@@ -232,6 +245,14 @@ pub inline fn setViewport(self: *Self, first: u32, viewports: []const vk.Viewpor
     try self.dispatch_table.setViewport(self, first, viewports);
 }
 
-pub inline fn waitEvents(self: *Self, events: []*const Event, src_stage: vk.PipelineStageFlags, dst_stage: vk.PipelineStageFlags, memory_barriers: []const vk.MemoryBarrier, buffer_barriers: []const vk.BufferMemoryBarrier, image_barriers: []const vk.ImageMemoryBarrier) VkError!void {
-    try self.dispatch_table.waitEvents(self, events, src_stage, dst_stage, memory_barriers, buffer_barriers, image_barriers);
+pub inline fn waitEvent(
+    self: *Self,
+    event: *Event,
+    src_stage: vk.PipelineStageFlags,
+    dst_stage: vk.PipelineStageFlags,
+    memory_barriers: []const vk.MemoryBarrier,
+    buffer_barriers: []const vk.BufferMemoryBarrier,
+    image_barriers: []const vk.ImageMemoryBarrier,
+) VkError!void {
+    try self.dispatch_table.waitEvent(self, event, src_stage, dst_stage, memory_barriers, buffer_barriers, image_barriers);
 }

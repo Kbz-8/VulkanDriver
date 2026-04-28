@@ -1705,14 +1705,11 @@ pub export fn strollCmdClearAttachments(p_cmd: vk.CommandBuffer, attachment_coun
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = attachment_count;
-    _ = attachments;
-    _ = rect_count;
-    _ = rects;
+    for (attachments[0..], 0..attachment_count) |attachment, _| {
+        for (rects[0..], 0..rect_count) |rect, _| {
+            cmd.clearAttachment(attachment, rect) catch |err| return errorLogger(err);
+        }
+    }
 }
 
 pub export fn strollCmdClearColorImage(p_cmd: vk.CommandBuffer, p_image: vk.Image, layout: vk.ImageLayout, color: *const vk.ClearColorValue, count: u32, ranges: [*]const vk.ImageSubresourceRange) callconv(vk.vulkan_call_conv) void {
@@ -2173,18 +2170,18 @@ pub export fn strollCmdWaitEvents(
     entryPointBeginLogTrace(.vkCmdWaitEvents);
     defer entryPointEndLogTrace();
 
-    _ = count;
-    _ = p_events;
-    _ = src_stage_mask;
-    _ = dst_stage_mask;
-    _ = memory_barrier_count;
-    _ = memory_barriers;
-    _ = buffer_memory_barrier_count;
-    _ = buffer_memory_barriers;
-    _ = image_memory_barrier_count;
-    _ = image_memory_barriers;
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-    _ = cmd;
+    for (p_events, 0..count) |p_event, _| {
+        const event = NonDispatchable(Event).fromHandleObject(p_event) catch |err| return errorLogger(err);
+        cmd.waitEvent(
+            event,
+            src_stage_mask,
+            dst_stage_mask,
+            memory_barriers[0..memory_barrier_count],
+            buffer_memory_barriers[0..buffer_memory_barrier_count],
+            image_memory_barriers[0..image_memory_barrier_count],
+        ) catch |err| return errorLogger(err);
+    }
 }
 
 pub export fn strollCmdWriteTimestamp(p_cmd: vk.CommandBuffer, stage: vk.PipelineStageFlags, p_pool: vk.QueryPool, query: u32) callconv(vk.vulkan_call_conv) void {

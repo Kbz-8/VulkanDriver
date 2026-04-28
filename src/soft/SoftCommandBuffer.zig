@@ -50,6 +50,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .bindPipeline = bindPipeline,
         .bindVertexBuffer = bindVertexBuffer,
         .blitImage = blitImage,
+        .clearAttachment = clearAttachment,
         .clearColorImage = clearColorImage,
         .copyBuffer = copyBuffer,
         .copyBufferToImage = copyBufferToImage,
@@ -67,7 +68,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .resetEvent = resetEvent,
         .setEvent = setEvent,
         .setViewport = setViewport,
-        .waitEvents = waitEvents,
+        .waitEvent = waitEvent,
     };
 
     self.* = .{
@@ -283,6 +284,45 @@ pub fn blitImage(interface: *Interface, src: *base.Image, _: vk.ImageLayout, dst
         .dst = @alignCast(@fieldParentPtr("interface", dst)),
         .regions = allocator.dupe(vk.ImageBlit, regions) catch return VkError.OutOfHostMemory, // Will be freed on cmdbuf reset or destroy
         .filter = filter,
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn clearAttachment(interface: *Interface, attachment: vk.ClearAttachment, rect: vk.ClearRect) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        attachment: vk.ClearAttachment,
+        rect: vk.ClearRect,
+
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+
+            if (device.renderer.framebuffer) |framebuffer| {
+                const image_view = framebuffer.interface.attachments[impl.attachment.color_attachment];
+                const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.image));
+                const clear_format = try image.getClearFormat();
+
+                try blitter.clear(
+                    impl.attachment.clear_value,
+                    clear_format,
+                    image,
+                    image_view.format,
+                    image_view.subresource_range,
+                    null,
+                );
+            }
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .attachment = attachment,
+        .rect = rect,
     };
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
@@ -609,17 +649,53 @@ pub fn pipelineBarrier(interface: *Interface, src_stage: vk.PipelineStageFlags, 
 }
 
 pub fn resetEvent(interface: *Interface, event: *base.Event, stage: vk.PipelineStageFlags) VkError!void {
-    // No-op
-    _ = interface;
-    _ = event;
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
     _ = stage;
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        event: *base.Event,
+
+        pub fn execute(context: *anyopaque, _: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            try impl.event.reset();
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .event = event,
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
 pub fn setEvent(interface: *Interface, event: *base.Event, stage: vk.PipelineStageFlags) VkError!void {
-    // No-op
-    _ = interface;
-    _ = event;
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
     _ = stage;
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        event: *base.Event,
+
+        pub fn execute(context: *anyopaque, _: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            try impl.event.signal();
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .event = event,
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
 pub fn setViewport(interface: *Interface, first: u32, viewports: []const vk.Viewport) VkError!void {
@@ -647,13 +723,31 @@ pub fn setViewport(interface: *Interface, first: u32, viewports: []const vk.View
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
-pub fn waitEvents(interface: *Interface, events: []*const base.Event, src_stage: vk.PipelineStageFlags, dst_stage: vk.PipelineStageFlags, memory_barriers: []const vk.MemoryBarrier, buffer_barriers: []const vk.BufferMemoryBarrier, image_barriers: []const vk.ImageMemoryBarrier) VkError!void {
-    // No-op
-    _ = interface;
-    _ = events;
+pub fn waitEvent(interface: *Interface, event: *base.Event, src_stage: vk.PipelineStageFlags, dst_stage: vk.PipelineStageFlags, memory_barriers: []const vk.MemoryBarrier, buffer_barriers: []const vk.BufferMemoryBarrier, image_barriers: []const vk.ImageMemoryBarrier) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
     _ = src_stage;
     _ = dst_stage;
     _ = memory_barriers;
     _ = buffer_barriers;
     _ = image_barriers;
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        event: *base.Event,
+
+        pub fn execute(context: *anyopaque, _: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            try impl.event.wait();
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .event = event,
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }

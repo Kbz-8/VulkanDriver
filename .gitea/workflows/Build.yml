@@ -23,7 +23,7 @@ jobs:
         node-version: 24
 
     - name: Building
-      run: zig build
+      run: zig build soft
 
     - name: Generating docs
       run: zig build docs

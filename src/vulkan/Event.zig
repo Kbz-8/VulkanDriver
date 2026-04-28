@@ -19,7 +19,7 @@ pub const VTable = struct {
     getStatus: *const fn (*Self) VkError!void,
     reset: *const fn (*Self) VkError!void,
     signal: *const fn (*Self) VkError!void,
-    wait: *const fn (*Self, u64) VkError!void,
+    wait: *const fn (*Self) VkError!void,
 };
 
 pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.EventCreateInfo) VkError!Self {
@@ -47,6 +47,6 @@ pub inline fn signal(self: *Self) VkError!void {
     try self.vtable.signal(self);
 }
 
-pub inline fn wait(self: *Self, timeout: u64) VkError!void {
-    try self.vtable.wait(self, timeout);
+pub inline fn wait(self: *Self) VkError!void {
+    try self.vtable.wait(self);
 }

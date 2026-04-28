@@ -74,7 +74,7 @@ pub fn signal(interface: *Interface) VkError!void {
     self.condition.broadcast(io);
 }
 
-pub fn wait(interface: *Interface, timeout: u64) VkError!void {
+pub fn wait(interface: *Interface) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     const io = interface.owner.io();
 
@@ -82,14 +82,5 @@ pub fn wait(interface: *Interface, timeout: u64) VkError!void {
     defer self.mutex.unlock(io);
 
     if (self.is_signaled) return;
-    if (timeout == 0) return VkError.Timeout;
-
-    if (timeout != std.math.maxInt(@TypeOf(timeout))) {
-        const duration: std.Io.Clock.Duration = .{
-            .raw = .fromNanoseconds(@intCast(timeout)),
-            .clock = .cpu_process,
-        };
-        duration.sleep(io) catch return VkError.DeviceLost;
-    }
     self.condition.wait(io, &self.mutex) catch return VkError.DeviceLost;
 }
