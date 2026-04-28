@@ -98,7 +98,7 @@ vkCreateDevice                                 | ✅ Implemented
 vkCreateEvent                                  | ✅ Implemented
 vkCreateFence                                  | ✅ Implemented
 vkCreateFramebuffer                            | ✅ Implemented
-vkCreateGraphicsPipelines                      | ⚙️ WIP
+vkCreateGraphicsPipelines                      | ✅ Implemented
 vkCreateImage                                  | ✅ Implemented
 vkCreateImageView                              | ✅ Implemented
 vkCreateInstance                               | ✅ Implemented
