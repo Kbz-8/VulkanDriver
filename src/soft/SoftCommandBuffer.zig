@@ -48,6 +48,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .beginRenderPass = beginRenderPass,
         .bindDescriptorSets = bindDescriptorSets,
         .bindPipeline = bindPipeline,
+        .bindIndexBuffer = bindIndexBuffer,
         .bindVertexBuffer = bindVertexBuffer,
         .blitImage = blitImage,
         .clearAttachment = clearAttachment,
@@ -222,6 +223,34 @@ pub fn bindPipeline(interface: *Interface, bind_point: vk.PipelineBindPoint, pip
     cmd.* = .{
         .bind_point = bind_point,
         .pipeline = @alignCast(@fieldParentPtr("interface", pipeline)),
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn bindIndexBuffer(interface: *Interface, buffer: *base.Buffer, offset: usize, index_type: vk.IndexType) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        buffer: *const SoftBuffer,
+        offset: usize,
+        index_type: vk.IndexType,
+
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            _ = impl;
+            _ = device;
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .buffer = @alignCast(@fieldParentPtr("interface", buffer)),
+        .offset = offset,
+        .index_type = index_type,
     };
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }

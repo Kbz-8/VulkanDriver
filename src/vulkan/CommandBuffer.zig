@@ -42,6 +42,7 @@ pub const DispatchTable = struct {
     beginRenderPass: *const fn (*Self, *RenderPass, *Framebuffer, vk.Rect2D, ?[]const vk.ClearValue) VkError!void,
     bindDescriptorSets: *const fn (*Self, vk.PipelineBindPoint, u32, [lib.VULKAN_MAX_DESCRIPTOR_SETS]?*DescriptorSet, []const u32) VkError!void,
     bindPipeline: *const fn (*Self, vk.PipelineBindPoint, *Pipeline) VkError!void,
+    bindIndexBuffer: *const fn (*Self, *Buffer, usize, vk.IndexType) VkError!void,
     bindVertexBuffer: *const fn (*Self, usize, *Buffer, usize) VkError!void,
     blitImage: *const fn (*Self, *Image, vk.ImageLayout, *Image, vk.ImageLayout, []const vk.ImageBlit, vk.Filter) VkError!void,
     clearAttachment: *const fn (*Self, vk.ClearAttachment, vk.ClearRect) VkError!void,
@@ -161,6 +162,10 @@ pub fn bindDescriptorSets(self: *Self, bind_point: vk.PipelineBindPoint, first_s
 
 pub inline fn bindPipeline(self: *Self, bind_point: vk.PipelineBindPoint, pipeline: *Pipeline) VkError!void {
     try self.dispatch_table.bindPipeline(self, bind_point, pipeline);
+}
+
+pub inline fn bindIndexBuffer(self: *Self, buffer: *Buffer, offset: usize, index_type: vk.IndexType) VkError!void {
+    try self.dispatch_table.bindIndexBuffer(self, buffer, offset, index_type);
 }
 
 pub inline fn bindVertexBuffer(self: *Self, index: usize, buffer: *Buffer, offset: usize) VkError!void {

@@ -1651,13 +1651,7 @@ pub export fn strollCmdBindIndexBuffer(p_cmd: vk.CommandBuffer, p_buffer: vk.Buf
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
     const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = buffer;
-    _ = offset;
-    _ = index_type;
+    cmd.bindIndexBuffer(buffer, offset, index_type) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdBindPipeline(p_cmd: vk.CommandBuffer, bind_point: vk.PipelineBindPoint, p_pipeline: vk.Pipeline) callconv(vk.vulkan_call_conv) void {
