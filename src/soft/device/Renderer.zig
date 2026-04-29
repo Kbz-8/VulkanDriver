@@ -89,7 +89,7 @@ pub fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_verte
     const allocator = arena.allocator();
 
     const timer = std.Io.Timestamp.now(io, .real);
-    defer if (comptime base.config.logs) {
+    defer if (comptime base.config.logs != .none) {
         const duration = timer.untilNow(io, .real);
         const ms = duration.toMicroseconds();
         std.log.scoped(.SoftwareRenderer).debug("Drawcall stats:\n>   Took {d}us\n>   Allocated {d} KB", .{ ms, @divTrunc(arena.queryCapacity(), 1000) });

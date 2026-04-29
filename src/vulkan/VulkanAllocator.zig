@@ -62,7 +62,10 @@ fn alloc(context: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize)
 
     if (self.callbacks) |callbacks| {
         if (callbacks.pfn_allocation) |pfn_allocation| {
-            return @ptrCast(pfn_allocation(self.callbacks.?.p_user_data, len, alignment.toByteUnits(), self.scope));
+            const ptr: ?[*]u8 = @ptrCast(pfn_allocation(self.callbacks.?.p_user_data, len, alignment.toByteUnits(), self.scope));
+            //std.debug.print("test {*}\n", .{ptr});
+            //std.debug.dumpCurrentStackTrace(.{});
+            return ptr;
         }
     }
 

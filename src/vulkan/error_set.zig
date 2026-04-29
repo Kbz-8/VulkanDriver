@@ -1,5 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
+const lib = @import("lib.zig");
 
 pub const VkError = error{
     NotReady,
@@ -58,10 +59,20 @@ pub const VkError = error{
 
 pub inline fn errorLogger(err: VkError) void {
     std.log.scoped(.errorLogger).err("Error logger catched a '{s}'", .{@errorName(err)});
+    if (comptime lib.config.logs == .verbose) {
+        if (@errorReturnTrace()) |trace| {
+            std.debug.dumpErrorReturnTrace(trace);
+        }
+    }
 }
 
 pub inline fn errorLoggerContext(err: VkError, context: []const u8) void {
     std.log.scoped(.errorLogger).err("Error logger catched a '{s}' in {s}", .{ @errorName(err), context });
+    if (comptime lib.config.logs == .verbose) {
+        if (@errorReturnTrace()) |trace| {
+            std.debug.dumpErrorReturnTrace(trace);
+        }
+    }
 }
 
 pub inline fn toVkResult(err: VkError) vk.Result {

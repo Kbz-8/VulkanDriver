@@ -14,14 +14,14 @@ comptime {
 var mutex: std.Io.Mutex = .init;
 
 pub inline fn fixme(comptime format: []const u8, args: anytype) void {
-    if (comptime !lib.config.logs) {
+    if (comptime lib.config.logs == .none) {
         return;
     }
     std.log.scoped(.FIXME).warn("FIXME: " ++ format, args);
 }
 
 pub fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), comptime format: []const u8, args: anytype) void {
-    if (comptime !lib.config.logs) {
+    if (comptime lib.config.logs == .none) {
         return;
     }
 

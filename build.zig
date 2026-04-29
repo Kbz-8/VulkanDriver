@@ -24,6 +24,12 @@ const RunningMode = enum {
     valgrind,
 };
 
+const LogType = enum {
+    none,
+    standard,
+    verbose,
+};
+
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -43,10 +49,10 @@ pub fn build(b: *std.Build) !void {
 
     const zmath = b.dependency("zmath", .{}).module("root");
 
-    const logs_option = b.option(bool, "logs", "Driver logs") orelse false;
+    const logs_option: LogType = b.option(LogType, "logs", "Driver logs") orelse .none;
 
     const options = b.addOptions();
-    options.addOption(bool, "logs", logs_option);
+    options.addOption(LogType, "logs", logs_option);
 
     base_mod.addImport("zmath", zmath);
     base_mod.addImport("vulkan", vulkan);

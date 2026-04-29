@@ -7,11 +7,14 @@ const lib = @import("lib.zig");
 const VkError = base.VkError;
 const Device = base.Device;
 
+const SoftDevice = @import("SoftDevice.zig");
+
 const Self = @This();
 pub const Interface = base.ShaderModule;
 
 interface: Interface,
 module: spv.Module,
+module_allocator: std.heap.ArenaAllocator,
 
 /// Pipelines need SPIR-V module reference so shader module may not
 /// be destroy on call to `vkDestroyShaderModule`
@@ -23,6 +26,13 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 
     var interface = try Interface.init(device, allocator, info);
 
+    const soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", device));
+    const device_allocator = soft_device.device_allocator.allocator();
+
+    var module_allocator_arena: std.heap.ArenaAllocator = .init(device_allocator);
+    errdefer module_allocator_arena.deinit();
+    const module_allocator = module_allocator_arena.allocator();
+
     interface.vtable = &.{
         .destroy = destroy,
     };
@@ -31,7 +41,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 
     self.* = .{
         .interface = interface,
-        .module = spv.Module.init(allocator, code, .{
+        .module = spv.Module.init(module_allocator, code, .{
             .use_simd_vectors_specializations = base.config.shaders_simd,
         }) catch |err| switch (err) {
             spv.Module.ModuleError.OutOfMemory => return VkError.OutOfHostMemory,
@@ -43,6 +53,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
                 return VkError.ValidationFailed;
             },
         },
+        .module_allocator = module_allocator_arena,
         .ref_count = std.atomic.Value(usize).init(1),
     };
     return self;
@@ -53,16 +64,16 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     self.unref(allocator);
 }
 
-pub inline fn drop(self: *Self, allocator: std.mem.Allocator) void {
-    self.module.deinit(allocator);
+pub fn drop(self: *Self, allocator: std.mem.Allocator) void {
+    self.module_allocator.deinit();
     allocator.destroy(self);
 }
 
-pub inline fn ref(self: *Self) void {
+pub fn ref(self: *Self) void {
     _ = self.ref_count.fetchAdd(1, .monotonic);
 }
 
-pub inline fn unref(self: *Self, allocator: std.mem.Allocator) void {
+pub fn unref(self: *Self, allocator: std.mem.Allocator) void {
     if (self.ref_count.fetchSub(1, .release) == 1) {
         self.drop(allocator);
     }

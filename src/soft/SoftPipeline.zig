@@ -77,7 +77,7 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
                 soft_module.ref();
                 shader.module = soft_module;
 
-                const runtimes = runtimes_allocator.alloc(spv.Runtime, runtimes_count) catch return VkError.OutOfHostMemory;
+                const runtimes = runtimes_allocator.alloc(spv.Runtime, runtimes_count) catch return VkError.OutOfDeviceMemory;
 
                 for (runtimes) |*runtime| {
                     runtime.* = spv.Runtime.init(
@@ -97,18 +97,22 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
                         if (specialization.p_map_entries) |map| {
                             const data: []const u8 = @as([*]const u8, @ptrCast(@alignCast(specialization.p_data)))[0..specialization.data_size];
                             for (map[0..], 0..specialization.map_entry_count) |entry, _| {
-                                runtime.addSpecializationInfo(runtimes_allocator, .{
-                                    .id = @intCast(entry.constant_id),
-                                    .offset = @intCast(entry.offset),
-                                    .size = @intCast(entry.size),
-                                }, data) catch return VkError.OutOfHostMemory;
+                                runtime.addSpecializationInfo(
+                                    runtimes_allocator,
+                                    .{
+                                        .id = @intCast(entry.constant_id),
+                                        .offset = @intCast(entry.offset),
+                                        .size = @intCast(entry.size),
+                                    },
+                                    data,
+                                ) catch return VkError.OutOfDeviceMemory;
                             }
                         }
                     }
                 }
 
                 shader.runtimes = runtimes;
-                shader.entry = runtimes_allocator.dupe(u8, std.mem.span(info.stage.p_name)) catch return VkError.OutOfHostMemory;
+                shader.entry = runtimes_allocator.dupe(u8, std.mem.span(info.stage.p_name)) catch return VkError.OutOfDeviceMemory;
 
                 std.log.scoped(.ComputePipeline).debug("Created {d} runtimes for compute stage", .{runtimes_count});
                 break :blk shader;
@@ -224,6 +228,10 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    var it = self.stages.iterator();
+    while (it.next()) |entry| {
+        entry.value.module.unref(allocator);
+    }
     self.runtimes_allocator.deinit();
     allocator.destroy(self);
 }
