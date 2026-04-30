@@ -60,6 +60,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .dispatch = dispatch,
         .dispatchIndirect = dispatchIndirect,
         .draw = draw,
+        .drawIndexed = drawIndexed,
         .end = end,
         .endRenderPass = endRenderPass,
         .executeCommands = executeCommands,
@@ -240,8 +241,11 @@ pub fn bindIndexBuffer(interface: *Interface, buffer: *base.Buffer, offset: usiz
 
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
-            _ = impl;
-            _ = device;
+            device.pipeline_states[ExecutionDevice.GRAPHICS_PIPELINE_STATE].data.graphics.index_buffer = .{
+                .buffer = impl.buffer,
+                .offset = impl.offset,
+                .index_type = impl.index_type,
+            };
         }
     };
 
@@ -553,6 +557,37 @@ pub fn dispatchIndirect(interface: *Interface, buffer: *base.Buffer, offset: vk.
     cmd.* = .{
         .buffer = @alignCast(@fieldParentPtr("interface", buffer)),
         .offset = offset,
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn drawIndexed(interface: *Interface, index_count: usize, instance_count: usize, first_index: usize, vertex_offset: usize, first_instance: usize) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        index_count: usize,
+        first_index: usize,
+        instance_count: usize,
+        first_instance: usize,
+        vertex_offset: usize,
+
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            try device.renderer.drawIndexed(impl.index_count, impl.instance_count, impl.first_index, impl.first_instance, impl.vertex_offset);
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .index_count = index_count,
+        .first_index = first_index,
+        .instance_count = instance_count,
+        .first_instance = first_instance,
+        .vertex_offset = vertex_offset,
     };
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }

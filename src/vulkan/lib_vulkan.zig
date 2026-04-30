@@ -1822,15 +1822,7 @@ pub export fn strollCmdDrawIndexed(p_cmd: vk.CommandBuffer, index_count: u32, in
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = index_count;
-    _ = instance_count;
-    _ = first_index;
-    _ = vertex_offset;
-    _ = first_instance;
+    cmd.drawIndexed(index_count, instance_count, first_index, vertex_offset, first_instance) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdDrawIndexedIndirect(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer, offset: vk.DeviceSize, count: u32, stride: u32) callconv(vk.vulkan_call_conv) void {

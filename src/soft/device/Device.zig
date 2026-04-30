@@ -25,6 +25,7 @@ pub const PipelineState = struct {
     data: union {
         compute: struct {},
         graphics: struct {
+            index_buffer: Renderer.IndexBuffer,
             vertex_buffers: [lib.MAX_VERTEX_INPUT_BINDINGS]Renderer.VertexBuffer,
         },
     },
@@ -45,6 +46,7 @@ pub fn init(self: *Self, device: *SoftDevice) void {
             .data = switch (i) {
                 GRAPHICS_PIPELINE_STATE => .{
                     .graphics = .{
+                        .index_buffer = undefined,
                         .vertex_buffers = undefined,
                     },
                 },
