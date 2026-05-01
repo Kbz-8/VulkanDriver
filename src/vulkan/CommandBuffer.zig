@@ -54,7 +54,9 @@ pub const DispatchTable = struct {
     dispatch: *const fn (*Self, u32, u32, u32) VkError!void,
     dispatchIndirect: *const fn (*Self, *Buffer, vk.DeviceSize) VkError!void,
     draw: *const fn (*Self, usize, usize, usize, usize) VkError!void,
-    drawIndexed: *const fn (*Self, usize, usize, usize, usize, usize) VkError!void,
+    drawIndexed: *const fn (*Self, usize, usize, usize, i32, usize) VkError!void,
+    drawIndexedIndirect: *const fn (*Self, *Buffer, usize, usize, usize) VkError!void,
+    drawIndirect: *const fn (*Self, *Buffer, usize, usize, usize) VkError!void,
     end: *const fn (*Self) VkError!void,
     endRenderPass: *const fn (*Self) VkError!void,
     executeCommands: *const fn (*Self, *Self) VkError!void,
@@ -215,8 +217,16 @@ pub inline fn draw(self: *Self, vertex_count: usize, instance_count: usize, firs
     try self.dispatch_table.draw(self, vertex_count, instance_count, first_vertex, first_instance);
 }
 
-pub inline fn drawIndexed(self: *Self, index_count: usize, instance_count: usize, first_index: usize, vertex_offset: usize, first_instance: usize) VkError!void {
+pub inline fn drawIndexed(self: *Self, index_count: usize, instance_count: usize, first_index: usize, vertex_offset: i32, first_instance: usize) VkError!void {
     try self.dispatch_table.drawIndexed(self, index_count, instance_count, first_index, vertex_offset, first_instance);
+}
+
+pub inline fn drawIndexedIndirect(self: *Self, buffer: *Buffer, offset: usize, count: usize, stride: usize) VkError!void {
+    try self.dispatch_table.drawIndexedIndirect(self, buffer, offset, count, stride);
+}
+
+pub inline fn drawIndirect(self: *Self, buffer: *Buffer, offset: usize, count: usize, stride: usize) VkError!void {
+    try self.dispatch_table.drawIndirect(self, buffer, offset, count, stride);
 }
 
 pub inline fn endRenderPass(self: *Self) VkError!void {

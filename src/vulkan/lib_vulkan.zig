@@ -44,6 +44,10 @@ pub const RenderPass = @import("RenderPass.zig");
 pub const Sampler = @import("Sampler.zig");
 pub const ShaderModule = @import("ShaderModule.zig");
 
+pub const SurfaceKHR = @import("wsi/SurfaceKHR.zig");
+pub const SwapchainKHR = @import("wsi/SwapchainKHR.zig");
+pub const WaylandSurfaceKHR = @import("wsi/WaylandSurfaceKHR.zig");
+
 fn entryPointBeginLogTrace(comptime scope: @EnumLiteral()) void {
     std.log.scoped(scope).debug("Calling {s}...", .{@tagName(scope)});
 }
@@ -1817,7 +1821,7 @@ pub export fn strollCmdDraw(p_cmd: vk.CommandBuffer, vertex_count: u32, instance
     cmd.draw(vertex_count, instance_count, first_vertex, first_instance) catch |err| return errorLogger(err);
 }
 
-pub export fn strollCmdDrawIndexed(p_cmd: vk.CommandBuffer, index_count: u32, instance_count: u32, first_index: u32, vertex_offset: u32, first_instance: u32) callconv(vk.vulkan_call_conv) void {
+pub export fn strollCmdDrawIndexed(p_cmd: vk.CommandBuffer, index_count: u32, instance_count: u32, first_index: u32, vertex_offset: i32, first_instance: u32) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkCmdDrawIndexed);
     defer entryPointEndLogTrace();
 
@@ -1830,15 +1834,8 @@ pub export fn strollCmdDrawIndexedIndirect(p_cmd: vk.CommandBuffer, p_buffer: vk
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-    const buffer = Dispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = buffer;
-    _ = offset;
-    _ = count;
-    _ = stride;
+    const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
+    cmd.drawIndexedIndirect(buffer, offset, count, stride) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdDrawIndirect(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer, offset: vk.DeviceSize, count: u32, stride: u32) callconv(vk.vulkan_call_conv) void {
@@ -1846,15 +1843,8 @@ pub export fn strollCmdDrawIndirect(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-    const buffer = Dispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = buffer;
-    _ = offset;
-    _ = count;
-    _ = stride;
+    const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
+    cmd.drawIndirect(buffer, offset, count, stride) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdEndQuery(p_cmd: vk.CommandBuffer, p_pool: vk.QueryPool, query: u32) callconv(vk.vulkan_call_conv) void {
@@ -2200,4 +2190,56 @@ pub export fn strollResetCommandBuffer(p_cmd: vk.CommandBuffer, flags: vk.Comman
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return toVkResult(err);
     cmd.reset(flags) catch |err| return toVkResult(err);
     return .success;
+}
+
+// WSI functions ===================================================================================================================================
+
+pub export fn strollCreateSwapchainKHR(p_device: vk.Device, info: *const vk.SwapchainCreateInfoKHR, callbacks: ?*const vk.AllocationCallbacks, p_swapchain: *vk.Swapchain) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkCreateSwapchainKHR);
+    defer entryPointEndLogTrace();
+
+    if (info.s_type != .swapchain_create_info_khr) {
+        return .error_validation_failed;
+    }
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const swapchain = SwapchainKHR.create(device, allocator, info) catch |err| return toVkResult(err);
+    p_swapchain.* = (NonDispatchable(SwapchainKHR).wrap(allocator, swapchain) catch |err| return toVkResult(err)).toVkHandle(vk.SwapchainKHR);
+    return .success;
+}
+
+pub export fn strollDestroySwapchainKHR(p_device: vk.Device, p_swapchain: vk.Swapchain, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkDestroySwapchainKHR);
+    defer entryPointEndLogTrace();
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
+
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const non_dispatchable = NonDispatchable(SwapchainKHR).fromHandle(p_swapchain) catch |err| return errorLogger(err);
+    non_dispatchable.intrusiveDestroy(allocator);
+}
+
+pub export fn strollCreateWaylandSurfaceKHR(p_device: vk.Device, info: *const vk.WaylandSurfaceCreateInfoKHR, callbacks: ?*const vk.AllocationCallbacks, p_surface: *vk.SurfaceKHR) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkCreateWaylandSurfaceKHR);
+    defer entryPointEndLogTrace();
+
+    if (info.s_type != .surface_create_info_khr) {
+        return .error_validation_failed;
+    }
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const surface = WaylandSurfaceKHR.create(device, allocator, info) catch |err| return toVkResult(err);
+    p_surface.* = (NonDispatchable(SurfaceKHR).wrap(allocator, surface) catch |err| return toVkResult(err)).toVkHandle(vk.SurfaceKHR);
+    return .success;
+}
+
+pub export fn strollDestroySurfaceKHR(p_device: vk.Device, p_surface: vk.SurfaceKHR, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkDestroySurfaceKHR);
+    defer entryPointEndLogTrace();
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
+
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const non_dispatchable = NonDispatchable(SurfaceKHR).fromHandle(p_surface) catch |err| return errorLogger(err);
+    non_dispatchable.intrusiveDestroy(allocator);
 }

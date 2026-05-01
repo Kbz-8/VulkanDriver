@@ -123,7 +123,7 @@ pub fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_verte
     try self.postVertexDraw(allocator, &draw_call);
 }
 
-pub fn drawIndexed(self: *Self, index_count: usize, instance_count: usize, first_index: usize, first_instance: usize, vertex_offset: usize) VkError!void {
+pub fn drawIndexed(self: *Self, index_count: usize, instance_count: usize, first_index: usize, first_instance: usize, vertex_offset: i32) VkError!void {
     const io = self.device.interface.io();
 
     var arena: std.heap.ArenaAllocator = .init(self.device.device_allocator.allocator());
@@ -154,7 +154,7 @@ pub fn deinit(self: *Self) void {
     _ = self;
 }
 
-fn vertexShaderStage(self: *Self, allocator: std.mem.Allocator, draw_call: *DrawCall, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize, indices: ?[]const u32) !void {
+fn vertexShaderStage(self: *Self, allocator: std.mem.Allocator, draw_call: *DrawCall, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize, indices: ?[]const i32) !void {
     const pipeline = self.state.pipeline orelse return;
     const batch_size = (pipeline.stages.getPtr(.vertex) orelse return).runtimes.len;
 
@@ -196,11 +196,11 @@ fn postVertexDraw(self: *Self, allocator: std.mem.Allocator, draw_call: *DrawCal
     };
 
     for (draw_call.fragments) |fragment| {
-        render_target.writeFloat4(
+        try render_target.writeFloat4(
             .{
                 .x = @intFromFloat(fragment.position[0]),
                 .y = @intFromFloat(fragment.position[1]),
-                .z = 0,
+                .z = 0, // FIXME
             },
             .{
                 .aspect_mask = render_target_view.subresource_range.aspect_mask,
@@ -209,7 +209,7 @@ fn postVertexDraw(self: *Self, allocator: std.mem.Allocator, draw_call: *DrawCal
             },
             render_target_view.format,
             fragment.color,
-        ) catch {};
+        );
     }
 }
 
@@ -342,7 +342,7 @@ fn fragmentShaderStage(self: *Self, draw_call: *DrawCall) !void {
     wg.await(self.device.interface.io()) catch return VkError.DeviceLost;
 }
 
-fn readIndexBuffer(self: *Self, allocator: std.mem.Allocator, index_count: usize, first_index: usize, vertex_offset: usize) VkError![]u32 {
+fn readIndexBuffer(self: *Self, allocator: std.mem.Allocator, index_count: usize, first_index: usize, vertex_offset: i32) VkError![]i32 {
     const index_buffer = self.state.data.graphics.index_buffer;
     const buffer = index_buffer.buffer;
     const buffer_memory = if (buffer.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
@@ -355,7 +355,7 @@ fn readIndexBuffer(self: *Self, allocator: std.mem.Allocator, index_count: usize
     const byte_size = index_count * index_size;
     const index_memory: []const u8 = @as([*]const u8, @ptrCast(@alignCast(try buffer_memory.map(byte_offset, byte_size))))[0..byte_size];
 
-    const indices = allocator.alloc(u32, index_count) catch return VkError.OutOfDeviceMemory;
+    const indices = allocator.alloc(i32, index_count) catch return VkError.OutOfDeviceMemory;
     for (indices, 0..) |*index, i| {
         const offset = i * index_size;
         const raw_index: u32 = switch (index_size) {
@@ -364,7 +364,7 @@ fn readIndexBuffer(self: *Self, allocator: std.mem.Allocator, index_count: usize
             4 => @intCast(std.mem.readInt(u32, index_memory[offset..][0..4], .little)),
             else => unreachable,
         };
-        index.* = @intCast(vertex_offset + raw_index);
+        index.* = vertex_offset + @as(i32, @intCast(raw_index));
     }
 
     return indices;

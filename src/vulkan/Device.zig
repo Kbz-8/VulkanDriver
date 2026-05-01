@@ -31,6 +31,9 @@ const RenderPass = @import("RenderPass.zig");
 const Sampler = @import("Sampler.zig");
 const ShaderModule = @import("ShaderModule.zig");
 
+const SurfaceKHR = @import("wsi/SurfaceKHR.zig");
+const SwapchainKHR = @import("wsi/SwapchainKHR.zig");
+
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .device;
 
@@ -203,7 +206,7 @@ pub inline fn createShaderModule(self: *Self, allocator: std.mem.Allocator, info
     return self.dispatch_table.createShaderModule(self, allocator, info);
 }
 
-pub inline fn waitIdle(self: *Self) VkError!void {
+pub fn waitIdle(self: *Self) VkError!void {
     var it = self.queues.iterator();
     while (it.next()) |family| {
         for (family.value_ptr.items) |queue| {

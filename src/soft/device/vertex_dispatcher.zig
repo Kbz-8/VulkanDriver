@@ -20,7 +20,7 @@ pub const RunData = struct {
     vertex_count: usize,
     first_vertex: usize,
     first_instance: usize,
-    indices: ?[]const u32,
+    indices: ?[]const i32,
     instance_index: usize,
     draw_call: *Renderer.DrawCall,
 };
@@ -44,7 +44,7 @@ inline fn run(data: RunData) !void {
 
     var invocation_index: usize = data.batch_id;
     while (invocation_index < data.vertex_count) : (invocation_index += data.batch_size) {
-        const vertex_index = if (data.indices) |indices| indices[invocation_index] else data.first_vertex + invocation_index;
+        const vertex_index: usize = if (data.indices) |indices| @intCast(indices[invocation_index]) else data.first_vertex + invocation_index;
         const instance_index = data.first_instance + data.instance_index;
 
         setupBuiltins(rt, vertex_index, instance_index) catch |err| switch (err) {

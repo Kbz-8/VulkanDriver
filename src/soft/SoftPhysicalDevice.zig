@@ -13,7 +13,7 @@ const Self = @This();
 pub const Interface = base.PhysicalDevice;
 
 // Device name should always be the same so avoid reprocessing it multiple times
-var device_name = [_]u8{0} ** vk.MAX_PHYSICAL_DEVICE_NAME_SIZE;
+var device_name: [vk.MAX_PHYSICAL_DEVICE_NAME_SIZE]u8 = @splat(0);
 
 interface: Interface,
 
