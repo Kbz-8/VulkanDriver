@@ -2194,7 +2194,7 @@ pub export fn strollResetCommandBuffer(p_cmd: vk.CommandBuffer, flags: vk.Comman
 
 // WSI functions ===================================================================================================================================
 
-pub export fn strollCreateSwapchainKHR(p_device: vk.Device, info: *const vk.SwapchainCreateInfoKHR, callbacks: ?*const vk.AllocationCallbacks, p_swapchain: *vk.Swapchain) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn strollCreateSwapchainKHR(p_device: vk.Device, info: *const vk.SwapchainCreateInfoKHR, callbacks: ?*const vk.AllocationCallbacks, p_swapchain: *vk.SwapchainKHR) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkCreateSwapchainKHR);
     defer entryPointEndLogTrace();
 
@@ -2208,7 +2208,7 @@ pub export fn strollCreateSwapchainKHR(p_device: vk.Device, info: *const vk.Swap
     return .success;
 }
 
-pub export fn strollDestroySwapchainKHR(p_device: vk.Device, p_swapchain: vk.Swapchain, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+pub export fn strollDestroySwapchainKHR(p_device: vk.Device, p_swapchain: vk.SwapchainKHR, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkDestroySwapchainKHR);
     defer entryPointEndLogTrace();
 
@@ -2223,7 +2223,7 @@ pub export fn strollCreateWaylandSurfaceKHR(p_device: vk.Device, info: *const vk
     entryPointBeginLogTrace(.vkCreateWaylandSurfaceKHR);
     defer entryPointEndLogTrace();
 
-    if (info.s_type != .surface_create_info_khr) {
+    if (info.s_type != .wayland_surface_create_info_khr) {
         return .error_validation_failed;
     }
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();

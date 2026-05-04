@@ -3,9 +3,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const vk = @import("vulkan");
-pub const vku = @cImport({
-    @cInclude("vulkan/utility/vk_format_utils.h");
-});
+pub const c = @import("base_c");
 
 pub const zm = @import("zmath");
 
@@ -47,6 +45,9 @@ pub const QueryPool = @import("QueryPool.zig");
 pub const RenderPass = @import("RenderPass.zig");
 pub const Sampler = @import("Sampler.zig");
 pub const ShaderModule = @import("ShaderModule.zig");
+
+pub const SurfaceKHR = @import("wsi/SurfaceKHR.zig");
+pub const SwapchainKHR = @import("wsi/SwapchainKHR.zig");
 
 pub const VULKAN_VENDOR_ID = @typeInfo(vk.VendorId).@"enum".fields[@typeInfo(vk.VendorId).@"enum".fields.len - 1].value + 1;
 

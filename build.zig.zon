@@ -17,6 +17,10 @@
             .url = "git+https://github.com/KhronosGroup/Vulkan-Utility-Libraries.git#ba452bad58bb4d4c64d7fbd872bf69f70141510e",
             .hash = "N-V-__8AAE42fwC1FFw26LNZ8AaSuGMdgG4vfYkfV_227sET",
         },
+        .zmath = .{
+            .url = "git+https://github.com/zig-gamedev/zmath#3a5955b2b72cd081563fbb084eff05bffd1e3fbb",
+            .hash = "zmath-0.11.0-dev-wjwivdMsAwD-xaLj76YHUq3t9JDH-X16xuMTmnDzqbu2",
+        },
         .cts_bin = .{
             .url = "git+https://git.kbz8.me/kbz_8/Vulkan-CTS-bin#19ce2da05f8176348064a9fc6688847e5f76a46e",
             .hash = "N-V-__8AAHDV0xtS93nAGaYd7YWxBLnvHDEplwIpC29izSGa",
@@ -25,10 +29,6 @@
             .url = "git+https://github.com/Kbz-8/cpuinfo.git#c9bea4f6c166a495ee0ce117821f9627d4aed118",
             .hash = "cpuinfo-0.0.1-RLgIQYrTMgGqfQMOd1nAa2EuglXOh5gR9bNzwMzQTemt",
             .lazy = true,
-        },
-        .zmath = .{
-            .url = "git+https://github.com/zig-gamedev/zmath#3a5955b2b72cd081563fbb084eff05bffd1e3fbb",
-            .hash = "zmath-0.11.0-dev-wjwivdMsAwD-xaLj76YHUq3t9JDH-X16xuMTmnDzqbu2",
         },
         .SPIRV_Interpreter = .{
             .url = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#5faf8fd30548f8bd96a18568fb21de698db64ca8",

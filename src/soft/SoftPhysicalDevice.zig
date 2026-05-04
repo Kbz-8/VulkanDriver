@@ -2,7 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 const lib = @import("lib.zig");
-const cpuinfo = @cImport(@cInclude("cpuinfo.h"));
+const cpuinfo = lib.c;
 
 const SoftDevice = @import("SoftDevice.zig");
 

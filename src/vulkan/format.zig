@@ -25,9 +25,9 @@ pub fn fromAspect(format: vk.Format, aspect: vk.ImageAspectFlags) vk.Format {
 
 pub fn toAspect(format: vk.Format) vk.ImageAspectFlags {
     var aspect: vk.ImageAspectFlags = .{};
-    if (lib.vku.vkuFormatHasDepth(@intCast(@intFromEnum(format))))
+    if (lib.c.vkuFormatHasDepth(@intCast(@intFromEnum(format))))
         aspect.depth_bit = true;
-    if (lib.vku.vkuFormatHasStencil(@intCast(@intFromEnum(format))))
+    if (lib.c.vkuFormatHasStencil(@intCast(@intFromEnum(format))))
         aspect.stencil_bit = true;
 
     if (aspect.toInt() == 0)
@@ -37,7 +37,7 @@ pub fn toAspect(format: vk.Format) vk.ImageAspectFlags {
 }
 
 pub inline fn texelSize(format: vk.Format) usize {
-    return lib.vku.vkuFormatTexelBlockSize(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatTexelBlockSize(@intCast(@intFromEnum(format)));
 }
 
 pub inline fn supportsColorAttachemendBlend(format: vk.Format) bool {
@@ -89,43 +89,43 @@ pub inline fn sliceMemSize(format: vk.Format, width: usize, height: usize) usize
 }
 
 pub inline fn isDepthAndStencil(format: vk.Format) bool {
-    return lib.vku.vkuFormatIsDepthAndStencil(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatIsDepthAndStencil(@intCast(@intFromEnum(format)));
 }
 
 pub inline fn isDepth(format: vk.Format) bool {
-    return lib.vku.vkuFormatHasDepth(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatHasDepth(@intCast(@intFromEnum(format)));
 }
 
 pub inline fn isStencil(format: vk.Format) bool {
-    return lib.vku.vkuFormatHasStencil(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatHasStencil(@intCast(@intFromEnum(format)));
 }
 
 pub inline fn isSrgb(format: vk.Format) bool {
-    return lib.vku.vkuFormatIsSRGB(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatIsSRGB(@intCast(@intFromEnum(format)));
 }
 
 pub inline fn isSfloat(format: vk.Format) bool {
-    return lib.vku.vkuFormatIsSFLOAT(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatIsSFLOAT(@intCast(@intFromEnum(format)));
 }
 
 pub inline fn isSint(format: vk.Format) bool {
-    return lib.vku.vkuFormatIsSINT(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatIsSINT(@intCast(@intFromEnum(format)));
 }
 
 pub inline fn isSnorm(format: vk.Format) bool {
-    return lib.vku.vkuFormatIsSNORM(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatIsSNORM(@intCast(@intFromEnum(format)));
 }
 
 pub inline fn isUfloat(format: vk.Format) bool {
-    return lib.vku.vkuFormatIsUFLOAT(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatIsUFLOAT(@intCast(@intFromEnum(format)));
 }
 
 pub inline fn isUint(format: vk.Format) bool {
-    return lib.vku.vkuFormatIsUINT(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatIsUINT(@intCast(@intFromEnum(format)));
 }
 
 pub inline fn isUnorm(format: vk.Format) bool {
-    return lib.vku.vkuFormatIsUNORM(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatIsUNORM(@intCast(@intFromEnum(format)));
 }
 
 pub inline fn isFloat(format: vk.Format) bool {

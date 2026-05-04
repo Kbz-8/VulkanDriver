@@ -2,6 +2,8 @@ const std = @import("std");
 const vk = @import("vulkan");
 pub const base = @import("base");
 
+pub const c = @import("soft_c");
+
 pub const Device = @import("device/Device.zig");
 
 pub const SoftInstance = @import("SoftInstance.zig");

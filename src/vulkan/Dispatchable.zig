@@ -1,8 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
-const c = @cImport({
-    @cInclude("vulkan/vk_icd.h");
-});
+const c = @import("lib.zig").c;
 
 const VkError = @import("error_set.zig").VkError;
 

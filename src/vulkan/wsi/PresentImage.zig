@@ -23,7 +23,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Image
     const image = try device.createImage(allocator, info);
     errdefer image.destroy(allocator);
 
-    const requirements: vk.MemoryRequirements = undefined;
+    var requirements: vk.MemoryRequirements = undefined;
     try image.getMemoryRequirements(&requirements);
 
     const memory = try device.allocateMemory(allocator, &.{

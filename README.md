@@ -173,7 +173,7 @@ vkGetPhysicalDeviceSurfaceFormatsKHR             | ⚙️ WIP
 vkGetPhysicalDeviceSurfacePresentModesKHR        | ⚙️ WIP
 vkGetPhysicalDeviceSurfaceSupportKHR             | ⚙️ WIP
 vkGetPhysicalDeviceWaylandPresentationSupportKHR | ⚙️ WIP
-vkGetPhysicalDeviceWind32PresentationSupportKHR  | ⚙️ WIP
+vkGetPhysicalDeviceWin32PresentationSupportKHR  | ⚙️ WIP
 vkGetPhysicalDeviceXcbPresentationSupportKHR     | ⚙️ WIP
 vkGetPhysicalDeviceXlibPresentationSupportKHR    | ⚙️ WIP
 vkGetPipelineCacheData                           | ⚙️ WIP

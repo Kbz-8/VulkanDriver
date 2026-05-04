@@ -6,7 +6,14 @@ const ImplementationDesc = struct {
     name: []const u8,
     root_source_file: []const u8,
     vulkan_version: std.SemanticVersion,
-    custom: ?*const fn (*std.Build, *std.Build.Step.Compile, *std.Build.Step.Options, bool) anyerror!void = null,
+    custom: ?*const fn (
+        *std.Build,
+        *Step.Compile,
+        std.Build.ResolvedTarget,
+        std.builtin.OptimizeMode,
+        *Step.Options,
+        bool,
+    ) anyerror!void = null,
 };
 
 const implementations = [_]ImplementationDesc{
@@ -56,8 +63,22 @@ pub fn build(b: *std.Build) !void {
 
     base_mod.addImport("zmath", zmath);
     base_mod.addImport("vulkan", vulkan);
-    base_mod.addSystemIncludePath(vulkan_headers.path("include"));
-    base_mod.addSystemIncludePath(vulkan_utility_libraries.path("include"));
+
+    const base_c_includes = b.addTranslateC(.{
+        .root_source_file = b.path("src/vulkan/c_includes.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = false,
+    });
+
+    base_c_includes.addIncludePath(vulkan_headers.path("include"));
+    base_c_includes.addIncludePath(vulkan_utility_libraries.path("include"));
+
+    if (builtin.target.os.tag == .linux) {
+        base_c_includes.link_libc = true;
+    }
+
+    base_mod.addImport("base_c", base_c_includes.createModule());
 
     const use_llvm = b.option(bool, "use-llvm", "LLVM build") orelse (b.release_mode != .off);
 
@@ -82,7 +103,7 @@ pub fn build(b: *std.Build) !void {
         });
 
         if (impl.custom) |custom| {
-            custom(b, lib, options, use_llvm) catch continue;
+            custom(b, lib, target, optimize, options, use_llvm) catch continue;
         }
 
         const icd_file = b.addWriteFile(
@@ -149,9 +170,15 @@ pub fn build(b: *std.Build) !void {
     docs_step.dependOn(&install_docs.step);
 }
 
-fn customSoft(b: *std.Build, lib: *std.Build.Step.Compile, options: *std.Build.Step.Options, use_llvm: bool) !void {
+fn customSoft(
+    b: *std.Build,
+    lib: *Step.Compile,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    options: *Step.Options,
+    use_llvm: bool,
+) !void {
     const cpuinfo = b.lazyDependency("cpuinfo", .{}) orelse return error.UnresolvedDependency;
-    lib.root_module.addSystemIncludePath(cpuinfo.path("include"));
     lib.root_module.linkLibrary(cpuinfo.artifact("cpuinfo"));
 
     const spv = b.lazyDependency("SPIRV_Interpreter", .{
@@ -160,6 +187,17 @@ fn customSoft(b: *std.Build, lib: *std.Build.Step.Compile, options: *std.Build.S
         .@"use-llvm" = use_llvm,
     }) orelse return error.UnresolvedDependency;
     lib.root_module.addImport("spv", spv.module("spv"));
+
+    const c_includes = b.addTranslateC(.{
+        .root_source_file = b.path("src/soft/c_includes.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = false,
+    });
+
+    c_includes.addIncludePath(cpuinfo.path("include"));
+
+    lib.root_module.addImport("soft_c", c_includes.createModule());
 
     const single_threaded_option = b.option(bool, "single-threaded", "Single threaded runtime mode") orelse false;
     const debug_allocator_option = b.option(bool, "debug-allocator", "Debug device allocator") orelse false;
@@ -176,7 +214,7 @@ fn customSoft(b: *std.Build, lib: *std.Build.Step.Compile, options: *std.Build.S
     options.addOption(?u32, "compute_dump_final_results_table", compute_dump_final_results_table_option);
 }
 
-fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *std.Build.Step.Compile, comptime mode: RunningMode) !*std.Build.Step {
+fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *Step.Compile, comptime mode: RunningMode) !*Step {
     const cts = b.dependency("cts_bin", .{});
 
     const cts_exe_name = cts.path(b.fmt("deqp-vk-{s}", .{
@@ -254,7 +292,7 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
     return &run.step;
 }
 
-fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *std.Build.Step.Compile) !*std.Build.Step {
+fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *Step.Compile) !*Step {
     const cts = b.dependency("cts_bin", .{});
 
     const cts_exe_name = cts.path(b.fmt("deqp-vk-{s}", .{

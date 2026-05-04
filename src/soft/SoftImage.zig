@@ -47,9 +47,9 @@ pub fn getMemoryRequirements(_: *Interface, requirements: *vk.MemoryRequirements
 }
 
 pub fn getClearFormat(self: *Self) VkError!vk.Format {
-    return if (base.vku.vkuFormatIsSINT(@intCast(@intFromEnum(self.interface.format))))
+    return if (base.c.vkuFormatIsSINT(@intCast(@intFromEnum(self.interface.format))))
         .r32g32b32a32_sint
-    else if (base.vku.vkuFormatIsUINT(@intCast(@intFromEnum(self.interface.format))))
+    else if (base.c.vkuFormatIsUINT(@intCast(@intFromEnum(self.interface.format))))
         .r32g32b32a32_uint
     else
         .r32g32b32a32_sfloat;
