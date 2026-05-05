@@ -23,13 +23,13 @@ pub fn Dispatchable(comptime T: type) type {
             return self;
         }
 
-        pub inline fn intrusiveDestroy(self: *Self, allocator: std.mem.Allocator) void {
+        pub fn intrusiveDestroy(self: *Self, allocator: std.mem.Allocator) void {
             self.object.destroy(allocator);
             allocator.destroy(self);
             std.log.debug("Destroyed dispatchable handle of type '{s}' at 0x{X}", .{ @typeName(T), @intFromPtr(self) });
         }
 
-        pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
+        pub fn destroy(self: *Self, allocator: std.mem.Allocator) void {
             allocator.destroy(self);
             std.log.debug("Destroyed dispatchable handle of type '{s}' at 0x{X}", .{ @typeName(T), @intFromPtr(self) });
         }
@@ -42,7 +42,7 @@ pub fn Dispatchable(comptime T: type) type {
             return @enumFromInt(@intFromPtr(self));
         }
 
-        pub inline fn fromHandle(vk_handle: anytype) VkError!*Self {
+        pub fn fromHandle(vk_handle: anytype) VkError!*Self {
             const handle = @intFromEnum(vk_handle);
             if (handle == 0) {
                 return VkError.InvalidHandleDrv;

@@ -98,8 +98,8 @@ pub fn clear(pixel: vk.ClearValue, format: vk.Format, dst: *SoftImage, view_form
         .array_layer = range.base_array_layer,
     };
 
-    const dst_slice_pitch_bytes = dst.getSliceMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level);
-    const dst_row_pitch_bytes = dst.getRowPitchMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level);
+    const dst_slice_pitch_bytes = dst.interface.getSliceMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level);
+    const dst_row_pitch_bytes = dst.interface.getRowPitchMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level);
 
     const last_mip_level = dst.interface.getLastMipLevel(range);
     const last_layer = dst.interface.getLastLayerIndex(range);
@@ -207,8 +207,8 @@ fn fastClear(clear_value: vk.ClearValue, clear_format: vk.Format, dst: *SoftImag
     const dst_memory = if (dst.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
 
     while (subresource.mip_level <= last_mip_level) : (subresource.mip_level += 1) {
-        const dst_slice_pitch_bytes = dst.getSliceMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level);
-        const dst_row_pitch_bytes = dst.getRowPitchMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level);
+        const dst_slice_pitch_bytes = dst.interface.getSliceMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level);
+        const dst_row_pitch_bytes = dst.interface.getRowPitchMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level);
         const extent = dst.getMipLevelExtent(subresource.mip_level);
 
         if (render_area == null) {
@@ -375,10 +375,10 @@ pub fn blitRegion(src: *const SoftImage, dst: *SoftImage, region: vk.ImageBlit, 
     const y0 = @as(f32, @floatFromInt(src_offset_0.y)) + (0.5 - @as(f32, @floatFromInt(dst_offset_0.y))) * height_ratio;
     const z0 = @as(f32, @floatFromInt(src_offset_0.z)) + (0.5 - @as(f32, @floatFromInt(dst_offset_0.z))) * depth_ratio;
 
-    const src_slice_pitch_bytes = src.getSliceMemSizeForMipLevel(region.src_subresource.aspect_mask, region.src_subresource.mip_level);
-    const src_row_pitch_bytes = src.getRowPitchMemSizeForMipLevel(region.src_subresource.aspect_mask, region.src_subresource.mip_level);
-    const dst_slice_pitch_bytes = dst.getSliceMemSizeForMipLevel(region.dst_subresource.aspect_mask, region.dst_subresource.mip_level);
-    const dst_row_pitch_bytes = dst.getRowPitchMemSizeForMipLevel(region.dst_subresource.aspect_mask, region.dst_subresource.mip_level);
+    const src_slice_pitch_bytes = src.interface.getSliceMemSizeForMipLevel(region.src_subresource.aspect_mask, region.src_subresource.mip_level);
+    const src_row_pitch_bytes = src.interface.getRowPitchMemSizeForMipLevel(region.src_subresource.aspect_mask, region.src_subresource.mip_level);
+    const dst_slice_pitch_bytes = dst.interface.getSliceMemSizeForMipLevel(region.dst_subresource.aspect_mask, region.dst_subresource.mip_level);
+    const dst_row_pitch_bytes = dst.interface.getRowPitchMemSizeForMipLevel(region.dst_subresource.aspect_mask, region.dst_subresource.mip_level);
 
     const src_format = base.format.fromAspect(src.interface.format, region.src_subresource.aspect_mask);
     const dst_format = base.format.fromAspect(dst.interface.format, region.dst_subresource.aspect_mask);

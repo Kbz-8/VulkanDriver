@@ -4,7 +4,7 @@ const lib = @import("../lib.zig");
 
 const VkError = @import("../error_set.zig").VkError;
 
-const Device = @import("../Device.zig");
+const Instance = lib.Instance;
 const PresentImage = @import("PresentImage.zig");
 const SwapchainKHR = @import("SwapchainKHR.zig");
 
@@ -20,7 +20,7 @@ const present_modes = [_]vk.PresentModeKHR{
     .immediate_khr,
 };
 
-owner: *Device,
+owner: *Instance,
 swapchain: ?*SwapchainKHR,
 
 vtable: *const VTable,
@@ -33,10 +33,10 @@ pub const VTable = struct {
     presentImage: *const fn (*Self, std.mem.Allocator, *PresentImage) VkError!void,
 };
 
-pub fn init(device: *Device, allocator: std.mem.Allocator) VkError!Self {
+pub fn init(instance: *Instance, allocator: std.mem.Allocator) VkError!Self {
     _ = allocator;
     return .{
-        .owner = device,
+        .owner = instance,
         .swapchain = null,
         .vtable = undefined,
     };
@@ -83,10 +83,10 @@ pub inline fn presentImage(self: *Self, allocator: std.mem.Allocator, image: *Pr
     try self.vtable.presentImage(self, allocator, image);
 }
 
-pub inline fn getFormats() []vk.SurfaceFormatKHR {
-    return formats;
+pub inline fn getFormats() []const vk.SurfaceFormatKHR {
+    return &formats;
 }
 
-pub inline fn getPresentModes() []vk.PresentModeKHR {
-    return present_modes;
+pub inline fn getPresentModes() []const vk.PresentModeKHR {
+    return &present_modes;
 }

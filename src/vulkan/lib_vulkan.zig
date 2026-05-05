@@ -84,7 +84,9 @@ const global_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
 });
 
 const instance_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
+    functionMapEntryPoint("vkCreateWaylandSurfaceKHR"),
     functionMapEntryPoint("vkDestroyInstance"),
+    functionMapEntryPoint("vkDestroySurfaceKHR"),
     functionMapEntryPoint("vkEnumeratePhysicalDevices"),
     functionMapEntryPoint("vkGetDeviceProcAddr"),
 });
@@ -106,11 +108,17 @@ const physical_device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComp
     functionMapEntryPoint("vkGetPhysicalDeviceQueueFamilyProperties2KHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceSparseImageFormatProperties"),
     functionMapEntryPoint("vkGetPhysicalDeviceSparseImageFormatProperties2KHR"),
+    functionMapEntryPoint("vkGetPhysicalDeviceSurfaceCapabilitiesKHR"),
+    functionMapEntryPoint("vkGetPhysicalDeviceSurfaceFormatsKHR"),
+    functionMapEntryPoint("vkGetPhysicalDeviceSurfacePresentModesKHR"),
+    functionMapEntryPoint("vkGetPhysicalDeviceSurfaceSupportKHR"),
+    functionMapEntryPoint("vkGetPhysicalDeviceWaylandPresentationSupportKHR"),
 });
 
 const device_pfn_map = block: {
     @setEvalBranchQuota(65535);
     break :block std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
+        functionMapEntryPoint("vkAcquireNextImageKHR"),
         functionMapEntryPoint("vkAllocateCommandBuffers"),
         functionMapEntryPoint("vkAllocateDescriptorSets"),
         functionMapEntryPoint("vkAllocateDescriptorSets"),
@@ -181,6 +189,7 @@ const device_pfn_map = block: {
         functionMapEntryPoint("vkCreateSampler"),
         functionMapEntryPoint("vkCreateSemaphore"),
         functionMapEntryPoint("vkCreateShaderModule"),
+        functionMapEntryPoint("vkCreateSwapchainKHR"),
         functionMapEntryPoint("vkDestroyBuffer"),
         functionMapEntryPoint("vkDestroyBufferView"),
         functionMapEntryPoint("vkDestroyCommandPool"),
@@ -200,6 +209,7 @@ const device_pfn_map = block: {
         functionMapEntryPoint("vkDestroySampler"),
         functionMapEntryPoint("vkDestroySemaphore"),
         functionMapEntryPoint("vkDestroyShaderModule"),
+        functionMapEntryPoint("vkDestroySwapchainKHR"),
         functionMapEntryPoint("vkDeviceWaitIdle"),
         functionMapEntryPoint("vkEndCommandBuffer"),
         functionMapEntryPoint("vkFlushMappedMemoryRanges"),
@@ -218,10 +228,12 @@ const device_pfn_map = block: {
         functionMapEntryPoint("vkGetPipelineCacheData"),
         functionMapEntryPoint("vkGetQueryPoolResults"),
         functionMapEntryPoint("vkGetRenderAreaGranularity"),
+        functionMapEntryPoint("vkGetSwapchainImagesKHR"),
         functionMapEntryPoint("vkInvalidateMappedMemoryRanges"),
         functionMapEntryPoint("vkMapMemory"),
         functionMapEntryPoint("vkMergePipelineCaches"),
         functionMapEntryPoint("vkQueueBindSparse"),
+        functionMapEntryPoint("vkQueuePresentKHR"),
         functionMapEntryPoint("vkQueueSubmit"),
         functionMapEntryPoint("vkQueueWaitIdle"),
         functionMapEntryPoint("vkResetCommandBuffer"),
@@ -2194,6 +2206,19 @@ pub export fn strollResetCommandBuffer(p_cmd: vk.CommandBuffer, flags: vk.Comman
 
 // WSI functions ===================================================================================================================================
 
+pub export fn strollAcquireNextImageKHR(p_device: vk.Device, p_swapchain: vk.SwapchainKHR, timeout: u64, p_semaphore: vk.Semaphore, p_fence: vk.Fence, image_index: *u32) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkAcquireNextImageKHR);
+    defer entryPointEndLogTrace();
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
+
+    const swapchain = NonDispatchable(SwapchainKHR).fromHandleObject(p_swapchain) catch |err| return toVkResult(err);
+    const semaphore = NonDispatchable(BinarySemaphore).fromHandleObject(p_semaphore) catch |err| return toVkResult(err);
+    const fence = NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err);
+    swapchain.getNextImage(timeout, semaphore, fence, image_index) catch |err| return toVkResult(err);
+    return .success;
+}
+
 pub export fn strollCreateSwapchainKHR(p_device: vk.Device, info: *const vk.SwapchainCreateInfoKHR, callbacks: ?*const vk.AllocationCallbacks, p_swapchain: *vk.SwapchainKHR) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkCreateSwapchainKHR);
     defer entryPointEndLogTrace();
@@ -2201,11 +2226,45 @@ pub export fn strollCreateSwapchainKHR(p_device: vk.Device, info: *const vk.Swap
     if (info.s_type != .swapchain_create_info_khr) {
         return .error_validation_failed;
     }
+
+    if (info.old_swapchain != .null_handle) {
+        const old_swapchain = NonDispatchable(SwapchainKHR).fromHandleObject(info.old_swapchain) catch |err| return toVkResult(err);
+        old_swapchain.detachSurface() catch |err| return toVkResult(err);
+    }
+
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const surface = NonDispatchable(SurfaceKHR).fromHandleObject(info.surface) catch |err| return toVkResult(err);
     const swapchain = SwapchainKHR.create(device, allocator, info) catch |err| return toVkResult(err);
+    swapchain.surface = surface;
+    surface.swapchain = swapchain;
     p_swapchain.* = (NonDispatchable(SwapchainKHR).wrap(allocator, swapchain) catch |err| return toVkResult(err)).toVkHandle(vk.SwapchainKHR);
     return .success;
+}
+
+pub export fn strollCreateWaylandSurfaceKHR(p_instance: vk.Instance, info: *const vk.WaylandSurfaceCreateInfoKHR, callbacks: ?*const vk.AllocationCallbacks, p_surface: *vk.SurfaceKHR) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkCreateWaylandSurfaceKHR);
+    defer entryPointEndLogTrace();
+
+    if (info.s_type != .wayland_surface_create_info_khr) {
+        return .error_validation_failed;
+    }
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const instance = Dispatchable(Instance).fromHandleObject(p_instance) catch |err| return toVkResult(err);
+    const surface = WaylandSurfaceKHR.create(instance, allocator, info) catch |err| return toVkResult(err);
+    p_surface.* = (NonDispatchable(SurfaceKHR).wrap(allocator, surface) catch |err| return toVkResult(err)).toVkHandle(vk.SurfaceKHR);
+    return .success;
+}
+
+pub export fn strollDestroySurfaceKHR(p_instance: vk.Instance, p_surface: vk.SurfaceKHR, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkDestroySurfaceKHR);
+    defer entryPointEndLogTrace();
+
+    NonDispatchable(Instance).checkHandleValidity(p_instance) catch |err| return errorLogger(err);
+
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const non_dispatchable = NonDispatchable(SurfaceKHR).fromHandle(p_surface) catch |err| return errorLogger(err);
+    non_dispatchable.intrusiveDestroy(allocator);
 }
 
 pub export fn strollDestroySwapchainKHR(p_device: vk.Device, p_swapchain: vk.SwapchainKHR, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
@@ -2219,27 +2278,79 @@ pub export fn strollDestroySwapchainKHR(p_device: vk.Device, p_swapchain: vk.Swa
     non_dispatchable.intrusiveDestroy(allocator);
 }
 
-pub export fn strollCreateWaylandSurfaceKHR(p_device: vk.Device, info: *const vk.WaylandSurfaceCreateInfoKHR, callbacks: ?*const vk.AllocationCallbacks, p_surface: *vk.SurfaceKHR) callconv(vk.vulkan_call_conv) vk.Result {
-    entryPointBeginLogTrace(.vkCreateWaylandSurfaceKHR);
+pub export fn strollGetPhysicalDeviceSurfaceCapabilitiesKHR(p_physical_device: vk.PhysicalDevice, p_surface: vk.SurfaceKHR, capabilities: *vk.SurfaceCapabilitiesKHR) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceSurfaceCapabilitiesKHR);
     defer entryPointEndLogTrace();
 
-    if (info.s_type != .wayland_surface_create_info_khr) {
-        return .error_validation_failed;
-    }
-    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
-    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
-    const surface = WaylandSurfaceKHR.create(device, allocator, info) catch |err| return toVkResult(err);
-    p_surface.* = (NonDispatchable(SurfaceKHR).wrap(allocator, surface) catch |err| return toVkResult(err)).toVkHandle(vk.SurfaceKHR);
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
+    const surface = NonDispatchable(SurfaceKHR).fromHandleObject(p_surface) catch |err| return toVkResult(err);
+    physical_device.getSurfaceCapabilitiesKHR(surface, capabilities) catch |err| return toVkResult(err);
     return .success;
 }
 
-pub export fn strollDestroySurfaceKHR(p_device: vk.Device, p_surface: vk.SurfaceKHR, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
-    entryPointBeginLogTrace(.vkDestroySurfaceKHR);
+pub export fn strollGetPhysicalDeviceSurfaceFormatsKHR(p_physical_device: vk.PhysicalDevice, p_surface: vk.SurfaceKHR, count: *u32, p_formats: ?[*]vk.SurfaceFormatKHR) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceSurfaceFormatsKHR);
     defer entryPointEndLogTrace();
 
-    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
+    const surface = NonDispatchable(SurfaceKHR).fromHandleObject(p_surface) catch |err| return toVkResult(err);
+    physical_device.getSurfaceFormatsKHR(surface, count, p_formats) catch |err| return toVkResult(err);
+    return .success;
+}
 
-    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
-    const non_dispatchable = NonDispatchable(SurfaceKHR).fromHandle(p_surface) catch |err| return errorLogger(err);
-    non_dispatchable.intrusiveDestroy(allocator);
+pub export fn strollGetPhysicalDeviceSurfacePresentModesKHR(p_physical_device: vk.PhysicalDevice, p_surface: vk.SurfaceKHR, count: *u32, p_modes: ?[*]vk.PresentModeKHR) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceSurfacePresentModesKHR);
+    defer entryPointEndLogTrace();
+
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
+    const surface = NonDispatchable(SurfaceKHR).fromHandleObject(p_surface) catch |err| return toVkResult(err);
+    physical_device.getSurfacePresentModesKHR(surface, count, p_modes) catch |err| return toVkResult(err);
+    return .success;
+}
+
+pub export fn strollGetPhysicalDeviceSurfaceSupportKHR(p_physical_device: vk.PhysicalDevice, queue_family_index: u32, p_surface: vk.SurfaceKHR, p_supported: *vk.Bool32) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceSurfaceSupportKHR);
+    defer entryPointEndLogTrace();
+
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
+    const surface = NonDispatchable(SurfaceKHR).fromHandleObject(p_surface) catch |err| return toVkResult(err);
+    p_supported.* = if (physical_device.getSurfaceSupportKHR(queue_family_index, surface) catch |err| return toVkResult(err)) .true else .false;
+    return .success;
+}
+
+pub export fn strollGetPhysicalDeviceWaylandPresentationSupportKHR(p_physical_device: vk.PhysicalDevice, _: u32, _: *anyopaque) callconv(vk.vulkan_call_conv) vk.Bool32 {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceWaylandPresentationSupportKHR);
+    defer entryPointEndLogTrace();
+
+    Dispatchable(PhysicalDevice).checkHandleValidity(p_physical_device) catch |err| errorLogger(err);
+    return .true;
+}
+
+pub export fn strollGetSwapchainImagesKHR(p_device: vk.Device, p_swapchain: vk.SwapchainKHR, count: *u32, p_images: ?[*]vk.Image) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkGetSwapchainImagesKHR);
+    defer entryPointEndLogTrace();
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
+
+    const swapchain = NonDispatchable(SwapchainKHR).fromHandleObject(p_swapchain) catch |err| return toVkResult(err);
+    count.* = @intCast(swapchain.images.len);
+    if (p_images) |images| {
+        for (images[0..], swapchain.images[0..]) |*image, swapchain_image| {
+            image.* = NonDispatchable(Image).fromObject(swapchain_image.image).toVkHandle(vk.Image);
+        }
+    }
+
+    return .success;
+}
+
+pub export fn strollQueuePresentKHR(p_queue: vk.Queue, info: *const vk.PresentInfoKHR) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkQueuePresentKHR);
+    defer entryPointEndLogTrace();
+
+    if (info.s_type != .present_info_khr) {
+        return .error_validation_failed;
+    }
+    const queue = Dispatchable(Queue).fromHandleObject(p_queue) catch |err| return toVkResult(err);
+    queue.presentKHR(info) catch |err| return toVkResult(err);
+    return .success;
 }

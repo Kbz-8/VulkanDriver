@@ -1,12 +1,18 @@
 const std = @import("std");
 const vk = @import("vulkan");
 
-const Dispatchable = @import("Dispatchable.zig").Dispatchable;
-const VkError = @import("error_set.zig").VkError;
-const VulkanAllocator = @import("VulkanAllocator.zig");
+const errors = @import("error_set.zig");
 
+const Dispatchable = @import("Dispatchable.zig").Dispatchable;
+const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
+const VkError = errors.VkError;
+const VulkanAllocator = @import("VulkanAllocator.zig");
+const toVkResult = errors.toVkResult;
+
+const BinarySemaphore = @import("BinarySemaphore.zig");
 const CommandBuffer = @import("CommandBuffer.zig");
 const Device = @import("Device.zig");
+const SwapchainKHR = @import("wsi/SwapchainKHR.zig");
 
 const Fence = @import("Fence.zig");
 
@@ -76,7 +82,7 @@ pub inline fn bindSparse(self: *Self, info: []const vk.BindSparseInfo, fence: ?*
     try self.dispatch_table.bindSparse(self, info, fence);
 }
 
-pub inline fn submit(self: *Self, infos: []const vk.SubmitInfo, p_fence: ?*Fence) VkError!void {
+pub fn submit(self: *Self, infos: []const vk.SubmitInfo, p_fence: ?*Fence) VkError!void {
     if (infos.len == 0) {
         if (p_fence) |fence| {
             try fence.signal();
@@ -90,6 +96,36 @@ pub inline fn submit(self: *Self, infos: []const vk.SubmitInfo, p_fence: ?*Fence
     defer SubmitInfo.deinitBlob(allocator, &submit_infos);
 
     try self.dispatch_table.submit(self, submit_infos.items, p_fence);
+}
+
+pub fn presentKHR(_: *Self, info: *const vk.PresentInfoKHR) VkError!void {
+    if (info.p_wait_semaphores) |p_wait_semaphores| {
+        for (p_wait_semaphores[0..], 0..info.wait_semaphore_count) |p_semaphore, _| {
+            const semaphore = try NonDispatchable(BinarySemaphore).fromHandleObject(p_semaphore);
+            // TODO: handle semaphores
+            _ = semaphore;
+        }
+    }
+
+    var cmd_err: ?VkError = null;
+    for (info.p_swapchains[0..], info.p_image_indices[0..], 0..info.swapchain_count) |p_swapchain, image_index, i| {
+        const swapchain = try NonDispatchable(SwapchainKHR).fromHandleObject(p_swapchain);
+        swapchain.present(image_index) catch |err| {
+            if (info.p_results) |results| {
+                results[i] = toVkResult(err);
+            }
+            if (cmd_err) |cmd_err_type|
+                switch (cmd_err_type) {
+                    VkError.SuboptimalKhr => cmd_err = err,
+                    else => {},
+                }
+            else
+                cmd_err = err;
+        };
+    }
+
+    if (cmd_err) |err|
+        return err;
 }
 
 pub inline fn waitIdle(self: *Self) VkError!void {

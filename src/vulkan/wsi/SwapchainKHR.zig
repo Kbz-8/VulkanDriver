@@ -4,16 +4,18 @@ const lib = @import("../lib.zig");
 
 const VkError = @import("../error_set.zig").VkError;
 
+const BinarySemaphore = lib.BinarySemaphore;
 const Device = @import("../Device.zig");
-const SurfaceKHR = @import("SurfaceKHR.zig");
+const Fence = lib.Fence;
+const Image = lib.Image;
 const PresentImage = @import("PresentImage.zig");
-const Image = @import("../Image.zig");
+const SurfaceKHR = lib.SurfaceKHR;
 
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .swapchain_khr;
 
 owner: *Device,
-surface: *SurfaceKHR,
+surface: ?*SurfaceKHR,
 images: []PresentImage,
 
 pub fn create(device: *Device, allocator: std.mem.Allocator, info: *const vk.SwapchainCreateInfoKHR) VkError!*Self {
@@ -48,19 +50,58 @@ pub fn create(device: *Device, allocator: std.mem.Allocator, info: *const vk.Swa
 
     self.* = .{
         .owner = device,
-        .surface = undefined,
+        .surface = null,
         .images = images,
     };
     return self;
 }
 
-pub fn getImage(self: *const Self, index: usize) VkError!*Image {
-    return if (index < self.images.len) self.images[index].image else VkError.Incomplete;
+pub fn getNextImage(self: *const Self, timeout: u64, semaphore: *BinarySemaphore, fence: *Fence, index: *u32) VkError!void {
+    // TODO: handle timeout correctly
+
+    for (self.images, 0..) |*image, i| {
+        if (image.state == .Available) {
+            image.state = .Drawing;
+            index.* = @intCast(i);
+            // TODO: signal semaphore
+            _ = semaphore;
+            try fence.signal();
+            return;
+        }
+    }
+
+    return if (timeout > 0) VkError.Timeout else VkError.NotReady;
+}
+
+pub fn present(self: *Self, index: usize) VkError!void {
+    const allocator = self.owner.host_allocator.allocator();
+
+    const image = &self.images[index];
+    if (self.surface) |surface| {
+        image.state = .Presenting;
+        try surface.presentImage(allocator, image);
+    }
+}
+
+pub fn detachSurface(self: *Self) VkError!void {
+    const allocator = self.owner.host_allocator.allocator();
+
+    if (self.surface) |surface| {
+        surface.swapchain = null;
+        for (self.images) |*image| {
+            if (image.state == .Available)
+                try surface.detachImage(allocator, image);
+        }
+    }
+    self.surface = null;
 }
 
 pub fn destroy(self: *Self, allocator: std.mem.Allocator) void {
-    for (self.images) |*image| {
-        image.deinit(allocator);
+    if (self.surface) |surface| {
+        for (self.images) |*image| {
+            surface.detachImage(allocator, image) catch {};
+            image.deinit(allocator);
+        }
     }
     allocator.destroy(self);
 }

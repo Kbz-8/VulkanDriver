@@ -168,12 +168,12 @@ vkGetPhysicalDeviceMemoryProperties              | ✅ Implemented
 vkGetPhysicalDeviceProperties                    | ✅ Implemented
 vkGetPhysicalDeviceQueueFamilyProperties         | ✅ Implemented
 vkGetPhysicalDeviceSparseImageFormatProperties   | ⚙️ WIP
-vkGetPhysicalDeviceSurfaceCapabilitiesKHR        | ⚙️ WIP
-vkGetPhysicalDeviceSurfaceFormatsKHR             | ⚙️ WIP
-vkGetPhysicalDeviceSurfacePresentModesKHR        | ⚙️ WIP
-vkGetPhysicalDeviceSurfaceSupportKHR             | ⚙️ WIP
+vkGetPhysicalDeviceSurfaceCapabilitiesKHR        | ✅ Implemented
+vkGetPhysicalDeviceSurfaceFormatsKHR             | ✅ Implemented
+vkGetPhysicalDeviceSurfacePresentModesKHR        | ✅ Implemented
+vkGetPhysicalDeviceSurfaceSupportKHR             | ✅ Implemented
 vkGetPhysicalDeviceWaylandPresentationSupportKHR | ⚙️ WIP
-vkGetPhysicalDeviceWin32PresentationSupportKHR  | ⚙️ WIP
+vkGetPhysicalDeviceWin32PresentationSupportKHR   | ⚙️ WIP
 vkGetPhysicalDeviceXcbPresentationSupportKHR     | ⚙️ WIP
 vkGetPhysicalDeviceXlibPresentationSupportKHR    | ⚙️ WIP
 vkGetPipelineCacheData                           | ⚙️ WIP
@@ -184,7 +184,7 @@ vkInvalidateMappedMemoryRanges                   | ✅ Implemented
 vkMapMemory                                      | ✅ Implemented
 vkMergePipelineCaches                            | ⚙️ WIP
 vkQueueBindSparse                                | ⚙️ WIP
-vkQueuePresentKHR                                | ⚙️ WIP
+vkQueuePresentKHR                                | ✅ Implemented
 vkQueueSubmit                                    | ✅ Implemented
 vkQueueWaitIdle                                  | ✅ Implemented
 vkResetCommandBuffer                             | ✅ Implemented

@@ -66,11 +66,12 @@ pub fn enumerateExtensionProperties(layer_name: ?[]const u8, count: *u32, p_prop
     if (layer_name) |_| {
         return VkError.LayerNotPresent;
     }
-    if (@hasDecl(root, "EXTENSIONS")) {
+
+    if (comptime @hasDecl(root.Instance, "EXTENSIONS")) {
         count.* = root.Instance.EXTENSIONS.len;
         if (p_properties) |properties| {
-            for (root.Instance.EXTENSIONS, 0..) |ext, i| {
-                properties[i] = ext;
+            for (root.Instance.EXTENSIONS, properties[0..]) |ext, *prop| {
+                prop.* = ext;
             }
         }
     } else {

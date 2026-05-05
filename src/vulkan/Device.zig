@@ -80,7 +80,7 @@ pub fn init(allocator: std.mem.Allocator, instance: *Instance, physical_device: 
         .instance = instance,
         .physical_device = physical_device,
         .queues = .empty,
-        .host_allocator = VulkanAllocator.from(allocator).clone(),
+        .host_allocator = VulkanAllocator.from(allocator).cloneWithScope(.object),
         .dispatch_table = undefined,
         .vtable = undefined,
     };

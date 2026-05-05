@@ -17,7 +17,7 @@ allocator: std.mem.Allocator,
 
 fn castExtension(comptime ext: vk.ApiInfo) vk.ExtensionProperties {
     var props: vk.ExtensionProperties = .{
-        .extension_name = undefined,
+        .extension_name = @splat(0),
         .spec_version = @bitCast(ext.version),
     };
     @memcpy(props.extension_name[0..ext.name.len], ext.name);
@@ -25,7 +25,11 @@ fn castExtension(comptime ext: vk.ApiInfo) vk.ExtensionProperties {
 }
 
 pub const EXTENSIONS = [_]vk.ExtensionProperties{
+    //castExtension(vk.extensions.lunarg_direct_driver_loading),
     castExtension(vk.extensions.khr_get_physical_device_properties_2),
+    castExtension(vk.extensions.khr_surface),
+    castExtension(vk.extensions.khr_wayland_surface),
+    castExtension(vk.extensions.khr_swapchain),
 };
 
 pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) VkError!*Interface {

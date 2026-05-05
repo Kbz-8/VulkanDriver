@@ -5,6 +5,7 @@ const root = @import("lib.zig");
 const Instance = @import("Instance.zig");
 const VkError = @import("error_set.zig").VkError;
 const Device = @import("Device.zig");
+const SurfaceKHR = @import("wsi/SurfaceKHR.zig");
 
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .physical_device;
@@ -21,8 +22,13 @@ pub const DispatchTable = struct {
     getFormatProperties: *const fn (*Self, vk.Format) VkError!vk.FormatProperties,
     getImageFormatProperties: *const fn (*Self, vk.Format, vk.ImageType, vk.ImageTiling, vk.ImageUsageFlags, vk.ImageCreateFlags) VkError!vk.ImageFormatProperties,
     getSparseImageFormatProperties: *const fn (*Self, vk.Format, vk.ImageType, vk.SampleCountFlags, vk.ImageTiling, vk.ImageUsageFlags, ?[*]vk.SparseImageFormatProperties) VkError!u32,
-    getSparseImageFormatProperties2: ?*const fn (*Self, vk.Format, vk.ImageType, vk.SampleCountFlags, vk.ImageTiling, vk.ImageUsageFlags, ?[*]vk.SparseImageFormatProperties2) VkError!u32,
     release: *const fn (*Self, std.mem.Allocator) VkError!void,
+
+    // VK_KHR_get_physical_device_properties_2
+    getSparseImageFormatProperties2: ?*const fn (*Self, vk.Format, vk.ImageType, vk.SampleCountFlags, vk.ImageTiling, vk.ImageUsageFlags, ?[*]vk.SparseImageFormatProperties2) VkError!u32,
+
+    // VK_KHR_surface
+    getSurfaceSupportKHR: ?*const fn (*Self, u32, *SurfaceKHR) VkError!bool,
 };
 
 pub fn init(allocator: std.mem.Allocator, instance: *Instance) VkError!Self {
@@ -52,15 +58,15 @@ pub fn init(allocator: std.mem.Allocator, instance: *Instance) VkError!Self {
     };
 }
 
-pub fn createDevice(self: *Self, allocator: std.mem.Allocator, infos: *const vk.DeviceCreateInfo) VkError!*Device {
+pub inline fn createDevice(self: *Self, allocator: std.mem.Allocator, infos: *const vk.DeviceCreateInfo) VkError!*Device {
     return try self.dispatch_table.createDevice(self, allocator, infos);
 }
 
-pub fn getFormatProperties(self: *Self, format: vk.Format) VkError!vk.FormatProperties {
+pub inline fn getFormatProperties(self: *Self, format: vk.Format) VkError!vk.FormatProperties {
     return try self.dispatch_table.getFormatProperties(self, format);
 }
 
-pub fn getImageFormatProperties(
+pub inline fn getImageFormatProperties(
     self: *Self,
     format: vk.Format,
     image_type: vk.ImageType,
@@ -71,7 +77,7 @@ pub fn getImageFormatProperties(
     return self.dispatch_table.getImageFormatProperties(self, format, image_type, tiling, usage, flags);
 }
 
-pub fn getSparseImageFormatProperties(
+pub inline fn getSparseImageFormatProperties(
     self: *Self,
     format: vk.Format,
     image_type: vk.ImageType,
@@ -81,6 +87,12 @@ pub fn getSparseImageFormatProperties(
     properties: ?[*]vk.SparseImageFormatProperties,
 ) VkError!u32 {
     return self.dispatch_table.getSparseImageFormatProperties(self, format, image_type, samples, tiling, usage, properties);
+}
+
+pub fn releasePhysicalDevice(self: *Self, allocator: std.mem.Allocator) VkError!void {
+    self.queue_family_props.deinit(allocator);
+    self.queue_family_props = .empty;
+    try self.dispatch_table.release(self, allocator);
 }
 
 pub fn getSparseImageFormatProperties2(
@@ -98,8 +110,33 @@ pub fn getSparseImageFormatProperties2(
         0;
 }
 
-pub fn releasePhysicalDevice(self: *Self, allocator: std.mem.Allocator) VkError!void {
-    self.queue_family_props.deinit(allocator);
-    self.queue_family_props = .empty;
-    try self.dispatch_table.release(self, allocator);
+pub fn getSurfaceCapabilitiesKHR(_: *Self, surface: *SurfaceKHR, capabilities: *vk.SurfaceCapabilitiesKHR) VkError!void {
+    capabilities.* = try surface.getCapabilities();
+}
+
+pub fn getSurfaceFormatsKHR(_: *Self, _: *SurfaceKHR, count: *u32, p_formats: ?[*]vk.SurfaceFormatKHR) VkError!void {
+    const surface_formats = SurfaceKHR.getFormats();
+    count.* = surface_formats.len;
+    if (p_formats) |formats| {
+        for (formats[0..], surface_formats[0..]) |*format, surface_format| {
+            format.* = surface_format;
+        }
+    }
+}
+
+pub fn getSurfacePresentModesKHR(_: *Self, _: *SurfaceKHR, count: *u32, p_modes: ?[*]vk.PresentModeKHR) VkError!void {
+    const surface_modes = SurfaceKHR.getPresentModes();
+    count.* = surface_modes.len;
+    if (p_modes) |modes| {
+        for (modes[0..], surface_modes[0..]) |*mode, surface_mode| {
+            mode.* = surface_mode;
+        }
+    }
+}
+
+pub fn getSurfaceSupportKHR(self: *Self, queue_family_index: u32, surface: *SurfaceKHR) VkError!bool {
+    return if (self.dispatch_table.getSurfaceSupportKHR) |pfn|
+        pfn(self, queue_family_index, surface)
+    else
+        false;
 }

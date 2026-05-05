@@ -9,6 +9,8 @@ pub const wl_registry_listener = extern struct {
     global_remove: *const fn (*anyopaque, *wl_registry, c_uint) callconv(.c) void,
 };
 
+pub const WL_SHM_FORMAT_ARGB8888 = 0;
+
 pub const wl_buffer = opaque {};
 pub const wl_callback = opaque {};
 pub const wl_display = vk.wl_display;
@@ -42,23 +44,27 @@ pub fn load() VkError!void {
     if (ref_count.load(.monotonic) != 0)
         return;
 
-    module = std.DynLib.open("libwayland-client.so.0") catch return VkError.Unknown;
+    module = std.DynLib.open("libwayland-client.so.0") catch {
+        _ = ref_count.fetchSub(1, .monotonic);
+        return VkError.Unknown;
+    };
     errdefer module.close();
+    errdefer std.debug.print("test {s}\n", .{std.c.dlerror().?});
 
     // zig fmt: off
-    wl_display_dispatch       = module.lookup(@TypeOf(wl_display_dispatch),       "wl_display_dispatch"       ) orelse return VkError.Unknown;
-    wl_display_get_registry   = module.lookup(@TypeOf(wl_display_get_registry),   "wl_display_get_registry"   ) orelse return VkError.Unknown;
-    wl_display_roundtrip      = module.lookup(@TypeOf(wl_display_roundtrip),      "wl_display_roundtrip"      ) orelse return VkError.Unknown;
-    wl_display_sync           = module.lookup(@TypeOf(wl_display_sync),           "wl_display_sync"           ) orelse return VkError.Unknown;
-    wl_registry_add_listener  = module.lookup(@TypeOf(wl_registry_add_listener),  "wl_registry_add_listener"  ) orelse return VkError.Unknown;
-    wl_registry_bind          = module.lookup(@TypeOf(wl_registry_bind),          "wl_registry_bind"          ) orelse return VkError.Unknown;
-    wl_buffer_destroy         = module.lookup(@TypeOf(wl_buffer_destroy),         "wl_buffer_destroy"         ) orelse return VkError.Unknown;
-    wl_shm_create_pool        = module.lookup(@TypeOf(wl_shm_create_pool),        "wl_shm_create_pool"        ) orelse return VkError.Unknown;
-    wl_shm_pool_create_buffer = module.lookup(@TypeOf(wl_shm_pool_create_buffer), "wl_shm_pool_create_buffer" ) orelse return VkError.Unknown;
-    wl_shm_pool_destroy       = module.lookup(@TypeOf(wl_shm_pool_destroy),       "wl_shm_pool_destroy"       ) orelse return VkError.Unknown;
-    wl_surface_attach         = module.lookup(@TypeOf(wl_surface_attach),         "wl_surface_attach"         ) orelse return VkError.Unknown;
-    wl_surface_damage         = module.lookup(@TypeOf(wl_surface_damage),         "wl_surface_damage"         ) orelse return VkError.Unknown;
-    wl_surface_commit         = module.lookup(@TypeOf(wl_surface_commit),         "wl_surface_commit"         ) orelse return VkError.Unknown;
+    wl_display_dispatch       = module.lookup(@TypeOf(wl_display_dispatch),       "wl_display_dispatch"      ) orelse return VkError.Unknown;
+    wl_display_get_registry   = module.lookup(@TypeOf(wl_display_get_registry),   "wl_display_get_registry"  ) orelse return VkError.Unknown;
+    wl_display_roundtrip      = module.lookup(@TypeOf(wl_display_roundtrip),      "wl_display_roundtrip"     ) orelse return VkError.Unknown;
+    wl_display_sync           = module.lookup(@TypeOf(wl_display_sync),           "wl_display_sync"          ) orelse return VkError.Unknown;
+    wl_registry_add_listener  = module.lookup(@TypeOf(wl_registry_add_listener),  "wl_registry_add_listener" ) orelse return VkError.Unknown;
+    wl_registry_bind          = module.lookup(@TypeOf(wl_registry_bind),          "wl_registry_bind"         ) orelse return VkError.Unknown;
+    wl_buffer_destroy         = module.lookup(@TypeOf(wl_buffer_destroy),         "wl_buffer_destroy"        ) orelse return VkError.Unknown;
+    wl_shm_create_pool        = module.lookup(@TypeOf(wl_shm_create_pool),        "wl_shm_create_pool"       ) orelse return VkError.Unknown;
+    wl_shm_pool_create_buffer = module.lookup(@TypeOf(wl_shm_pool_create_buffer), "wl_shm_pool_create_buffer") orelse return VkError.Unknown;
+    wl_shm_pool_destroy       = module.lookup(@TypeOf(wl_shm_pool_destroy),       "wl_shm_pool_destroy"      ) orelse return VkError.Unknown;
+    wl_surface_attach         = module.lookup(@TypeOf(wl_surface_attach),         "wl_surface_attach"        ) orelse return VkError.Unknown;
+    wl_surface_damage         = module.lookup(@TypeOf(wl_surface_damage),         "wl_surface_damage"        ) orelse return VkError.Unknown;
+    wl_surface_commit         = module.lookup(@TypeOf(wl_surface_commit),         "wl_surface_commit"        ) orelse return VkError.Unknown;
     // zig fmt: on
 
     wl_shm_interface = module.lookup(*wl_interface, "wl_shm_interface") orelse return VkError.Unknown;

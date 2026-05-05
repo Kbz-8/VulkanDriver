@@ -8,6 +8,7 @@ const SoftDevice = @import("SoftDevice.zig");
 
 const VkError = base.VkError;
 const VulkanAllocator = base.VulkanAllocator;
+const SurfaceKHR = base.SurfaceKHR;
 
 const Self = @This();
 pub const Interface = base.PhysicalDevice;
@@ -30,8 +31,13 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
         .getFormatProperties = getFormatProperties,
         .getImageFormatProperties = getImageFormatProperties,
         .getSparseImageFormatProperties = getSparseImageFormatProperties,
-        .getSparseImageFormatProperties2 = getSparseImageFormatProperties2,
         .release = destroy,
+
+        // VK_KHR_get_physical_device_properties_2
+        .getSparseImageFormatProperties2 = getSparseImageFormatProperties2,
+
+        // VK_KHR_surface
+        .getSurfaceSupportKHR = getSurfaceSupportKHR,
     };
 
     interface.props.api_version = @bitCast(lib.VULKAN_VERSION);
@@ -811,5 +817,9 @@ fn checkFormatUsage(usage: vk.ImageUsageFlags, features: vk.FormatFeatureFlags) 
         return false;
     if (usage.transfer_dst_bit and !features.transfer_dst_bit)
         return false;
+    return true;
+}
+
+pub fn getSurfaceSupportKHR(_: *Interface, _: u32, _: *SurfaceKHR) VkError!bool {
     return true;
 }

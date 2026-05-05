@@ -32,6 +32,9 @@ pub const VTable = struct {
     getMemoryRequirements: *const fn (*Self, *vk.MemoryRequirements) VkError!void,
     getSubresourceLayout: *const fn (*const Self, vk.ImageSubresource) VkError!vk.SubresourceLayout,
     getTotalSizeForAspect: *const fn (*const Self, vk.ImageAspectFlags) VkError!usize,
+    getSliceMemSizeForMipLevel: *const fn (*const Self, vk.ImageAspectFlags, u32) usize,
+    getRowPitchMemSizeForMipLevel: *const fn (*const Self, vk.ImageAspectFlags, u32) usize,
+    copyToMemory: *const fn (*const Self, []u8, vk.ImageSubresourceLayers) VkError!void,
 };
 
 pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.ImageCreateInfo) VkError!Self {
@@ -58,7 +61,7 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
     self.vtable.destroy(self, allocator);
 }
 
-pub inline fn bindMemory(self: *Self, memory: *DeviceMemory, offset: vk.DeviceSize) VkError!void {
+pub fn bindMemory(self: *Self, memory: *DeviceMemory, offset: vk.DeviceSize) VkError!void {
     const image_size = try self.getTotalSize();
     if (offset >= image_size or !self.allowed_memory_types.isSet(memory.memory_type_index)) {
         return VkError.ValidationFailed;
@@ -67,10 +70,22 @@ pub inline fn bindMemory(self: *Self, memory: *DeviceMemory, offset: vk.DeviceSi
     self.memory_offset = offset;
 }
 
-pub inline fn getMemoryRequirements(self: *Self, requirements: *vk.MemoryRequirements) VkError!void {
+pub fn getMemoryRequirements(self: *Self, requirements: *vk.MemoryRequirements) VkError!void {
     requirements.size = try self.getTotalSize();
     requirements.memory_type_bits = self.allowed_memory_types.mask;
     try self.vtable.getMemoryRequirements(self, requirements);
+}
+
+pub fn getSliceMemSizeForMipLevel(self: *const Self, aspect_mask: vk.ImageAspectFlags, mip_level: u32) usize {
+    return self.vtable.getSliceMemSizeForMipLevel(self, aspect_mask, mip_level);
+}
+
+pub fn getRowPitchMemSizeForMipLevel(self: *const Self, aspect_mask: vk.ImageAspectFlags, mip_level: u32) usize {
+    return self.vtable.getRowPitchMemSizeForMipLevel(self, aspect_mask, mip_level);
+}
+
+pub inline fn copyToMemory(self: *const Self, memory: []u8, subresource: vk.ImageSubresourceLayers) VkError!void {
+    try self.vtable.copyToMemory(self, memory, subresource);
 }
 
 pub inline fn getTexelSize(self: *const Self) usize {

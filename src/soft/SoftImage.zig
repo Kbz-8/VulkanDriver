@@ -29,6 +29,9 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .getMemoryRequirements = getMemoryRequirements,
         .getSubresourceLayout = getSubresourceLayout,
         .getTotalSizeForAspect = getTotalSizeForAspect,
+        .getSliceMemSizeForMipLevel = getSliceMemSizeForMipLevel,
+        .getRowPitchMemSizeForMipLevel = getRowPitchMemSizeForMipLevel,
+        .copyToMemory = copyToMemory,
     };
 
     self.* = .{
@@ -106,10 +109,10 @@ pub fn copyToImageSingleAspect(self: *const Self, dst: *Self, region: vk.ImageCo
     const one_is_3D = (self.interface.image_type == .@"3d") != (dst.interface.image_type == .@"3d");
     const both_are_3D = (self.interface.image_type == .@"3d") and (dst.interface.image_type == .@"3d");
 
-    const src_row_pitch_bytes = self.getRowPitchMemSizeForMipLevel(region.src_subresource.aspect_mask, region.src_subresource.mip_level);
-    const src_depth_pitch_bytes = self.getSliceMemSizeForMipLevel(region.src_subresource.aspect_mask, region.src_subresource.mip_level);
-    const dst_row_pitch_bytes = dst.getRowPitchMemSizeForMipLevel(region.dst_subresource.aspect_mask, region.dst_subresource.mip_level);
-    const dst_depth_pitch_bytes = dst.getSliceMemSizeForMipLevel(region.dst_subresource.aspect_mask, region.dst_subresource.mip_level);
+    const src_row_pitch_bytes = self.interface.getRowPitchMemSizeForMipLevel(region.src_subresource.aspect_mask, region.src_subresource.mip_level);
+    const src_depth_pitch_bytes = self.interface.getSliceMemSizeForMipLevel(region.src_subresource.aspect_mask, region.src_subresource.mip_level);
+    const dst_row_pitch_bytes = dst.interface.getRowPitchMemSizeForMipLevel(region.dst_subresource.aspect_mask, region.dst_subresource.mip_level);
+    const dst_depth_pitch_bytes = dst.interface.getSliceMemSizeForMipLevel(region.dst_subresource.aspect_mask, region.dst_subresource.mip_level);
 
     const src_array_pitch = self.getLayerSize(region.src_subresource.aspect_mask);
     const dst_array_pitch = dst.getLayerSize(region.dst_subresource.aspect_mask);
@@ -238,6 +241,11 @@ pub fn copyFromBuffer(self: *const Self, src: *const SoftBuffer, region: vk.Buff
     );
 }
 
+pub fn copyToMemory(interface: *const Interface, memory: []u8, subresource: vk.ImageSubresourceLayers) VkError!void {
+    const self: *const Self = @alignCast(@fieldParentPtr("interface", interface));
+    try self.copy(null, memory, subresource, .{ .x = 0, .y = 0, .z = 0 }, interface.extent);
+}
+
 /// Based on SwiftShader vk::Image::copy
 pub fn copy(
     self: *const Self,
@@ -284,10 +292,10 @@ pub fn copy(
     var src_memory = if (is_source) base_src_memory orelse return VkError.InvalidDeviceMemoryDrv else image_map;
     var dst_memory = if (is_source) image_map else base_dst_memory orelse return VkError.InvalidDeviceMemoryDrv;
 
-    const src_slice_pitch_bytes = if (is_source) memory_slice_pitch_bytes else self.getSliceMemSizeForMipLevel(image_subresource.aspect_mask, image_subresource.mip_level);
-    const dst_slice_pitch_bytes = if (is_source) self.getSliceMemSizeForMipLevel(image_subresource.aspect_mask, image_subresource.mip_level) else memory_slice_pitch_bytes;
-    const src_row_pitch_bytes = if (is_source) memory_row_pitch_bytes else self.getRowPitchMemSizeForMipLevel(image_subresource.aspect_mask, image_subresource.mip_level);
-    const dst_row_pitch_bytes = if (is_source) self.getRowPitchMemSizeForMipLevel(image_subresource.aspect_mask, image_subresource.mip_level) else memory_row_pitch_bytes;
+    const src_slice_pitch_bytes = if (is_source) memory_slice_pitch_bytes else self.interface.getSliceMemSizeForMipLevel(image_subresource.aspect_mask, image_subresource.mip_level);
+    const dst_slice_pitch_bytes = if (is_source) self.interface.getSliceMemSizeForMipLevel(image_subresource.aspect_mask, image_subresource.mip_level) else memory_slice_pitch_bytes;
+    const src_row_pitch_bytes = if (is_source) memory_row_pitch_bytes else self.interface.getRowPitchMemSizeForMipLevel(image_subresource.aspect_mask, image_subresource.mip_level);
+    const dst_row_pitch_bytes = if (is_source) self.interface.getRowPitchMemSizeForMipLevel(image_subresource.aspect_mask, image_subresource.mip_level) else memory_row_pitch_bytes;
 
     const src_layer_size = if (is_source) memory_slice_pitch_bytes else self.getLayerSize(image_subresource.aspect_mask);
     const dst_layer_size = if (is_source) self.getLayerSize(image_subresource.aspect_mask) else memory_slice_pitch_bytes;
@@ -352,8 +360,8 @@ pub fn writeInt4(self: *Self, offset: vk.Offset3D, subresource: vk.ImageSubresou
 }
 
 pub fn getTexelMemoryOffsetInSubresource(self: *const Self, offset: vk.Offset3D, subresource: vk.ImageSubresource) usize {
-    return @as(usize, @intCast(offset.z)) * self.getSliceMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level) +
-        @as(usize, @intCast(offset.y)) * self.getRowPitchMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level) +
+    return @as(usize, @intCast(offset.z)) * self.interface.getSliceMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level) +
+        @as(usize, @intCast(offset.y)) * self.interface.getRowPitchMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level) +
         @as(usize, @intCast(offset.x)) * base.format.texelSize(base.format.fromAspect(self.interface.format, subresource.aspect_mask));
 }
 
@@ -369,7 +377,7 @@ fn getSubresourceOffset(self: *const Self, aspect_mask: vk.ImageAspectFlags, mip
 
     const is_3D = (self.interface.image_type == .@"3d") and self.interface.flags.@"2d_array_compatible_bit";
     const layer_offset = if (is_3D)
-        self.getSliceMemSizeForMipLevel(aspect_mask, mip_level)
+        self.interface.getSliceMemSizeForMipLevel(aspect_mask, mip_level)
     else
         self.getLayerSize(aspect_mask);
     return offset + layer * layer_offset;
@@ -427,8 +435,8 @@ fn getSubresourceLayout(interface: *const Interface, subresource: vk.ImageSubres
     return .{
         .offset = try self.getSubresourceOffset(subresource.aspect_mask, subresource.mip_level, subresource.array_layer),
         .size = self.getMultiSampledLevelSize(subresource.aspect_mask, subresource.mip_level),
-        .row_pitch = self.getRowPitchMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level),
-        .array_pitch = self.getSliceMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level),
+        .row_pitch = self.interface.getRowPitchMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level),
+        .array_pitch = self.interface.getSliceMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level),
         .depth_pitch = self.getLayerSize(subresource.aspect_mask),
     };
 }
@@ -446,7 +454,7 @@ pub inline fn getMultiSampledLevelSize(self: *const Self, aspect_mask: vk.ImageA
 }
 
 pub inline fn getMipLevelSize(self: *const Self, aspect_mask: vk.ImageAspectFlags, mip_level: u32) usize {
-    return self.getSliceMemSizeForMipLevel(aspect_mask, mip_level) * self.getMipLevelExtent(mip_level).depth;
+    return self.interface.getSliceMemSizeForMipLevel(aspect_mask, mip_level) * self.getMipLevelExtent(mip_level).depth;
 }
 
 pub fn getMipLevelExtent(self: *const Self, mip_level: u32) vk.Extent3D {
@@ -463,13 +471,17 @@ pub fn getMipLevelExtent(self: *const Self, mip_level: u32) vk.Extent3D {
     return extent;
 }
 
-pub fn getSliceMemSizeForMipLevel(self: *const Self, aspect_mask: vk.ImageAspectFlags, mip_level: u32) usize {
+pub fn getSliceMemSizeForMipLevel(interface: *const Interface, aspect_mask: vk.ImageAspectFlags, mip_level: u32) usize {
+    const self: *const Self = @alignCast(@fieldParentPtr("interface", interface));
+
     const mip_extent = self.getMipLevelExtent(mip_level);
     const format = self.interface.formatFromAspect(aspect_mask);
     return base.format.sliceMemSize(format, mip_extent.width, mip_extent.height);
 }
 
-pub fn getRowPitchMemSizeForMipLevel(self: *const Self, aspect_mask: vk.ImageAspectFlags, mip_level: u32) usize {
+pub fn getRowPitchMemSizeForMipLevel(interface: *const Interface, aspect_mask: vk.ImageAspectFlags, mip_level: u32) usize {
+    const self: *const Self = @alignCast(@fieldParentPtr("interface", interface));
+
     const mip_extent = self.getMipLevelExtent(mip_level);
     const format = self.interface.formatFromAspect(aspect_mask);
     return base.format.pitchMemSize(format, mip_extent.width);
