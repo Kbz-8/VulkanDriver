@@ -6,10 +6,6 @@ const lib = @import("../../lib.zig");
 
 const VkError = lib.VkError;
 
-pub extern const wl_registry_interface: wl_interface;
-pub extern const wl_shm_pool_interface: wl_interface;
-pub extern const wl_buffer_interface: wl_interface;
-
 pub const wl_registry_listener = extern struct {
     global: ?*const fn (data: ?*anyopaque, wl_registry: ?*wl_registry, name: u32, interface: [*c]const u8, version: u32) callconv(.c) void = null,
     global_remove: ?*const fn (data: ?*anyopaque, wl_registry: ?*wl_registry, name: u32) callconv(.c) void = null,
@@ -56,7 +52,10 @@ pub var wl_proxy_get_version: *const fn (*wl_proxy) callconv(.c) u32 = undefined
 pub var wl_proxy_add_listener: *const fn (*wl_proxy, **const fn (void) void, ?*anyopaque) callconv(.c) c_int = undefined;
 pub var wl_display_flush: *const fn (*wl_display) callconv(.c) c_int = undefined;
 
+pub var wl_buffer_interface: *wl_interface = undefined;
+pub var wl_registry_interface: *wl_interface = undefined;
 pub var wl_shm_interface: *wl_interface = undefined;
+pub var wl_shm_pool_interface: *wl_interface = undefined;
 
 pub var module: std.DynLib = undefined;
 
@@ -79,7 +78,10 @@ pub fn load() VkError!void {
     wl_proxy_add_listener = module.lookup(@TypeOf(wl_proxy_add_listener), "wl_proxy_add_listener") orelse return VkError.Unknown;
     wl_display_flush = module.lookup(@TypeOf(wl_display_flush), "wl_display_flush") orelse return VkError.Unknown;
 
+    wl_buffer_interface = module.lookup(*wl_interface, "wl_buffer_interface") orelse return VkError.Unknown;
+    wl_registry_interface = module.lookup(*wl_interface, "wl_registry_interface") orelse return VkError.Unknown;
     wl_shm_interface = module.lookup(*wl_interface, "wl_shm_interface") orelse return VkError.Unknown;
+    wl_shm_pool_interface = module.lookup(*wl_interface, "wl_shm_pool_interface") orelse return VkError.Unknown;
 
     _ = ref_count.fetchAdd(1, .monotonic);
 }
@@ -108,7 +110,7 @@ pub fn wl_display_get_registry(display: *wl_display) callconv(.c) ?*wl_registry 
     return @ptrCast(@alignCast(wl_proxy_marshal_flags(
         @ptrCast(@alignCast(display)),
         WL_DISPLAY_GET_REGISTRY,
-        &wl_registry_interface,
+        wl_registry_interface,
         wl_proxy_get_version(@ptrCast(@alignCast(display))),
         0,
         @as(?*anyopaque, null),
@@ -123,7 +125,7 @@ pub fn wl_shm_create_pool(shm: *wl_shm, fd: i32, size: i32) callconv(.c) ?*wl_sh
     return @ptrCast(@alignCast(wl_proxy_marshal_flags(
         @ptrCast(@alignCast(shm)),
         WL_SHM_CREATE_POOL,
-        &wl_shm_pool_interface,
+        wl_shm_pool_interface,
         wl_proxy_get_version(@ptrCast(@alignCast(shm))),
         0,
         @as(?*anyopaque, null),
@@ -146,7 +148,7 @@ pub fn wl_shm_pool_create_buffer(shm_pool: *wl_shm_pool, offset: i32, width: i32
     return @ptrCast(@alignCast(wl_proxy_marshal_flags(
         @ptrCast(@alignCast(shm_pool)),
         WL_SHM_POOL_CREATE_BUFFER,
-        &wl_buffer_interface,
+        wl_buffer_interface,
         wl_proxy_get_version(@ptrCast(@alignCast(shm_pool))),
         0,
         @as(?*anyopaque, null),
