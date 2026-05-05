@@ -76,7 +76,6 @@ pub fn build(b: *std.Build) !void {
 
     if (builtin.target.os.tag == .linux) {
         base_c_includes.link_libc = true;
-        base_c_includes.defineCMacroRaw("STROLL_ENABLE_WAYLAND");
     }
 
     base_mod.addImport("base_c", base_c_includes.createModule());

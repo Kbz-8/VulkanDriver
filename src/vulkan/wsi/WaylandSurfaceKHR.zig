@@ -22,7 +22,7 @@ const WaylandImage = struct {
 fn wlRegistryHandleGlobal(data: ?*anyopaque, registry: ?*wayland.wl_registry, name: u32, interface: [*c]const u8, _: u32) callconv(.c) void {
     const pshm: **wayland.wl_shm = @ptrCast(@alignCast(data orelse return));
     if (std.mem.eql(u8, std.mem.span(interface), "wl_shm")) {
-        if (wayland.c.wl_registry_bind(registry orelse return, name, wayland.wl_shm_interface, 1)) |shm| {
+        if (wayland.wl_registry_bind(registry orelse return, name, wayland.wl_shm_interface, 1)) |shm| {
             pshm.* = @ptrCast(@alignCast(shm));
         }
     }
@@ -65,9 +65,9 @@ pub fn create(instance: *Instance, allocator: std.mem.Allocator, info: *const vk
         .image_map = .empty,
     };
 
-    const registry = wayland.c.wl_display_get_registry(@ptrCast(self.display)) orelse return VkError.Unknown;
-    _ = wayland.c.wl_registry_add_listener(registry, &wl_registry_listener, @ptrCast(&self.shm));
-    _ = wayland.c.wl_display_dispatch(@ptrCast(self.display));
+    const registry = wayland.wl_display_get_registry(@ptrCast(self.display)) orelse return VkError.Unknown;
+    _ = wayland.wl_registry_add_listener(registry, &wl_registry_listener, @ptrCast(&self.shm));
+    _ = wayland.wl_display_dispatch(@ptrCast(self.display));
 
     return &self.interface;
 }
@@ -106,11 +106,11 @@ pub fn attachImage(interface: *Interface, allocator: std.mem.Allocator, image: *
     const data = std.posix.mmap(null, size, .{ .READ = true, .WRITE = true }, .{ .TYPE = .SHARED }, fd, 0) catch return VkError.OutOfHostMemory;
     errdefer std.posix.munmap(data);
 
-    const pool = wayland.c.wl_shm_create_pool(self.shm, fd, @intCast(size)) orelse return VkError.Unknown;
-    defer wayland.c.wl_shm_pool_destroy(pool);
+    const pool = wayland.wl_shm_create_pool(self.shm, fd, @intCast(size)) orelse return VkError.Unknown;
+    defer wayland.wl_shm_pool_destroy(pool);
 
-    const buffer = wayland.c.wl_shm_pool_create_buffer(pool, 0, @intCast(width), @intCast(height), @intCast(stride), wayland.WL_SHM_FORMAT_ARGB8888) orelse return VkError.Unknown;
-    errdefer wayland.c.wl_buffer_destroy(buffer);
+    const buffer = wayland.wl_shm_pool_create_buffer(pool, 0, @intCast(width), @intCast(height), @intCast(stride), wayland.WL_SHM_FORMAT_ARGB8888) orelse return VkError.Unknown;
+    errdefer wayland.wl_buffer_destroy(buffer);
 
     wl_image.* = .{
         .buffer = buffer,
@@ -128,7 +128,7 @@ pub fn detachImage(interface: *Interface, allocator: std.mem.Allocator, image: *
     const entry = self.image_map.fetchRemove(image) orelse return;
     const wl_image = entry.value;
 
-    wayland.c.wl_buffer_destroy(wl_image.buffer);
+    wayland.wl_buffer_destroy(wl_image.buffer);
     std.posix.munmap(wl_image.data);
     allocator.destroy(wl_image);
 }
@@ -146,11 +146,11 @@ pub fn presentImage(interface: *Interface, allocator: std.mem.Allocator, image: 
         .layer_count = 1,
     });
 
-    wayland.c.wl_surface_attach(@ptrCast(self.surface), wl_image.buffer, 0, 0);
-    wayland.c.wl_surface_damage(@ptrCast(self.surface), 0, 0, @intCast(wl_image.width), @intCast(wl_image.height));
-    wayland.c.wl_surface_commit(@ptrCast(self.surface));
+    wayland.wl_surface_attach(@ptrCast(self.surface), wl_image.buffer, 0, 0);
+    wayland.wl_surface_damage(@ptrCast(self.surface), 0, 0, @intCast(wl_image.width), @intCast(wl_image.height));
+    wayland.wl_surface_commit(@ptrCast(self.surface));
 
-    _ = wayland.c.wl_display_flush(@ptrCast(self.display));
+    _ = wayland.wl_display_flush(@ptrCast(self.display));
 
     image.state = .Available;
 }
