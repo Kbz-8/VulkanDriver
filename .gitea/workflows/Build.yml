@@ -22,6 +22,9 @@ jobs:
       with:
         node-version: 24
 
+    - name: Installing system dependencies
+      run: apt update && apt install wayland-protocols
+
     - name: Building
       run: zig build soft
 
