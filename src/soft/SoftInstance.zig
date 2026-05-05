@@ -25,11 +25,9 @@ fn castExtension(comptime ext: vk.ApiInfo) vk.ExtensionProperties {
 }
 
 pub const EXTENSIONS = [_]vk.ExtensionProperties{
-    //castExtension(vk.extensions.lunarg_direct_driver_loading),
     castExtension(vk.extensions.khr_get_physical_device_properties_2),
     castExtension(vk.extensions.khr_surface),
     castExtension(vk.extensions.khr_wayland_surface),
-    castExtension(vk.extensions.khr_swapchain),
 };
 
 pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) VkError!*Interface {

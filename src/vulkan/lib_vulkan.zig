@@ -382,7 +382,7 @@ pub export fn strollCreateDevice(p_physical_device: vk.PhysicalDevice, info: *co
     return .success;
 }
 
-pub export fn strollEnumerateDeviceExtensionProperties(p_physical_device: vk.PhysicalDevice, p_layer_name: ?[*:0]const u8, property_count: *u32, properties: ?*vk.ExtensionProperties) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn strollEnumerateDeviceExtensionProperties(p_physical_device: vk.PhysicalDevice, p_layer_name: ?[*:0]const u8, property_count: *u32, properties: ?[*]vk.ExtensionProperties) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkEnumerateDeviceExtensionProperties);
     defer entryPointEndLogTrace();
 
@@ -390,9 +390,8 @@ pub export fn strollEnumerateDeviceExtensionProperties(p_physical_device: vk.Phy
     if (p_layer_name) |layer_name| {
         name = std.mem.span(layer_name);
     }
-    _ = p_physical_device;
-    property_count.* = 0;
-    _ = properties;
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
+    physical_device.enumerateExtensionProperties(name, property_count, properties) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -2213,8 +2212,8 @@ pub export fn strollAcquireNextImageKHR(p_device: vk.Device, p_swapchain: vk.Swa
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
 
     const swapchain = NonDispatchable(SwapchainKHR).fromHandleObject(p_swapchain) catch |err| return toVkResult(err);
-    const semaphore = NonDispatchable(BinarySemaphore).fromHandleObject(p_semaphore) catch |err| return toVkResult(err);
-    const fence = NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err);
+    const semaphore = if (p_semaphore != .null_handle) NonDispatchable(BinarySemaphore).fromHandleObject(p_semaphore) catch |err| return toVkResult(err) else null;
+    const fence = if (p_fence != .null_handle) NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err) else null;
     swapchain.getNextImage(timeout, semaphore, fence, image_index) catch |err| return toVkResult(err);
     return .success;
 }
@@ -2235,9 +2234,7 @@ pub export fn strollCreateSwapchainKHR(p_device: vk.Device, info: *const vk.Swap
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const surface = NonDispatchable(SurfaceKHR).fromHandleObject(info.surface) catch |err| return toVkResult(err);
-    const swapchain = SwapchainKHR.create(device, allocator, info) catch |err| return toVkResult(err);
-    swapchain.surface = surface;
-    surface.swapchain = swapchain;
+    const swapchain = SwapchainKHR.create(device, allocator, surface, info) catch |err| return toVkResult(err);
     p_swapchain.* = (NonDispatchable(SwapchainKHR).wrap(allocator, swapchain) catch |err| return toVkResult(err)).toVkHandle(vk.SwapchainKHR);
     return .success;
 }
@@ -2318,6 +2315,7 @@ pub export fn strollGetPhysicalDeviceSurfaceSupportKHR(p_physical_device: vk.Phy
     return .success;
 }
 
+/// TODO: proper implementation when adding new drivers
 pub export fn strollGetPhysicalDeviceWaylandPresentationSupportKHR(p_physical_device: vk.PhysicalDevice, _: u32, _: *anyopaque) callconv(vk.vulkan_call_conv) vk.Bool32 {
     entryPointBeginLogTrace(.vkGetPhysicalDeviceWaylandPresentationSupportKHR);
     defer entryPointEndLogTrace();
@@ -2335,8 +2333,8 @@ pub export fn strollGetSwapchainImagesKHR(p_device: vk.Device, p_swapchain: vk.S
     const swapchain = NonDispatchable(SwapchainKHR).fromHandleObject(p_swapchain) catch |err| return toVkResult(err);
     count.* = @intCast(swapchain.images.len);
     if (p_images) |images| {
-        for (images[0..], swapchain.images[0..]) |*image, swapchain_image| {
-            image.* = NonDispatchable(Image).fromObject(swapchain_image.image).toVkHandle(vk.Image);
+        for (images[0..], swapchain.images[0..]) |*image, *swapchain_image| {
+            image.* = swapchain_image.non_dispatchable_image.toVkHandle(vk.Image);
         }
     }
 

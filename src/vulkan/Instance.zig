@@ -67,7 +67,7 @@ pub fn enumerateExtensionProperties(layer_name: ?[]const u8, count: *u32, p_prop
         return VkError.LayerNotPresent;
     }
 
-    if (comptime @hasDecl(root, "Instance") and @hasDecl(root.Instance, "EXTENSIONS")) {
+    if (comptime !builtin.is_test and @hasDecl(root.Instance, "EXTENSIONS")) {
         count.* = root.Instance.EXTENSIONS.len;
         if (p_properties) |properties| {
             for (root.Instance.EXTENSIONS, properties[0..]) |ext, *prop| {

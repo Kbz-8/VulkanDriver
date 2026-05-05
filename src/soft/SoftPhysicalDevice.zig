@@ -13,6 +13,19 @@ const SurfaceKHR = base.SurfaceKHR;
 const Self = @This();
 pub const Interface = base.PhysicalDevice;
 
+fn castExtension(comptime ext: vk.ApiInfo) vk.ExtensionProperties {
+    var props: vk.ExtensionProperties = .{
+        .extension_name = @splat(0),
+        .spec_version = @bitCast(ext.version),
+    };
+    @memcpy(props.extension_name[0..ext.name.len], ext.name);
+    return props;
+}
+
+const EXTENSIONS = [_]vk.ExtensionProperties{
+    castExtension(vk.extensions.khr_swapchain),
+};
+
 // Device name should always be the same so avoid reprocessing it multiple times
 var device_name: [vk.MAX_PHYSICAL_DEVICE_NAME_SIZE]u8 = @splat(0);
 
@@ -31,6 +44,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
         .getFormatProperties = getFormatProperties,
         .getImageFormatProperties = getImageFormatProperties,
         .getSparseImageFormatProperties = getSparseImageFormatProperties,
+        .enumerateExtensionProperties = enumerateExtensionProperties,
         .release = destroy,
 
         // VK_KHR_get_physical_device_properties_2
@@ -232,6 +246,19 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void
 pub fn createDevice(interface: *Interface, allocator: std.mem.Allocator, infos: *const vk.DeviceCreateInfo) VkError!*base.Device {
     const device = try SoftDevice.create(interface.instance, interface, allocator, infos);
     return &device.interface;
+}
+
+pub fn enumerateExtensionProperties(_: *const Interface, layer_name: ?[]const u8, count: *u32, p_properties: ?[*]vk.ExtensionProperties) VkError!void {
+    if (layer_name) |_| {
+        return VkError.LayerNotPresent;
+    }
+
+    count.* = EXTENSIONS.len;
+    if (p_properties) |properties| {
+        for (EXTENSIONS, properties[0..]) |ext, *prop| {
+            prop.* = ext;
+        }
+    }
 }
 
 pub fn getFormatProperties(interface: *Interface, format: vk.Format) VkError!vk.FormatProperties {

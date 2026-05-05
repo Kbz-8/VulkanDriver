@@ -6,6 +6,7 @@ const VkError = @import("../error_set.zig").VkError;
 const Device = @import("../Device.zig");
 const DeviceMemory = @import("../DeviceMemory.zig");
 const Image = @import("../Image.zig");
+const NonDispatchable = @import("../NonDispatchable.zig").NonDispatchable;
 
 pub const State = enum {
     Available,
@@ -16,6 +17,7 @@ pub const State = enum {
 const Self = @This();
 
 image: *Image,
+non_dispatchable_image: *NonDispatchable(Image),
 memory: *DeviceMemory,
 state: State,
 
@@ -36,12 +38,13 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Image
 
     return .{
         .image = image,
+        .non_dispatchable_image = try NonDispatchable(Image).wrap(allocator, image),
         .memory = memory,
         .state = .Available,
     };
 }
 
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
-    self.image.destroy(allocator);
+    self.non_dispatchable_image.intrusiveDestroy(allocator);
     self.memory.destroy(allocator);
 }

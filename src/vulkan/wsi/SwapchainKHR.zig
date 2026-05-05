@@ -18,7 +18,7 @@ owner: *Device,
 surface: ?*SurfaceKHR,
 images: []PresentImage,
 
-pub fn create(device: *Device, allocator: std.mem.Allocator, info: *const vk.SwapchainCreateInfoKHR) VkError!*Self {
+pub fn create(device: *Device, allocator: std.mem.Allocator, surface: *SurfaceKHR, info: *const vk.SwapchainCreateInfoKHR) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
 
@@ -46,17 +46,22 @@ pub fn create(device: *Device, allocator: std.mem.Allocator, info: *const vk.Swa
             .queue_family_index_count = info.queue_family_index_count,
             .initial_layout = .general,
         });
+
+        try surface.attachImage(allocator, image);
     }
 
     self.* = .{
         .owner = device,
-        .surface = null,
+        .surface = surface,
         .images = images,
     };
+
+    surface.swapchain = self;
+
     return self;
 }
 
-pub fn getNextImage(self: *const Self, timeout: u64, semaphore: *BinarySemaphore, fence: *Fence, index: *u32) VkError!void {
+pub fn getNextImage(self: *const Self, timeout: u64, semaphore: ?*BinarySemaphore, fence: ?*Fence, index: *u32) VkError!void {
     // TODO: handle timeout correctly
 
     for (self.images, 0..) |*image, i| {
@@ -65,7 +70,8 @@ pub fn getNextImage(self: *const Self, timeout: u64, semaphore: *BinarySemaphore
             index.* = @intCast(i);
             // TODO: signal semaphore
             _ = semaphore;
-            try fence.signal();
+            if (fence) |f|
+                try f.signal();
             return;
         }
     }

@@ -39,10 +39,6 @@ pub fn NonDispatchable(comptime T: type) type {
             return @enumFromInt(@intFromPtr(self));
         }
 
-        pub fn fromObject(object: *T) *Self {
-            return @alignCast(@constCast(@fieldParentPtr("object", &object)));
-        }
-
         pub fn fromHandle(vk_handle: anytype) VkError!*Self {
             const handle = @intFromEnum(vk_handle);
             if (handle == 0) {

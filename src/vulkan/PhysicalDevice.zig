@@ -22,6 +22,7 @@ pub const DispatchTable = struct {
     getFormatProperties: *const fn (*Self, vk.Format) VkError!vk.FormatProperties,
     getImageFormatProperties: *const fn (*Self, vk.Format, vk.ImageType, vk.ImageTiling, vk.ImageUsageFlags, vk.ImageCreateFlags) VkError!vk.ImageFormatProperties,
     getSparseImageFormatProperties: *const fn (*Self, vk.Format, vk.ImageType, vk.SampleCountFlags, vk.ImageTiling, vk.ImageUsageFlags, ?[*]vk.SparseImageFormatProperties) VkError!u32,
+    enumerateExtensionProperties: *const fn (*const Self, ?[]const u8, *u32, ?[*]vk.ExtensionProperties) VkError!void,
     release: *const fn (*Self, std.mem.Allocator) VkError!void,
 
     // VK_KHR_get_physical_device_properties_2
@@ -64,6 +65,10 @@ pub inline fn createDevice(self: *Self, allocator: std.mem.Allocator, infos: *co
 
 pub inline fn getFormatProperties(self: *Self, format: vk.Format) VkError!vk.FormatProperties {
     return try self.dispatch_table.getFormatProperties(self, format);
+}
+
+pub inline fn enumerateExtensionProperties(self: *const Self, layer_name: ?[]const u8, count: *u32, p_properties: ?[*]vk.ExtensionProperties) VkError!void {
+    return try self.dispatch_table.enumerateExtensionProperties(self, layer_name, count, p_properties);
 }
 
 pub inline fn getImageFormatProperties(

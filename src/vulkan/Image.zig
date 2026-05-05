@@ -72,7 +72,7 @@ pub fn bindMemory(self: *Self, memory: *DeviceMemory, offset: vk.DeviceSize) VkE
 
 pub fn getMemoryRequirements(self: *Self, requirements: *vk.MemoryRequirements) VkError!void {
     requirements.size = try self.getTotalSize();
-    requirements.memory_type_bits = self.allowed_memory_types.mask;
+    requirements.memory_type_bits = 0;
     try self.vtable.getMemoryRequirements(self, requirements);
 }
 
