@@ -84,11 +84,13 @@ pub fn load() VkError!void {
     wl_shm_pool_interface = module.lookup(*wl_interface, "wl_shm_pool_interface") orelse return VkError.Unknown;
 
     _ = ref_count.fetchAdd(1, .monotonic);
+    std.log.scoped(.WaylandClient).debug("Loaded wayland client lib", .{});
 }
 
 pub fn unload() void {
     if (ref_count.fetchSub(1, .release) == 1) {
         module.close();
+        std.log.scoped(.WaylandClient).debug("Unloaded wayland client lib", .{});
     }
 }
 
@@ -100,7 +102,7 @@ pub fn wl_registry_bind(registry: *wl_registry, name: u32, interface: *const wl_
         version,
         0,
         name,
-        interface.*.name,
+        interface.name,
         version,
         @as(?*anyopaque, null),
     );
