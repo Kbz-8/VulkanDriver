@@ -10,6 +10,10 @@ pub inline fn ref(self: *Self) void {
     _ = self.count.fetchAdd(1, .seq_cst);
 }
 
+pub inline fn setRef(self: *Self, count: usize) void {
+    _ = self.count.store(count, .seq_cst);
+}
+
 pub inline fn unref(self: *Self) void {
     _ = self.count.fetchSub(1, .seq_cst);
 }

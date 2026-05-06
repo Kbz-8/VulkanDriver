@@ -57,8 +57,8 @@ pub fn allocateCommandBuffers(self: *Self, info: *const vk.CommandBufferAllocate
         }
         for (0..info.command_buffer_count) |_| {
             const cmd = try self.vtable.createCommandBuffer(self, allocator, info);
-            const non_dis_cmd = try Dispatchable(CommandBuffer).wrap(allocator, cmd);
-            self.buffers.appendAssumeCapacity(non_dis_cmd);
+            const dis_cmd = try Dispatchable(CommandBuffer).wrap(allocator, cmd);
+            self.buffers.appendAssumeCapacity(dis_cmd);
         }
     }
 
@@ -85,20 +85,27 @@ pub fn freeCommandBuffers(self: *Self, cmds: []*Dispatchable(CommandBuffer)) VkE
 }
 
 pub fn destroy(self: *Self, allocator: std.mem.Allocator) void {
-    for (self.buffers.items) |non_dis_cmd| {
-        non_dis_cmd.intrusiveDestroy(allocator);
+    for (self.buffers.items) |dis_cmd| {
+        dis_cmd.intrusiveDestroy(allocator);
     }
     self.buffers.deinit(allocator);
     self.vtable.destroy(self, allocator);
 }
 
-pub inline fn reset(self: *Self, flags: vk.CommandPoolResetFlags) VkError!void {
+pub fn reset(self: *Self, flags: vk.CommandPoolResetFlags) VkError!void {
     try self.vtable.reset(self, flags);
+
+    self.first_free_buffer_index = 0;
+
     if (flags.release_resources_bit) {
         const allocator = self.host_allocator.allocator();
-        for (self.buffers.items) |non_dis_cmd| {
-            non_dis_cmd.intrusiveDestroy(allocator);
+        for (self.buffers.items) |dis_cmd| {
+            dis_cmd.intrusiveDestroy(allocator);
         }
         self.buffers.clearRetainingCapacity();
+    } else {
+        for (self.buffers.items) |dis_cmd| {
+            _ = dis_cmd.object.reset(.{ .release_resources_bit = true }) catch {};
+        }
     }
 }

@@ -103,11 +103,12 @@ pub fn detachSurface(self: *Self) VkError!void {
 }
 
 pub fn destroy(self: *Self, allocator: std.mem.Allocator) void {
-    if (self.surface) |surface| {
-        for (self.images) |*image| {
+    for (self.images) |*image| {
+        if (self.surface) |surface| {
             surface.detachImage(allocator, image) catch {};
-            image.deinit(allocator);
         }
+        image.deinit(allocator);
     }
+    allocator.free(self.images);
     allocator.destroy(self);
 }

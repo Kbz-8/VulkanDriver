@@ -96,8 +96,9 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void
         if (!self.device_allocator.detectLeaks()) {
             std.log.scoped(.vkDestroyDevice).debug("No device memory leaks detected", .{});
         }
-        allocator.destroy(self);
     }
+
+    allocator.destroy(self);
 }
 
 pub fn allocateMemory(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.MemoryAllocateInfo) VkError!*base.DeviceMemory {

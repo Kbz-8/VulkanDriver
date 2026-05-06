@@ -58,13 +58,16 @@ pub fn submit(interface: *Interface, infos: []Interface.SubmitInfo, p_fence: ?*b
     const allocator = soft_device.device_allocator.allocator();
     const io = soft_device.interface.io();
 
+    const runners_counter = allocator.create(RefCounter) catch return VkError.OutOfDeviceMemory;
+    errdefer allocator.destroy(runners_counter);
+    runners_counter.* = .init;
+    runners_counter.setRef(infos.len);
+
     for (infos) |info| {
         // Cloning info to keep them alive until command execution ends
         const cloned_info: Interface.SubmitInfo = .{
             .command_buffers = info.command_buffers.clone(allocator) catch return VkError.OutOfDeviceMemory,
         };
-        const runners_counter = allocator.create(RefCounter) catch return VkError.OutOfDeviceMemory;
-        runners_counter.* = .init;
         self.group.async(io, Self.taskRunner, .{ self, cloned_info, p_fence, runners_counter });
     }
 }
