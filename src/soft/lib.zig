@@ -66,6 +66,9 @@ pub const MAX_IMAGE_LEVELS_3D = 12;
 pub const MAX_IMAGE_LEVELS_CUBE = 15;
 pub const MAX_IMAGE_ARRAY_LAYERS = 2048;
 
+pub const PHYSICAL_DEVICE_HEAP_SIZE = 0x80000000; // 2 GiB
+pub const MAX_ALLOCATION_COUNT = 4096;
+
 pub const std_options = base.std_options;
 
 comptime {

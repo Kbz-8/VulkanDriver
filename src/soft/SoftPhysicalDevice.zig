@@ -68,7 +68,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
         .max_uniform_buffer_range = 16384,
         .max_storage_buffer_range = 134217728,
         .max_push_constants_size = 128,
-        .max_memory_allocation_count = std.math.maxInt(u32),
+        .max_memory_allocation_count = lib.MAX_ALLOCATION_COUNT,
         .max_sampler_allocation_count = 4096,
         .buffer_image_granularity = 131072,
         .sparse_address_space_size = 0,
@@ -179,8 +179,8 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
     };
     interface.mem_props.memory_heap_count = 1;
     interface.mem_props.memory_heaps[0] = .{
-        .size = std.process.totalSystemMemory() catch 0,
-        .flags = .{}, // Host memory
+        .size = lib.PHYSICAL_DEVICE_HEAP_SIZE,
+        .flags = .{ .device_local_bit = true },
     };
 
     interface.features = .{
