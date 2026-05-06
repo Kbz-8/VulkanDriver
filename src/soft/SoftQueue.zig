@@ -79,7 +79,6 @@ pub fn waitIdle(interface: *Interface) VkError!void {
 }
 
 fn taskRunner(self: *Self, info: Interface.SubmitInfo, p_fence: ?*base.Fence, runners_counter: *RefCounter) void {
-    runners_counter.ref();
     defer {
         runners_counter.unref();
         if (!runners_counter.hasRefs()) {
