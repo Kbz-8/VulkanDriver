@@ -70,6 +70,18 @@ jobs:
         exit 0
       continue-on-error: true
 
+      
+    - name: Upload CTS runner logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: cts-runner-logs
+        path: |
+          **/log.json
+          **/summary.csv
+          **/results.csv
+          **/fails/**
+
     - name: Verify tests
       run: ls cts | grep "results.csv";
 
