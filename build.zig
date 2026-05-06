@@ -224,7 +224,7 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
         },
     }));
 
-    const mustpass = try cts.path("mustpass/master/vk-default.txt").getPath3(b, null).toString(b.allocator);
+    const mustpass = try cts.path("vk-default.txt").getPath3(b, null).toString(b.allocator);
 
     const cts_exe_path = try cts_exe_name.getPath3(b, null).toString(b.allocator);
 
@@ -241,6 +241,9 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
             run.addArg(cts_exe_path);
         },
         .valgrind => {
+            run.addArg("-s");
+            run.addArg("--leak-check=full");
+            run.addArg("--show-leak-kinds=all");
             run.addArg("--track-origins=yes");
             run.addArg(cts_exe_path);
         },
@@ -297,23 +300,17 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
         },
     }));
 
-    var mustpass_override: ?[]const u8 = null;
     var jobs_count: ?usize = null;
 
     if (b.args) |args| {
         for (args) |arg| {
-            if (std.mem.startsWith(u8, arg, "--mustpass-list")) {
-                mustpass_override = arg["--mustpass-list=".len..];
-            } else if (std.mem.startsWith(u8, arg, "-j")) {
+            if (std.mem.startsWith(u8, arg, "-j")) {
                 jobs_count = try std.fmt.parseInt(usize, arg["-j".len..], 10);
             }
         }
     }
 
-    const mustpass_path = try cts.path(if (mustpass_override) |override|
-        b.fmt("mustpass/{s}/vk-default.txt", .{override})
-    else
-        "mustpass/master/vk-default.txt").getPath3(b, null).toString(b.allocator);
+    const mustpass_path = try cts.path("mustpass/master/vk-default.txt").getPath3(b, null).toString(b.allocator);
     const cts_exe_path = try cts_exe_name.getPath3(b, null).toString(b.allocator);
 
     const run = b.addSystemCommand(&[_][]const u8{"deqp-runner"});

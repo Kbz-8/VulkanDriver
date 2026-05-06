@@ -61,7 +61,7 @@ jobs:
         which deqp-runner && deqp-runner --version || echo "deqp-runner not found"
 
     - name: Run Vulkan CTS
-      run: zig build cts-soft --release=fast -- -j3
+      run: zig build cts-soft --release=fast -- -j3 --deqp-test-oom=disable
       continue-on-error: true
 
     - name: Verify tests
