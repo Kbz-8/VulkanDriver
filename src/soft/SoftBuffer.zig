@@ -13,6 +13,9 @@ pub const Interface = base.Buffer;
 interface: Interface,
 
 pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const vk.BufferCreateInfo) VkError!*Self {
+    if (info.size > lib.MAX_MEMORY_ALLOCATION_SIZE)
+        return VkError.OutOfDeviceMemory;
+
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
 

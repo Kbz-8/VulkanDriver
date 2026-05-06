@@ -224,12 +224,7 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
         },
     }));
 
-    const mustpass = try cts.path(
-        b.fmt("mustpass/{}.{}.2/vk-default.txt", .{
-            impl.vulkan_version.major,
-            impl.vulkan_version.minor,
-        }),
-    ).getPath3(b, null).toString(b.allocator);
+    const mustpass = try cts.path("mustpass/master/vk-default.txt").getPath3(b, null).toString(b.allocator);
 
     const cts_exe_path = try cts_exe_name.getPath3(b, null).toString(b.allocator);
 
@@ -315,15 +310,10 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
         }
     }
 
-    const mustpass_path = try cts.path(
-        if (mustpass_override) |override|
-            b.fmt("mustpass/{s}/vk-default.txt", .{override})
-        else
-            b.fmt("mustpass/{}.{}.2/vk-default.txt", .{
-                impl.vulkan_version.major,
-                impl.vulkan_version.minor,
-            }),
-    ).getPath3(b, null).toString(b.allocator);
+    const mustpass_path = try cts.path(if (mustpass_override) |override|
+        b.fmt("mustpass/{s}/vk-default.txt", .{override})
+    else
+        "mustpass/master/vk-default.txt").getPath3(b, null).toString(b.allocator);
     const cts_exe_path = try cts_exe_name.getPath3(b, null).toString(b.allocator);
 
     const run = b.addSystemCommand(&[_][]const u8{"deqp-runner"});
