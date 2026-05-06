@@ -61,7 +61,13 @@ jobs:
         which deqp-runner && deqp-runner --version || echo "deqp-runner not found"
 
     - name: Run Vulkan CTS
-      run: zig build cts-soft --release=fast -- -j3
+      run: |
+        set +e
+        zig build cts-soft --release=fast -- -j1 --timeout 5 --no-progress
+        status=$?
+        echo "CTS exited with $status"
+        find . -name 'log.json' -o -name 'summary.csv' -o -name 'results.csv'
+        exit 0
       continue-on-error: true
 
     - name: Verify tests
