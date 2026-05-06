@@ -2,6 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const SoftDevice = @import("SoftDevice.zig");
 const base = @import("base");
+const lib = @import("lib.zig");
 
 const VkError = base.VkError;
 
@@ -12,6 +13,9 @@ interface: Interface,
 data: []u8,
 
 pub fn create(device: *SoftDevice, allocator: std.mem.Allocator, size: vk.DeviceSize, memory_type_index: u32) VkError!*Self {
+    if (size > lib.MAX_MEMORY_ALLOCATION_SIZE)
+        return VkError.OutOfDeviceMemory;
+
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
 
