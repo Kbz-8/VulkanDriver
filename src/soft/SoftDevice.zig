@@ -95,7 +95,7 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void
         // All device memory allocations should've been freed by now
         const leaks = self.device_allocator.detectLeaks();
         if (leaks != 0)
-            std.log.scoped(.vkDestroyDevice).err("Device was destroyed leaking {d}KB", .{@divTrunc(leaks, 1000)})
+            std.log.scoped(.vkDestroyDevice).err("Device was destroyed leaking {d:.3}KB", .{@as(f32, @floatFromInt(leaks)) / 1000})
         else
             std.log.scoped(.vkDestroyDevice).debug("No device memory leaks detected", .{});
         self.device_allocator.deinitWithoutLeakChecks();
