@@ -48,11 +48,11 @@ pub const SurfaceKHR = @import("wsi/SurfaceKHR.zig");
 pub const SwapchainKHR = @import("wsi/SwapchainKHR.zig");
 pub const WaylandSurfaceKHR = @import("wsi/WaylandSurfaceKHR.zig");
 
-fn entryPointBeginLogTrace(comptime scope: @EnumLiteral()) void {
+inline fn entryPointBeginLogTrace(comptime scope: @EnumLiteral()) void {
     std.log.scoped(scope).debug("Calling {s}...", .{@tagName(scope)});
 }
 
-fn entryPointEndLogTrace() void {}
+inline fn entryPointEndLogTrace() void {}
 
 inline fn notImplementedWarning() void {
     logger.fixme("function not yet implemented", .{});
@@ -79,6 +79,7 @@ const icd_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
 const global_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkCreateInstance"),
     functionMapEntryPoint("vkEnumerateInstanceExtensionProperties"),
+    functionMapEntryPoint("vkEnumerateInstanceLayerProperties"),
     //functionMapEntryPoint("vkEnumerateInstanceVersion"),
     functionMapEntryPoint("vkGetInstanceProcAddr"),
 });
@@ -94,6 +95,7 @@ const instance_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
 const physical_device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkCreateDevice"),
     functionMapEntryPoint("vkEnumerateDeviceExtensionProperties"),
+    functionMapEntryPoint("vkEnumerateDeviceLayerProperties"),
     functionMapEntryPoint("vkGetPhysicalDeviceFeatures"),
     functionMapEntryPoint("vkGetPhysicalDeviceFeatures2KHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceFormatProperties"),
@@ -316,6 +318,14 @@ pub export fn strollCreateInstance(info: *const vk.InstanceCreateInfo, callbacks
     return .success;
 }
 
+pub export fn strollEnumerateInstanceLayerProperties(property_count: *u32, properties: ?[*]vk.LayerProperties) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkEnumerateInstanceLayerProperties);
+    defer entryPointEndLogTrace();
+
+    Instance.enumerateLayerProperties(property_count, properties) catch |err| return toVkResult(err);
+    return .success;
+}
+
 pub export fn strollEnumerateInstanceExtensionProperties(p_layer_name: ?[*:0]const u8, property_count: *u32, properties: ?[*]vk.ExtensionProperties) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkEnumerateInstanceExtensionProperties);
     defer entryPointEndLogTrace();
@@ -328,6 +338,7 @@ pub export fn strollEnumerateInstanceExtensionProperties(p_layer_name: ?[*:0]con
     return .success;
 }
 
+/// Do not make it available to GetProcAddr until Vulkan 1.1 is implemented
 pub export fn strollEnumerateInstanceVersion(version: *u32) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkEnumerateInstanceVersion);
     defer entryPointEndLogTrace();
@@ -379,6 +390,15 @@ pub export fn strollCreateDevice(p_physical_device: vk.PhysicalDevice, info: *co
 
     const device = physical_device.createDevice(allocator, info) catch |err| return toVkResult(err);
     p_device.* = (Dispatchable(Device).wrap(allocator, device) catch |err| return toVkResult(err)).toVkHandle(vk.Device);
+    return .success;
+}
+
+pub export fn strollEnumerateDeviceLayerProperties(p_physical_device: vk.PhysicalDevice, property_count: *u32, properties: ?[*]vk.LayerProperties) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkEnumerateDeviceLayerProperties);
+    defer entryPointEndLogTrace();
+
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
+    physical_device.enumerateLayerProperties(property_count, properties) catch |err| return toVkResult(err);
     return .success;
 }
 

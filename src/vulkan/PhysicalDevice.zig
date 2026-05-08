@@ -23,6 +23,7 @@ pub const DispatchTable = struct {
     getImageFormatProperties: *const fn (*Self, vk.Format, vk.ImageType, vk.ImageTiling, vk.ImageUsageFlags, vk.ImageCreateFlags) VkError!vk.ImageFormatProperties,
     getSparseImageFormatProperties: *const fn (*Self, vk.Format, vk.ImageType, vk.SampleCountFlags, vk.ImageTiling, vk.ImageUsageFlags, ?[*]vk.SparseImageFormatProperties) VkError!u32,
     enumerateExtensionProperties: *const fn (*const Self, ?[]const u8, *u32, ?[*]vk.ExtensionProperties) VkError!void,
+    enumerateLayerProperties: *const fn (*const Self, *u32, ?[*]vk.LayerProperties) VkError!void,
     release: *const fn (*Self, std.mem.Allocator) VkError!void,
 
     // VK_KHR_get_physical_device_properties_2
@@ -69,6 +70,10 @@ pub inline fn getFormatProperties(self: *Self, format: vk.Format) VkError!vk.For
 
 pub inline fn enumerateExtensionProperties(self: *const Self, layer_name: ?[]const u8, count: *u32, p_properties: ?[*]vk.ExtensionProperties) VkError!void {
     return try self.dispatch_table.enumerateExtensionProperties(self, layer_name, count, p_properties);
+}
+
+pub inline fn enumerateLayerProperties(self: *const Self, count: *u32, p_properties: ?[*]vk.LayerProperties) VkError!void {
+    return try self.dispatch_table.enumerateLayerProperties(self, count, p_properties);
 }
 
 pub inline fn getImageFormatProperties(

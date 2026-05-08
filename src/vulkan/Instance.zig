@@ -50,7 +50,7 @@ pub fn init(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) V
     };
 }
 
-/// Dummy for docs creation and stuff
+/// Dummy to avoid compile error in tests and doc generation
 pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) VkError!*Self {
     _ = allocator;
     _ = infos;
@@ -60,6 +60,19 @@ pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo)
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) VkError!void {
     try self.releasePhysicalDevices(allocator);
     try self.dispatch_table.destroy(self, allocator);
+}
+
+pub fn enumerateLayerProperties(count: *u32, p_properties: ?[*]vk.LayerProperties) VkError!void {
+    if (comptime !builtin.is_test and @hasDecl(root.Instance, "LAYERS")) {
+        count.* = root.Instance.LAYERS.len;
+        if (p_properties) |properties| {
+            for (root.Instance.LAYERS, properties[0..]) |layer, *prop| {
+                prop.* = layer;
+            }
+        }
+    } else {
+        count.* = 0;
+    }
 }
 
 pub fn enumerateExtensionProperties(layer_name: ?[]const u8, count: *u32, p_properties: ?[*]vk.ExtensionProperties) VkError!void {

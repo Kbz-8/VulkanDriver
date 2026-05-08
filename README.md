@@ -39,7 +39,7 @@ Assume thou that functions lacking in this array are, for now, not intended to b
 
 Name                                             | Status
 -------------------------------------------------|--------
-vkAcquireNextImageKHR                            | ⚙️ WIP
+vkAcquireNextImageKHR                            | ✅ Implemented
 vkAllocateCommandBuffers                         | ✅ Implemented
 vkAllocateDescriptorSets                         | ✅ Implemented
 vkAllocateMemory                                 | ✅ Implemented
@@ -138,14 +138,13 @@ vkDestroySampler                                 | ✅ Implemented
 vkDestroySemaphore                               | ✅ Implemented
 vkDestroyShaderModule                            | ✅ Implemented
 vkDestroySurfaceKHR                              | ✅ Implemented
-vkDestroySwapchainKHR                            | ⚙️ WIP
 vkDestroySwapchainKHR                            | ✅ Implemented
 vkDeviceWaitIdle                                 | ✅ Implemented
 vkEndCommandBuffer                               | ✅ Implemented
-vkEnumerateDeviceExtensionProperties             | ⚙️ WIP
-vkEnumerateDeviceLayerProperties                 | ⚙️ WIP
-vkEnumerateInstanceExtensionProperties           | ⚙️ WIP
-vkEnumerateInstanceLayerProperties               | ⚙️ WIP
+vkEnumerateDeviceExtensionProperties             | ✅ Implemented
+vkEnumerateDeviceLayerProperties                 | ✅ Implemented
+vkEnumerateInstanceExtensionProperties           | ✅ Implemented
+vkEnumerateInstanceLayerProperties               | ✅ Implemented
 vkEnumeratePhysicalDevices                       | ✅ Implemented
 vkFlushMappedMemoryRanges                        | ✅ Implemented
 vkFreeCommandBuffers                             | ✅ Implemented
@@ -172,14 +171,14 @@ vkGetPhysicalDeviceSurfaceCapabilitiesKHR        | ✅ Implemented
 vkGetPhysicalDeviceSurfaceFormatsKHR             | ✅ Implemented
 vkGetPhysicalDeviceSurfacePresentModesKHR        | ✅ Implemented
 vkGetPhysicalDeviceSurfaceSupportKHR             | ✅ Implemented
-vkGetPhysicalDeviceWaylandPresentationSupportKHR | ⚙️ WIP
+vkGetPhysicalDeviceWaylandPresentationSupportKHR | ✅ Implemented
 vkGetPhysicalDeviceWin32PresentationSupportKHR   | ⚙️ WIP
 vkGetPhysicalDeviceXcbPresentationSupportKHR     | ⚙️ WIP
 vkGetPhysicalDeviceXlibPresentationSupportKHR    | ⚙️ WIP
 vkGetPipelineCacheData                           | ⚙️ WIP
 vkGetQueryPoolResults                            | ⚙️ WIP
 vkGetRenderAreaGranularity                       | ⚙️ WIP
-vkGetSwapchainImagesKHR                          | ⚙️ WIP
+vkGetSwapchainImagesKHR                          | ✅ Implemented
 vkInvalidateMappedMemoryRanges                   | ✅ Implemented
 vkMapMemory                                      | ✅ Implemented
 vkMergePipelineCaches                            | ⚙️ WIP

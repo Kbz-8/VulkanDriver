@@ -61,26 +61,16 @@ jobs:
         which deqp-runner && deqp-runner --version || echo "deqp-runner not found"
 
     - name: Run Vulkan CTS
-      run: |
-        set +e
-        zig build cts-soft --release=fast -- -j1 --timeout 5 --no-progress
-        status=$?
-        echo "CTS exited with $status"
-        find . -name 'log.json' -o -name 'summary.csv' -o -name 'results.csv'
-        exit 0
+      run: zig build cts-soft --release=fast -Ddebug-allocator=true -- -j1
       continue-on-error: true
 
-      
     - name: Upload CTS runner logs
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: cts-runner-logs
         path: |
-          **/log.json
-          **/summary.csv
-          **/results.csv
-          **/fails/**
+          cts/results.csv
 
     - name: Verify tests
       run: ls cts | grep "results.csv";

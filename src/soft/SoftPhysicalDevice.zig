@@ -44,6 +44,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
         .getFormatProperties = getFormatProperties,
         .getImageFormatProperties = getImageFormatProperties,
         .getSparseImageFormatProperties = getSparseImageFormatProperties,
+        .enumerateLayerProperties = enumerateLayerProperties,
         .enumerateExtensionProperties = enumerateExtensionProperties,
         .release = destroy,
 
@@ -246,6 +247,11 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void
 pub fn createDevice(interface: *Interface, allocator: std.mem.Allocator, infos: *const vk.DeviceCreateInfo) VkError!*base.Device {
     const device = try SoftDevice.create(interface.instance, interface, allocator, infos);
     return &device.interface;
+}
+
+pub fn enumerateLayerProperties(_: *const Interface, count: *u32, p_properties: ?[*]vk.LayerProperties) VkError!void {
+    count.* = 0;
+    _ = p_properties;
 }
 
 pub fn enumerateExtensionProperties(_: *const Interface, layer_name: ?[]const u8, count: *u32, p_properties: ?[*]vk.ExtensionProperties) VkError!void {

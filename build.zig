@@ -310,7 +310,15 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
         }
     }
 
-    const mustpass_path = try cts.path("vk-default.txt").getPath3(b, null).toString(b.allocator);
+    var caselist_file_path: []const u8 = try cts.path("vk-default.txt").getPath3(b, null).toString(b.allocator);
+    if (b.args) |args| {
+        for (args) |arg| {
+            if (std.mem.startsWith(u8, arg, "--deqp-caselist-file")) {
+                caselist_file_path = arg["--deqp-caselist-file=".len..];
+            }
+        }
+    }
+
     const cts_exe_path = try cts_exe_name.getPath3(b, null).toString(b.allocator);
 
     const run = b.addSystemCommand(&[_][]const u8{"deqp-runner"});
@@ -320,7 +328,7 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
     run.addArg("--deqp");
     run.addArg(cts_exe_path);
     run.addArg("--caselist");
-    run.addArg(mustpass_path);
+    run.addArg(caselist_file_path);
     run.addArg("--output");
     run.addArg("./cts");
     if (jobs_count) |count| {
