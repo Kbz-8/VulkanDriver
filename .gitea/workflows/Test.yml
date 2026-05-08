@@ -61,16 +61,8 @@ jobs:
         which deqp-runner && deqp-runner --version || echo "deqp-runner not found"
 
     - name: Run Vulkan CTS
-      run: zig build cts-soft --release=fast -Ddebug-allocator=true -- -j1
+      run: zig build cts-soft --release=fast -- -j3
       continue-on-error: true
-
-    - name: Upload CTS runner logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: cts-runner-logs
-        path: |
-          cts/results.csv
 
     - name: Verify tests
       run: ls cts | grep "results.csv";

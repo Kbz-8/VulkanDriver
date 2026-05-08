@@ -4,27 +4,21 @@
 const std = @import("std");
 const vk = @import("vulkan");
 
+const fallback_host_allocator = @import("fallback_host_allocator.zig").fallback_host_allocator;
+
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 
 const Self = @This();
 
-const FallbackAllocator = struct {
-    pub inline fn allocator(_: @This()) std.mem.Allocator {
-        return std.heap.smp_allocator;
-    }
-};
-
 callbacks: ?vk.AllocationCallbacks,
 scope: vk.SystemAllocationScope,
-fallback_allocator: FallbackAllocator,
 
 pub fn init(callbacks: ?*const vk.AllocationCallbacks, scope: vk.SystemAllocationScope) Self {
     const deref_callbacks = if (callbacks) |c| c.* else null;
     return .{
         .callbacks = deref_callbacks,
         .scope = scope,
-        .fallback_allocator = .{},
     };
 }
 
@@ -53,7 +47,6 @@ pub fn cloneWithScope(self: *Self, scope: vk.SystemAllocationScope) Self {
     return .{
         .callbacks = self.callbacks,
         .scope = scope,
-        .fallback_allocator = self.fallback_allocator,
     };
 }
 
@@ -69,7 +62,7 @@ fn alloc(context: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize)
         }
     }
 
-    return self.getFallbackAllocator().rawAlloc(len, alignment, ret_addr);
+    return fallback_host_allocator.rawAlloc(len, alignment, ret_addr);
 }
 
 fn resize(context: *anyopaque, ptr: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) bool {
@@ -77,7 +70,7 @@ fn resize(context: *anyopaque, ptr: []u8, alignment: Alignment, new_len: usize, 
     return if (self.callbacks != null)
         new_len <= ptr.len
     else
-        self.getFallbackAllocator().rawResize(ptr, alignment, new_len, ret_addr);
+        fallback_host_allocator.rawResize(ptr, alignment, new_len, ret_addr);
 }
 
 fn remap(context: *anyopaque, ptr: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
@@ -87,7 +80,7 @@ fn remap(context: *anyopaque, ptr: []u8, alignment: Alignment, new_len: usize, r
             return @ptrCast(pfn_reallocation(self.callbacks.?.p_user_data, ptr.ptr, new_len, alignment.toByteUnits(), self.scope));
         }
     }
-    return self.getFallbackAllocator().rawRemap(ptr, alignment, new_len, ret_addr);
+    return fallback_host_allocator.rawRemap(ptr, alignment, new_len, ret_addr);
 }
 
 fn free(context: *anyopaque, ptr: []u8, alignment: Alignment, ret_addr: usize) void {
@@ -98,9 +91,5 @@ fn free(context: *anyopaque, ptr: []u8, alignment: Alignment, ret_addr: usize) v
             return;
         }
     }
-    self.getFallbackAllocator().rawFree(ptr, alignment, ret_addr);
-}
-
-inline fn getFallbackAllocator(self: *Self) std.mem.Allocator {
-    return self.fallback_allocator.allocator();
+    fallback_host_allocator.rawFree(ptr, alignment, ret_addr);
 }

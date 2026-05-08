@@ -37,7 +37,7 @@ const SpawnError = std.Thread.SpawnError;
 
 const DeviceAllocator = struct {
     pub inline fn allocator(_: @This()) std.mem.Allocator {
-        return std.heap.smp_allocator;
+        return base.fallback_host_allocator;
     }
 };
 

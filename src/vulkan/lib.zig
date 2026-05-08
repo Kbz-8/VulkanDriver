@@ -14,6 +14,7 @@ pub const format = @import("format.zig");
 pub const config = @import("config");
 
 pub const Dispatchable = @import("Dispatchable.zig").Dispatchable;
+pub const fallback_host_allocator = @import("fallback_host_allocator.zig").fallback_host_allocator;
 pub const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
 pub const VkError = errors.VkError;
 pub const VulkanAllocator = @import("VulkanAllocator.zig");
