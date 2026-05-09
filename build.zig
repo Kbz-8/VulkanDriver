@@ -324,7 +324,7 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
     const cts_exe_path = try cts_exe_name.getPath3(b, null).toString(b.allocator);
 
     const run = b.addSystemCommand(&[_][]const u8{switch (mode) {
-        .normal => cts_exe_path,
+        .normal => "deqp-runner",
         .gdb => "gdb",
         .valgrind => "valgrind",
     }});
