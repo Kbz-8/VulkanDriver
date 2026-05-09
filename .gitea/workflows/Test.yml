@@ -22,9 +22,6 @@ jobs:
         apt update
         apt install -y libgl1 libwayland-egl1 libwayland-cursor0 clang libwayland-server0
 
-    - name: Building
-      run: zig build
-
     - name: Zig Tests
       run: zig build test-soft
 
