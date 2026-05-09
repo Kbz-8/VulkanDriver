@@ -142,20 +142,57 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
 
             for (impl.render_pass.interface.attachments, impl.framebuffer.interface.attachments, 0..) |desc, attachment, index| {
                 const image: *SoftImage = @alignCast(@fieldParentPtr("interface", attachment.image));
-                const clear_format = try image.getClearFormat();
+                var clear_mask: vk.ImageAspectFlags = .{};
 
                 switch (desc.load_op) {
-                    .clear => {
+                    .clear => clear_mask = .{ .color_bit = true, .depth_bit = true },
+                    else => {},
+                }
+
+                switch (desc.stencil_load_op) {
+                    .clear => clear_mask = .{ .stencil_bit = true },
+                    else => {},
+                }
+
+                clear_mask = clear_mask.intersect(base.format.toAspect(attachment.format));
+
+                if (clear_mask.toInt() != 0) {
+                    if (clear_mask.color_bit) {
                         try blitter.clear(
                             (impl.clear_values orelse return VkError.Unknown)[index],
-                            clear_format,
+                            try image.getClearFormat(),
                             image,
                             attachment.format,
                             attachment.subresource_range,
                             null,
                         );
-                    },
-                    else => {},
+                    } else {
+                        var subresource_range = attachment.subresource_range;
+
+                        if (clear_mask.depth_bit) {
+                            subresource_range.aspect_mask = .{ .depth_bit = true };
+                            try blitter.clear(
+                                (impl.clear_values orelse return VkError.Unknown)[index],
+                                .d32_sfloat,
+                                image,
+                                attachment.format,
+                                subresource_range,
+                                null,
+                            );
+                        }
+
+                        if (clear_mask.stencil_bit) {
+                            subresource_range.aspect_mask = .{ .stencil_bit = true };
+                            try blitter.clear(
+                                (impl.clear_values orelse return VkError.Unknown)[index],
+                                .s8_uint,
+                                image,
+                                attachment.format,
+                                subresource_range,
+                                null,
+                            );
+                        }
+                    }
                 }
             }
         }

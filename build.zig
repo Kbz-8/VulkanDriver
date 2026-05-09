@@ -136,7 +136,9 @@ pub fn build(b: *std.Build) !void {
         (try addCTS(b, target, &impl, lib, .gdb)).dependOn(&lib_install.step);
         (try addCTS(b, target, &impl, lib, .valgrind)).dependOn(&lib_install.step);
 
-        (try addMultithreadedCTS(b, target, &impl, lib)).dependOn(&lib_install.step);
+        (try addMultithreadedCTS(b, target, &impl, lib, .normal)).dependOn(&lib_install.step);
+        (try addMultithreadedCTS(b, target, &impl, lib, .gdb)).dependOn(&lib_install.step);
+        (try addMultithreadedCTS(b, target, &impl, lib, .valgrind)).dependOn(&lib_install.step);
 
         const impl_autodoc_test = b.addObject(.{
             .name = "lib",
@@ -290,7 +292,7 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
     return &run.step;
 }
 
-fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *Step.Compile) !*Step {
+fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *Step.Compile, comptime mode: RunningMode) !*Step {
     const cts = b.dependency("cts_bin", .{});
 
     const cts_exe_name = cts.path(b.fmt("deqp-vk-{s}", .{
@@ -321,8 +323,27 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
 
     const cts_exe_path = try cts_exe_name.getPath3(b, null).toString(b.allocator);
 
-    const run = b.addSystemCommand(&[_][]const u8{"deqp-runner"});
+    const run = b.addSystemCommand(&[_][]const u8{switch (mode) {
+        .normal => cts_exe_path,
+        .gdb => "gdb",
+        .valgrind => "valgrind",
+    }});
     run.step.dependOn(&impl_lib.step);
+
+    switch (mode) {
+        .gdb => {
+            run.addArg("--args");
+            run.addArg(cts_exe_path);
+        },
+        .valgrind => {
+            run.addArg("-s");
+            run.addArg("--leak-check=full");
+            run.addArg("--show-leak-kinds=all");
+            run.addArg("--track-origins=yes");
+            run.addArg(cts_exe_path);
+        },
+        else => {},
+    }
 
     run.addArg("run");
     run.addArg("--verbose");
@@ -340,7 +361,24 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
     run.addArg(b.fmt("--deqp-vk-library-path={s}", .{b.getInstallPath(.lib, impl_lib.out_lib_filename)}));
     run.addArg("--deqp-test-oom=disable");
 
-    const run_step = b.step(b.fmt("cts-{s}", .{impl.name}), b.fmt("Run Vulkan conformance tests for libvulkan_{s} in a multithreaded environment", .{impl.name}));
+    const run_step = b.step(
+        b.fmt("cts-{s}{s}", .{
+            impl.name,
+            switch (mode) {
+                .normal => "",
+                .gdb => "-gdb",
+                .valgrind => "-valgrind",
+            },
+        }),
+        b.fmt("Run Vulkan conformance tests for libvulkan_{s}{s} in a multithreaded environment", .{
+            impl.name,
+            switch (mode) {
+                .normal => "",
+                .gdb => " within GDB",
+                .valgrind => " within Valgrind",
+            },
+        }),
+    );
     run_step.dependOn(&run.step);
 
     return &run.step;

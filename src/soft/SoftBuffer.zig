@@ -94,7 +94,7 @@ pub inline fn mapToWithAddedOffset(self: *const Self, comptime T: type, offset: 
     return self.mapToWithOffset(T, self.interface.offset + offset);
 }
 
-pub inline fn mapAsSliceWithAddedOffset(self: *const Self, comptime T: type, size: usize, offset: usize) VkError![]T {
+pub inline fn mapAsSliceWithAddedOffset(self: *const Self, comptime T: type, offset: usize, size: usize) VkError![]T {
     return self.mapAsSliceWithOffset(T, self.interface.offset + offset, size);
 }
 

@@ -148,18 +148,16 @@ pub fn copyToImageSingleAspect(self: *const Self, dst: *Self, region: vk.ImageCo
         .mip_level = region.src_subresource.mip_level,
         .array_layer = region.src_subresource.base_array_layer,
     });
-    const src_size = try self.interface.getTotalSizeForAspect(region.src_subresource.aspect_mask) - src_texel_offset;
-    const src_memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
-    var src_map: []u8 = @as([*]u8, @ptrCast(try src_memory.map(self.interface.memory_offset + src_texel_offset, src_size)))[0..src_size];
+    const src_size = try self.interface.getTotalSizeForAspect(region.src_subresource.aspect_mask);
+    var src_map = try self.mapAsSliceWithAddedOffset(u8, src_texel_offset, src_size);
 
     const dst_texel_offset = try dst.getTexelMemoryOffset(region.dst_offset, .{
         .aspect_mask = region.dst_subresource.aspect_mask,
         .mip_level = region.dst_subresource.mip_level,
         .array_layer = region.dst_subresource.base_array_layer,
     });
-    const dst_size = try dst.interface.getTotalSizeForAspect(region.dst_subresource.aspect_mask) - dst_texel_offset;
-    const dst_memory = if (dst.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
-    var dst_map: []u8 = @as([*]u8, @ptrCast(try dst_memory.map(dst.interface.memory_offset + dst_texel_offset, dst_size)))[0..dst_size];
+    const dst_size = try dst.interface.getTotalSizeForAspect(region.dst_subresource.aspect_mask);
+    var dst_map = try dst.mapAsSliceWithAddedOffset(u8, dst_texel_offset, dst_size);
 
     for (0..layer_count) |_| {
         if (is_single_row) {
@@ -216,8 +214,7 @@ pub fn copyToImageSingleAspect(self: *const Self, dst: *Self, region: vk.ImageCo
 pub fn copyToBuffer(self: *const Self, dst: *SoftBuffer, region: vk.BufferImageCopy) VkError!void {
     const dst_size = dst.interface.size - region.buffer_offset;
     const dst_offset = dst.interface.offset + region.buffer_offset;
-    const dst_memory = if (dst.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
-    const dst_map: []u8 = @as([*]u8, @ptrCast(try dst_memory.map(dst_offset, dst_size)))[0..dst_size];
+    const dst_map = try dst.mapAsSliceWithOffset(u8, dst_offset, dst_size);
     try self.copy(
         null,
         dst_map,
@@ -230,8 +227,7 @@ pub fn copyToBuffer(self: *const Self, dst: *SoftBuffer, region: vk.BufferImageC
 pub fn copyFromBuffer(self: *const Self, src: *const SoftBuffer, region: vk.BufferImageCopy) VkError!void {
     const src_size = src.interface.size - region.buffer_offset;
     const src_offset = src.interface.offset + region.buffer_offset;
-    const src_memory = if (src.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
-    const src_map: []u8 = @as([*]u8, @ptrCast(try src_memory.map(src_offset, src_size)))[0..src_size];
+    const src_map = try src.mapAsSliceWithOffset(u8, src_offset, src_size);
     try self.copy(
         src_map,
         null,
@@ -285,9 +281,8 @@ pub fn copy(
         .mip_level = image_subresource.mip_level,
         .array_layer = image_subresource.base_array_layer,
     });
-    const image_size = try self.interface.getTotalSizeForAspect(image_subresource.aspect_mask) - image_texel_offset;
-    const image_memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
-    const image_map: []u8 = @as([*]u8, @ptrCast(try image_memory.map(self.interface.memory_offset + image_texel_offset, image_size)))[0..image_size];
+    const image_size = try self.interface.getTotalSizeForAspect(image_subresource.aspect_mask);
+    const image_map = try self.mapAsSliceWithAddedOffset(u8, image_texel_offset, image_size);
 
     var src_memory = if (is_source) base_src_memory orelse return VkError.InvalidDeviceMemoryDrv else image_map;
     var dst_memory = if (is_source) image_map else base_dst_memory orelse return VkError.InvalidDeviceMemoryDrv;
@@ -328,34 +323,30 @@ pub fn copy(
 }
 
 pub fn readFloat4(self: *Self, offset: vk.Offset3D, subresource: vk.ImageSubresource, format: vk.Format) VkError!F32x4 {
-    const memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
     const texel_size = base.format.texelSize(format);
     const texel_offset = try self.getTexelMemoryOffset(offset, subresource);
-    const map: []const u8 = @as([*]u8, @ptrCast(try memory.map(self.interface.memory_offset + texel_offset, texel_size)))[0..texel_size];
+    const map = try self.mapAsSliceWithAddedOffset(u8, texel_offset, texel_size);
     return blitter.readFloat4(map, format);
 }
 
 pub fn readInt4(self: *Self, offset: vk.Offset3D, subresource: vk.ImageSubresource, format: vk.Format) VkError!U32x4 {
-    const memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
     const texel_size = base.format.texelSize(format);
     const texel_offset = try self.getTexelMemoryOffset(offset, subresource);
-    const map: []const u8 = @as([*]u8, @ptrCast(try memory.map(self.interface.memory_offset + texel_offset, texel_size)))[0..texel_size];
+    const map = try self.mapAsSliceWithAddedOffset(u8, texel_offset, texel_size);
     return blitter.readInt4(map, format);
 }
 
 pub fn writeFloat4(self: *Self, offset: vk.Offset3D, subresource: vk.ImageSubresource, format: vk.Format, pixel: F32x4) VkError!void {
-    const memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
     const texel_size = base.format.texelSize(format);
     const texel_offset = try self.getTexelMemoryOffset(offset, subresource);
-    const map: []u8 = @as([*]u8, @ptrCast(try memory.map(self.interface.memory_offset + texel_offset, texel_size)))[0..texel_size];
+    const map = try self.mapAsSliceWithAddedOffset(u8, texel_offset, texel_size);
     blitter.writeFloat4(pixel, map, format);
 }
 
 pub fn writeInt4(self: *Self, offset: vk.Offset3D, subresource: vk.ImageSubresource, format: vk.Format, pixel: U32x4) VkError!void {
-    const memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
     const texel_size = base.format.texelSize(format);
     const texel_offset = try self.getTexelMemoryOffset(offset, subresource);
-    const map: []u8 = @as([*]u8, @ptrCast(try memory.map(self.interface.memory_offset + texel_offset, texel_size)))[0..texel_size];
+    const map = try self.mapAsSliceWithAddedOffset(u8, texel_offset, texel_size);
     blitter.writeInt4(pixel, map, format);
 }
 
@@ -366,7 +357,7 @@ pub fn getTexelMemoryOffsetInSubresource(self: *const Self, offset: vk.Offset3D,
 }
 
 pub fn getTexelMemoryOffset(self: *const Self, offset: vk.Offset3D, subresource: vk.ImageSubresource) VkError!usize {
-    return self.getTexelMemoryOffsetInSubresource(offset, subresource) + try self.getSubresourceOffset(subresource.aspect_mask, subresource.mip_level, subresource.array_layer);
+    return try self.getSubresourceOffset(subresource.aspect_mask, subresource.mip_level, subresource.array_layer) + self.getTexelMemoryOffsetInSubresource(offset, subresource);
 }
 
 fn getSubresourceOffset(self: *const Self, aspect_mask: vk.ImageAspectFlags, mip_level: u32, layer: u32) VkError!usize {
@@ -485,4 +476,46 @@ pub fn getRowPitchMemSizeForMipLevel(interface: *const Interface, aspect_mask: v
     const mip_extent = self.getMipLevelExtent(mip_level);
     const format = self.interface.formatFromAspect(aspect_mask);
     return base.format.pitchMemSize(format, mip_extent.width);
+}
+
+pub inline fn mapAs(self: *const Self, comptime T: type) VkError!*T {
+    return self.mapAsWithAddedOffset(T, 0);
+}
+
+pub inline fn mapTo(self: *const Self, comptime T: type) VkError!T {
+    return self.mapToWithAddedOffset(T, 0);
+}
+
+pub inline fn mapAsSlice(self: *const Self, comptime T: type, size: usize) VkError![]T {
+    return self.mapAsSliceWithAddedOffset(T, 0, size);
+}
+
+pub inline fn mapAsWithAddedOffset(self: *const Self, comptime T: type, offset: usize) VkError!*T {
+    return self.mapAsWithOffset(T, self.interface.memory_offset + offset);
+}
+
+pub inline fn mapToWithAddedOffset(self: *const Self, comptime T: type, offset: usize) VkError!T {
+    return self.mapToWithOffset(T, self.interface.memory_offset + offset);
+}
+
+pub inline fn mapAsSliceWithAddedOffset(self: *const Self, comptime T: type, offset: usize, size: usize) VkError![]T {
+    return self.mapAsSliceWithOffset(T, self.interface.memory_offset + offset, size);
+}
+
+pub fn mapAsWithOffset(self: *const Self, comptime T: type, offset: usize) VkError!*T {
+    const memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
+    const map = @as([*]u8, @ptrCast(@alignCast(try memory.map(offset, @sizeOf(T)))))[0..@sizeOf(T)];
+    return @alignCast(std.mem.bytesAsValue(T, map));
+}
+
+pub fn mapToWithOffset(self: *const Self, comptime T: type, offset: usize) VkError!T {
+    const memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
+    const map = @as([*]u8, @ptrCast(@alignCast(try memory.map(offset, @sizeOf(T)))))[0..@sizeOf(T)];
+    return std.mem.bytesToValue(T, map);
+}
+
+pub fn mapAsSliceWithOffset(self: *const Self, comptime T: type, offset: usize, size: usize) VkError![]T {
+    const memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
+    const map = @as([*]u8, @ptrCast(@alignCast(try memory.map(offset, size))))[0..size];
+    return @alignCast(std.mem.bytesAsSlice(T, map));
 }

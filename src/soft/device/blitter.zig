@@ -70,7 +70,6 @@ pub fn clear(pixel: vk.ClearValue, format: vk.Format, dst: *SoftImage, view_form
             clamped_pixel.color.float_32[3] = std.math.clamp(pixel.color.float_32[3], min_value, 1.0);
         }
 
-        // Stencil never requires clamping, so we can check for Depth only
         if (range.aspect_mask.depth_bit) {
             clamped_pixel.depth_stencil.depth = std.math.clamp(pixel.depth_stencil.depth, min_value, 1.0);
         }
@@ -182,7 +181,7 @@ fn fastClear(clear_value: vk.ClearValue, clear_format: vk.Format, dst: *SoftImag
             (@as(u32, @intFromFloat(255.0 * b + 0.5))),
         .d32_sfloat => {
             std.debug.assert(clear_format == .d32_sfloat);
-            pack = @bitCast(d); // float reinterpreted as uint32
+            pack = @bitCast(d); // f32 reinterpreted as u32
         },
         .s8_uint => {
             std.debug.assert(clear_format == .s8_uint);
@@ -204,8 +203,6 @@ fn fastClear(clear_value: vk.ClearValue, clear_format: vk.Format, dst: *SoftImag
         .extent = .{ .width = 0, .height = 0 },
     };
 
-    const dst_memory = if (dst.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
-
     while (subresource.mip_level <= last_mip_level) : (subresource.mip_level += 1) {
         const dst_slice_pitch_bytes = dst.interface.getSliceMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level);
         const dst_row_pitch_bytes = dst.interface.getRowPitchMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level);
@@ -220,8 +217,8 @@ fn fastClear(clear_value: vk.ClearValue, clear_format: vk.Format, dst: *SoftImag
         while (subresource.array_layer <= last_layer) : (subresource.array_layer += 1) {
             for (0..@intCast(extent.depth)) |depth| {
                 const dst_texel_offset = try dst.getTexelMemoryOffset(.{ .x = area.offset.x, .y = area.offset.y, .z = @intCast(depth) }, subresource);
-                const dst_size = try dst.interface.getTotalSizeForAspect(subresource.aspect_mask) - dst_texel_offset;
-                var dst_map: []u8 = @as([*]u8, @ptrCast(try dst_memory.map(dst.interface.memory_offset + dst_texel_offset, dst_size)))[0..dst_size];
+                const dst_size = try dst.interface.getTotalSizeForAspect(subresource.aspect_mask);
+                var dst_map = try dst.mapAsSliceWithAddedOffset(u8, dst_texel_offset, dst_size);
 
                 for (0..dst.interface.samples.toInt()) |_| {
                     var dst_pixel = dst_map[0..];
@@ -584,6 +581,8 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
 
         .r32g32b32a32_sfloat => c = std.mem.bytesToValue(F32x4, map),
 
+        .s8_uint => c[0] = @floatFromInt(map[0]),
+
         else => base.unsupported("Blitter: read float from source format {any}", .{src_format}),
     }
 
@@ -594,10 +593,12 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
     switch (dst_format) {
         .r8_snorm,
         .r8_unorm,
+        .s8_uint,
         => map[0] = @intFromFloat(@round(color[0] * 255.0)),
 
         .r16_sint,
         .r16_uint,
+        .d16_unorm,
         => std.mem.bytesAsValue(u16, map).* = @intFromFloat(@round(color[0])),
 
         .r16_sfloat => std.mem.bytesAsValue(f16, map).* = @floatCast(color[0]),
@@ -606,7 +607,9 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
         .r32_uint,
         => std.mem.bytesAsValue(u32, map).* = @intFromFloat(@round(color[0])),
 
-        .r32_sfloat => std.mem.bytesAsValue(f32, map).* = color[0],
+        .r32_sfloat,
+        .d32_sfloat,
+        => std.mem.bytesAsValue(f32, map).* = color[0],
 
         .b8g8r8a8_srgb,
         .b8g8r8a8_unorm,
@@ -644,6 +647,7 @@ pub fn readInt4(map: []const u8, src_format: vk.Format) U32x4 {
     switch (src_format) {
         .r8_sint,
         .r8_uint,
+        .s8_uint,
         => c[0] = map[0],
         .r16_sint,
         .r16_uint,

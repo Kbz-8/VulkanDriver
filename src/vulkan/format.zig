@@ -4,7 +4,7 @@ const lib = @import("lib.zig");
 const zm = @import("zmath");
 
 pub fn fromAspect(format: vk.Format, aspect: vk.ImageAspectFlags) vk.Format {
-    if (aspect.color_bit or (aspect.color_bit and aspect.stencil_bit)) {
+    if (aspect.color_bit or (aspect.depth_bit and aspect.stencil_bit)) {
         return format;
     } else if (aspect.depth_bit) {
         if (format == .d16_unorm or format == .d16_unorm_s8_uint) {
@@ -20,7 +20,7 @@ pub fn fromAspect(format: vk.Format, aspect: vk.ImageAspectFlags) vk.Format {
         }
     }
     lib.unsupported("format {s}", .{@tagName(format)});
-    return format;
+    return .undefined;
 }
 
 pub fn toAspect(format: vk.Format) vk.ImageAspectFlags {
@@ -40,7 +40,7 @@ pub inline fn texelSize(format: vk.Format) usize {
     return lib.c.vkuFormatTexelBlockSize(@intCast(@intFromEnum(format)));
 }
 
-pub inline fn supportsColorAttachemendBlend(format: vk.Format) bool {
+pub fn supportsColorAttachemendBlend(format: vk.Format) bool {
     return switch (format) {
         // Vulkan 1.1 mandatory
         .r5g6b5_unorm_pack16,
