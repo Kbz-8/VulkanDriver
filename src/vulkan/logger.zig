@@ -25,7 +25,7 @@ pub fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), compti
         return;
     }
 
-    if (comptime (lib.config.logs != .debug or lib.config.logs != .verbose) and (level == .info or level == .debug)) {
+    if (comptime (lib.config.logs != .debug and lib.config.logs != .verbose) and (level == .info or level == .debug)) {
         return;
     }
 
