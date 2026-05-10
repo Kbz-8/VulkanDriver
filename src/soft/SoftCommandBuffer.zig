@@ -106,9 +106,8 @@ pub fn execute(self: *Self, device: *ExecutionDevice) void {
 }
 
 pub fn begin(interface: *Interface, _: *const vk.CommandBufferBeginInfo) VkError!void {
-    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    self.commands.clearAndFree(self.command_allocator.allocator());
-    _ = self.command_allocator.reset(.free_all);
+    // No-op
+    _ = interface;
 }
 
 pub fn end(interface: *Interface) VkError!void {
