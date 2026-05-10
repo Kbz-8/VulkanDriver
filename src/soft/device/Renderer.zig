@@ -110,7 +110,7 @@ pub fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_verte
     defer if (comptime base.config.logs != .none) {
         const duration = timer.untilNow(io, .real);
         const ms = duration.toMicroseconds();
-        std.log.scoped(.SoftwareRenderer).debug("Drawcall stats:\n>   Took {d}us\n>   Allocated {d} KB", .{ ms, @divTrunc(arena.queryCapacity(), 1000) });
+        std.log.scoped(.SoftwareRenderer).warn("Drawcall stats:\n>   Took {d}us\n>   Allocated {d} KB", .{ ms, @divTrunc(arena.queryCapacity(), 1000) });
     };
 
     self.vertexShaderStage(allocator, &draw_call, vertex_count, instance_count, first_vertex, first_instance, null) catch |err| {
@@ -137,7 +137,7 @@ pub fn drawIndexed(self: *Self, index_count: usize, instance_count: usize, first
     defer if (comptime base.config.logs != .none) {
         const duration = timer.untilNow(io, .real);
         const ms = duration.toMicroseconds();
-        std.log.scoped(.SoftwareRenderer).debug("Drawcall indexed stats:\n>   Took {d}us\n>   Allocated {d} KB", .{ ms, @divTrunc(arena.queryCapacity(), 1000) });
+        std.log.scoped(.SoftwareRenderer).warn("Drawcall indexed stats:\n>   Took {d}us\n>   Allocated {d} KB", .{ ms, @divTrunc(arena.queryCapacity(), 1000) });
     };
 
     self.vertexShaderStage(allocator, &draw_call, index_count, instance_count, 0, first_instance, indices) catch |err| {

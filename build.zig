@@ -34,6 +34,7 @@ const RunningMode = enum {
 const LogType = enum {
     none,
     standard,
+    debug,
     verbose,
 };
 

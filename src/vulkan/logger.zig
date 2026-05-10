@@ -25,6 +25,10 @@ pub fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), compti
         return;
     }
 
+    if (comptime (lib.config.logs != .debug or lib.config.logs != .verbose) and (level == .info or level == .debug)) {
+        return;
+    }
+
     const io = std.Options.debug_io;
 
     const scope_name = @tagName(scope);
