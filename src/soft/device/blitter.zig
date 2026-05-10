@@ -583,7 +583,7 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
 
         .s8_uint => c[0] = @floatFromInt(map[0]),
 
-        else => base.unsupported("Blitter: read float from source format {any}", .{src_format}),
+        else => {}, //base.unsupported("Blitter: read float from source format {any}", .{src_format}),
     }
 
     return c;
@@ -637,7 +637,7 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
 
         .r32g32b32a32_sfloat => std.mem.bytesAsValue(F32x4, map).* = color,
 
-        else => base.unsupported("Blitter: write float to destination format {any}", .{dst_format}),
+        else => {}, //base.unsupported("Blitter: write float to destination format {any}", .{dst_format}),
     }
 }
 
@@ -678,7 +678,7 @@ pub fn readInt4(map: []const u8, src_format: vk.Format) U32x4 {
         .r32g32b32a32_uint,
         => c = std.mem.bytesToValue(U32x4, map),
 
-        else => base.unsupported("Blitter: read int from source format {any}", .{src_format}),
+        else => {}, //base.unsupported("Blitter: read int from source format {any}", .{src_format}),
     }
 
     return c;
@@ -720,6 +720,6 @@ pub fn writeInt4(color: U32x4, map: []u8, dst_format: vk.Format) void {
         .r32g32b32a32_uint,
         => std.mem.bytesAsValue(U32x4, map).* = color,
 
-        else => base.unsupported("Blitter: write int to destination format {any}", .{dst_format}),
+        else => {}, //base.unsupported("Blitter: write int to destination format {any}", .{dst_format}),
     }
 }
