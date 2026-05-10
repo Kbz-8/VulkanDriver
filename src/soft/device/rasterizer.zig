@@ -167,8 +167,6 @@ pub fn drawTriangleFilled(allocator: std.mem.Allocator, fragments: *std.ArrayLis
                 .color = zm.f32x4(1.0, 1.0, 1.0, 1.0),
                 .inputs = try interpolateVertexOutputs(allocator, v0, v1, v2, b0, b1, b2),
             }) catch return VkError.OutOfDeviceMemory;
-            if (fragments.items.len > 64_000)
-                return VkError.MemoryFootprintTooBigDrv;
         }
     }
 }

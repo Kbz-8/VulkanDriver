@@ -19,6 +19,7 @@ pub const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
 pub const VkError = errors.VkError;
 pub const VulkanAllocator = @import("VulkanAllocator.zig");
 pub const RefCounter = @import("RefCounter.zig");
+pub const SpinMutex = @import("SpinMutex.zig");
 
 pub const CommandBuffer = @import("CommandBuffer.zig");
 pub const Device = @import("Device.zig");

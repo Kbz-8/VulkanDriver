@@ -8,6 +8,7 @@ const spv = @import("spv");
 pub const F32x4 = zm.F32x4;
 
 const PipelineState = @import("Device.zig").PipelineState;
+const BoundedArenaAllocator = @import("BoundedArenaAllocator.zig");
 
 const SoftBuffer = @import("../SoftBuffer.zig");
 const SoftDescriptorSet = @import("../SoftDescriptorSet.zig");
@@ -25,6 +26,8 @@ const fragment_dispatcher = @import("fragment_dispatcher.zig");
 const VkError = base.VkError;
 
 const Self = @This();
+
+const @"1GiB" = 1_073_741_824;
 
 pub const VertexBuffer = struct {
     buffer: *const SoftBuffer,
@@ -100,7 +103,7 @@ pub fn init(device: *SoftDevice, state: *PipelineState) Self {
 pub fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize) VkError!void {
     const io = self.device.interface.io();
 
-    var arena: std.heap.ArenaAllocator = .init(self.device.device_allocator.allocator());
+    var arena: BoundedArenaAllocator = .init(self.device.device_allocator.allocator(), @"1GiB");
     defer arena.deinit();
     const allocator = arena.allocator();
 
@@ -131,7 +134,7 @@ pub fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_verte
 pub fn drawIndexed(self: *Self, index_count: usize, instance_count: usize, first_index: usize, first_instance: usize, vertex_offset: i32) VkError!void {
     const io = self.device.interface.io();
 
-    var arena: std.heap.ArenaAllocator = .init(self.device.device_allocator.allocator());
+    var arena: BoundedArenaAllocator = .init(self.device.device_allocator.allocator(), @"1GiB");
     defer arena.deinit();
     const allocator = arena.allocator();
 

@@ -4,29 +4,9 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 
-/// Atomic based spin mutex
-const AtomicMutex = struct {
-    mutex: std.atomic.Mutex = .unlocked,
+const SpinMutex = @import("SpinMutex.zig");
 
-    fn lock(self: *@This()) void {
-        if (self.mutex.tryLock()) {
-            @branchHint(.likely);
-            return;
-        }
-
-        while (true) {
-            if (self.mutex.tryLock()) {
-                return;
-            }
-        }
-    }
-
-    fn unlock(self: *@This()) void {
-        self.mutex.unlock();
-    }
-};
-
-var mutex: AtomicMutex = .{};
+var mutex: SpinMutex = .{};
 var child_allocator: std.mem.Allocator = if (builtin.link_libc) std.heap.c_allocator else std.heap.smp_allocator;
 
 pub const fallback_host_allocator: Allocator = .{
