@@ -68,8 +68,8 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
         .max_texel_buffer_elements = 65536,
         .max_uniform_buffer_range = 16384,
         .max_storage_buffer_range = 134217728,
-        .max_push_constants_size = 128,
-        .max_memory_allocation_count = lib.MAX_ALLOCATION_COUNT,
+        .max_push_constants_size = lib.PUSH_CONSTANT_SIZE,
+        .max_memory_allocation_count = std.math.maxInt(u32),
         .max_sampler_allocation_count = 4096,
         .buffer_image_granularity = 131072,
         .sparse_address_space_size = 0,
@@ -180,7 +180,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
     };
     interface.mem_props.memory_heap_count = 1;
     interface.mem_props.memory_heaps[0] = .{
-        .size = lib.PHYSICAL_DEVICE_HEAP_SIZE,
+        .size = std.process.totalSystemMemory() catch lib.PHYSICAL_DEVICE_FALLBACK_HEAP_SIZE,
         .flags = .{ .device_local_bit = true },
     };
 
@@ -189,8 +189,8 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
         .shader_float_64 = .true,
         .shader_int_64 = .true,
         .shader_int_16 = .true,
-        .texture_compression_etc2 = .true,
-        .texture_compression_bc = .true,
+        .texture_compression_etc2 = .false,
+        .texture_compression_bc = .false,
     };
 
     var queue_family_props = [_]vk.QueueFamilyProperties{

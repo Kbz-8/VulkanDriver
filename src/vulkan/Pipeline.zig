@@ -1,12 +1,13 @@
 const std = @import("std");
 const vk = @import("vulkan");
 
-const NonDispatchable = @import("NonDispatchable.zig");
+const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
 
 const VkError = @import("error_set.zig").VkError;
 
 const Device = @import("Device.zig");
 const PipelineCache = @import("PipelineCache.zig");
+const PipelineLayout = @import("PipelineLayout.zig");
 
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .pipeline;
@@ -28,6 +29,7 @@ owner: *Device,
 vtable: *const VTable,
 bind_point: vk.PipelineBindPoint,
 stages: vk.ShaderStageFlags,
+layout: *PipelineLayout,
 mode: union(enum) {
     compute: struct {},
     graphics: struct {
@@ -55,20 +57,28 @@ pub const VTable = struct {
 };
 
 pub fn initCompute(device: *Device, allocator: std.mem.Allocator, cache: ?*PipelineCache, info: *const vk.ComputePipelineCreateInfo) VkError!Self {
-    _ = allocator;
     _ = cache;
+
+    const layout = try NonDispatchable(PipelineLayout).fromHandleObject(info.layout);
+    layout.ref();
+    errdefer layout.unref(allocator);
 
     return .{
         .owner = device,
         .vtable = undefined,
         .bind_point = .compute,
         .stages = info.stage.stage,
+        .layout = layout,
         .mode = .{ .compute = .{} },
     };
 }
 
 pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*PipelineCache, info: *const vk.GraphicsPipelineCreateInfo) VkError!Self {
     _ = cache;
+
+    const layout = try NonDispatchable(PipelineLayout).fromHandleObject(info.layout);
+    layout.ref();
+    errdefer layout.unref(allocator);
 
     var stages: vk.ShaderStageFlags = .{};
     if (info.p_stages) |p_stages| {
@@ -82,6 +92,7 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
         .vtable = undefined,
         .bind_point = .graphics,
         .stages = stages,
+        .layout = layout,
         .mode = .{
             .graphics = .{
                 .input_assembly = .{
@@ -172,5 +183,6 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
             }
         },
     }
+    self.layout.unref(allocator);
     self.vtable.destroy(self, allocator);
 }

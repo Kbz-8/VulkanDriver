@@ -39,6 +39,7 @@ inline fn run(data: RunData) !void {
 
     const shader = data.pipeline.stages.getPtrAssertContains(.vertex);
     const rt = &shader.runtimes[data.batch_id];
+    try rt.populatePushConstants(data.renderer.state.push_constant_blob[0..]);
 
     const entry = try rt.getEntryPointByName(shader.entry);
 

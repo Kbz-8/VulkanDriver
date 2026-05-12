@@ -1957,20 +1957,14 @@ pub export fn strollCmdPipelineBarrier(
     ) catch |err| return errorLogger(err);
 }
 
-pub export fn strollCmdPushConstants(p_cmd: vk.CommandBuffer, layout: vk.PipelineLayout, flags: vk.ShaderStageFlags, offset: u32, size: u32, values: *const anyopaque) callconv(vk.vulkan_call_conv) void {
+pub export fn strollCmdPushConstants(p_cmd: vk.CommandBuffer, layout: vk.PipelineLayout, flags: vk.ShaderStageFlags, offset: u32, size: u32, data: [*]const u8) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkCmdPushConstants);
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+    cmd.pushConstants(flags, offset, data[0..size]) catch |err| return errorLogger(err);
 
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = layout;
-    _ = flags;
-    _ = offset;
-    _ = size;
-    _ = values;
+    _ = layout; // Pipelines embed their layout which is more trustworthy
 }
 
 pub export fn strollCmdResetQueryPool(p_cmd: vk.CommandBuffer, p_pool: vk.QueryPool, first: u32, count: u32) callconv(vk.vulkan_call_conv) void {

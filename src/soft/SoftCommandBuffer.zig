@@ -68,6 +68,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .executeCommands = executeCommands,
         .fillBuffer = fillBuffer,
         .pipelineBarrier = pipelineBarrier,
+        .pushConstants = pushConstants,
         .reset = reset,
         .resetEvent = resetEvent,
         .setEvent = setEvent,
@@ -150,7 +151,7 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
                 }
 
                 switch (desc.stencil_load_op) {
-                    .clear => clear_mask = .{ .stencil_bit = true },
+                    .clear => clear_mask.stencil_bit = true,
                     else => {},
                 }
 
@@ -811,6 +812,41 @@ pub fn pipelineBarrier(interface: *Interface, src_stage: vk.PipelineStageFlags, 
     _ = memory_barriers;
     _ = buffer_barriers;
     _ = image_barriers;
+}
+
+pub fn pushConstants(interface: *Interface, stages: vk.ShaderStageFlags, offset: u32, blob: []const u8) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        stages: vk.ShaderStageFlags,
+        offset: u32,
+        blob: []const u8,
+
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+
+            const size = @min(lib.PUSH_CONSTANT_SIZE - impl.offset, impl.blob.len);
+            // TODO: pipeline layout offset
+            if (impl.stages.vertex_bit or impl.stages.fragment_bit) {
+                @memcpy(device.pipeline_states[ExecutionDevice.GRAPHICS_PIPELINE_STATE].push_constant_blob[impl.offset..size], impl.blob[0..size]);
+            }
+            if (impl.stages.compute_bit) {
+                @memcpy(device.pipeline_states[ExecutionDevice.COMPUTE_PIPELINE_STATE].push_constant_blob[impl.offset..size], impl.blob[0..size]);
+            }
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .stages = stages,
+        .offset = offset,
+        .blob = allocator.dupe(u8, blob) catch return VkError.OutOfHostMemory, // Will be freed on cmdbuf reset or destroy
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
 pub fn resetEvent(interface: *Interface, event: *base.Event, stage: vk.PipelineStageFlags) VkError!void {

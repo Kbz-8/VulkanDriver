@@ -21,6 +21,8 @@ fn interpolateF32x4(value0: F32x4, value1: F32x4, value2: F32x4, b0: f32, b1: f3
     return (value0 * @as(F32x4, @splat(b0))) + (value1 * @as(F32x4, @splat(b1))) + (value2 * @as(F32x4, @splat(b2)));
 }
 
+var calls: usize = 0;
+
 fn interpolateVertexOutputs(
     allocator: std.mem.Allocator,
     v0: *const Renderer.Vertex,
@@ -43,6 +45,8 @@ fn interpolateVertexOutputs(
         }
 
         const len = @min(out0.blob.len, out1.blob.len, out2.blob.len);
+        calls += 1;
+        std.debug.print("test {d}\n", .{calls});
         const input = allocator.alloc(u8, len) catch return VkError.OutOfDeviceMemory;
 
         var byte_index: usize = 0;

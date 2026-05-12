@@ -30,16 +30,16 @@
             .hash = "cpuinfo-0.0.1-RLgIQYrTMgGqfQMOd1nAa2EuglXOh5gR9bNzwMzQTemt",
             .lazy = true,
         },
-        .SPIRV_Interpreter = .{
-            .url = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#9d20363ae852e1b400cb62508cb672bcfd5b3716",
-            .hash = "SPIRV_Interpreter-0.0.1-ajmpn6QuBQDDfo3uv6HauRc4DLNp2b0pZkfwyuzF-w9d",
-            .lazy = true,
-        },
         //.SPIRV_Interpreter = .{
-        //    // For development
-        //    .path = "../SPIRV-Interpreter",
+        //    .url = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#ca33cfe3e997503208f031d270018c10d0611989",
+        //    .hash = "SPIRV_Interpreter-0.0.1-ajmpnwBCBQBqUKcAUTwaaxbvYmX2s0KFzF_9Bc_ntqs4",
         //    .lazy = true,
         //},
+        .SPIRV_Interpreter = .{
+            // For development
+            .path = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#3139f3cfdd844818ab42ebce1d430a1f524025d5",
+            .lazy = true,
+        },
     },
 
     .paths = .{

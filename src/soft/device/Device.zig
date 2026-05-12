@@ -22,6 +22,7 @@ pub const COMPUTE_PIPELINE_STATE = 1;
 pub const PipelineState = struct {
     pipeline: ?*SoftPipeline,
     sets: [base.VULKAN_MAX_DESCRIPTOR_SETS]?*SoftDescriptorSet,
+    push_constant_blob: [lib.PUSH_CONSTANT_SIZE]u8,
     data: union {
         compute: struct {},
         graphics: struct {
@@ -43,6 +44,7 @@ pub fn init(self: *Self, device: *SoftDevice) void {
         state.* = .{
             .pipeline = null,
             .sets = [_]?*SoftDescriptorSet{null} ** base.VULKAN_MAX_DESCRIPTOR_SETS,
+            .push_constant_blob = @splat(0),
             .data = switch (i) {
                 GRAPHICS_PIPELINE_STATE => .{
                     .graphics = .{

@@ -62,6 +62,7 @@ pub const DispatchTable = struct {
     executeCommands: *const fn (*Self, *Self) VkError!void,
     fillBuffer: *const fn (*Self, *Buffer, vk.DeviceSize, vk.DeviceSize, u32) VkError!void,
     pipelineBarrier: *const fn (*Self, vk.PipelineStageFlags, vk.PipelineStageFlags, vk.DependencyFlags, []const vk.MemoryBarrier, []const vk.BufferMemoryBarrier, []const vk.ImageMemoryBarrier) VkError!void,
+    pushConstants: *const fn (*Self, vk.ShaderStageFlags, u32, []const u8) VkError!void,
     reset: *const fn (*Self, vk.CommandBufferResetFlags) VkError!void,
     resetEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
     setEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
@@ -251,6 +252,10 @@ pub inline fn pipelineBarrier(
     image_barriers: []const vk.ImageMemoryBarrier,
 ) VkError!void {
     try self.dispatch_table.pipelineBarrier(self, src_stage, dst_stage, dependency, memory_barriers, buffer_barriers, image_barriers);
+}
+
+pub inline fn pushConstants(self: *Self, stages: vk.ShaderStageFlags, offset: u32, blob: []const u8) VkError!void {
+    try self.dispatch_table.pushConstants(self, stages, offset, blob);
 }
 
 pub inline fn resetEvent(self: *Self, event: *Event, stage: vk.PipelineStageFlags) VkError!void {
