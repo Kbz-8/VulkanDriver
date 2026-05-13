@@ -72,6 +72,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .reset = reset,
         .resetEvent = resetEvent,
         .setEvent = setEvent,
+        .setScissor = setScissor,
         .setViewport = setViewport,
         .waitEvent = waitEvent,
     };
@@ -895,6 +896,31 @@ pub fn setEvent(interface: *Interface, event: *base.Event, stage: vk.PipelineSta
     errdefer allocator.destroy(cmd);
     cmd.* = .{
         .event = event,
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn setScissor(interface: *Interface, first: u32, scissor: []const vk.Rect2D) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        first: u32,
+        scissor: []const vk.Rect2D,
+
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            device.renderer.dynamic_state.scissor = impl.scissor; // Unsafe
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .first = first,
+        .scissor = allocator.dupe(vk.Rect2D, scissor) catch return VkError.OutOfHostMemory, // Will be freed on cmdbuf reset or destroy
     };
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }

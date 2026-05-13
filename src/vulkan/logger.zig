@@ -59,7 +59,7 @@ pub fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), compti
     file.lock(io, .exclusive) catch {};
     defer file.unlock(io);
 
-    const now = std.Io.Timestamp.now(io, .cpu_process).toMicroseconds();
+    const now = std.Io.Timestamp.now(io, .real).toMicroseconds();
 
     const now_us: u16 = @intCast(@mod(now, 1000));
     const now_ms: u16 = @intCast(@mod(@divTrunc(now, 1000), std.time.ms_per_s));

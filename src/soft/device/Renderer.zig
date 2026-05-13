@@ -2,28 +2,25 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 const zm = base.zm;
-const lib = @import("../lib.zig");
 const spv = @import("spv");
 
-pub const F32x4 = zm.F32x4;
-
 const PipelineState = @import("Device.zig").PipelineState;
-const BoundedArenaAllocator = @import("BoundedArenaAllocator.zig");
+const BoundedAllocator = @import("BoundedAllocator.zig");
 
 const SoftBuffer = @import("../SoftBuffer.zig");
 const SoftDescriptorSet = @import("../SoftDescriptorSet.zig");
 const SoftDevice = @import("../SoftDevice.zig");
 const SoftFramebuffer = @import("../SoftFramebuffer.zig");
-const SoftImage = @import("../SoftImage.zig");
 const SoftPipeline = @import("../SoftPipeline.zig");
 const SoftRenderPass = @import("../SoftRenderPass.zig");
 
 const blitter = @import("blitter.zig");
 const rasterizer = @import("rasterizer.zig");
 const vertex_dispatcher = @import("vertex_dispatcher.zig");
-const fragment_dispatcher = @import("fragment_dispatcher.zig");
+const clip = @import("clip.zig");
 
 const VkError = base.VkError;
+const F32x4 = zm.F32x4;
 
 const Self = @This();
 
@@ -43,7 +40,7 @@ pub const IndexBuffer = struct {
 
 pub const DynamicState = struct {
     viewports: ?[]const vk.Viewport,
-    scissor: ?[]vk.Rect2D,
+    scissor: ?[]const vk.Rect2D,
     line_width: ?f32,
 };
 
@@ -55,20 +52,19 @@ pub const Vertex = struct {
     },
 };
 
-pub const Fragment = struct {
-    position: F32x4,
-    color: F32x4,
-    inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][]u8,
-};
-
 pub const DrawCall = struct {
+    renderer: *Self,
     vertices: []Vertex,
-    fragments: []Fragment,
 
-    pub fn init(allocator: std.mem.Allocator, vertex_count: usize, instance_count: usize) VkError!@This() {
+    viewport: vk.Viewport,
+    scissor: vk.Rect2D,
+
+    pub fn init(allocator: std.mem.Allocator, vertex_count: usize, instance_count: usize, renderer: *Self) VkError!@This() {
         const self: @This() = .{
             .vertices = allocator.alloc(Vertex, vertex_count * instance_count) catch return VkError.OutOfDeviceMemory,
-            .fragments = undefined,
+            .renderer = renderer,
+            .viewport = undefined,
+            .scissor = undefined,
         };
 
         for (self.vertices) |*vertex| {
@@ -100,20 +96,35 @@ pub fn init(device: *SoftDevice, state: *PipelineState) Self {
     };
 }
 
+pub fn deinit(self: *Self) void {
+    _ = self;
+}
+
 pub fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize) VkError!void {
+    var bounded_allocator: BoundedAllocator = .init(self.device.device_allocator.allocator(), @"1GiB");
+    try self.drawCall(&bounded_allocator, vertex_count, instance_count, first_vertex, first_instance, null);
+}
+
+pub fn drawIndexed(self: *Self, index_count: usize, instance_count: usize, first_index: usize, first_instance: usize, vertex_offset: i32) VkError!void {
+    var bounded_allocator: BoundedAllocator = .init(self.device.device_allocator.allocator(), @"1GiB");
+    const allocator = bounded_allocator.allocator();
+
+    const indices = try self.readIndexBuffer(allocator, index_count, first_index, vertex_offset);
+
+    try self.drawCall(&bounded_allocator, index_count, instance_count, 0, first_instance, indices);
+}
+
+fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize, indices: ?[]const i32) VkError!void {
     const io = self.device.interface.io();
+    const allocator = bounded_allocator.allocator();
 
-    var arena: BoundedArenaAllocator = .init(self.device.device_allocator.allocator(), @"1GiB");
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    var draw_call = try DrawCall.init(allocator, vertex_count, instance_count);
+    var draw_call = try DrawCall.init(allocator, vertex_count, instance_count, self);
 
     const timer = std.Io.Timestamp.now(io, .real);
     defer if (comptime base.config.logs != .none) {
         const duration = timer.untilNow(io, .real);
         const ms = duration.toMicroseconds();
-        const memory_footprint = @divTrunc(arena.queryCapacity(), 1000);
+        const memory_footprint = @divTrunc(bounded_allocator.queryFootprint(), 1000);
         const logger = std.log.scoped(.SoftwareRenderer);
         if (memory_footprint > 256_000)
             logger.warn("Drawcall stats:\n>   Took {d}us\n>   Allocated {d} KB", .{ ms, memory_footprint })
@@ -121,50 +132,18 @@ pub fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_verte
             logger.debug("Drawcall stats:\n>   Took {d}us\n>   Allocated {d} KB", .{ ms, memory_footprint });
     };
 
-    self.vertexShaderStage(allocator, &draw_call, vertex_count, instance_count, first_vertex, first_instance, null) catch |err| {
+    self.vertexShaderStage(allocator, &draw_call, vertex_count, instance_count, first_vertex, first_instance, indices) catch |err| {
         std.log.scoped(.@"Vertex stage").err("catched a '{s}'", .{@errorName(err)});
         if (@errorReturnTrace()) |trace| {
             std.debug.dumpErrorReturnTrace(trace);
         }
+        return VkError.Unknown;
     };
 
-    try self.postVertexDraw(allocator, &draw_call);
-}
+    draw_call.viewport = try self.resolveViewport(0);
+    draw_call.scissor = try self.resolveScissor(0);
 
-pub fn drawIndexed(self: *Self, index_count: usize, instance_count: usize, first_index: usize, first_instance: usize, vertex_offset: i32) VkError!void {
-    const io = self.device.interface.io();
-
-    var arena: BoundedArenaAllocator = .init(self.device.device_allocator.allocator(), @"1GiB");
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    var draw_call = try DrawCall.init(allocator, index_count, instance_count);
-    const indices = try self.readIndexBuffer(allocator, index_count, first_index, vertex_offset);
-
-    const timer = std.Io.Timestamp.now(io, .real);
-    defer if (comptime base.config.logs != .none) {
-        const duration = timer.untilNow(io, .real);
-        const ms = duration.toMicroseconds();
-        const memory_footprint = @divTrunc(arena.queryCapacity(), 1000);
-        const logger = std.log.scoped(.SoftwareRenderer);
-        if (memory_footprint > 256_000)
-            logger.warn("Drawcall indexed stats:\n>   Took {d}us\n>   Allocated {d} KB", .{ ms, memory_footprint })
-        else
-            logger.debug("Drawcall indexed stats:\n>   Took {d}us\n>   Allocated {d} KB", .{ ms, memory_footprint });
-    };
-
-    self.vertexShaderStage(allocator, &draw_call, index_count, instance_count, 0, first_instance, indices) catch |err| {
-        std.log.scoped(.@"Vertex stage").err("catched a '{s}'", .{@errorName(err)});
-        if (@errorReturnTrace()) |trace| {
-            std.debug.dumpErrorReturnTrace(trace);
-        }
-    };
-
-    try self.postVertexDraw(allocator, &draw_call);
-}
-
-pub fn deinit(self: *Self) void {
-    _ = self;
+    try rasterizer.processThenFragmentStage(self, allocator, &draw_call);
 }
 
 fn vertexShaderStage(self: *Self, allocator: std.mem.Allocator, draw_call: *DrawCall, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize, indices: ?[]const i32) !void {
@@ -176,7 +155,6 @@ fn vertexShaderStage(self: *Self, allocator: std.mem.Allocator, draw_call: *Draw
         for (0..@min(batch_size, vertex_count)) |batch_id| {
             const run_data: vertex_dispatcher.RunData = .{
                 .allocator = allocator,
-                .renderer = self,
                 .pipeline = pipeline,
                 .batch_id = batch_id,
                 .batch_size = batch_size,
@@ -190,167 +168,6 @@ fn vertexShaderStage(self: *Self, allocator: std.mem.Allocator, draw_call: *Draw
 
             wg.async(self.device.interface.io(), vertex_dispatcher.runWrapper, .{run_data});
         }
-    }
-    wg.await(self.device.interface.io()) catch return VkError.DeviceLost;
-}
-
-fn postVertexDraw(self: *Self, allocator: std.mem.Allocator, draw_call: *DrawCall) VkError!void {
-    const render_target_view: *base.ImageView = (self.framebuffer orelse return).interface.attachments[0];
-    const render_target: *SoftImage = @alignCast(@fieldParentPtr("interface", render_target_view.image));
-
-    try self.primitiveAssemblyStage(draw_call);
-    try self.rasterizationStage(allocator, draw_call);
-
-    self.fragmentShaderStage(draw_call) catch |err| {
-        std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
-        if (@errorReturnTrace()) |trace| {
-            std.debug.dumpErrorReturnTrace(trace);
-        }
-    };
-
-    for (draw_call.fragments) |fragment| {
-        try render_target.writeFloat4(
-            .{
-                .x = @intFromFloat(fragment.position[0]),
-                .y = @intFromFloat(fragment.position[1]),
-                .z = 0, // FIXME
-            },
-            .{
-                .aspect_mask = render_target_view.subresource_range.aspect_mask,
-                .mip_level = render_target_view.subresource_range.base_mip_level,
-                .array_layer = render_target_view.subresource_range.base_array_layer,
-            },
-            render_target_view.format,
-            fragment.color,
-        );
-    }
-}
-
-fn primitiveAssemblyStage(self: *Self, draw_call: *DrawCall) VkError!void {
-    const viewport = blk: {
-        const pipeline_data = &(self.state.pipeline orelse return VkError.InvalidPipelineDrv).interface.mode.graphics;
-        if (pipeline_data.dynamic_state.viewport) {
-            if (self.dynamic_state.viewports) |viewports|
-                break :blk viewports[0];
-        }
-        if (pipeline_data.viewport_state.viewports) |viewports|
-            break :blk viewports[0];
-        return VkError.Unknown;
-    };
-
-    for (draw_call.vertices) |*vertex| {
-        const x = vertex.position[0];
-        const y = vertex.position[1];
-        const z = vertex.position[2];
-        const w = vertex.position[3];
-
-        // Perspective division.
-        const x_ndc = x / w;
-        const y_ndc = y / w;
-        const z_ndc = z / w;
-
-        const p_x = viewport.width;
-        const p_y = viewport.height;
-        const p_z = viewport.max_depth - viewport.min_depth;
-
-        const o_x = viewport.x + viewport.width / 2.0;
-        const o_y = viewport.y + viewport.height / 2.0;
-        const o_z = viewport.min_depth;
-
-        const x_screen = ((p_x / 2.0) * x_ndc) + o_x;
-        const y_screen = ((p_y / 2.0) * y_ndc) + o_y;
-        const z_screen = (p_z * z_ndc) + o_z;
-
-        vertex.position = zm.f32x4(x_screen, y_screen, z_screen, 1.0);
-    }
-}
-
-fn rasterizationStage(self: *Self, allocator: std.mem.Allocator, draw_call: *DrawCall) VkError!void {
-    var fragments: std.ArrayList(Fragment) = .empty;
-
-    const pipeline_data = (self.state.pipeline orelse return VkError.InvalidHandleDrv).interface.mode.graphics;
-    const topology = pipeline_data.input_assembly.topology;
-    switch (topology) {
-        .triangle_list => for (0..@divTrunc(draw_call.vertices.len, 3)) |triangle_index| {
-            const first_vertex = triangle_index * 3;
-            const v0 = &draw_call.vertices[first_vertex + 0];
-            const v1 = &draw_call.vertices[first_vertex + 1];
-            const v2 = &draw_call.vertices[first_vertex + 2];
-
-            try self.rasterizeTriangle(allocator, &fragments, v0, v1, v2, v0, v1, v2);
-        },
-        .triangle_fan => if (draw_call.vertices.len >= 3) {
-            const v0 = &draw_call.vertices[0];
-            for (1..(draw_call.vertices.len - 1)) |vertex_index| {
-                const v1 = &draw_call.vertices[vertex_index];
-                const v2 = &draw_call.vertices[vertex_index + 1];
-
-                try self.rasterizeTriangle(allocator, &fragments, v0, v1, v2, v0, v1, v2);
-            }
-        },
-        .triangle_strip => if (draw_call.vertices.len >= 3) {
-            for (0..(draw_call.vertices.len - 2)) |vertex_index| {
-                const v0 = &draw_call.vertices[vertex_index + 0];
-                const v1 = &draw_call.vertices[vertex_index + 1];
-                const v2 = &draw_call.vertices[vertex_index + 2];
-
-                if ((vertex_index & 1) == 0) {
-                    try self.rasterizeTriangle(allocator, &fragments, v0, v1, v2, v0, v1, v2);
-                } else {
-                    try self.rasterizeTriangle(allocator, &fragments, v0, v1, v2, v1, v0, v2);
-                }
-            }
-        },
-        else => base.unsupported("primitive topology {any}", .{topology}),
-    }
-
-    draw_call.fragments = fragments.toOwnedSlice(allocator) catch return VkError.OutOfDeviceMemory;
-}
-
-fn rasterizeTriangle(
-    self: *Self,
-    allocator: std.mem.Allocator,
-    fragments: *std.ArrayList(Fragment),
-    v0: *Vertex,
-    v1: *Vertex,
-    v2: *Vertex,
-    cull_v0: *const Vertex,
-    cull_v1: *const Vertex,
-    cull_v2: *const Vertex,
-) VkError!void {
-    if (try self.triangleIsCulled(cull_v0, cull_v1, cull_v2))
-        return;
-
-    const pipeline_data = (self.state.pipeline orelse return VkError.InvalidHandleDrv).interface.mode.graphics;
-    switch (pipeline_data.rasterization.polygon_mode) {
-        .fill => try rasterizer.drawTriangleFilled(allocator, fragments, v0, v1, v2),
-        .line => {
-            try rasterizer.drawLineBresenham(allocator, fragments, v0, v1);
-            try rasterizer.drawLineBresenham(allocator, fragments, v1, v2);
-            try rasterizer.drawLineBresenham(allocator, fragments, v2, v0);
-        },
-        .point => {},
-        else => base.unsupported("polygon mode {any}", .{pipeline_data.rasterization.polygon_mode}),
-    }
-}
-
-fn fragmentShaderStage(self: *Self, draw_call: *DrawCall) !void {
-    const pipeline = self.state.pipeline orelse return;
-    const batch_size = (pipeline.stages.getPtr(.fragment) orelse return).runtimes.len;
-    const fragment_count = draw_call.fragments.len;
-
-    var wg: std.Io.Group = .init;
-    for (0..@min(batch_size, fragment_count)) |batch_id| {
-        const run_data: fragment_dispatcher.RunData = .{
-            .renderer = self,
-            .pipeline = pipeline,
-            .batch_id = batch_id,
-            .batch_size = batch_size,
-            .fragment_count = fragment_count,
-            .draw_call = draw_call,
-        };
-
-        wg.async(self.device.interface.io(), fragment_dispatcher.runWrapper, .{run_data});
     }
     wg.await(self.device.interface.io()) catch return VkError.DeviceLost;
 }
@@ -392,37 +209,44 @@ fn indexTypeSize(index_type: vk.IndexType) ?usize {
     };
 }
 
-fn triangleArea2(v0: *const Vertex, v1: *const Vertex, v2: *const Vertex) f32 {
-    const x0 = v0.position[0];
-    const y0 = v0.position[1];
-    const x1 = v1.position[0];
-    const y1 = v1.position[1];
-    const x2 = v2.position[0];
-    const y2 = v2.position[1];
+fn resolveViewport(self: *Self, viewport_index: usize) VkError!vk.Viewport {
+    const pipeline_data =
+        &(self.state.pipeline orelse return VkError.InvalidPipelineDrv).interface.mode.graphics;
 
-    return ((x1 - x0) * (y2 - y0)) - ((y1 - y0) * (x2 - x0));
+    if (pipeline_data.dynamic_state.viewport) {
+        if (self.dynamic_state.viewports) |viewports| {
+            if (viewport_index < viewports.len)
+                return viewports[viewport_index];
+        }
+
+        return VkError.Unknown;
+    }
+
+    if (pipeline_data.viewport_state.viewports) |viewports| {
+        if (viewport_index < viewports.len)
+            return viewports[viewport_index];
+    }
+
+    return VkError.Unknown;
 }
 
-fn triangleIsCulled(self: *Self, v0: *const Vertex, v1: *const Vertex, v2: *const Vertex) VkError!bool {
-    const pipeline_data = (self.state.pipeline orelse return VkError.InvalidHandleDrv).interface.mode.graphics;
-    const rasterization = pipeline_data.rasterization;
-    const cull_mode = rasterization.cull_mode;
+fn resolveScissor(self: *Self, scissor_index: usize) VkError!vk.Rect2D {
+    const pipeline_data =
+        &(self.state.pipeline orelse return VkError.InvalidPipelineDrv).interface.mode.graphics;
 
-    if (!cull_mode.front_bit and !cull_mode.back_bit)
-        return false;
+    if (pipeline_data.dynamic_state.scissor) {
+        if (self.dynamic_state.scissor) |scissor| {
+            if (scissor_index < scissor.len)
+                return scissor[scissor_index];
+        }
 
-    if (cull_mode.front_bit and cull_mode.back_bit)
-        return true;
+        return VkError.Unknown;
+    }
 
-    const area = triangleArea2(v0, v1, v2);
-    if (area == 0.0)
-        return true;
+    if (pipeline_data.viewport_state.scissor) |scissor| {
+        if (scissor_index < scissor.len)
+            return scissor[scissor_index];
+    }
 
-    const front_face = switch (rasterization.front_face) {
-        .counter_clockwise => area < 0.0,
-        .clockwise => area > 0.0,
-        else => return false,
-    };
-
-    return (cull_mode.front_bit and front_face) or (cull_mode.back_bit and !front_face);
+    return VkError.Unknown;
 }

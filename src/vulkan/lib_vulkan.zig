@@ -2083,13 +2083,7 @@ pub export fn strollCmdSetScissor(p_cmd: vk.CommandBuffer, first: u32, count: u3
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = first;
-    _ = count;
-    _ = scissors;
+    cmd.setScissor(first, scissors[0..count]) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdSetStencilCompareMask(p_cmd: vk.CommandBuffer, face_mask: vk.StencilFaceFlags, compare_mask: u32) callconv(vk.vulkan_call_conv) void {

@@ -13,7 +13,6 @@ const VkError = base.VkError;
 
 pub const RunData = struct {
     allocator: std.mem.Allocator,
-    renderer: *Renderer,
     pipeline: *SoftPipeline,
     batch_id: usize,
     batch_size: usize,
@@ -35,11 +34,9 @@ pub fn runWrapper(data: RunData) void {
 }
 
 inline fn run(data: RunData) !void {
-    const allocator = data.renderer.device.device_allocator.allocator();
-
     const shader = data.pipeline.stages.getPtrAssertContains(.vertex);
     const rt = &shader.runtimes[data.batch_id];
-    try rt.populatePushConstants(data.renderer.state.push_constant_blob[0..]);
+    try rt.populatePushConstants(data.draw_call.renderer.state.push_constant_blob[0..]);
 
     const entry = try rt.getEntryPointByName(shader.entry);
 
@@ -59,7 +56,7 @@ inline fn run(data: RunData) !void {
 
                 const binding_info = (data.pipeline.interface.mode.graphics.input_assembly.binding_description orelse return)[attribute.binding];
 
-                const vertex_buffer = data.renderer.state.data.graphics.vertex_buffers[attribute.binding];
+                const vertex_buffer = data.draw_call.renderer.state.data.graphics.vertex_buffers[attribute.binding];
                 const buffer = vertex_buffer.buffer;
                 const buffer_memory_size = base.format.texelSize(attribute.format);
                 const buffer_memory = if (buffer.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
@@ -71,7 +68,7 @@ inline fn run(data: RunData) !void {
             }
         }
 
-        rt.callEntryPoint(allocator, entry) catch |err| switch (err) {
+        rt.callEntryPoint(data.allocator, entry) catch |err| switch (err) {
             // Some errors can be safely ignored
             SpvRuntimeError.OutOfBounds,
             SpvRuntimeError.Killed,
@@ -81,6 +78,19 @@ inline fn run(data: RunData) !void {
 
         const output: *Renderer.Vertex = &data.draw_call.vertices[(data.instance_index * data.vertex_count) + invocation_index];
         try rt.readBuiltIn(std.mem.asBytes(&output.position), .Position);
+
+        if (invocation_index == 0) {
+            const io = data.draw_call.renderer.device.interface.io();
+            const file = try std.Io.Dir.cwd().createFile(
+                io,
+                "vertex_result_table_dump.txt",
+                .{ .truncate = true },
+            );
+            defer file.close(io);
+            var buffer = [_]u8{0} ** 1024;
+            var writer = file.writer(io, buffer[0..]);
+            try rt.dumpResultsTable(data.allocator, &writer.interface);
+        }
 
         for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
             const result_word = rt.getResultByLocation(@intCast(location), .output) catch |err| switch (err) {
@@ -97,6 +107,9 @@ inline fn run(data: RunData) !void {
 }
 
 fn setupBuiltins(rt: *spv.Runtime, vertex_index: usize, instance_index: usize) !void {
-    try rt.writeBuiltIn(std.mem.asBytes(&vertex_index), .VertexIndex);
-    try rt.writeBuiltIn(std.mem.asBytes(&instance_index), .InstanceIndex);
+    const vertex_index_u32: u32 = @intCast(vertex_index);
+    const instance_index_u32: u32 = @intCast(instance_index);
+
+    try rt.writeBuiltIn(std.mem.asBytes(&vertex_index_u32), .VertexIndex);
+    try rt.writeBuiltIn(std.mem.asBytes(&instance_index_u32), .InstanceIndex);
 }

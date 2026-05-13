@@ -66,6 +66,7 @@ pub const DispatchTable = struct {
     reset: *const fn (*Self, vk.CommandBufferResetFlags) VkError!void,
     resetEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
     setEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
+    setScissor: *const fn (*Self, u32, []const vk.Rect2D) VkError!void,
     setViewport: *const fn (*Self, u32, []const vk.Viewport) VkError!void,
     waitEvent: *const fn (*Self, *Event, vk.PipelineStageFlags, vk.PipelineStageFlags, []const vk.MemoryBarrier, []const vk.BufferMemoryBarrier, []const vk.ImageMemoryBarrier) VkError!void,
 };
@@ -264,6 +265,10 @@ pub inline fn resetEvent(self: *Self, event: *Event, stage: vk.PipelineStageFlag
 
 pub inline fn setEvent(self: *Self, event: *Event, stage: vk.PipelineStageFlags) VkError!void {
     try self.dispatch_table.setEvent(self, event, stage);
+}
+
+pub inline fn setScissor(self: *Self, first: u32, scissor: []const vk.Rect2D) VkError!void {
+    try self.dispatch_table.setScissor(self, first, scissor);
 }
 
 pub inline fn setViewport(self: *Self, first: u32, viewports: []const vk.Viewport) VkError!void {

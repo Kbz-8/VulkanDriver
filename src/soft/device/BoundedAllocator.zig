@@ -7,19 +7,19 @@ const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 
 mutex: base.SpinMutex,
-arena: std.heap.ArenaAllocator,
+child_allocator: std.mem.Allocator,
 bound: usize,
+total_bytes_allocated: std.atomic.Value(usize),
+current_bytes_allocated: std.atomic.Value(usize),
 
 pub fn init(child_allocator: Allocator, bound: usize) Self {
     return .{
         .mutex = .{},
-        .arena = .init(child_allocator),
+        .child_allocator = child_allocator,
         .bound = bound,
+        .total_bytes_allocated = std.atomic.Value(usize).init(0),
+        .current_bytes_allocated = std.atomic.Value(usize).init(0),
     };
-}
-
-pub fn deinit(self: *Self) void {
-    self.arena.deinit();
 }
 
 pub fn allocator(self: *const Self) Allocator {
@@ -34,40 +34,46 @@ pub fn allocator(self: *const Self) Allocator {
     };
 }
 
-pub inline fn queryCapacity(self: *Self) usize {
-    return self.arena.queryCapacity();
+pub inline fn queryFootprint(self: *Self) usize {
+    return self.total_bytes_allocated.load(.monotonic);
 }
 
 fn alloc(context: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize) ?[*]u8 {
     const self: *Self = @ptrCast(@alignCast(context));
     self.mutex.lock();
     defer self.mutex.unlock();
-    if (self.arena.queryCapacity() >= self.bound)
+    if (self.current_bytes_allocated.fetchAdd(len, .monotonic) >= self.bound)
         return null;
-    return self.arena.allocator().rawAlloc(len, alignment, ret_addr);
+    _ = self.total_bytes_allocated.fetchAdd(len, .monotonic);
+    return self.child_allocator.rawAlloc(len, alignment, ret_addr);
 }
 
 fn resize(context: *anyopaque, ptr: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) bool {
     const self: *Self = @ptrCast(@alignCast(context));
     self.mutex.lock();
     defer self.mutex.unlock();
-    if (self.arena.queryCapacity() >= self.bound)
+    _ = self.current_bytes_allocated.fetchSub(ptr.len, .monotonic);
+    if (self.current_bytes_allocated.fetchAdd(new_len, .monotonic) >= self.bound)
         return false;
-    return self.arena.allocator().rawResize(ptr, alignment, new_len, ret_addr);
+    _ = self.total_bytes_allocated.fetchAdd(new_len, .monotonic);
+    return self.child_allocator.rawResize(ptr, alignment, new_len, ret_addr);
 }
 
 fn remap(context: *anyopaque, ptr: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
     const self: *Self = @ptrCast(@alignCast(context));
     self.mutex.lock();
     defer self.mutex.unlock();
-    if (self.arena.queryCapacity() >= self.bound)
+    _ = self.current_bytes_allocated.fetchSub(ptr.len, .monotonic);
+    if (self.current_bytes_allocated.fetchAdd(new_len, .monotonic) >= self.bound)
         return null;
-    return self.arena.allocator().rawRemap(ptr, alignment, new_len, ret_addr);
+    _ = self.total_bytes_allocated.fetchAdd(new_len, .monotonic);
+    return self.child_allocator.rawRemap(ptr, alignment, new_len, ret_addr);
 }
 
 fn free(context: *anyopaque, ptr: []u8, alignment: Alignment, ret_addr: usize) void {
     const self: *Self = @ptrCast(@alignCast(context));
     self.mutex.lock();
     defer self.mutex.unlock();
-    return self.arena.allocator().rawFree(ptr, alignment, ret_addr);
+    _ = self.current_bytes_allocated.fetchSub(ptr.len, .monotonic);
+    return self.child_allocator.rawFree(ptr, alignment, ret_addr);
 }
