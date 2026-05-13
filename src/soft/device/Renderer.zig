@@ -59,12 +59,25 @@ pub const DrawCall = struct {
     viewport: vk.Viewport,
     scissor: vk.Rect2D,
 
+    color_attachments: []*base.ImageView,
+    depth_attachment: ?*base.ImageView,
+
+    render_pass: *SoftRenderPass,
+    framebuffer: *SoftFramebuffer,
+
     fn init(allocator: std.mem.Allocator, vertex_count: usize, instance_count: usize, renderer: *Self) VkError!@This() {
+        const framebuffer = renderer.framebuffer orelse return VkError.InvalidHandleDrv;
+        const render_pass = renderer.render_pass orelse return VkError.InvalidHandleDrv;
+
         const self: @This() = .{
             .vertices = allocator.alloc(Vertex, vertex_count * instance_count) catch return VkError.OutOfDeviceMemory,
             .renderer = renderer,
             .viewport = undefined,
             .scissor = undefined,
+            .color_attachments = framebuffer.interface.attachments[0..],
+            .depth_attachment = if (render_pass.interface.subpasses[0].depth_stencil_attachments) |desc| framebuffer.interface.attachments[desc.attachment] else null,
+            .render_pass = render_pass,
+            .framebuffer = framebuffer,
         };
 
         for (self.vertices) |*vertex| {

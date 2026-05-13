@@ -55,6 +55,7 @@ pub const VkError = error{
     InvalidHandleDrv,
     InvalidPipelineDrv,
     InvalidDeviceMemoryDrv,
+    InvalidAttachmentDrv,
 };
 
 pub inline fn errorLogger(err: VkError) void {

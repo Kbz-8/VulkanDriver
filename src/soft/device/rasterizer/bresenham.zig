@@ -119,7 +119,8 @@ fn runWrapper(data: RunData) void {
 }
 
 inline fn run(data: RunData) !void {
-    const render_target_view: *base.ImageView = (data.draw_call.renderer.framebuffer orelse return).interface.attachments[0];
+    const color_attachment = if (data.draw_call.render_pass.interface.subpasses[0].color_attachments) |attachments| attachments[0].attachment else return VkError.InvalidAttachmentDrv;
+    const render_target_view: *base.ImageView = data.draw_call.color_attachments[color_attachment];
     const render_target: *SoftImage = @alignCast(@fieldParentPtr("interface", render_target_view.image));
 
     var step = data.start_step;

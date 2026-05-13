@@ -108,8 +108,12 @@ fn runWrapper(data: RunData) void {
 }
 
 inline fn run(data: RunData) !void {
-    const render_target_view: *base.ImageView = (data.draw_call.renderer.framebuffer orelse return).interface.attachments[0];
+    const color_attachment = if (data.draw_call.render_pass.interface.subpasses[0].color_attachments) |attachments| attachments[0].attachment else return VkError.InvalidAttachmentDrv;
+    const render_target_view: *base.ImageView = data.draw_call.color_attachments[color_attachment];
     const render_target: *SoftImage = @alignCast(@fieldParentPtr("interface", render_target_view.image));
+
+    const depth_attachment_view: ?*base.ImageView = if (data.draw_call.depth_attachment) |view| view else null;
+    const depth_attachment: ?*SoftImage = if (depth_attachment_view) |view| @alignCast(@fieldParentPtr("interface", view.image)) else null;
 
     var y = data.min_y;
     while (y <= data.max_y) : (y += 1) {
@@ -138,6 +142,40 @@ inline fn run(data: RunData) !void {
             const b2 = w2 / data.area;
             const z = (b0 * data.v0.position[2]) + (b1 * data.v1.position[2]) + (b2 * data.v2.position[2]);
 
+            if (depth_attachment) |depth| {
+                const depth_value = try depth.readFloat4(
+                    .{
+                        .x = x,
+                        .y = y,
+                        .z = 0,
+                    },
+                    .{
+                        .aspect_mask = depth_attachment_view.?.subresource_range.aspect_mask,
+                        .mip_level = depth_attachment_view.?.subresource_range.base_mip_level,
+                        .array_layer = depth_attachment_view.?.subresource_range.base_array_layer,
+                    },
+                    depth_attachment_view.?.format,
+                );
+
+                if (z >= depth_value[0])
+                    continue;
+
+                try depth.writeFloat4(
+                    .{
+                        .x = x,
+                        .y = y,
+                        .z = 0,
+                    },
+                    .{
+                        .aspect_mask = depth_attachment_view.?.subresource_range.aspect_mask,
+                        .mip_level = depth_attachment_view.?.subresource_range.base_mip_level,
+                        .array_layer = depth_attachment_view.?.subresource_range.base_array_layer,
+                    },
+                    depth_attachment_view.?.format,
+                    zm.f32x4s(z),
+                );
+            }
+
             const pixel = fragment.shaderInvocation(
                 data.allocator,
                 data.draw_call,
@@ -156,7 +194,7 @@ inline fn run(data: RunData) !void {
                 .{
                     .x = x,
                     .y = y,
-                    .z = 0, // FIXME
+                    .z = 0,
                 },
                 .{
                     .aspect_mask = render_target_view.subresource_range.aspect_mask,
