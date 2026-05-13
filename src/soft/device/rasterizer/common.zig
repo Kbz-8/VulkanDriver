@@ -25,15 +25,6 @@ pub fn scissorContainsPixel(scissor: vk.Rect2D, x: i32, y: i32) bool {
         pixel_y < max_y;
 }
 
-fn writePacked(comptime T: type, bytes: []u8, value: T) void {
-    const raw: [@sizeOf(T)]u8 = @bitCast(value);
-    @memcpy(bytes[0..@sizeOf(T)], raw[0..]);
-}
-
-fn interpolateF32x4(value0: F32x4, value1: F32x4, value2: F32x4, b0: f32, b1: f32, b2: f32) F32x4 {
-    return (value0 * @as(F32x4, @splat(b0))) + (value1 * @as(F32x4, @splat(b1))) + (value2 * @as(F32x4, @splat(b2)));
-}
-
 pub fn interpolateVertexOutputs(
     allocator: std.mem.Allocator,
     v0: *const Renderer.Vertex,
@@ -63,14 +54,14 @@ pub fn interpolateVertexOutputs(
             const value0 = std.mem.bytesToValue(F32x4, out0.blob[byte_index..]);
             const value1 = std.mem.bytesToValue(F32x4, out1.blob[byte_index..]);
             const value2 = std.mem.bytesToValue(F32x4, out2.blob[byte_index..]);
-            writePacked(F32x4, input[byte_index..], interpolateF32x4(value0, value1, value2, b0, b1, b2));
+            base.utils.writePacked(F32x4, input[byte_index..], interpolateF32x4(value0, value1, value2, b0, b1, b2));
         }
 
         while (byte_index + @sizeOf(f32) <= len) : (byte_index += @sizeOf(f32)) {
             const value0 = std.mem.bytesToValue(f32, out0.blob[byte_index..]);
             const value1 = std.mem.bytesToValue(f32, out1.blob[byte_index..]);
             const value2 = std.mem.bytesToValue(f32, out2.blob[byte_index..]);
-            writePacked(f32, input[byte_index..], (value0 * b0) + (value1 * b1) + (value2 * b2));
+            base.utils.writePacked(f32, input[byte_index..], (value0 * b0) + (value1 * b1) + (value2 * b2));
         }
 
         if (byte_index < len)
@@ -84,4 +75,8 @@ pub fn interpolateVertexOutputs(
 
 pub fn interpolateLineOutputs(allocator: std.mem.Allocator, v0: *const Renderer.Vertex, v1: *const Renderer.Vertex, t: f32) VkError![spv.SPIRV_MAX_OUTPUT_LOCATIONS][]u8 {
     return interpolateVertexOutputs(allocator, v0, v1, v0, 1.0 - t, t, 0.0);
+}
+
+inline fn interpolateF32x4(value0: F32x4, value1: F32x4, value2: F32x4, b0: f32, b1: f32, b2: f32) F32x4 {
+    return (value0 * zm.f32x4s(b0)) + (value1 * zm.f32x4s(b1)) + (value2 * zm.f32x4s(b2));
 }

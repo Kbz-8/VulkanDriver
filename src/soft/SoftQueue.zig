@@ -95,8 +95,7 @@ fn taskRunner(self: *Self, info: Interface.SubmitInfo, p_fence: ?*base.Fence, ru
     }
 
     var execution_device: ExecutionDevice = undefined;
-    execution_device.init(soft_device);
-    defer execution_device.deinit();
+    execution_device.setup(soft_device);
 
     for (info.command_buffers.items) |command_buffer| {
         const soft_command_buffer: *SoftCommandBuffer = @alignCast(@fieldParentPtr("interface", command_buffer));

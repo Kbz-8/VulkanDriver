@@ -42,7 +42,6 @@ pub fn drawTriangle(allocator: std.mem.Allocator, draw_call: *Renderer.DrawCall,
 
     const pipeline = draw_call.renderer.state.pipeline orelse return;
 
-    var wg: std.Io.Group = .init;
     const runtimes_count = (pipeline.stages.getPtr(.fragment) orelse return).runtimes.len;
     const grid_size: usize = @intFromFloat(@floor(@sqrt(@as(f32, @floatFromInt(runtimes_count)))));
 
@@ -53,6 +52,8 @@ pub fn drawTriangle(allocator: std.mem.Allocator, draw_call: *Renderer.DrawCall,
     const rows_per_run = @divTrunc(height + grid_size - 1, grid_size);
 
     var batch_id: usize = 0;
+
+    var wg: std.Io.Group = .init;
     for (0..grid_size) |gy| {
         for (0..grid_size) |gx| {
             defer batch_id = @mod(batch_id + 1, runtimes_count);

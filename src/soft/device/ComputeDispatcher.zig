@@ -45,10 +45,6 @@ pub fn init(device: *SoftDevice, state: *PipelineState) Self {
     };
 }
 
-pub fn deinit(self: *Self) void {
-    _ = self;
-}
-
 pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count_z: u32) VkError!void {
     const group_count: usize = @intCast(group_count_x * group_count_y * group_count_z);
 

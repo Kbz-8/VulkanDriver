@@ -51,7 +51,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
     }
 }
 
-fn clipTransformAndRasterizeTriangle(renderer: *Renderer, allocator: std.mem.Allocator, draw_call: *DrawCall, v0: *const Vertex, v1: *const Vertex, v2: *const Vertex) VkError!void {
+fn clipTransformAndRasterizeTriangle(renderer: *Renderer, allocator: std.mem.Allocator, draw_call: *DrawCall, v0: *Vertex, v1: *Vertex, v2: *Vertex) VkError!void {
     const clipped_polygon = try clip.clipTriangle(allocator, v0, v1, v2);
 
     if (clipped_polygon.len < 3)

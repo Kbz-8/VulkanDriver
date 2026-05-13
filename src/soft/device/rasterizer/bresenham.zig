@@ -100,7 +100,7 @@ pub fn drawLine(allocator: std.mem.Allocator, draw_call: *Renderer.DrawCall, v0:
     wg.await(io) catch return VkError.DeviceLost;
 }
 
-inline fn bresenhamYAtStep(y0: i32, d_x: i32, d_err: i32, y_step: i32, step: usize) i32 {
+fn bresenhamYAtStep(y0: i32, d_x: i32, d_err: i32, y_step: i32, step: usize) i32 {
     if (d_x == 0)
         return y0;
 

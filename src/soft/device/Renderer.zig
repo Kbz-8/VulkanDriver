@@ -59,7 +59,7 @@ pub const DrawCall = struct {
     viewport: vk.Viewport,
     scissor: vk.Rect2D,
 
-    pub fn init(allocator: std.mem.Allocator, vertex_count: usize, instance_count: usize, renderer: *Self) VkError!@This() {
+    fn init(allocator: std.mem.Allocator, vertex_count: usize, instance_count: usize, renderer: *Self) VkError!@This() {
         const self: @This() = .{
             .vertices = allocator.alloc(Vertex, vertex_count * instance_count) catch return VkError.OutOfDeviceMemory,
             .renderer = renderer,
@@ -72,6 +72,17 @@ pub const DrawCall = struct {
         }
 
         return self;
+    }
+
+    fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        for (self.vertices) |*vertex| {
+            for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
+                if (vertex.outputs[location]) |output| {
+                    allocator.free(output.blob);
+                }
+            }
+        }
+        allocator.free(self.vertices);
     }
 };
 
@@ -96,10 +107,6 @@ pub fn init(device: *SoftDevice, state: *PipelineState) Self {
     };
 }
 
-pub fn deinit(self: *Self) void {
-    _ = self;
-}
-
 pub fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize) VkError!void {
     var bounded_allocator: BoundedAllocator = .init(self.device.device_allocator.allocator(), @"1GiB");
     try self.drawCall(&bounded_allocator, vertex_count, instance_count, first_vertex, first_instance, null);
@@ -119,17 +126,18 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
     const allocator = bounded_allocator.allocator();
 
     var draw_call = try DrawCall.init(allocator, vertex_count, instance_count, self);
+    defer draw_call.deinit(allocator);
 
     const timer = std.Io.Timestamp.now(io, .real);
     defer if (comptime base.config.logs != .none) {
         const duration = timer.untilNow(io, .real);
-        const ms = duration.toMicroseconds();
+        const ms: f32 = @floatFromInt(duration.toMicroseconds());
         const memory_footprint = @divTrunc(bounded_allocator.queryFootprint(), 1000);
         const logger = std.log.scoped(.SoftwareRenderer);
         if (memory_footprint > 256_000)
-            logger.warn("Drawcall stats:\n>   Took {d}us\n>   Allocated {d} KB", .{ ms, memory_footprint })
+            logger.warn("Drawcall stats:\n>   Took {d:.3}ms\n>   Allocated {d} KB", .{ ms / 1000, memory_footprint })
         else
-            logger.debug("Drawcall stats:\n>   Took {d}us\n>   Allocated {d} KB", .{ ms, memory_footprint });
+            logger.debug("Drawcall stats:\n>   Took {d:.3}ms\n>   Allocated {d} KB", .{ ms / 1000, memory_footprint });
     };
 
     self.vertexShaderStage(allocator, &draw_call, vertex_count, instance_count, first_vertex, first_instance, indices) catch |err| {

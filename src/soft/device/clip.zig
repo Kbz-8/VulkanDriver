@@ -2,7 +2,6 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 const zm = base.zm;
-const lib = @import("../lib.zig");
 const spv = @import("spv");
 
 pub const F32x4 = zm.F32x4;
@@ -35,114 +34,6 @@ const ClippedPolygon = struct {
         self.len += 1;
     }
 };
-
-fn clipDistance(position: F32x4, plane: ClipPlane) f32 {
-    const x = position[0];
-    const y = position[1];
-    const z = position[2];
-    const w = position[3];
-
-    return switch (plane) {
-        .Left => x + w,
-        .Right => w - x,
-        .Bottom => y + w,
-        .Top => w - y,
-        .Near => z,
-        .Far => w - z,
-    };
-}
-
-fn vertexInsidePlane(vertex: *const Vertex, plane: ClipPlane) bool {
-    return clipDistance(vertex.position, plane) >= 0.0;
-}
-
-fn copyBlob(allocator: std.mem.Allocator, blob: []const u8) VkError![]u8 {
-    const result = allocator.alloc(u8, blob.len) catch return VkError.OutOfDeviceMemory;
-    @memcpy(result, blob);
-    return result;
-}
-
-fn writePacked(comptime T: type, bytes: []u8, value: T) void {
-    const raw: [@sizeOf(T)]u8 = @bitCast(value);
-    @memcpy(bytes[0..@sizeOf(T)], raw[0..]);
-}
-
-fn interpolateBlob(allocator: std.mem.Allocator, a: []const u8, b: []const u8, t: f32) VkError![]u8 {
-    const len = @min(a.len, b.len);
-    const result = allocator.alloc(u8, len) catch return VkError.OutOfDeviceMemory;
-
-    var byte_index: usize = 0;
-    while (byte_index + @sizeOf(F32x4) <= len) : (byte_index += @sizeOf(F32x4)) {
-        const value_a = std.mem.bytesToValue(F32x4, a[byte_index..]);
-        const value_b = std.mem.bytesToValue(F32x4, b[byte_index..]);
-        writePacked(F32x4, result[byte_index..], value_a + ((value_b - value_a) * @as(F32x4, @splat(t))));
-    }
-
-    while (byte_index + @sizeOf(f32) <= len) : (byte_index += @sizeOf(f32)) {
-        const value_a = std.mem.bytesToValue(f32, a[byte_index..]);
-        const value_b = std.mem.bytesToValue(f32, b[byte_index..]);
-        writePacked(f32, result[byte_index..], value_a + ((value_b - value_a) * t));
-    }
-
-    if (byte_index < len)
-        @memcpy(result[byte_index..], a[byte_index..len]);
-
-    return result;
-}
-
-fn interpolateVertexForClipping(allocator: std.mem.Allocator, a: *const Vertex, b: *const Vertex, t: f32) VkError!Vertex {
-    var result: Vertex = .{
-        .position = a.position + ((b.position - a.position) * @as(F32x4, @splat(t))),
-        .outputs = undefined,
-    };
-
-    @memset(result.outputs[0..], null);
-
-    for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
-        const out_a = a.outputs[location] orelse continue;
-        const out_b = b.outputs[location] orelse continue;
-
-        result.outputs[location] = .{
-            .interpolation_type = out_a.interpolation_type,
-            .blob = if (out_a.interpolation_type == .flat)
-                try copyBlob(allocator, out_a.blob)
-            else
-                try interpolateBlob(allocator, out_a.blob, out_b.blob, t),
-        };
-    }
-
-    return result;
-}
-
-fn clipPolygonAgainstPlane(allocator: std.mem.Allocator, input: *const ClippedPolygon, plane: ClipPlane) VkError!ClippedPolygon {
-    var output: ClippedPolygon = .{};
-
-    if (input.len == 0)
-        return output;
-
-    var previous = input.vertices[input.len - 1];
-    var previous_inside = vertexInsidePlane(&previous, plane);
-    var previous_distance = clipDistance(previous.position, plane);
-
-    for (input.vertices[0..input.len]) |current| {
-        const current_inside = vertexInsidePlane(&current, plane);
-        const current_distance = clipDistance(current.position, plane);
-
-        if (current_inside != previous_inside) {
-            const t = previous_distance / (previous_distance - current_distance);
-            try output.append(try interpolateVertexForClipping(allocator, &previous, &current, t));
-        }
-
-        if (current_inside)
-            try output.append(current);
-
-        previous = current;
-        previous_inside = current_inside;
-        previous_distance = current_distance;
-    }
-
-    return output;
-}
 
 pub fn clipTriangle(allocator: std.mem.Allocator, v0: *const Vertex, v1: *const Vertex, v2: *const Vertex) VkError!ClippedPolygon {
     var polygon: ClippedPolygon = .{};
@@ -188,4 +79,97 @@ pub fn viewportTransformVertex(viewport: vk.Viewport, vertex: *Vertex) void {
     const z_screen = (p_z * z_ndc) + o_z;
 
     vertex.position = zm.f32x4(x_screen, y_screen, z_screen, w);
+}
+
+fn clipDistance(position: F32x4, plane: ClipPlane) f32 {
+    const x, const y, const z, const w = position;
+    return switch (plane) {
+        .Left => x + w,
+        .Right => w - x,
+        .Bottom => y + w,
+        .Top => w - y,
+        .Near => z,
+        .Far => w - z,
+    };
+}
+
+fn isVertexInsidePlane(vertex: *const Vertex, plane: ClipPlane) bool {
+    return clipDistance(vertex.position, plane) >= 0.0;
+}
+
+fn interpolateBlob(allocator: std.mem.Allocator, a: []const u8, b: []const u8, t: f32) VkError![]u8 {
+    const len = @min(a.len, b.len);
+    const result = allocator.alloc(u8, len) catch return VkError.OutOfDeviceMemory;
+
+    var byte_index: usize = 0;
+    while (byte_index + @sizeOf(F32x4) <= len) : (byte_index += @sizeOf(F32x4)) {
+        const value_a = std.mem.bytesToValue(F32x4, a[byte_index..]);
+        const value_b = std.mem.bytesToValue(F32x4, b[byte_index..]);
+        base.utils.writePacked(F32x4, result[byte_index..], value_a + ((value_b - value_a) * zm.f32x4s(t)));
+    }
+
+    while (byte_index + @sizeOf(f32) <= len) : (byte_index += @sizeOf(f32)) {
+        const value_a = std.mem.bytesToValue(f32, a[byte_index..]);
+        const value_b = std.mem.bytesToValue(f32, b[byte_index..]);
+        base.utils.writePacked(f32, result[byte_index..], value_a + ((value_b - value_a) * t));
+    }
+
+    if (byte_index < len)
+        @memcpy(result[byte_index..], a[byte_index..len]);
+
+    return result;
+}
+
+fn interpolateVertexForClipping(allocator: std.mem.Allocator, a: *const Vertex, b: *const Vertex, t: f32) VkError!Vertex {
+    var result: Vertex = .{
+        .position = a.position + ((b.position - a.position) * zm.f32x4s(t)),
+        .outputs = undefined,
+    };
+
+    @memset(result.outputs[0..], null);
+
+    for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
+        const out_a = a.outputs[location] orelse continue;
+        const out_b = b.outputs[location] orelse continue;
+
+        result.outputs[location] = .{
+            .interpolation_type = out_a.interpolation_type,
+            .blob = if (out_a.interpolation_type == .flat)
+                allocator.dupe(u8, out_a.blob) catch return VkError.OutOfDeviceMemory
+            else
+                try interpolateBlob(allocator, out_a.blob, out_b.blob, t),
+        };
+    }
+
+    return result;
+}
+
+fn clipPolygonAgainstPlane(allocator: std.mem.Allocator, input: *const ClippedPolygon, plane: ClipPlane) VkError!ClippedPolygon {
+    var output: ClippedPolygon = .{};
+
+    if (input.len == 0)
+        return output;
+
+    var previous = input.vertices[input.len - 1];
+    var previous_inside = isVertexInsidePlane(&previous, plane);
+    var previous_distance = clipDistance(previous.position, plane);
+
+    for (input.vertices[0..input.len]) |current| {
+        const current_inside = isVertexInsidePlane(&current, plane);
+        const current_distance = clipDistance(current.position, plane);
+
+        if (current_inside != previous_inside) {
+            const t = previous_distance / (previous_distance - current_distance);
+            try output.append(try interpolateVertexForClipping(allocator, &previous, &current, t));
+        }
+
+        if (current_inside)
+            try output.append(current);
+
+        previous = current;
+        previous_inside = current_inside;
+        previous_distance = current_distance;
+    }
+
+    return output;
 }

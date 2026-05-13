@@ -12,6 +12,7 @@ pub const lib_vulkan = @import("lib_vulkan.zig");
 pub const logger = @import("logger.zig");
 pub const format = @import("format.zig");
 pub const config = @import("config");
+pub const utils = @import("utils.zig");
 
 pub const Dispatchable = @import("Dispatchable.zig").Dispatchable;
 pub const fallback_host_allocator = @import("fallback_host_allocator.zig").fallback_host_allocator;

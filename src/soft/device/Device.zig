@@ -39,7 +39,7 @@ pipeline_states: [2]PipelineState,
 
 /// Initializating an execution device and
 /// not creating one to avoid dangling pointers
-pub fn init(self: *Self, device: *SoftDevice) void {
+pub fn setup(self: *Self, device: *SoftDevice) void {
     for (self.pipeline_states[0..], 0..) |*state, i| {
         state.* = .{
             .pipeline = null,
@@ -59,9 +59,4 @@ pub fn init(self: *Self, device: *SoftDevice) void {
     }
     self.compute = .init(device, &self.pipeline_states[@intFromEnum(vk.PipelineBindPoint.compute)]);
     self.renderer = .init(device, &self.pipeline_states[@intFromEnum(vk.PipelineBindPoint.graphics)]);
-}
-
-pub fn deinit(self: *Self) void {
-    self.compute.deinit();
-    self.renderer.deinit();
 }
