@@ -1598,8 +1598,9 @@ pub export fn strollUpdateDescriptorSets(p_device: vk.Device, write_count: u32, 
     }
 
     for (copies, 0..copy_count) |copy, _| {
-        const set = NonDispatchable(DescriptorSet).fromHandleObject(copy.dst_set) catch |err| return errorLogger(err);
-        set.copy(copy) catch |err| return errorLogger(err);
+        const dst = NonDispatchable(DescriptorSet).fromHandleObject(copy.dst_set) catch |err| return errorLogger(err);
+        const src = NonDispatchable(DescriptorSet).fromHandleObject(copy.src_set) catch |err| return errorLogger(err);
+        dst.copy(src, copy) catch |err| return errorLogger(err);
     }
 }
 

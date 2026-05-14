@@ -179,6 +179,16 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
             logger.debug(fmt, args);
     };
 
+    const pipeline = self.state.pipeline orelse return VkError.InvalidPipelineDrv;
+    const vertex_shader = pipeline.stages.getPtrAssertContains(.vertex);
+    for (vertex_shader.runtimes[0..]) |*runtime| {
+        writeDescriptorSets(&draw_call, &runtime.rt) catch return VkError.Unknown;
+    }
+    const fragment_shader = pipeline.stages.getPtrAssertContains(.fragment);
+    for (fragment_shader.runtimes[0..]) |*runtime| {
+        writeDescriptorSets(&draw_call, &runtime.rt) catch return VkError.Unknown;
+    }
+
     self.vertexShaderStage(allocator, &draw_call, vertex_count, instance_count, first_vertex, first_instance, indices) catch |err| {
         std.log.scoped(.@"Vertex stage").err("catched a '{s}'", .{@errorName(err)});
         if (@errorReturnTrace()) |trace| {
@@ -296,4 +306,39 @@ fn resolveScissor(self: *Self, scissor_index: usize) VkError!vk.Rect2D {
     }
 
     return VkError.Unknown;
+}
+
+fn writeDescriptorSets(draw_call: *DrawCall, rt: *spv.Runtime) !void {
+    sets: for (draw_call.renderer.state.sets[0..], 0..) |set, set_index| {
+        if (set == null)
+            continue :sets;
+
+        bindings: for (set.?.descriptors[0..], 0..) |binding, binding_index| {
+            switch (binding) {
+                .buffer => |buffer_data_array| for (buffer_data_array, 0..) |buffer_data, descriptor_index| {
+                    if (buffer_data.object) |buffer| {
+                        const map = buffer.mapAsSliceWithOffset(u8, buffer_data.offset, buffer_data.size) catch continue :bindings;
+                        try rt.writeDescriptorSet(
+                            map,
+                            @as(u32, @intCast(set_index)),
+                            @as(u32, @intCast(binding_index)),
+                            @as(u32, @intCast(descriptor_index)),
+                        );
+                    }
+                },
+                .image => |image_data_array| for (image_data_array, 0..) |image_data, descriptor_index| {
+                    if (image_data.object) |image_view| {
+                        const addr: usize = @intFromPtr(image_view);
+                        try rt.writeDescriptorSet(
+                            std.mem.asBytes(&addr),
+                            @as(u32, @intCast(set_index)),
+                            @as(u32, @intCast(binding_index)),
+                            @as(u32, @intCast(descriptor_index)),
+                        );
+                    }
+                },
+                else => {},
+            }
+        }
+    }
 }

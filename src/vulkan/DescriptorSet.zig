@@ -18,7 +18,7 @@ layout: *DescriptorSetLayout,
 vtable: *const VTable,
 
 pub const VTable = struct {
-    copy: *const fn (*Self, vk.CopyDescriptorSet) VkError!void,
+    copy: *const fn (*Self, *const Self, vk.CopyDescriptorSet) VkError!void,
     destroy: *const fn (*Self, std.mem.Allocator) void,
     write: *const fn (*Self, vk.WriteDescriptorSet) VkError!void,
 };
@@ -33,8 +33,8 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, layout: *DescriptorSe
     };
 }
 
-pub inline fn copy(self: *Self, copy_data: vk.CopyDescriptorSet) VkError!void {
-    try self.vtable.copy(self, copy_data);
+pub inline fn copy(self: *Self, src: *const Self, copy_data: vk.CopyDescriptorSet) VkError!void {
+    try self.vtable.copy(self, src, copy_data);
 }
 
 pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {

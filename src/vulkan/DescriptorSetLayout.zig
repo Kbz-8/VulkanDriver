@@ -34,19 +34,6 @@ dynamic_descriptor_count: usize,
 /// Shader stages affected by this descriptor set
 stages: vk.ShaderStageFlags,
 
-/// Mesa's common Vulkan runtime states:
-///
-/// It's often necessary to store a pointer to the descriptor set layout in
-/// the descriptor so that any entrypoint which has access to a descriptor
-/// set also has the layout. While layouts are often passed into various
-/// entrypoints, they're notably missing from vkUpdateDescriptorSets(). In
-/// order to implement descriptor writes, you either need to stash a pointer
-/// to the descriptor set layout in the descriptor set or you need to copy
-/// all of the relevant information.  Storing a pointer is a lot cheaper.
-///
-/// Because descriptor set layout lifetimes and descriptor set lifetimes are
-/// not guaranteed to coincide, we have to reference count if we're going to
-/// do this.
 ref_count: std.atomic.Value(usize),
 
 vtable: *const VTable,

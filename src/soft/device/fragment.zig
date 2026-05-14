@@ -48,5 +48,8 @@ pub fn shaderInvocation(allocator: std.mem.Allocator, draw_call: *Renderer.DrawC
 
     var color = zm.f32x4s(0.0);
     try rt.readOutput(std.mem.asBytes(&color), output_result);
+
+    try rt.flushDescriptorSets(allocator);
+
     return std.math.clamp(color, zm.f32x4s(0.0), zm.f32x4s(1.0));
 }

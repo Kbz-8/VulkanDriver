@@ -174,8 +174,7 @@ fn writeDescriptorSets(self: *Self, rt: *spv.Runtime) !void {
             switch (binding) {
                 .buffer => |buffer_data_array| for (buffer_data_array, 0..) |buffer_data, descriptor_index| {
                     if (buffer_data.object) |buffer| {
-                        const memory = if (buffer.interface.memory) |memory| memory else continue :bindings;
-                        const map: []u8 = @as([*]u8, @ptrCast(try memory.map(buffer_data.offset, buffer_data.size)))[0..buffer_data.size];
+                        const map = buffer.mapAsSliceWithOffset(u8, buffer_data.offset, buffer_data.size) catch continue :bindings;
                         try rt.writeDescriptorSet(
                             map,
                             @as(u32, @intCast(set_index)),

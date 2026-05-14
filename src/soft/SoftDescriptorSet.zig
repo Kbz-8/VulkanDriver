@@ -98,16 +98,26 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, layout: *base.
     return self;
 }
 
-pub fn copy(interface: *Interface, copy_data: vk.CopyDescriptorSet) VkError!void {
-    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    _ = self;
-    _ = copy_data;
-}
-
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     allocator.free(self.heap);
     allocator.destroy(self);
+}
+
+pub fn copy(interface: *Interface, src_interface: *const Interface, data: vk.CopyDescriptorSet) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const src: *const Self = @alignCast(@fieldParentPtr("interface", src_interface));
+
+    for (self.descriptors[data.dst_binding..(data.dst_binding + data.descriptor_count)], src.descriptors[data.src_binding..(data.src_binding + data.descriptor_count)]) |*dst_desc, src_desc| {
+        switch (dst_desc.*) {
+            .buffer => |dst_buffer| @memcpy(dst_buffer[0..], src_desc.buffer[0..]),
+            .image => |dst_image| @memcpy(dst_image[0..], src_desc.image[0..]),
+            else => {
+                dst_desc.* = .{ .unsupported = .{} };
+                base.unsupported("descriptor type for copy", .{});
+            },
+        }
+    }
 }
 
 pub fn write(interface: *Interface, write_data: vk.WriteDescriptorSet) VkError!void {

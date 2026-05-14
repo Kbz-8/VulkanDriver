@@ -90,6 +90,8 @@ inline fn run(data: RunData) !void {
             };
             try rt.readOutput(output.outputs[location].?.blob, result_word);
         }
+
+        try rt.flushDescriptorSets(data.allocator);
     }
 }
 
