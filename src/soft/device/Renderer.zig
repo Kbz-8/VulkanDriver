@@ -65,6 +65,8 @@ pub const DrawCall = struct {
     render_pass: *SoftRenderPass,
     framebuffer: *SoftFramebuffer,
 
+    rasterizer_wait_group: std.Io.Group,
+
     stats: struct {
         polygons_drawn: usize,
     },
@@ -82,6 +84,7 @@ pub const DrawCall = struct {
             .depth_attachment = if (render_pass.interface.subpasses[0].depth_stencil_attachments) |desc| framebuffer.interface.attachments[desc.attachment] else null,
             .render_pass = render_pass,
             .framebuffer = framebuffer,
+            .rasterizer_wait_group = .init,
             .stats = .{
                 .polygons_drawn = 0,
             },

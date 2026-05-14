@@ -92,7 +92,7 @@ inline fn run(data: RunData) !void {
     const io = data.self.device.interface.io();
 
     const shader = data.pipeline.stages.getPtrAssertContains(.compute);
-    const rt = &shader.runtimes[data.batch_id];
+    const rt = &shader.runtimes[data.batch_id].rt;
 
     const entry = try rt.getEntryPointByName(shader.entry);
 

@@ -6,9 +6,9 @@ const zm = base.zm;
 
 const common = @import("common.zig");
 const fragment = @import("../fragment.zig");
+const blitter = @import("../blitter.zig");
 
 const Renderer = @import("../Renderer.zig");
-const SoftImage = @import("../../SoftImage.zig");
 
 const VkError = base.VkError;
 const SpvRuntimeError = spv.Runtime.RuntimeError;
@@ -23,12 +23,22 @@ const RunData = struct {
     min_y: i32,
     max_y: i32,
     area: f32,
+    v0: Renderer.Vertex,
+    v1: Renderer.Vertex,
+    v2: Renderer.Vertex,
+    color_attachment_access: *const common.RenderTargetAccess,
+    depth_attachment_access: ?*common.RenderTargetAccess,
+};
+
+pub fn drawTriangle(
+    allocator: std.mem.Allocator,
+    draw_call: *Renderer.DrawCall,
     v0: *Renderer.Vertex,
     v1: *Renderer.Vertex,
     v2: *Renderer.Vertex,
-};
-
-pub fn drawTriangle(allocator: std.mem.Allocator, draw_call: *Renderer.DrawCall, v0: *Renderer.Vertex, v1: *Renderer.Vertex, v2: *Renderer.Vertex) VkError!void {
+    color_attachment_access: *const common.RenderTargetAccess,
+    depth_attachment_access: ?*common.RenderTargetAccess,
+) VkError!void {
     const io = draw_call.renderer.device.interface.io();
 
     const min_x: i32 = @intFromFloat(@floor(@min(v0.position[0], v1.position[0], v2.position[0])));
@@ -43,7 +53,7 @@ pub fn drawTriangle(allocator: std.mem.Allocator, draw_call: *Renderer.DrawCall,
     const pipeline = draw_call.renderer.state.pipeline orelse return;
 
     const runtimes_count = (pipeline.stages.getPtr(.fragment) orelse return).runtimes.len;
-    const grid_size: usize = @intFromFloat(@floor(@sqrt(@as(f32, @floatFromInt(runtimes_count)))));
+    const grid_size: usize = @intFromFloat(@ceil(@sqrt(@as(f32, @floatFromInt(runtimes_count)))));
 
     const width: usize = @intCast(max_x - min_x + 1);
     const height: usize = @intCast(max_y - min_y + 1);
@@ -53,7 +63,6 @@ pub fn drawTriangle(allocator: std.mem.Allocator, draw_call: *Renderer.DrawCall,
 
     var batch_id: usize = 0;
 
-    var wg: std.Io.Group = .init;
     for (0..grid_size) |gy| {
         for (0..grid_size) |gx| {
             defer batch_id = @mod(batch_id + 1, runtimes_count);
@@ -78,20 +87,25 @@ pub fn drawTriangle(allocator: std.mem.Allocator, draw_call: *Renderer.DrawCall,
                 .allocator = allocator,
                 .draw_call = draw_call,
                 .batch_id = batch_id,
-                .v0 = v0,
-                .v1 = v1,
-                .v2 = v2,
+                .v0 = v0.*,
+                .v1 = v1.*,
+                .v2 = v2.*,
                 .area = area,
                 .min_x = run_min_x,
                 .max_x = run_max_x,
                 .min_y = run_min_y,
                 .max_y = run_max_y,
+                .color_attachment_access = color_attachment_access,
+                .depth_attachment_access = depth_attachment_access,
             };
 
-            wg.async(io, runWrapper, .{run_data});
+            draw_call.rasterizer_wait_group.async(io, runWrapper, .{run_data});
         }
     }
-    wg.await(io) catch return VkError.DeviceLost;
+
+    // To avoid mess with pixel render order without depth buffer to sort them
+    if (depth_attachment_access == null)
+        draw_call.rasterizer_wait_group.await(io) catch return VkError.DeviceLost;
 }
 
 inline fn edgeFunction(a: F32x4, b: F32x4, p: F32x4) f32 {
@@ -108,12 +122,7 @@ fn runWrapper(data: RunData) void {
 }
 
 inline fn run(data: RunData) !void {
-    const color_attachment = if (data.draw_call.render_pass.interface.subpasses[0].color_attachments) |attachments| attachments[0].attachment else return VkError.InvalidAttachmentDrv;
-    const render_target_view: *base.ImageView = data.draw_call.color_attachments[color_attachment];
-    const render_target: *SoftImage = @alignCast(@fieldParentPtr("interface", render_target_view.image));
-
-    const depth_attachment_view: ?*base.ImageView = if (data.draw_call.depth_attachment) |view| view else null;
-    const depth_attachment: ?*SoftImage = if (depth_attachment_view) |view| @alignCast(@fieldParentPtr("interface", view.image)) else null;
+    const io = data.draw_call.renderer.device.interface.io();
 
     var y = data.min_y;
     while (y <= data.max_y) : (y += 1) {
@@ -142,38 +151,12 @@ inline fn run(data: RunData) !void {
             const b2 = w2 / data.area;
             const z = (b0 * data.v0.position[2]) + (b1 * data.v1.position[2]) + (b2 * data.v2.position[2]);
 
-            if (depth_attachment) |depth| {
-                const depth_value = try depth.readFloat4(
-                    .{
-                        .x = x,
-                        .y = y,
-                        .z = 0,
-                    },
-                    .{
-                        .aspect_mask = depth_attachment_view.?.subresource_range.aspect_mask,
-                        .mip_level = depth_attachment_view.?.subresource_range.base_mip_level,
-                        .array_layer = depth_attachment_view.?.subresource_range.base_array_layer,
-                    },
-                    depth_attachment_view.?.format,
-                );
-
+            // Early depth test to avoid unnecesary computations
+            if (data.depth_attachment_access) |depth| {
+                const offset = @as(usize, @intCast(x)) * depth.texel_size + @as(usize, @intCast(y)) * depth.row_pitch;
+                const depth_value = blitter.readFloat4(depth.base[offset..], depth.format);
                 if (z >= depth_value[0])
                     continue;
-
-                try depth.writeFloat4(
-                    .{
-                        .x = x,
-                        .y = y,
-                        .z = 0,
-                    },
-                    .{
-                        .aspect_mask = depth_attachment_view.?.subresource_range.aspect_mask,
-                        .mip_level = depth_attachment_view.?.subresource_range.base_mip_level,
-                        .array_layer = depth_attachment_view.?.subresource_range.base_array_layer,
-                    },
-                    depth_attachment_view.?.format,
-                    zm.f32x4s(z),
-                );
             }
 
             const pixel = fragment.shaderInvocation(
@@ -181,7 +164,7 @@ inline fn run(data: RunData) !void {
                 data.draw_call,
                 data.batch_id,
                 zm.f32x4(@floatFromInt(x), @floatFromInt(y), z, 1.0),
-                try common.interpolateVertexOutputs(data.allocator, data.v0, data.v1, data.v2, b0, b1, b2),
+                try common.interpolateVertexOutputs(data.allocator, &data.v0, &data.v1, &data.v2, b0, b1, b2),
             ) catch |err| {
                 std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
                 if (@errorReturnTrace()) |trace| {
@@ -190,20 +173,23 @@ inline fn run(data: RunData) !void {
                 return;
             };
 
-            try render_target.writeFloat4(
-                .{
-                    .x = x,
-                    .y = y,
-                    .z = 0,
-                },
-                .{
-                    .aspect_mask = render_target_view.subresource_range.aspect_mask,
-                    .mip_level = render_target_view.subresource_range.base_mip_level,
-                    .array_layer = render_target_view.subresource_range.base_array_layer,
-                },
-                render_target_view.format,
-                pixel,
-            );
+            const color_offset = @as(usize, @intCast(x)) * data.color_attachment_access.texel_size + @as(usize, @intCast(y)) * data.color_attachment_access.row_pitch;
+
+            // After work depth test to avoid overwritten depth pixels during fragment invocations
+            if (data.depth_attachment_access) |depth| {
+                const depth_offset = @as(usize, @intCast(x)) * depth.texel_size + @as(usize, @intCast(y)) * depth.row_pitch;
+
+                depth.mutex.lock(io) catch return VkError.DeviceLost;
+                defer depth.mutex.unlock(io);
+
+                const depth_value = blitter.readFloat4(depth.base[depth_offset..], depth.format);
+                if (z >= depth_value[0])
+                    continue;
+                blitter.writeFloat4(zm.f32x4s(z), depth.base[depth_offset..], depth.format);
+                blitter.writeFloat4(pixel, data.color_attachment_access.base[color_offset..], data.color_attachment_access.format);
+            } else {
+                blitter.writeFloat4(pixel, data.color_attachment_access.base[color_offset..], data.color_attachment_access.format);
+            }
         }
     }
 }

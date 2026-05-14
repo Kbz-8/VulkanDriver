@@ -19,9 +19,14 @@ const SoftShaderModule = @import("SoftShaderModule.zig");
 const Self = @This();
 pub const Interface = base.Pipeline;
 
+const Runtime = struct {
+    mutex: std.Io.Mutex,
+    rt: spv.Runtime,
+};
+
 const Shader = struct {
     module: *SoftShaderModule,
-    runtimes: []spv.Runtime,
+    runtimes: []Runtime,
     entry: []const u8,
 };
 
@@ -77,10 +82,11 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
         soft_module.ref();
         shader.module = soft_module;
 
-        const runtimes = runtimes_allocator.alloc(spv.Runtime, runtimes_count) catch return VkError.OutOfDeviceMemory;
+        const runtimes = runtimes_allocator.alloc(Runtime, runtimes_count) catch return VkError.OutOfDeviceMemory;
 
         for (runtimes) |*runtime| {
-            runtime.* = spv.Runtime.init(
+            runtime.mutex = .init;
+            runtime.rt = spv.Runtime.init(
                 runtimes_allocator,
                 &soft_module.module,
                 .{
@@ -97,7 +103,7 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
                 if (specialization.p_map_entries) |map| {
                     const data: []const u8 = @as([*]const u8, @ptrCast(@alignCast(specialization.p_data)))[0..specialization.data_size];
                     for (map[0..], 0..specialization.map_entry_count) |entry, _| {
-                        runtime.addSpecializationInfo(
+                        runtime.rt.addSpecializationInfo(
                             runtimes_allocator,
                             .{
                                 .id = @intCast(entry.constant_id),
@@ -160,10 +166,11 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
             soft_module.ref();
             shader.module = soft_module;
 
-            const runtimes = runtimes_allocator.alloc(spv.Runtime, runtimes_count) catch return VkError.OutOfHostMemory;
+            const runtimes = runtimes_allocator.alloc(Runtime, runtimes_count) catch return VkError.OutOfHostMemory;
 
             for (runtimes) |*runtime| {
-                runtime.* = spv.Runtime.init(
+                runtime.mutex = .init;
+                runtime.rt = spv.Runtime.init(
                     runtimes_allocator,
                     &soft_module.module,
                     .{
@@ -180,7 +187,7 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
                     if (specialization.p_map_entries) |map| {
                         const data: []const u8 = @as([*]const u8, @ptrCast(@alignCast(specialization.p_data)))[0..specialization.data_size];
                         for (map[0..], 0..specialization.map_entry_count) |entry, _| {
-                            runtime.addSpecializationInfo(runtimes_allocator, .{
+                            runtime.rt.addSpecializationInfo(runtimes_allocator, .{
                                 .id = @intCast(entry.constant_id),
                                 .offset = @intCast(entry.offset),
                                 .size = @intCast(entry.size),
@@ -230,8 +237,8 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     var it = self.stages.iterator();
     while (it.next()) |entry| {
         entry.value.module.unref(allocator);
-        for (entry.value.runtimes) |*rt| {
-            rt.function_stack.clearAndFree(device_allocator); // Hacky to avoid leaks
+        for (entry.value.runtimes) |*runtime| {
+            runtime.rt.function_stack.clearAndFree(device_allocator); // Hacky to avoid leaks
         }
     }
     self.runtimes_allocator.deinit();

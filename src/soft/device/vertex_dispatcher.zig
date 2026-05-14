@@ -35,7 +35,7 @@ pub fn runWrapper(data: RunData) void {
 
 inline fn run(data: RunData) !void {
     const shader = data.pipeline.stages.getPtrAssertContains(.vertex);
-    const rt = &shader.runtimes[data.batch_id];
+    const rt = &shader.runtimes[data.batch_id].rt;
     try rt.populatePushConstants(data.draw_call.renderer.state.push_constant_blob[0..]);
 
     const entry = try rt.getEntryPointByName(shader.entry);
@@ -78,19 +78,6 @@ inline fn run(data: RunData) !void {
 
         const output: *Renderer.Vertex = &data.draw_call.vertices[(data.instance_index * data.vertex_count) + invocation_index];
         try rt.readBuiltIn(std.mem.asBytes(&output.position), .Position);
-
-        if (invocation_index == 0) {
-            const io = data.draw_call.renderer.device.interface.io();
-            const file = try std.Io.Dir.cwd().createFile(
-                io,
-                "vertex_result_table_dump.txt",
-                .{ .truncate = true },
-            );
-            defer file.close(io);
-            var buffer = [_]u8{0} ** 1024;
-            var writer = file.writer(io, buffer[0..]);
-            try rt.dumpResultsTable(data.allocator, &writer.interface);
-        }
 
         for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
             const result_word = rt.getResultByLocation(@intCast(location), .output) catch |err| switch (err) {

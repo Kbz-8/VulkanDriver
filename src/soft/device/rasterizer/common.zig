@@ -9,6 +9,14 @@ const Renderer = @import("../Renderer.zig");
 const VkError = base.VkError;
 const F32x4 = zm.F32x4;
 
+pub const RenderTargetAccess = struct {
+    mutex: std.Io.Mutex,
+    base: []u8,
+    row_pitch: usize,
+    texel_size: usize,
+    format: vk.Format,
+};
+
 pub fn scissorContainsPixel(scissor: vk.Rect2D, x: i32, y: i32) bool {
     const min_x: i64 = @as(i64, scissor.offset.x);
     const min_y: i64 = @as(i64, scissor.offset.y);

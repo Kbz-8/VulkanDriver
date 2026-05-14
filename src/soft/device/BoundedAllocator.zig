@@ -6,7 +6,6 @@ const Self = @This();
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 
-mutex: base.SpinMutex,
 child_allocator: std.mem.Allocator,
 bound: usize,
 total_bytes_allocated: std.atomic.Value(usize),
@@ -15,7 +14,6 @@ current_bytes_allocated: std.atomic.Value(usize),
 
 pub fn init(child_allocator: Allocator, bound: usize) Self {
     return .{
-        .mutex = .{},
         .child_allocator = child_allocator,
         .bound = bound,
         .total_bytes_allocated = std.atomic.Value(usize).init(0),
@@ -46,8 +44,6 @@ pub inline fn queryPeakFootprint(self: *Self) usize {
 
 fn alloc(context: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize) ?[*]u8 {
     const self: *Self = @ptrCast(@alignCast(context));
-    self.mutex.lock();
-    defer self.mutex.unlock();
     if (self.current_bytes_allocated.fetchAdd(len, .monotonic) >= self.bound)
         return null;
     _ = self.total_bytes_allocated.fetchAdd(len, .monotonic);
@@ -58,8 +54,6 @@ fn alloc(context: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize)
 
 fn resize(context: *anyopaque, ptr: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) bool {
     const self: *Self = @ptrCast(@alignCast(context));
-    self.mutex.lock();
-    defer self.mutex.unlock();
     _ = self.current_bytes_allocated.fetchSub(ptr.len, .monotonic);
     if (self.current_bytes_allocated.fetchAdd(new_len, .monotonic) >= self.bound)
         return false;
@@ -69,8 +63,6 @@ fn resize(context: *anyopaque, ptr: []u8, alignment: Alignment, new_len: usize, 
 
 fn remap(context: *anyopaque, ptr: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
     const self: *Self = @ptrCast(@alignCast(context));
-    self.mutex.lock();
-    defer self.mutex.unlock();
     _ = self.current_bytes_allocated.fetchSub(ptr.len, .monotonic);
     if (self.current_bytes_allocated.fetchAdd(new_len, .monotonic) >= self.bound)
         return null;
@@ -80,8 +72,6 @@ fn remap(context: *anyopaque, ptr: []u8, alignment: Alignment, new_len: usize, r
 
 fn free(context: *anyopaque, ptr: []u8, alignment: Alignment, ret_addr: usize) void {
     const self: *Self = @ptrCast(@alignCast(context));
-    self.mutex.lock();
-    defer self.mutex.unlock();
     _ = self.current_bytes_allocated.fetchSub(ptr.len, .monotonic);
     return self.child_allocator.rawFree(ptr, alignment, ret_addr);
 }
