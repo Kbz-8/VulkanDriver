@@ -10,6 +10,7 @@ mutex: base.SpinMutex,
 child_allocator: std.mem.Allocator,
 bound: usize,
 total_bytes_allocated: std.atomic.Value(usize),
+peak_concurrent_bytes_allocated: std.atomic.Value(usize),
 current_bytes_allocated: std.atomic.Value(usize),
 
 pub fn init(child_allocator: Allocator, bound: usize) Self {
@@ -19,6 +20,7 @@ pub fn init(child_allocator: Allocator, bound: usize) Self {
         .bound = bound,
         .total_bytes_allocated = std.atomic.Value(usize).init(0),
         .current_bytes_allocated = std.atomic.Value(usize).init(0),
+        .peak_concurrent_bytes_allocated = std.atomic.Value(usize).init(0),
     };
 }
 
@@ -38,6 +40,10 @@ pub inline fn queryFootprint(self: *Self) usize {
     return self.total_bytes_allocated.load(.monotonic);
 }
 
+pub inline fn queryPeakFootprint(self: *Self) usize {
+    return self.peak_concurrent_bytes_allocated.load(.monotonic);
+}
+
 fn alloc(context: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize) ?[*]u8 {
     const self: *Self = @ptrCast(@alignCast(context));
     self.mutex.lock();
@@ -45,6 +51,8 @@ fn alloc(context: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize)
     if (self.current_bytes_allocated.fetchAdd(len, .monotonic) >= self.bound)
         return null;
     _ = self.total_bytes_allocated.fetchAdd(len, .monotonic);
+    if (self.current_bytes_allocated.load(.monotonic) > self.peak_concurrent_bytes_allocated.load(.monotonic))
+        self.peak_concurrent_bytes_allocated.store(self.current_bytes_allocated.load(.monotonic), .monotonic);
     return self.child_allocator.rawAlloc(len, alignment, ret_addr);
 }
 

@@ -74,6 +74,8 @@ fn rasterizeTriangle(renderer: *Renderer, allocator: std.mem.Allocator, draw_cal
     if (try triangleIsCulled(renderer, v0, v1, v2))
         return;
 
+    draw_call.stats.polygons_drawn += 1;
+
     const pipeline_data = (renderer.state.pipeline orelse return VkError.InvalidHandleDrv).interface.mode.graphics;
     switch (pipeline_data.rasterization.polygon_mode) {
         .fill => try edge_function.drawTriangle(allocator, draw_call, v0, v1, v2),

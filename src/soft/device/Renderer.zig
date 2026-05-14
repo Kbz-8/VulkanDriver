@@ -65,6 +65,10 @@ pub const DrawCall = struct {
     render_pass: *SoftRenderPass,
     framebuffer: *SoftFramebuffer,
 
+    stats: struct {
+        polygons_drawn: usize,
+    },
+
     fn init(allocator: std.mem.Allocator, vertex_count: usize, instance_count: usize, renderer: *Self) VkError!@This() {
         const framebuffer = renderer.framebuffer orelse return VkError.InvalidHandleDrv;
         const render_pass = renderer.render_pass orelse return VkError.InvalidHandleDrv;
@@ -78,6 +82,9 @@ pub const DrawCall = struct {
             .depth_attachment = if (render_pass.interface.subpasses[0].depth_stencil_attachments) |desc| framebuffer.interface.attachments[desc.attachment] else null,
             .render_pass = render_pass,
             .framebuffer = framebuffer,
+            .stats = .{
+                .polygons_drawn = 0,
+            },
         };
 
         for (self.vertices) |*vertex| {
@@ -146,11 +153,27 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
         const duration = timer.untilNow(io, .real);
         const ms: f32 = @floatFromInt(duration.toMicroseconds());
         const memory_footprint = @divTrunc(bounded_allocator.queryFootprint(), 1000);
+        const peak_memory_footprint = @divTrunc(bounded_allocator.queryPeakFootprint(), 1000);
+
+        const fmt =
+            \\Drawcall stats:
+            \\>   Took {d:.3}ms
+            \\>   Total allocation of {d} KB
+            \\>   Peak concurrent allocation of {d} KB
+            \\>   Total polygons drawn {d}
+        ;
+        const args = .{
+            ms / 1000,
+            memory_footprint,
+            peak_memory_footprint,
+            draw_call.stats.polygons_drawn,
+        };
+
         const logger = std.log.scoped(.SoftwareRenderer);
         if (memory_footprint > 256_000)
-            logger.warn("Drawcall stats:\n>   Took {d:.3}ms\n>   Allocated {d} KB", .{ ms / 1000, memory_footprint })
+            logger.warn(fmt, args)
         else
-            logger.debug("Drawcall stats:\n>   Took {d:.3}ms\n>   Allocated {d} KB", .{ ms / 1000, memory_footprint });
+            logger.debug(fmt, args);
     };
 
     self.vertexShaderStage(allocator, &draw_call, vertex_count, instance_count, first_vertex, first_instance, indices) catch |err| {

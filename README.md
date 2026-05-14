@@ -73,7 +73,7 @@ vkCmdExecuteCommands                             | ✅ Implemented
 vkCmdFillBuffer                                  | ✅ Implemented
 vkCmdNextSubpass                                 | ⚙️ WIP
 vkCmdPipelineBarrier                             | ✅ Implemented
-vkCmdPushConstants                               | ⚙️ WIP
+vkCmdPushConstants                               | ✅ Implemented
 vkCmdResetEvent                                  | ✅ Implemented
 vkCmdResetQueryPool                              | ⚙️ WIP
 vkCmdResolveImage                                | ⚙️ WIP
@@ -82,7 +82,7 @@ vkCmdSetDepthBias                                | ⚙️ WIP
 vkCmdSetDepthBounds                              | ⚙️ WIP
 vkCmdSetEvent                                    | ✅ Implemented
 vkCmdSetLineWidth                                | ⚙️ WIP
-vkCmdSetScissor                                  | ⚙️ WIP
+vkCmdSetScissor                                  | ✅ Implemented
 vkCmdSetStencilCompareMask                       | ⚙️ WIP
 vkCmdSetStencilReference                         | ⚙️ WIP
 vkCmdSetStencilWriteMask                         | ⚙️ WIP
