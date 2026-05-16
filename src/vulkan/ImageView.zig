@@ -6,8 +6,6 @@ const VkError = @import("error_set.zig").VkError;
 const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
 
 const Device = @import("Device.zig");
-
-const DeviceMemory = @import("DeviceMemory.zig");
 const Image = @import("Image.zig");
 
 const Self = @This();

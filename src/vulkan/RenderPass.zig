@@ -64,7 +64,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Rende
             else
                 null,
             .depth_stencil_attachments = if (subpass_info.p_depth_stencil_attachment) |subpass_attachment|
-                subpass_attachment.*
+                if (subpass_attachment.attachment != vk.ATTACHMENT_UNUSED) subpass_attachment.* else null
             else
                 null,
             .preserve_attachments = if (subpass_info.p_preserve_attachments) |subpass_attachments|

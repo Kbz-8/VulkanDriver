@@ -1,16 +1,20 @@
 const std = @import("std");
 const vk = @import("vulkan");
 
-const NonDispatchable = @import("NonDispatchable.zig");
-
 const VkError = @import("error_set.zig").VkError;
+const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
 
 const Device = @import("Device.zig");
+const Buffer = @import("Buffer.zig");
 
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .buffer_view;
 
 owner: *Device,
+buffer: *Buffer,
+format: vk.Format,
+offset: vk.DeviceSize,
+range: vk.DeviceSize,
 
 vtable: *const VTable,
 
@@ -20,10 +24,13 @@ pub const VTable = struct {
 
 pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.BufferViewCreateInfo) VkError!Self {
     _ = allocator;
-    _ = info;
     return .{
         .owner = device,
+        .buffer = try NonDispatchable(Buffer).fromHandleObject(info.buffer),
         .vtable = undefined,
+        .format = info.format,
+        .offset = info.offset,
+        .range = info.range,
     };
 }
 

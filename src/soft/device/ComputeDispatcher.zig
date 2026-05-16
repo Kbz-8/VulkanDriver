@@ -194,6 +194,17 @@ fn writeDescriptorSets(self: *Self, rt: *spv.Runtime) !void {
                         );
                     }
                 },
+                .texel_buffer => |texel_data_array| for (texel_data_array, 0..) |texel_data, descriptor_index| {
+                    if (texel_data.object) |buffer_view| {
+                        const addr: usize = @intFromPtr(buffer_view);
+                        try rt.writeDescriptorSet(
+                            std.mem.asBytes(&addr),
+                            @as(u32, @intCast(set_index)),
+                            @as(u32, @intCast(binding_index)),
+                            @as(u32, @intCast(descriptor_index)),
+                        );
+                    }
+                },
                 else => {},
             }
         }

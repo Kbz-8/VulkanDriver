@@ -5,9 +5,11 @@ const base = @import("base");
 const VkError = base.VkError;
 const Device = base.Device;
 const Buffer = base.Buffer;
+const BufferView = base.BufferView;
 const ImageView = base.ImageView;
 
 const SoftBuffer = @import("SoftBuffer.zig");
+const SoftBufferView = @import("SoftBufferView.zig");
 const SoftImageView = @import("SoftImageView.zig");
 const SoftSampler = @import("SoftSampler.zig");
 
@@ -31,10 +33,15 @@ const DescriptorImage = struct {
     object: ?*SoftImageView,
 };
 
+const DescriptorTexel = struct {
+    object: ?*SoftBufferView,
+};
+
 const Descriptor = union(enum) {
     buffer: []DescriptorBuffer,
     texture: []DescriptorTexture,
     image: []DescriptorImage,
+    texel_buffer: []DescriptorTexel,
     unsupported: struct {},
 };
 
@@ -61,8 +68,16 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, layout: *base.
         var size: usize = layout.bindings.len * @sizeOf(Descriptor);
         for (layout.bindings) |binding| {
             const struct_size: usize = switch (binding.descriptor_type) {
-                .storage_buffer, .storage_buffer_dynamic => @sizeOf(DescriptorBuffer),
-                .storage_image, .input_attachment => @sizeOf(DescriptorImage),
+                .uniform_buffer,
+                .storage_buffer,
+                .storage_buffer_dynamic,
+                => @sizeOf(DescriptorBuffer),
+                .storage_image,
+                .input_attachment,
+                => @sizeOf(DescriptorImage),
+                .storage_texel_buffer,
+                .uniform_texel_buffer,
+                => @sizeOf(DescriptorTexel),
                 else => 0,
             };
 
@@ -80,11 +95,21 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, layout: *base.
     const descriptors = local_allocator.alloc(Descriptor, layout.bindings.len) catch return VkError.OutOfHostMemory;
     for (descriptors, layout.bindings) |*descriptor, binding| {
         switch (binding.descriptor_type) {
-            .storage_buffer, .storage_buffer_dynamic => descriptor.* = .{
+            .uniform_buffer,
+            .storage_buffer,
+            .storage_buffer_dynamic,
+            => descriptor.* = .{
                 .buffer = local_allocator.alloc(DescriptorBuffer, binding.array_size) catch return VkError.OutOfHostMemory,
             },
-            .storage_image, .input_attachment => descriptor.* = .{
+            .storage_image,
+            .input_attachment,
+            => descriptor.* = .{
                 .image = local_allocator.alloc(DescriptorImage, binding.array_size) catch return VkError.OutOfHostMemory,
+            },
+            .storage_texel_buffer,
+            .uniform_texel_buffer,
+            => descriptor.* = .{
+                .texel_buffer = local_allocator.alloc(DescriptorTexel, binding.array_size) catch return VkError.OutOfHostMemory,
             },
             else => {},
         }
@@ -108,10 +133,24 @@ pub fn copy(interface: *Interface, src_interface: *const Interface, data: vk.Cop
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     const src: *const Self = @alignCast(@fieldParentPtr("interface", src_interface));
 
-    for (self.descriptors[data.dst_binding..(data.dst_binding + data.descriptor_count)], src.descriptors[data.src_binding..(data.src_binding + data.descriptor_count)]) |*dst_desc, src_desc| {
+    const dst_start = @min(@as(usize, @intCast(data.dst_binding)), self.descriptors.len);
+    const src_start = @min(@as(usize, @intCast(data.src_binding)), src.descriptors.len);
+
+    const descriptor_count: usize = @intCast(data.descriptor_count);
+
+    const dst_remaining = self.descriptors.len - dst_start;
+    const src_remaining = src.descriptors.len - src_start;
+
+    const copy_count = @min(descriptor_count, dst_remaining, src_remaining);
+
+    const dst_slice = self.descriptors[dst_start .. dst_start + copy_count];
+    const src_slice = src.descriptors[src_start .. src_start + copy_count];
+
+    for (dst_slice, src_slice) |*dst_desc, src_desc| {
         switch (dst_desc.*) {
             .buffer => |dst_buffer| @memcpy(dst_buffer[0..], src_desc.buffer[0..]),
             .image => |dst_image| @memcpy(dst_image[0..], src_desc.image[0..]),
+            .texel_buffer => |dst_texel| @memcpy(dst_texel[0..], src_desc.texel_buffer[0..]),
             else => {
                 dst_desc.* = .{ .unsupported = .{} };
                 base.unsupported("descriptor type for copy", .{});
@@ -124,7 +163,10 @@ pub fn write(interface: *Interface, write_data: vk.WriteDescriptorSet) VkError!v
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
 
     switch (write_data.descriptor_type) {
-        .storage_buffer, .storage_buffer_dynamic => {
+        .uniform_buffer,
+        .storage_buffer,
+        .storage_buffer_dynamic,
+        => {
             for (write_data.p_buffer_info, 0..write_data.descriptor_count) |buffer_info, i| {
                 const desc = &self.descriptors[write_data.dst_binding].buffer[i];
                 desc.* = .{
@@ -141,13 +183,27 @@ pub fn write(interface: *Interface, write_data: vk.WriteDescriptorSet) VkError!v
                 }
             }
         },
-        .storage_image, .input_attachment => {
+        .storage_image,
+        .input_attachment,
+        => {
             for (write_data.p_image_info, 0..write_data.descriptor_count) |image_info, i| {
                 const desc = &self.descriptors[write_data.dst_binding].image[i];
                 desc.* = .{ .object = null };
                 if (image_info.image_view != .null_handle) {
                     const image_view = try NonDispatchable(ImageView).fromHandleObject(image_info.image_view);
                     desc.object = @as(*SoftImageView, @alignCast(@fieldParentPtr("interface", image_view)));
+                }
+            }
+        },
+        .storage_texel_buffer,
+        .uniform_texel_buffer,
+        => {
+            for (write_data.p_texel_buffer_view, 0..write_data.descriptor_count) |view, i| {
+                const desc = &self.descriptors[write_data.dst_binding].texel_buffer[i];
+                desc.* = .{ .object = null };
+                if (view != .null_handle) {
+                    const buffer_view = try NonDispatchable(BufferView).fromHandleObject(view);
+                    desc.object = @as(*SoftBufferView, @alignCast(@fieldParentPtr("interface", buffer_view)));
                 }
             }
         },

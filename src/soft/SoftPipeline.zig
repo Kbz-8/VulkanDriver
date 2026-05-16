@@ -3,6 +3,10 @@ const vk = @import("vulkan");
 const base = @import("base");
 const spv = @import("spv");
 
+const zm = base.zm;
+
+const blitter = @import("device/blitter.zig");
+
 const Device = base.Device;
 const VkError = base.VkError;
 const SpvRuntimeError = spv.Runtime.RuntimeError;
@@ -11,6 +15,8 @@ const NonDispatchable = base.NonDispatchable;
 const ShaderModule = base.ShaderModule;
 
 const SoftDevice = @import("SoftDevice.zig");
+const SoftBuffer = @import("SoftBuffer.zig");
+const SoftBufferView = @import("SoftBufferView.zig");
 const SoftImage = @import("SoftImage.zig");
 const SoftImageView = @import("SoftImageView.zig");
 const SoftInstance = @import("SoftInstance.zig");
@@ -245,22 +251,30 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     allocator.destroy(self);
 }
 
-fn readImageFloat4(context: *anyopaque, x: i32, y: i32, z: i32) SpvRuntimeError!spv.Runtime.Vec4(f32) {
-    const image_view: *SoftImageView = @ptrCast(@alignCast(context));
-    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
-    const pixel = image.readFloat4(
-        .{
-            .x = x,
-            .y = y,
-            .z = z,
-        },
-        .{
-            .aspect_mask = image_view.interface.subresource_range.aspect_mask,
-            .mip_level = image_view.interface.subresource_range.base_mip_level,
-            .array_layer = image_view.interface.subresource_range.base_array_layer,
-        },
-        image_view.interface.format,
-    ) catch return SpvRuntimeError.Unknown;
+fn readImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32) SpvRuntimeError!spv.Runtime.Vec4(f32) {
+    var pixel = zm.f32x4s(0.0);
+    if (dim == .Buffer) {
+        const buffer_view: *SoftBufferView = @ptrCast(@alignCast(context));
+        const buffer: *SoftBuffer = @alignCast(@fieldParentPtr("interface", buffer_view.interface.buffer));
+        const map = buffer.mapAsSliceWithOffset(u8, buffer_view.interface.offset, buffer_view.interface.range) catch return SpvRuntimeError.Unknown;
+        pixel = blitter.readFloat4(map[(@as(usize, @intCast(x)) * base.format.texelSize(buffer_view.interface.format))..], buffer_view.interface.format);
+    } else {
+        const image_view: *SoftImageView = @ptrCast(@alignCast(context));
+        const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
+        pixel = image.readFloat4(
+            .{
+                .x = x,
+                .y = y,
+                .z = z,
+            },
+            .{
+                .aspect_mask = image_view.interface.subresource_range.aspect_mask,
+                .mip_level = image_view.interface.subresource_range.base_mip_level,
+                .array_layer = image_view.interface.subresource_range.base_array_layer,
+            },
+            image_view.interface.format,
+        ) catch return SpvRuntimeError.Unknown;
+    }
     return .{
         .x = pixel[0],
         .y = pixel[1],
@@ -269,22 +283,30 @@ fn readImageFloat4(context: *anyopaque, x: i32, y: i32, z: i32) SpvRuntimeError!
     };
 }
 
-fn readImageInt4(context: *anyopaque, x: i32, y: i32, z: i32) SpvRuntimeError!spv.Runtime.Vec4(u32) {
-    const image_view: *SoftImageView = @ptrCast(@alignCast(context));
-    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
-    const pixel = image.readInt4(
-        .{
-            .x = x,
-            .y = y,
-            .z = z,
-        },
-        .{
-            .aspect_mask = image_view.interface.subresource_range.aspect_mask,
-            .mip_level = image_view.interface.subresource_range.base_mip_level,
-            .array_layer = image_view.interface.subresource_range.base_array_layer,
-        },
-        image_view.interface.format,
-    ) catch return SpvRuntimeError.Unknown;
+fn readImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32) SpvRuntimeError!spv.Runtime.Vec4(u32) {
+    var pixel = @Vector(4, u32){ 0, 0, 0, 0 };
+    if (dim == .Buffer) {
+        const buffer_view: *SoftBufferView = @ptrCast(@alignCast(context));
+        const buffer: *SoftBuffer = @alignCast(@fieldParentPtr("interface", buffer_view.interface.buffer));
+        const map = buffer.mapAsSliceWithOffset(u8, buffer_view.interface.offset, buffer_view.interface.range) catch return SpvRuntimeError.Unknown;
+        pixel = blitter.readInt4(map[(@as(usize, @intCast(x)) * base.format.texelSize(buffer_view.interface.format))..], buffer_view.interface.format);
+    } else {
+        const image_view: *SoftImageView = @ptrCast(@alignCast(context));
+        const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
+        pixel = image.readInt4(
+            .{
+                .x = x,
+                .y = y,
+                .z = z,
+            },
+            .{
+                .aspect_mask = image_view.interface.subresource_range.aspect_mask,
+                .mip_level = image_view.interface.subresource_range.base_mip_level,
+                .array_layer = image_view.interface.subresource_range.base_array_layer,
+            },
+            image_view.interface.format,
+        ) catch return SpvRuntimeError.Unknown;
+    }
     return .{
         .x = pixel[0],
         .y = pixel[1],
@@ -293,40 +315,56 @@ fn readImageInt4(context: *anyopaque, x: i32, y: i32, z: i32) SpvRuntimeError!sp
     };
 }
 
-fn writeImageFloat4(context: *anyopaque, x: i32, y: i32, z: i32, pixel: spv.Runtime.Vec4(f32)) SpvRuntimeError!void {
-    const image_view: *SoftImageView = @ptrCast(@alignCast(context));
-    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
-    image.writeFloat4(
-        .{
-            .x = x,
-            .y = y,
-            .z = z,
-        },
-        .{
-            .aspect_mask = image_view.interface.subresource_range.aspect_mask,
-            .mip_level = image_view.interface.subresource_range.base_mip_level,
-            .array_layer = image_view.interface.subresource_range.base_array_layer,
-        },
-        image_view.interface.format,
-        .{ pixel.x, pixel.y, pixel.z, pixel.w },
-    ) catch return SpvRuntimeError.Unknown;
+fn writeImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, pixel: spv.Runtime.Vec4(f32)) SpvRuntimeError!void {
+    const vec_pixel = zm.f32x4(pixel.x, pixel.y, pixel.z, pixel.w);
+    if (dim == .Buffer) {
+        const buffer_view: *SoftBufferView = @ptrCast(@alignCast(context));
+        const buffer: *SoftBuffer = @alignCast(@fieldParentPtr("interface", buffer_view.interface.buffer));
+        const map = buffer.mapAsSliceWithOffset(u8, buffer_view.interface.offset, buffer_view.interface.range) catch return SpvRuntimeError.Unknown;
+        blitter.writeFloat4(vec_pixel, map[(@as(usize, @intCast(x)) * base.format.texelSize(buffer_view.interface.format))..], buffer_view.interface.format);
+    } else {
+        const image_view: *SoftImageView = @ptrCast(@alignCast(context));
+        const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
+        image.writeFloat4(
+            .{
+                .x = x,
+                .y = y,
+                .z = z,
+            },
+            .{
+                .aspect_mask = image_view.interface.subresource_range.aspect_mask,
+                .mip_level = image_view.interface.subresource_range.base_mip_level,
+                .array_layer = image_view.interface.subresource_range.base_array_layer,
+            },
+            image_view.interface.format,
+            vec_pixel,
+        ) catch return SpvRuntimeError.Unknown;
+    }
 }
 
-fn writeImageInt4(context: *anyopaque, x: i32, y: i32, z: i32, pixel: spv.Runtime.Vec4(u32)) SpvRuntimeError!void {
-    const image_view: *SoftImageView = @ptrCast(@alignCast(context));
-    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
-    image.writeInt4(
-        .{
-            .x = x,
-            .y = y,
-            .z = z,
-        },
-        .{
-            .aspect_mask = image_view.interface.subresource_range.aspect_mask,
-            .mip_level = image_view.interface.subresource_range.base_mip_level,
-            .array_layer = image_view.interface.subresource_range.base_array_layer,
-        },
-        image_view.interface.format,
-        .{ pixel.x, pixel.y, pixel.z, pixel.w },
-    ) catch return SpvRuntimeError.Unknown;
+fn writeImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, pixel: spv.Runtime.Vec4(u32)) SpvRuntimeError!void {
+    const vec_pixel = @Vector(4, u32){ pixel.x, pixel.y, pixel.z, pixel.w };
+    if (dim == .Buffer) {
+        const buffer_view: *SoftBufferView = @ptrCast(@alignCast(context));
+        const buffer: *SoftBuffer = @alignCast(@fieldParentPtr("interface", buffer_view.interface.buffer));
+        const map = buffer.mapAsSliceWithOffset(u8, buffer_view.interface.offset, buffer_view.interface.range) catch return SpvRuntimeError.Unknown;
+        blitter.writeInt4(vec_pixel, map[(@as(usize, @intCast(x)) * base.format.texelSize(buffer_view.interface.format))..], buffer_view.interface.format);
+    } else {
+        const image_view: *SoftImageView = @ptrCast(@alignCast(context));
+        const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
+        image.writeInt4(
+            .{
+                .x = x,
+                .y = y,
+                .z = z,
+            },
+            .{
+                .aspect_mask = image_view.interface.subresource_range.aspect_mask,
+                .mip_level = image_view.interface.subresource_range.base_mip_level,
+                .array_layer = image_view.interface.subresource_range.base_array_layer,
+            },
+            image_view.interface.format,
+            vec_pixel,
+        ) catch return SpvRuntimeError.Unknown;
+    }
 }
