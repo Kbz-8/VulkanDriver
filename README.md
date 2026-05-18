@@ -91,7 +91,7 @@ vkCmdUpdateBuffer                                | ⚙️ WIP
 vkCmdWaitEvents                                  | ✅ Implemented
 vkCmdWriteTimestamp                              | ⚙️ WIP
 vkCreateBuffer                                   | ✅ Implemented
-vkCreateBufferView                               | ⚙️ WIP
+vkCreateBufferView                               | ✅ Implemented
 vkCreateCommandPool                              | ✅ Implemented
 vkCreateComputePipelines                         | ✅ Implemented
 vkCreateDescriptorPool                           | ✅ Implemented
@@ -111,14 +111,13 @@ vkCreateRenderPass                               | ✅ Implemented
 vkCreateSampler                                  | ⚙️ WIP
 vkCreateSemaphore                                | ⚙️ WIP
 vkCreateShaderModule                             | ✅ Implemented
-vkCreateSwapchainKHR                             | ⚙️ WIP
 vkCreateSwapchainKHR                             | ✅ Implemented
 vkCreateWaylandSurfaceKHR                        | ✅ Implemented
 vkCreateWin32SurfaceKHR                          | ⚙️ WIP
 vkCreateXcbSurfaceKHR                            | ⚙️ WIP
 vkCreateXlibSurfaceKHR                           | ⚙️ WIP
 vkDestroyBuffer                                  | ✅ Implemented
-vkDestroyBufferView                              | ⚙️ WIP
+vkDestroyBufferView                              | ✅ Implemented
 vkDestroyCommandPool                             | ✅ Implemented
 vkDestroyDescriptorPool                          | ✅ Implemented
 vkDestroyDescriptorSetLayout                     | ✅ Implemented
