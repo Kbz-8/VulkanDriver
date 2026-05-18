@@ -4,7 +4,8 @@ const base = @import("base");
 const spv = @import("spv");
 const lib = @import("../lib.zig");
 
-const PipelineState = @import("Device.zig").PipelineState;
+const ExecutionDevice = @import("Device.zig");
+const PipelineState = ExecutionDevice.PipelineState;
 
 const SoftDevice = @import("../SoftDevice.zig");
 const SoftPipeline = @import("../SoftPipeline.zig");
@@ -96,7 +97,7 @@ inline fn run(data: RunData) !void {
 
     const entry = try rt.getEntryPointByName(shader.entry);
 
-    try data.self.writeDescriptorSets(rt);
+    try ExecutionDevice.writeDescriptorSets(data.self.state, rt);
 
     var group_index: usize = data.batch_id;
     while (group_index < data.group_count) : (group_index += data.self.batch_size) {
@@ -163,52 +164,6 @@ inline fn dumpResultsTable(allocator: std.mem.Allocator, io: std.Io, rt: *spv.Ru
     var buffer = [_]u8{0} ** 1024;
     var writer = file.writer(io, buffer[0..]);
     try rt.dumpResultsTable(allocator, &writer.interface);
-}
-
-fn writeDescriptorSets(self: *Self, rt: *spv.Runtime) !void {
-    sets: for (self.state.sets[0..], 0..) |set, set_index| {
-        if (set == null)
-            continue :sets;
-
-        bindings: for (set.?.descriptors[0..], 0..) |binding, binding_index| {
-            switch (binding) {
-                .buffer => |buffer_data_array| for (buffer_data_array, 0..) |buffer_data, descriptor_index| {
-                    if (buffer_data.object) |buffer| {
-                        const map = buffer.mapAsSliceWithOffset(u8, buffer_data.offset, buffer_data.size) catch continue :bindings;
-                        try rt.writeDescriptorSet(
-                            map,
-                            @as(u32, @intCast(set_index)),
-                            @as(u32, @intCast(binding_index)),
-                            @as(u32, @intCast(descriptor_index)),
-                        );
-                    }
-                },
-                .image => |image_data_array| for (image_data_array, 0..) |image_data, descriptor_index| {
-                    if (image_data.object) |image_view| {
-                        const addr: usize = @intFromPtr(image_view);
-                        try rt.writeDescriptorSet(
-                            std.mem.asBytes(&addr),
-                            @as(u32, @intCast(set_index)),
-                            @as(u32, @intCast(binding_index)),
-                            @as(u32, @intCast(descriptor_index)),
-                        );
-                    }
-                },
-                .texel_buffer => |texel_data_array| for (texel_data_array, 0..) |texel_data, descriptor_index| {
-                    if (texel_data.object) |buffer_view| {
-                        const addr: usize = @intFromPtr(buffer_view);
-                        try rt.writeDescriptorSet(
-                            std.mem.asBytes(&addr),
-                            @as(u32, @intCast(set_index)),
-                            @as(u32, @intCast(binding_index)),
-                            @as(u32, @intCast(descriptor_index)),
-                        );
-                    }
-                },
-                else => {},
-            }
-        }
-    }
 }
 
 fn setupWorkgroupBuiltins(

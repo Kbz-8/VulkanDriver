@@ -649,7 +649,7 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
         .r8_snorm,
         .r8_unorm,
         .s8_uint,
-        => map[0] = @intFromFloat(@round(color[0] * 255.0)),
+        => map[0] = @intFromFloat(@round(color[0] * std.math.maxInt(u8))),
 
         .r16_sint,
         .r16_uint,
@@ -691,6 +691,13 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
         },
 
         .r32g32b32a32_sfloat => std.mem.bytesAsValue(F32x4, map).* = color,
+
+        .r5g6b5_unorm_pack16 => {
+            const r: u5 = @intFromFloat(@round(color[0] * std.math.maxInt(u5)));
+            const g: u6 = @intFromFloat(@round(color[1] * std.math.maxInt(u6)));
+            const b: u5 = @intFromFloat(@round(color[2] * std.math.maxInt(u5)));
+            std.mem.bytesAsValue(u16, map[0..]).* = (@as(u16, r) << 11) | (@as(u16, g) << 5) | @as(u16, b);
+        },
 
         else => base.unsupported("Blitter: write float to destination format {any}", .{dst_format}),
     }

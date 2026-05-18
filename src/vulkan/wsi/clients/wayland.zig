@@ -65,10 +65,7 @@ pub fn load() VkError!void {
     if (ref_count.load(.monotonic) != 0)
         return;
 
-    module = std.DynLib.open("libwayland-client.so.0") catch {
-        _ = ref_count.fetchSub(1, .monotonic);
-        return VkError.Unknown;
-    };
+    module = std.DynLib.open("libwayland-client.so.0") catch return VkError.Unknown;
     errdefer module.close();
     errdefer std.log.scoped(.WaylandClient).err("Could not open 'libwayland-client.so.0': {s}", .{std.c.dlerror() orelse "unknown error"});
 
@@ -94,7 +91,7 @@ pub fn unload() void {
     }
 }
 
-pub fn wl_registry_bind(registry: *wl_registry, name: u32, interface: *const wl_interface, version: u32) callconv(.c) ?*wl_proxy {
+pub fn wl_registry_bind(registry: *wl_registry, name: u32, interface: *const wl_interface, version: u32) ?*wl_proxy {
     return wl_proxy_marshal_flags(
         @ptrCast(@alignCast(registry)),
         WL_REGISTRY_BIND,
@@ -108,7 +105,7 @@ pub fn wl_registry_bind(registry: *wl_registry, name: u32, interface: *const wl_
     );
 }
 
-pub fn wl_display_get_registry(display: *wl_display) callconv(.c) ?*wl_registry {
+pub fn wl_display_get_registry(display: *wl_display) ?*wl_registry {
     return @ptrCast(@alignCast(wl_proxy_marshal_flags(
         @ptrCast(@alignCast(display)),
         WL_DISPLAY_GET_REGISTRY,
@@ -119,7 +116,7 @@ pub fn wl_display_get_registry(display: *wl_display) callconv(.c) ?*wl_registry 
     )));
 }
 
-pub fn wl_registry_add_listener(registry: *wl_registry, listener: *const wl_registry_listener, data: ?*anyopaque) callconv(.c) c_int {
+pub fn wl_registry_add_listener(registry: *wl_registry, listener: *const wl_registry_listener, data: ?*anyopaque) c_int {
     return wl_proxy_add_listener(@ptrCast(@alignCast(registry)), @ptrCast(@alignCast(@constCast(listener))), data);
 }
 
@@ -136,7 +133,7 @@ pub fn wl_shm_create_pool(shm: *wl_shm, fd: i32, size: i32) callconv(.c) ?*wl_sh
     )));
 }
 
-pub fn wl_shm_pool_destroy(shm_pool: *wl_shm_pool) callconv(.c) void {
+pub fn wl_shm_pool_destroy(shm_pool: *wl_shm_pool) void {
     _ = wl_proxy_marshal_flags(
         @ptrCast(@alignCast(shm_pool)),
         WL_SHM_POOL_DESTROY,
@@ -146,7 +143,7 @@ pub fn wl_shm_pool_destroy(shm_pool: *wl_shm_pool) callconv(.c) void {
     );
 }
 
-pub fn wl_shm_pool_create_buffer(shm_pool: *wl_shm_pool, offset: i32, width: i32, height: i32, stride: i32, format: u32) callconv(.c) ?*wl_buffer {
+pub fn wl_shm_pool_create_buffer(shm_pool: *wl_shm_pool, offset: i32, width: i32, height: i32, stride: i32, format: u32) ?*wl_buffer {
     return @ptrCast(@alignCast(wl_proxy_marshal_flags(
         @ptrCast(@alignCast(shm_pool)),
         WL_SHM_POOL_CREATE_BUFFER,
@@ -162,7 +159,7 @@ pub fn wl_shm_pool_create_buffer(shm_pool: *wl_shm_pool, offset: i32, width: i32
     )));
 }
 
-pub fn wl_buffer_destroy(buffer: *wl_buffer) callconv(.c) void {
+pub fn wl_buffer_destroy(buffer: *wl_buffer) void {
     _ = wl_proxy_marshal_flags(
         @ptrCast(@alignCast(buffer)),
         WL_BUFFER_DESTROY,
@@ -172,7 +169,7 @@ pub fn wl_buffer_destroy(buffer: *wl_buffer) callconv(.c) void {
     );
 }
 
-pub fn wl_surface_attach(surface: *wl_surface, buffer: *wl_buffer, x: i32, y: i32) callconv(.c) void {
+pub fn wl_surface_attach(surface: *wl_surface, buffer: *wl_buffer, x: i32, y: i32) void {
     _ = wl_proxy_marshal_flags(
         @ptrCast(@alignCast(surface)),
         WL_SURFACE_ATTACH,
@@ -185,7 +182,7 @@ pub fn wl_surface_attach(surface: *wl_surface, buffer: *wl_buffer, x: i32, y: i3
     );
 }
 
-pub fn wl_surface_damage(surface: *wl_surface, x: i32, y: i32, width: i32, height: i32) callconv(.c) void {
+pub fn wl_surface_damage(surface: *wl_surface, x: i32, y: i32, width: i32, height: i32) void {
     _ = wl_proxy_marshal_flags(
         @ptrCast(@alignCast(surface)),
         WL_SURFACE_DAMAGE,
@@ -199,7 +196,7 @@ pub fn wl_surface_damage(surface: *wl_surface, x: i32, y: i32, width: i32, heigh
     );
 }
 
-pub fn wl_surface_commit(surface: *wl_surface) callconv(.c) void {
+pub fn wl_surface_commit(surface: *wl_surface) void {
     _ = wl_proxy_marshal_flags(
         @ptrCast(@alignCast(surface)),
         WL_SURFACE_COMMIT,

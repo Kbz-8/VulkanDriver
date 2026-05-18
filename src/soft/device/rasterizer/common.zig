@@ -17,6 +17,11 @@ pub const RenderTargetAccess = struct {
     format: vk.Format,
 };
 
+pub const VertexInterpolation = struct {
+    blob: []const u8,
+    free_responsability: bool,
+};
+
 pub fn scissorContainsPixel(scissor: vk.Rect2D, x: i32, y: i32) bool {
     const min_x: i64 = @as(i64, scissor.offset.x);
     const min_y: i64 = @as(i64, scissor.offset.y);
@@ -41,8 +46,8 @@ pub fn interpolateVertexOutputs(
     b0: f32,
     b1: f32,
     b2: f32,
-) VkError![spv.SPIRV_MAX_OUTPUT_LOCATIONS][]u8 {
-    var inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][]u8 = undefined;
+) VkError![spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolation {
+    var inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolation = undefined;
 
     for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
         const out0 = v0.outputs[location] orelse continue;
@@ -50,7 +55,7 @@ pub fn interpolateVertexOutputs(
         const out2 = v2.outputs[location] orelse continue;
 
         if (out0.interpolation_type == .flat or out0.blob.len == 0) {
-            inputs[location] = out0.blob;
+            inputs[location] = .{ .blob = out0.blob, .free_responsability = false };
             continue;
         }
 
@@ -75,13 +80,18 @@ pub fn interpolateVertexOutputs(
         if (byte_index < len)
             @memcpy(input[byte_index..], out0.blob[byte_index..len]);
 
-        inputs[location] = input;
+        inputs[location] = .{ .blob = input, .free_responsability = true };
     }
 
     return inputs;
 }
 
-pub fn interpolateLineOutputs(allocator: std.mem.Allocator, v0: *const Renderer.Vertex, v1: *const Renderer.Vertex, t: f32) VkError![spv.SPIRV_MAX_OUTPUT_LOCATIONS][]u8 {
+pub fn interpolateLineOutputs(
+    allocator: std.mem.Allocator,
+    v0: *const Renderer.Vertex,
+    v1: *const Renderer.Vertex,
+    t: f32,
+) VkError![spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolation {
     return interpolateVertexOutputs(allocator, v0, v1, v0, 1.0 - t, t, 0.0);
 }
 

@@ -98,18 +98,42 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, layout: *base.
             .uniform_buffer,
             .storage_buffer,
             .storage_buffer_dynamic,
-            => descriptor.* = .{
-                .buffer = local_allocator.alloc(DescriptorBuffer, binding.array_size) catch return VkError.OutOfHostMemory,
+            => descriptor.* = blk: {
+                const desc: Descriptor = .{
+                    .buffer = local_allocator.alloc(DescriptorBuffer, binding.array_size) catch return VkError.OutOfHostMemory,
+                };
+                for (desc.buffer[0..]) |*d| {
+                    d.* = .{
+                        .object = null,
+                        .offset = 0,
+                        .size = 0,
+                    };
+                }
+                break :blk desc;
             },
+
             .storage_image,
             .input_attachment,
-            => descriptor.* = .{
-                .image = local_allocator.alloc(DescriptorImage, binding.array_size) catch return VkError.OutOfHostMemory,
+            => descriptor.* = blk: {
+                const desc: Descriptor = .{
+                    .image = local_allocator.alloc(DescriptorImage, binding.array_size) catch return VkError.OutOfHostMemory,
+                };
+                for (desc.image[0..]) |*d| {
+                    d.* = .{ .object = null };
+                }
+                break :blk desc;
             },
+
             .storage_texel_buffer,
             .uniform_texel_buffer,
-            => descriptor.* = .{
-                .texel_buffer = local_allocator.alloc(DescriptorTexel, binding.array_size) catch return VkError.OutOfHostMemory,
+            => descriptor.* = blk: {
+                const desc: Descriptor = .{
+                    .texel_buffer = local_allocator.alloc(DescriptorTexel, binding.array_size) catch return VkError.OutOfHostMemory,
+                };
+                for (desc.texel_buffer[0..]) |*d| {
+                    d.* = .{ .object = null };
+                }
+                break :blk desc;
             },
             else => {},
         }

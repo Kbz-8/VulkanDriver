@@ -2,6 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 const lib = @import("../lib.zig");
+const spv = @import("spv");
 
 const SoftDescriptorSet = @import("../SoftDescriptorSet.zig");
 const SoftDevice = @import("../SoftDevice.zig");
@@ -59,4 +60,50 @@ pub fn setup(self: *Self, device: *SoftDevice) void {
     }
     self.compute = .init(device, &self.pipeline_states[@intFromEnum(vk.PipelineBindPoint.compute)]);
     self.renderer = .init(device, &self.pipeline_states[@intFromEnum(vk.PipelineBindPoint.graphics)]);
+}
+
+pub fn writeDescriptorSets(state: *PipelineState, rt: *spv.Runtime) !void {
+    sets: for (state.sets[0..], 0..) |set, set_index| {
+        if (set == null)
+            continue :sets;
+
+        bindings: for (set.?.descriptors[0..], 0..) |binding, binding_index| {
+            switch (binding) {
+                .buffer => |buffer_data_array| for (buffer_data_array, 0..) |buffer_data, descriptor_index| {
+                    if (buffer_data.object) |buffer| {
+                        const map = buffer.mapAsSliceWithOffset(u8, buffer_data.offset, buffer_data.size) catch continue :bindings;
+                        try rt.writeDescriptorSet(
+                            map,
+                            @as(u32, @intCast(set_index)),
+                            @as(u32, @intCast(binding_index)),
+                            @as(u32, @intCast(descriptor_index)),
+                        );
+                    }
+                },
+                .image => |image_data_array| for (image_data_array, 0..) |image_data, descriptor_index| {
+                    if (image_data.object) |image_view| {
+                        const addr: usize = @intFromPtr(image_view);
+                        try rt.writeDescriptorSet(
+                            std.mem.asBytes(&addr),
+                            @as(u32, @intCast(set_index)),
+                            @as(u32, @intCast(binding_index)),
+                            @as(u32, @intCast(descriptor_index)),
+                        );
+                    }
+                },
+                .texel_buffer => |texel_data_array| for (texel_data_array, 0..) |texel_data, descriptor_index| {
+                    if (texel_data.object) |buffer_view| {
+                        const addr: usize = @intFromPtr(buffer_view);
+                        try rt.writeDescriptorSet(
+                            std.mem.asBytes(&addr),
+                            @as(u32, @intCast(set_index)),
+                            @as(u32, @intCast(binding_index)),
+                            @as(u32, @intCast(descriptor_index)),
+                        );
+                    }
+                },
+                else => {},
+            }
+        }
+    }
 }

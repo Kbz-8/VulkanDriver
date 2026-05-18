@@ -4,7 +4,7 @@ const base = @import("base");
 const zm = base.zm;
 const spv = @import("spv");
 
-const lib = @import("../lib.zig");
+const VertexInterpolation = @import("rasterizer/common.zig").VertexInterpolation;
 
 const Renderer = @import("Renderer.zig");
 const SoftImage = @import("../SoftImage.zig");
@@ -12,7 +12,13 @@ const SoftImage = @import("../SoftImage.zig");
 const VkError = base.VkError;
 const SpvRuntimeError = spv.Runtime.RuntimeError;
 
-pub fn shaderInvocation(allocator: std.mem.Allocator, draw_call: *Renderer.DrawCall, batch_id: usize, position: zm.F32x4, inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][]const u8) SpvRuntimeError!zm.F32x4 {
+pub fn shaderInvocation(
+    allocator: std.mem.Allocator,
+    draw_call: *Renderer.DrawCall,
+    batch_id: usize,
+    position: zm.F32x4,
+    inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolation,
+) SpvRuntimeError!zm.F32x4 {
     const io = draw_call.renderer.device.interface.io();
 
     _ = position;
@@ -34,8 +40,9 @@ pub fn shaderInvocation(allocator: std.mem.Allocator, draw_call: *Renderer.DrawC
             SpvRuntimeError.NotFound => continue,
             else => return err,
         };
-        try rt.writeInput(inputs[location], result_word);
-        allocator.free(inputs[location]);
+        try rt.writeInput(inputs[location].blob, result_word);
+        if (inputs[location].free_responsability)
+            allocator.free(inputs[location].blob);
     }
 
     rt.callEntryPoint(allocator, entry) catch |err| switch (err) {
