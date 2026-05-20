@@ -80,6 +80,7 @@ pub fn writeDescriptorSets(state: *PipelineState, rt: *spv.Runtime) !void {
                         );
                     }
                 },
+
                 .image => |image_data_array| for (image_data_array, 0..) |image_data, descriptor_index| {
                     if (image_data.object) |image_view| {
                         const addr: usize = @intFromPtr(image_view);
@@ -91,6 +92,7 @@ pub fn writeDescriptorSets(state: *PipelineState, rt: *spv.Runtime) !void {
                         );
                     }
                 },
+
                 .texel_buffer => |texel_data_array| for (texel_data_array, 0..) |texel_data, descriptor_index| {
                     if (texel_data.object) |buffer_view| {
                         const addr: usize = @intFromPtr(buffer_view);
@@ -102,6 +104,32 @@ pub fn writeDescriptorSets(state: *PipelineState, rt: *spv.Runtime) !void {
                         );
                     }
                 },
+
+                .texture => |texture_data_array| for (texture_data_array, 0..) |texture_data, descriptor_index| {
+                    const SampledImage = packed struct {
+                        image: usize,
+                        sampler: usize,
+                    };
+
+                    var data: SampledImage = undefined;
+
+                    if (texture_data.view) |image_view| {
+                        const addr: usize = @intFromPtr(image_view);
+                        data.image = addr;
+                    }
+                    if (texture_data.sampler) |sampler| {
+                        const addr: usize = @intFromPtr(sampler);
+                        data.sampler = addr;
+                    }
+
+                    try rt.writeDescriptorSet(
+                        std.mem.asBytes(&data),
+                        @as(u32, @intCast(set_index)),
+                        @as(u32, @intCast(binding_index)),
+                        @as(u32, @intCast(descriptor_index)),
+                    );
+                },
+
                 else => {},
             }
         }

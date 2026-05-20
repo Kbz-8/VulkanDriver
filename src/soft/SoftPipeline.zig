@@ -20,6 +20,7 @@ const SoftBufferView = @import("SoftBufferView.zig");
 const SoftImage = @import("SoftImage.zig");
 const SoftImageView = @import("SoftImageView.zig");
 const SoftInstance = @import("SoftInstance.zig");
+const SoftSampler = @import("SoftSampler.zig");
 const SoftShaderModule = @import("SoftShaderModule.zig");
 
 const Self = @This();
@@ -100,6 +101,7 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
                     .readImageInt4 = readImageInt4,
                     .writeImageFloat4 = writeImageFloat4,
                     .writeImageInt4 = writeImageInt4,
+                    .sampleImageFloat4 = sampleImageFloat4,
                 },
             ) catch |err| {
                 std.log.scoped(.SpvRuntimeInit).err("SPIR-V Runtime failed to initialize, {s}", .{@errorName(err)});
@@ -184,6 +186,7 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
                         .readImageInt4 = readImageInt4,
                         .writeImageFloat4 = writeImageFloat4,
                         .writeImageInt4 = writeImageInt4,
+                        .sampleImageFloat4 = sampleImageFloat4,
                     },
                 ) catch |err| {
                     std.log.scoped(.SpvRuntimeInit).err("SPIR-V Runtime failed to initialize, {s}", .{@errorName(err)});
@@ -367,4 +370,42 @@ fn writeImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, 
             vec_pixel,
         ) catch return SpvRuntimeError.Unknown;
     }
+}
+
+fn sampleImageFloat4(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim, x: f32, y: f32, z: f32) SpvRuntimeError!spv.Runtime.Vec4(f32) {
+    var pixel = zm.f32x4s(0.0);
+
+    if (dim == .Buffer) {
+        const buffer_view: *SoftBufferView = @ptrCast(@alignCast(context));
+        const buffer: *SoftBuffer = @alignCast(@fieldParentPtr("interface", buffer_view.interface.buffer));
+        const map = buffer.mapAsSliceWithOffset(u8, buffer_view.interface.offset, buffer_view.interface.range) catch return SpvRuntimeError.Unknown;
+        _ = map;
+    } else {
+        const image_view: *SoftImageView = @ptrCast(@alignCast(context));
+        const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
+
+        const sampler: *SoftSampler = @ptrCast(@alignCast(context2));
+        _ = sampler;
+
+        pixel = image.readFloat4(
+            .{
+                .x = std.math.clamp(@as(i32, @intFromFloat(x * @as(f32, @floatFromInt(image.interface.extent.width)))), 0, image.interface.extent.width - 1),
+                .y = std.math.clamp(@as(i32, @intFromFloat(y * @as(f32, @floatFromInt(image.interface.extent.height)))), 0, image.interface.extent.height - 1),
+                .z = std.math.clamp(@as(i32, @intFromFloat(z * @as(f32, @floatFromInt(image.interface.extent.depth)))), 0, image.interface.extent.depth - 1),
+            },
+            .{
+                .aspect_mask = image_view.interface.subresource_range.aspect_mask,
+                .mip_level = image_view.interface.subresource_range.base_mip_level,
+                .array_layer = image_view.interface.subresource_range.base_array_layer,
+            },
+            image_view.interface.format,
+        ) catch return SpvRuntimeError.Unknown;
+    }
+
+    return .{
+        .x = pixel[0],
+        .y = pixel[1],
+        .z = pixel[2],
+        .w = pixel[3],
+    };
 }

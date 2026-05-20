@@ -829,14 +829,15 @@ pub fn pushConstants(interface: *Interface, stages: vk.ShaderStageFlags, offset:
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
 
+            const state = &device.pipeline_states[
+                if (impl.stages.vertex_bit or impl.stages.fragment_bit)
+                    ExecutionDevice.GRAPHICS_PIPELINE_STATE
+                else
+                    ExecutionDevice.COMPUTE_PIPELINE_STATE
+            ];
+
             const size = @min(lib.PUSH_CONSTANT_SIZE - impl.offset, impl.blob.len);
-            // TODO: pipeline layout offset
-            if (impl.stages.vertex_bit or impl.stages.fragment_bit) {
-                @memcpy(device.pipeline_states[ExecutionDevice.GRAPHICS_PIPELINE_STATE].push_constant_blob[impl.offset..size], impl.blob[0..size]);
-            }
-            if (impl.stages.compute_bit) {
-                @memcpy(device.pipeline_states[ExecutionDevice.COMPUTE_PIPELINE_STATE].push_constant_blob[impl.offset..size], impl.blob[0..size]);
-            }
+            @memcpy(state.push_constant_blob[impl.offset .. impl.offset + size], impl.blob[0..size]);
         }
     };
 
