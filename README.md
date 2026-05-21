@@ -18,7 +18,7 @@ It does not seek to produce a performant or production-worthy driver. \
 
 If thou art truly determined:
 ```
-zig build
+zig build soft
 ```
 
 Then ensure thy Vulkan loader is pointed toward the ICD manifest.

@@ -549,13 +549,11 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
     var c: F32x4 = .{ 0.0, 0.0, 0.0, 1.0 };
 
     switch (src_format) {
-        .r8_snorm,
-        .r8_unorm,
-        => c[0] = @as(f32, @floatFromInt(map[0])) / 255.0,
+        .r8_unorm => c[0] = @as(f32, @floatFromInt(map[0])) / std.math.maxInt(u8),
+        .r8_snorm => c[0] = @as(f32, @floatFromInt(map[0])) / std.math.maxInt(i8),
 
-        .r16_snorm,
-        .r16_unorm,
-        => c[0] = @as(f32, @floatFromInt(std.mem.bytesToValue(u16, map))) / 255.0,
+        .r16_snorm => c[0] = @as(f32, @floatFromInt(std.mem.bytesToValue(u16, map))) / std.math.maxInt(i16),
+        .r16_unorm => c[0] = @as(f32, @floatFromInt(std.mem.bytesToValue(u16, map))) / std.math.maxInt(u16),
 
         .r8g8b8a8_sint,
         .r8g8b8a8_uint,
@@ -568,21 +566,65 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
             c[3] = @as(f32, @floatFromInt(map[3])) / std.math.maxInt(u8);
         },
 
-        .r8g8b8a8_snorm,
-        => {
+        .r8g8_unorm => {
+            c[0] = @as(f32, @floatFromInt(map[0])) / std.math.maxInt(u8);
+            c[1] = @as(f32, @floatFromInt(map[1])) / std.math.maxInt(u8);
+        },
+
+        .r8g8_snorm => {
+            c[0] = @as(f32, @floatFromInt(map[0])) / std.math.maxInt(i8);
+            c[1] = @as(f32, @floatFromInt(map[1])) / std.math.maxInt(i8);
+        },
+
+        .r8g8b8a8_snorm => {
             c[0] = @as(f32, @floatFromInt(map[0])) / std.math.maxInt(i8);
             c[1] = @as(f32, @floatFromInt(map[1])) / std.math.maxInt(i8);
             c[2] = @as(f32, @floatFromInt(map[2])) / std.math.maxInt(i8);
             c[3] = @as(f32, @floatFromInt(map[3])) / std.math.maxInt(i8);
         },
 
+        .r4g4b4a4_unorm_pack16 => {
+            const pack = std.mem.bytesToValue(u16, map);
+            c[0] = @as(f32, @floatFromInt((pack & 0x000F >> 0))) / std.math.maxInt(u4);
+            c[1] = @as(f32, @floatFromInt((pack & 0x00F0 >> 4))) / std.math.maxInt(u4);
+            c[2] = @as(f32, @floatFromInt((pack & 0x0F00 >> 8))) / std.math.maxInt(u4);
+            c[3] = @as(f32, @floatFromInt((pack & 0xF000 >> 12))) / std.math.maxInt(u4);
+        },
+
+        .b4g4r4a4_unorm_pack16 => {
+            const pack = std.mem.bytesToValue(u16, map);
+            c[2] = @as(f32, @floatFromInt((pack & 0x000F >> 0))) / std.math.maxInt(u4);
+            c[1] = @as(f32, @floatFromInt((pack & 0x00F0 >> 4))) / std.math.maxInt(u4);
+            c[0] = @as(f32, @floatFromInt((pack & 0x0F00 >> 8))) / std.math.maxInt(u4);
+            c[3] = @as(f32, @floatFromInt((pack & 0xF000 >> 12))) / std.math.maxInt(u4);
+        },
+
         .r16_sint,
         .r16_uint,
         => c[0] = @floatFromInt(std.mem.bytesToValue(u16, map)),
 
+        .r16_sfloat => c[0] = std.mem.bytesToValue(f16, map),
+
+        .r16g16_sint,
+        .r16g16_uint,
+        => {
+            c[0] = @floatFromInt(std.mem.bytesToValue(u16, map[0..]));
+            c[1] = @floatFromInt(std.mem.bytesToValue(u16, map[2..]));
+        },
+
+        .r16g16_sfloat => {
+            c[0] = std.mem.bytesToValue(f16, map[0..]);
+            c[1] = std.mem.bytesToValue(f16, map[2..]);
+        },
+
         .r32_sint,
         .r32_uint,
         => c[0] = @floatFromInt(std.mem.bytesToValue(u32, map)),
+
+        .r32g32_sfloat => {
+            c[0] = std.mem.bytesToValue(f32, map[0..]);
+            c[1] = std.mem.bytesToValue(f32, map[4..]);
+        },
 
         .d32_sfloat,
         .r32_sfloat,
@@ -598,6 +640,15 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
         .r32g32b32a32_sfloat => c = std.mem.bytesToValue(F32x4, map),
 
         .s8_uint => c[0] = @floatFromInt(map[0]),
+
+        .b8g8r8a8_srgb,
+        .b8g8r8a8_unorm,
+        => {
+            c[0] = @as(f32, @floatFromInt(map[2])) / std.math.maxInt(u8);
+            c[1] = @as(f32, @floatFromInt(map[1])) / std.math.maxInt(u8);
+            c[2] = @as(f32, @floatFromInt(map[0])) / std.math.maxInt(u8);
+            c[3] = @as(f32, @floatFromInt(map[3])) / std.math.maxInt(u8);
+        },
 
         .a8b8g8r8_uint_pack32,
         .a8b8g8r8_sint_pack32,
@@ -638,6 +689,28 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
             c[3] = @as(f32, @floatFromInt((pack & 0xC0000000) >> 30)) / std.math.maxInt(u2);
         },
 
+        .r5g6b5_unorm_pack16 => {
+            const pack = std.mem.bytesToValue(u16, map);
+            c[0] = @as(f32, @floatFromInt((pack & 0x001F) >> 0)) / std.math.maxInt(u5);
+            c[1] = @as(f32, @floatFromInt((pack & 0x07E0) >> 5)) / std.math.maxInt(u6);
+            c[2] = @as(f32, @floatFromInt((pack & 0xF800) >> 11)) / std.math.maxInt(u5);
+        },
+
+        .b5g6r5_unorm_pack16 => {
+            const pack = std.mem.bytesToValue(u16, map);
+            c[2] = @as(f32, @floatFromInt((pack & 0x001F) >> 0)) / std.math.maxInt(u5);
+            c[1] = @as(f32, @floatFromInt((pack & 0x07E0) >> 5)) / std.math.maxInt(u6);
+            c[0] = @as(f32, @floatFromInt((pack & 0xF800) >> 11)) / std.math.maxInt(u5);
+        },
+
+        .r5g5b5a1_unorm_pack16 => {
+            const pack = std.mem.bytesToValue(u16, map);
+            c[0] = @as(f32, @floatFromInt((pack & 0x001F) >> 0)) / std.math.maxInt(u5);
+            c[1] = @as(f32, @floatFromInt((pack & 0x03E0) >> 5)) / std.math.maxInt(u5);
+            c[2] = @as(f32, @floatFromInt((pack & 0x7C00) >> 10)) / std.math.maxInt(u5);
+            c[3] = @as(f32, @floatFromInt((pack & 0x8000) >> 15)) / std.math.maxInt(u1);
+        },
+
         else => base.unsupported("Blitter: read float from source format {any}", .{src_format}),
     }
 
@@ -675,6 +748,30 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
             map[3] = @intFromFloat(@round(color[3] * std.math.maxInt(u8)));
         },
 
+        .r4g4b4a4_unorm_pack16 => {
+            const r: u4 = @intFromFloat(@round(color[0] * std.math.maxInt(u4)));
+            const g: u4 = @intFromFloat(@round(color[1] * std.math.maxInt(u4)));
+            const b: u4 = @intFromFloat(@round(color[2] * std.math.maxInt(u4)));
+            const a: u4 = @intFromFloat(@round(color[2] * std.math.maxInt(u4)));
+            std.mem.bytesAsValue(u16, map[0..]).* =
+                (@as(u16, r) << 12) |
+                (@as(u16, g) << 8) |
+                (@as(u16, b) << 4) |
+                (@as(u16, a) << 0);
+        },
+
+        .b4g4r4a4_unorm_pack16 => {
+            const r: u4 = @intFromFloat(@round(color[0] * std.math.maxInt(u4)));
+            const g: u4 = @intFromFloat(@round(color[1] * std.math.maxInt(u4)));
+            const b: u4 = @intFromFloat(@round(color[2] * std.math.maxInt(u4)));
+            const a: u4 = @intFromFloat(@round(color[2] * std.math.maxInt(u4)));
+            std.mem.bytesAsValue(u16, map[0..]).* =
+                (@as(u16, b) << 12) |
+                (@as(u16, g) << 8) |
+                (@as(u16, r) << 4) |
+                (@as(u16, a) << 0);
+        },
+
         .a8b8g8r8_unorm_pack32,
         .r8g8b8a8_unorm,
         .a8b8g8r8_srgb_pack32,
@@ -696,7 +793,32 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
             const r: u5 = @intFromFloat(@round(color[0] * std.math.maxInt(u5)));
             const g: u6 = @intFromFloat(@round(color[1] * std.math.maxInt(u6)));
             const b: u5 = @intFromFloat(@round(color[2] * std.math.maxInt(u5)));
-            std.mem.bytesAsValue(u16, map[0..]).* = (@as(u16, r) << 11) | (@as(u16, g) << 5) | @as(u16, b);
+            std.mem.bytesAsValue(u16, map[0..]).* =
+                (@as(u16, r) << 11) |
+                (@as(u16, g) << 5) |
+                (@as(u16, b) << 0);
+        },
+
+        .b5g6r5_unorm_pack16 => {
+            const r: u5 = @intFromFloat(@round(color[0] * std.math.maxInt(u5)));
+            const g: u6 = @intFromFloat(@round(color[1] * std.math.maxInt(u6)));
+            const b: u5 = @intFromFloat(@round(color[2] * std.math.maxInt(u5)));
+            std.mem.bytesAsValue(u16, map[0..]).* =
+                (@as(u16, b) << 11) |
+                (@as(u16, g) << 5) |
+                (@as(u16, r) << 0);
+        },
+
+        .r5g5b5a1_unorm_pack16 => {
+            const r: u5 = @intFromFloat(@round(color[0] * std.math.maxInt(u5)));
+            const g: u5 = @intFromFloat(@round(color[1] * std.math.maxInt(u5)));
+            const b: u5 = @intFromFloat(@round(color[2] * std.math.maxInt(u5)));
+            const a: u1 = @intFromFloat(@round(color[3] * std.math.maxInt(u1)));
+            std.mem.bytesAsValue(u16, map).* =
+                (@as(u16, r) << 0) |
+                (@as(u16, g) << 5) |
+                (@as(u16, b) << 10) |
+                (@as(u16, a) << 15);
         },
 
         else => base.unsupported("Blitter: write float to destination format {any}", .{dst_format}),
@@ -719,6 +841,27 @@ pub fn readInt4(map: []const u8, src_format: vk.Format) U32x4 {
         .r32_sint,
         .r32_uint,
         => c[0] = std.mem.bytesToValue(u32, map),
+
+        .r8g8_sint,
+        .r8g8_uint,
+        => {
+            c[0] = map[0];
+            c[1] = map[1];
+        },
+
+        .r16g16_sint,
+        .r16g16_uint,
+        => {
+            c[0] = std.mem.bytesToValue(u16, map[0..]);
+            c[1] = std.mem.bytesToValue(u16, map[2..]);
+        },
+
+        .r32g32_sint,
+        .r32g32_uint,
+        => {
+            c[0] = std.mem.bytesToValue(u32, map[0..]);
+            c[1] = std.mem.bytesToValue(u32, map[4..]);
+        },
 
         .r8g8b8a8_sint,
         .r8g8b8a8_uint,
@@ -768,9 +911,9 @@ pub fn readInt4(map: []const u8, src_format: vk.Format) U32x4 {
         .a2r10g10b10_uint_pack32,
         => {
             const pack = std.mem.bytesToValue(u32, map);
-            c[0] = (pack & 0x000003FF);
+            c[2] = (pack & 0x000003FF);
             c[1] = (pack & 0x000FFC00) >> 10;
-            c[2] = (pack & 0x3FF00000) >> 20;
+            c[0] = (pack & 0x3FF00000) >> 20;
             c[3] = (pack & 0xC0000000) >> 30;
         },
 
@@ -786,13 +929,34 @@ pub fn writeInt4(color: U32x4, map: []u8, dst_format: vk.Format) void {
         .r8_uint,
         => map[0] = @truncate(color[0]),
 
+        .r8g8_sint,
+        .r8g8_uint,
+        => {
+            map[0] = @truncate(color[0]);
+            map[1] = @truncate(color[1]);
+        },
+
         .r16_sint,
         .r16_uint,
         => std.mem.bytesAsValue(u16, map).* = @truncate(color[0]),
 
+        .r16g16_sint,
+        .r16g16_uint,
+        => {
+            std.mem.bytesAsValue(u16, map[0..]).* = @truncate(color[0]);
+            std.mem.bytesAsValue(u16, map[2..]).* = @truncate(color[1]);
+        },
+
         .r32_sint,
         .r32_uint,
         => std.mem.bytesAsValue(u32, map).* = color[0],
+
+        .r32g32_sint,
+        .r32g32_uint,
+        => {
+            std.mem.bytesAsValue(u32, map[0..]).* = color[0];
+            std.mem.bytesAsValue(u32, map[4..]).* = color[1];
+        },
 
         .r8g8b8a8_sint,
         .r8g8b8a8_uint,
@@ -815,6 +979,42 @@ pub fn writeInt4(color: U32x4, map: []u8, dst_format: vk.Format) void {
         .r32g32b32a32_sint,
         .r32g32b32a32_uint,
         => std.mem.bytesAsValue(U32x4, map).* = color,
+
+        .a8b8g8r8_unorm_pack32,
+        .a8b8g8r8_sint_pack32,
+        .a8b8g8r8_srgb_pack32,
+        .a8b8g8r8_uint_pack32,
+        .a8b8g8r8_uscaled_pack32,
+        => {
+            map[3] = @truncate(color[0]);
+            map[2] = @truncate(color[1]);
+            map[0] = @truncate(color[2]);
+            map[1] = @truncate(color[3]);
+        },
+
+        .a2r10g10b10_unorm_pack32,
+        .a2r10g10b10_uint_pack32,
+        => {
+            const pack: u32 =
+                (@as(u32, color[2] & 0x3FF)) |
+                (@as(u32, color[1] & 0x3FF) << 10) |
+                (@as(u32, color[0] & 0x3FF) << 20) |
+                (@as(u32, color[3] & 0x003) << 30);
+
+            std.mem.bytesAsValue(u32, map).* = pack;
+        },
+
+        .a2b10g10r10_unorm_pack32,
+        .a2b10g10r10_uint_pack32,
+        => {
+            const pack: u32 =
+                (@as(u32, color[0] & 0x3FF)) |
+                (@as(u32, color[1] & 0x3FF) << 10) |
+                (@as(u32, color[2] & 0x3FF) << 20) |
+                (@as(u32, color[3] & 0x003) << 30);
+
+            std.mem.bytesAsValue(u32, map).* = pack;
+        },
 
         else => base.unsupported("Blitter: write int to destination format {any}", .{dst_format}),
     }
