@@ -208,6 +208,7 @@ fn customSoft(
     const single_threaded_compute_option = b.option(bool, "single-threaded-compute", "Single threaded compute shaders execution") orelse true;
     const compute_dump_early_results_table_option = b.option(u32, "compute-dump-early-results-table", "Dump compute shaders results table before invocation");
     const compute_dump_final_results_table_option = b.option(u32, "compute-dump-final-results-table", "Dump compute shaders results table after invocation");
+    const approxiamte_rgb_option = b.option(bool, "approximates-rgb", "Approximate sRGB <-> RGB conversions") orelse true;
 
     options.addOption(bool, "single_threaded", single_threaded_option);
     options.addOption(bool, "debug_allocator", debug_allocator_option);
@@ -215,6 +216,7 @@ fn customSoft(
     options.addOption(bool, "single_threaded_compute", single_threaded_compute_option);
     options.addOption(?u32, "compute_dump_early_results_table", compute_dump_early_results_table_option);
     options.addOption(?u32, "compute_dump_final_results_table", compute_dump_final_results_table_option);
+    options.addOption(bool, "approximates_rgb", approxiamte_rgb_option);
 }
 
 fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *Step.Compile, comptime mode: RunningMode) !*Step {
