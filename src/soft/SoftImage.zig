@@ -281,8 +281,7 @@ pub fn copy(
         .mip_level = image_subresource.mip_level,
         .array_layer = image_subresource.base_array_layer,
     });
-    const image_size = try self.interface.getTotalSizeForAspect(image_subresource.aspect_mask);
-    const image_map = try self.mapAsSliceWithAddedOffset(u8, image_texel_offset, image_size);
+    const image_map = try self.mapAsSliceWithAddedOffset(u8, image_texel_offset, vk.WHOLE_SIZE);
 
     var src_memory = if (is_source) base_src_memory orelse return VkError.InvalidDeviceMemoryDrv else image_map;
     var dst_memory = if (is_source) image_map else base_dst_memory orelse return VkError.InvalidDeviceMemoryDrv;

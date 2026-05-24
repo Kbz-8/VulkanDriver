@@ -797,9 +797,7 @@ pub fn pipelineBarrier(interface: *Interface, src_stage: vk.PipelineStageFlags, 
     const CommandImpl = struct {
         const Impl = @This();
 
-        pub fn execute(_: *anyopaque, _: *ExecutionDevice) VkError!void {
-            // TODO: implement synchronization for rasterization stages
-        }
+        pub fn execute(_: *anyopaque, _: *ExecutionDevice) VkError!void {}
     };
 
     const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
