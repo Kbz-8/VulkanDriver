@@ -115,8 +115,10 @@ inline fn edgeFunction(a: F32x4, b: F32x4, p: F32x4) f32 {
 fn runWrapper(data: RunData) void {
     @call(.always_inline, run, .{data}) catch |err| {
         std.log.scoped(.@"Rasterization stage").err("triangle fill mode catched a '{s}'", .{@errorName(err)});
-        if (@errorReturnTrace()) |trace| {
-            std.debug.dumpErrorReturnTrace(trace);
+        if (comptime base.config.logs == .verbose) {
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpErrorReturnTrace(trace);
+            }
         }
     };
 }
@@ -167,9 +169,12 @@ inline fn run(data: RunData) !void {
                 try common.interpolateVertexOutputs(data.allocator, &data.v0, &data.v1, &data.v2, b0, b1, b2),
             ) catch |err| {
                 std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
-                if (@errorReturnTrace()) |trace| {
-                    std.debug.dumpErrorReturnTrace(trace);
+                if (comptime base.config.logs == .verbose) {
+                    if (@errorReturnTrace()) |trace| {
+                        std.debug.dumpErrorReturnTrace(trace);
+                    }
                 }
+
                 return;
             };
 

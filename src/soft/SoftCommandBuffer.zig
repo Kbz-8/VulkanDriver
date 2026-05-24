@@ -99,8 +99,10 @@ pub fn execute(self: *Self, device: *ExecutionDevice) void {
     for (self.commands.items) |command| {
         command.vtable.execute(@ptrCast(command.ptr), device) catch |err| {
             base.errors.errorLoggerContext(err, "the software execution device");
-            if (@errorReturnTrace()) |trace| {
-                std.debug.dumpErrorReturnTrace(trace);
+            if (comptime base.config.logs == .verbose) {
+                if (@errorReturnTrace()) |trace| {
+                    std.debug.dumpErrorReturnTrace(trace);
+                }
             }
             return; // Should we return or continue ? Maybe device lost ?
         };

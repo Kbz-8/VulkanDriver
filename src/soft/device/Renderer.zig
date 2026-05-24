@@ -192,9 +192,12 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
 
     self.vertexShaderStage(allocator, &draw_call, vertex_count, instance_count, first_vertex, first_instance, indices) catch |err| {
         std.log.scoped(.@"Vertex stage").err("catched a '{s}'", .{@errorName(err)});
-        if (@errorReturnTrace()) |trace| {
-            std.debug.dumpErrorReturnTrace(trace);
+        if (comptime base.config.logs == .verbose) {
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpErrorReturnTrace(trace);
+            }
         }
+
         return VkError.Unknown;
     };
 

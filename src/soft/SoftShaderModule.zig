@@ -47,8 +47,10 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
             spv.Module.ModuleError.OutOfMemory => return VkError.OutOfHostMemory,
             else => {
                 std.log.scoped(.@"SPIR-V module").err("module creation catched a '{s}'", .{@errorName(err)});
-                if (@errorReturnTrace()) |trace| {
-                    std.debug.dumpErrorReturnTrace(trace);
+                if (comptime base.config.logs == .verbose) {
+                    if (@errorReturnTrace()) |trace| {
+                        std.debug.dumpErrorReturnTrace(trace);
+                    }
                 }
                 return VkError.ValidationFailed;
             },

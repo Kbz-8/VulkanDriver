@@ -27,8 +27,10 @@ pub const RunData = struct {
 pub fn runWrapper(data: RunData) void {
     @call(.always_inline, run, .{data}) catch |err| {
         std.log.scoped(.@"SPIR-V runtime").err("SPIR-V runtime catched a '{s}'", .{@errorName(err)});
-        if (@errorReturnTrace()) |trace| {
-            std.debug.dumpErrorReturnTrace(trace);
+        if (comptime base.config.logs == .verbose) {
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpErrorReturnTrace(trace);
+            }
         }
     };
 }

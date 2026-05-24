@@ -104,7 +104,7 @@ pub fn copyToImageSingleAspect(self: *const Self, dst: *Self, region: vk.ImageCo
     const bytes_per_block = base.format.texelSize(src_format);
 
     const src_extent = self.getMipLevelExtent(region.src_subresource.mip_level);
-    const dst_extent = dst.getMipLevelExtent(region.src_subresource.mip_level);
+    const dst_extent = dst.getMipLevelExtent(region.dst_subresource.mip_level);
 
     const one_is_3D = (self.interface.image_type == .@"3d") != (dst.interface.image_type == .@"3d");
     const both_are_3D = (self.interface.image_type == .@"3d") and (dst.interface.image_type == .@"3d");
@@ -120,24 +120,13 @@ pub fn copyToImageSingleAspect(self: *const Self, dst: *Self, region: vk.ImageCo
     const src_layer_pitch = if (self.interface.image_type == .@"3d") src_depth_pitch_bytes else src_array_pitch;
     const dst_layer_pitch = if (dst.interface.image_type == .@"3d") dst_depth_pitch_bytes else dst_array_pitch;
 
-    // If one image is 3D, extent.depth must match the layer count. If both images are 2D,
-    // depth is 1 but the source and destination subresource layer count must match.
     const layer_count = if (one_is_3D) region.extent.depth else region.src_subresource.layer_count;
-
-    // Copies between 2D and 3D images are treated as layers, so only use depth as the slice count when both images are 3D.
     const slice_count = if (both_are_3D) region.extent.depth else self.interface.samples.toInt();
 
     const is_single_slice = (slice_count == 1);
     const is_single_row = (region.extent.height == 1) and is_single_slice;
-
-    // In order to copy multiple rows using a single memcpy call, we
-    // have to make sure that we need to copy the entire row and that
-    // both source and destination rows have the same size in bytes
     const is_entire_row = (region.extent.width == src_extent.width) and (region.extent.width == dst_extent.width);
 
-    // In order to copy multiple slices using a single memcpy call, we
-    // have to make sure that we need to copy the entire slice and that
-    // both source and destination slices have the same size in bytes
     const is_entire_slice = is_entire_row and
         (region.extent.height == src_extent.height) and
         (region.extent.height == dst_extent.height) and
@@ -148,16 +137,14 @@ pub fn copyToImageSingleAspect(self: *const Self, dst: *Self, region: vk.ImageCo
         .mip_level = region.src_subresource.mip_level,
         .array_layer = region.src_subresource.base_array_layer,
     });
-    const src_size = try self.interface.getTotalSizeForAspect(region.src_subresource.aspect_mask);
-    var src_map = try self.mapAsSliceWithAddedOffset(u8, src_texel_offset, src_size);
+    var src_map = try self.mapAsSliceWithAddedOffset(u8, src_texel_offset, vk.WHOLE_SIZE);
 
     const dst_texel_offset = try dst.getTexelMemoryOffset(region.dst_offset, .{
         .aspect_mask = region.dst_subresource.aspect_mask,
         .mip_level = region.dst_subresource.mip_level,
         .array_layer = region.dst_subresource.base_array_layer,
     });
-    const dst_size = try dst.interface.getTotalSizeForAspect(region.dst_subresource.aspect_mask);
-    var dst_map = try dst.mapAsSliceWithAddedOffset(u8, dst_texel_offset, dst_size);
+    var dst_map = try dst.mapAsSliceWithAddedOffset(u8, dst_texel_offset, vk.WHOLE_SIZE);
 
     for (0..layer_count) |_| {
         if (is_single_row) {
@@ -203,6 +190,9 @@ pub fn copyToImageSingleAspect(self: *const Self, dst: *Self, region: vk.ImageCo
                     src_row_memory = if (src_row_memory.len < src_row_pitch_bytes) break else src_row_memory[src_row_pitch_bytes..];
                     dst_row_memory = if (dst_row_memory.len < dst_row_pitch_bytes) break else dst_row_memory[dst_row_pitch_bytes..];
                 }
+
+                src_slice_memory = if (src_slice_memory.len < src_depth_pitch_bytes) break else src_slice_memory[src_depth_pitch_bytes..];
+                dst_slice_memory = if (dst_slice_memory.len < dst_depth_pitch_bytes) break else dst_slice_memory[dst_depth_pitch_bytes..];
             }
         }
 
@@ -212,34 +202,36 @@ pub fn copyToImageSingleAspect(self: *const Self, dst: *Self, region: vk.ImageCo
 }
 
 pub fn copyToBuffer(self: *const Self, dst: *SoftBuffer, region: vk.BufferImageCopy) VkError!void {
-    const dst_size = dst.interface.size - region.buffer_offset;
     const dst_offset = dst.interface.offset + region.buffer_offset;
-    const dst_map = try dst.mapAsSliceWithOffset(u8, dst_offset, dst_size);
+    const dst_map = try dst.mapAsSliceWithOffset(u8, dst_offset, vk.WHOLE_SIZE);
     try self.copy(
         null,
         dst_map,
         region.image_subresource,
         region.image_offset,
         region.image_extent,
+        region.buffer_row_length,
+        region.buffer_image_height,
     );
 }
 
 pub fn copyFromBuffer(self: *const Self, src: *const SoftBuffer, region: vk.BufferImageCopy) VkError!void {
-    const src_size = src.interface.size - region.buffer_offset;
     const src_offset = src.interface.offset + region.buffer_offset;
-    const src_map = try src.mapAsSliceWithOffset(u8, src_offset, src_size);
+    const src_map = try src.mapAsSliceWithOffset(u8, src_offset, vk.WHOLE_SIZE);
     try self.copy(
         src_map,
         null,
         region.image_subresource,
         region.image_offset,
         region.image_extent,
+        region.buffer_row_length,
+        region.buffer_image_height,
     );
 }
 
 pub fn copyToMemory(interface: *const Interface, memory: []u8, subresource: vk.ImageSubresourceLayers) VkError!void {
     const self: *const Self = @alignCast(@fieldParentPtr("interface", interface));
-    try self.copy(null, memory, subresource, .{ .x = 0, .y = 0, .z = 0 }, interface.extent);
+    try self.copy(null, memory, subresource, .{ .x = 0, .y = 0, .z = 0 }, interface.extent, 0, 0);
 }
 
 /// Based on SwiftShader vk::Image::copy
@@ -250,6 +242,8 @@ pub fn copy(
     image_subresource: vk.ImageSubresourceLayers,
     image_offset: vk.Offset3D,
     image_extent: vk.Extent3D,
+    row_length: u32,
+    image_height: u32,
 ) VkError!void {
     std.debug.assert((base_src_memory == null) != (base_dst_memory == null));
 
@@ -266,15 +260,18 @@ pub fn copy(
 
     const format = self.interface.formatFromAspect(image_subresource.aspect_mask);
 
-    // TODO: handle extent of compressed formats
-
     if (image_extent.width == 0 or image_extent.height == 0 or image_extent.depth == 0) {
         return;
     }
 
+    const extent: vk.Extent2D = .{
+        .width = if (row_length == 0) image_extent.width else row_length,
+        .height = if (image_height == 0) image_extent.height else image_height,
+    };
+
     const bytes_per_block = base.format.texelSize(format);
-    const memory_row_pitch_bytes = image_extent.width * bytes_per_block;
-    const memory_slice_pitch_bytes = image_extent.height * memory_row_pitch_bytes;
+    const memory_row_pitch_bytes = extent.width * bytes_per_block;
+    const memory_slice_pitch_bytes = extent.height * memory_row_pitch_bytes;
 
     const image_texel_offset = try self.getTexelMemoryOffset(image_offset, .{
         .aspect_mask = image_subresource.aspect_mask,

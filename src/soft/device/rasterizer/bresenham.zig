@@ -112,8 +112,10 @@ fn bresenhamYAtStep(y0: i32, d_x: i32, d_err: i32, y_step: i32, step: usize) i32
 fn runWrapper(data: RunData) void {
     @call(.always_inline, run, .{data}) catch |err| {
         std.log.scoped(.@"Rasterization stage").err("line fill mode catched a '{s}'", .{@errorName(err)});
-        if (@errorReturnTrace()) |trace| {
-            std.debug.dumpErrorReturnTrace(trace);
+        if (comptime base.config.logs == .verbose) {
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpErrorReturnTrace(trace);
+            }
         }
     };
 }
@@ -146,9 +148,12 @@ inline fn run(data: RunData) !void {
             try common.interpolateLineOutputs(data.allocator, data.start_vertex, data.end_vertex, t),
         ) catch |err| {
             std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
-            if (@errorReturnTrace()) |trace| {
-                std.debug.dumpErrorReturnTrace(trace);
+            if (comptime base.config.logs == .verbose) {
+                if (@errorReturnTrace()) |trace| {
+                    std.debug.dumpErrorReturnTrace(trace);
+                }
             }
+
             return;
         };
 
