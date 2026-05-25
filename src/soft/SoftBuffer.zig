@@ -60,7 +60,7 @@ pub fn fillBuffer(self: *Self, offset: vk.DeviceSize, size: vk.DeviceSize, data:
     const memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
     var bytes = if (size == vk.WHOLE_SIZE) memory.size - offset else size;
 
-    const map = try self.mapAsSliceWithOffset(u32, offset, bytes);
+    const map = try self.mapAsSliceWithOffset(u32, offset, @divFloor(bytes, @sizeOf(u32)) * @sizeOf(u32));
 
     var i: usize = 0;
     while (bytes >= 4) : ({

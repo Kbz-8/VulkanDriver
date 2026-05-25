@@ -424,59 +424,6 @@ pub inline fn isUnsigned(format: vk.Format) bool {
     return isUnsignedComponent(format, 0);
 }
 
-pub fn isSignedUnnormalizedInteger(format: vk.Format) bool {
-    return switch (format) {
-        .r8_sint,
-        .r8g8_sint,
-        .r8g8b8a8_sint,
-        .b8g8r8a8_sint,
-        .a8b8g8r8_sint_pack32,
-        .a2r10g10b10_sint_pack32,
-        .a2b10g10r10_sint_pack32,
-        .r16_sint,
-        .r16g16_sint,
-        .r16g16b16_sint,
-        .r16g16b16a16_sint,
-        .r32_sint,
-        .r32g32_sint,
-        .r32g32b32_sint,
-        .r32g32b32a32_sint,
-        .r64_sint,
-        .r64g64_sint,
-        .r64g64b64_sint,
-        .r64g64b64a64_sint,
-        => true,
-        else => false,
-    };
-}
-
-pub fn isUnsignedUnnormalizedInteger(format: vk.Format) bool {
-    return switch (format) {
-        .r8_uint,
-        .r8g8_uint,
-        .r8g8b8a8_uint,
-        .b8g8r8a8_uint,
-        .a8b8g8r8_uint_pack32,
-        .a2r10g10b10_uint_pack32,
-        .a2b10g10r10_uint_pack32,
-        .r16_uint,
-        .r16g16_uint,
-        .r16g16b16_uint,
-        .r16g16b16a16_uint,
-        .r32_uint,
-        .r32g32_uint,
-        .r32g32b32_uint,
-        .r32g32b32a32_uint,
-        .r64_uint,
-        .r64g64_uint,
-        .r64g64b64_uint,
-        .r64g64b64a64_uint,
-        .s8_uint,
-        => true,
-        else => false,
-    };
-}
-
 pub inline fn isUnnormalizedInteger(format: vk.Format) bool {
-    return isSignedUnnormalizedInteger(format) or isUnsignedUnnormalizedInteger(format);
+    return isSint(format) or isUint(format);
 }

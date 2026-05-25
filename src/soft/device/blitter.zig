@@ -1,5 +1,3 @@
-//! This software blitter is highly inspired by SwiftShaders one
-
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
@@ -47,10 +45,6 @@ const BlitData = struct {
     width_ratio: f32,
 };
 
-fn computeOffset2D(x: usize, y: usize, pitch_bytes: usize, texel_bytes: usize) usize {
-    return y * pitch_bytes + x * texel_bytes;
-}
-
 fn computeOffset3D(x: usize, y: usize, z: usize, slice_bytes: usize, pitch_bytes: usize, texel_bytes: usize) usize {
     return z * slice_bytes + y * pitch_bytes + x * texel_bytes;
 }
@@ -70,7 +64,7 @@ pub fn clear(pixel: vk.ClearValue, format: vk.Format, dst: *SoftImage, view_form
     };
 
     var clamped_pixel: vk.ClearValue = pixel;
-    if (base.format.isSint(view_format) or base.format.isUint(view_format)) {
+    if (base.format.isSnorm(view_format) or base.format.isUnorm(view_format)) {
         const min_value: f32 = if (base.format.isSnorm(view_format)) -1.0 else 0.0;
 
         if (range.aspect_mask.color_bit) {
@@ -83,10 +77,6 @@ pub fn clear(pixel: vk.ClearValue, format: vk.Format, dst: *SoftImage, view_form
         if (range.aspect_mask.depth_bit) {
             clamped_pixel.depth_stencil.depth = std.math.clamp(pixel.depth_stencil.depth, min_value, 1.0);
         }
-    }
-
-    if (try fastClear(clamped_pixel, format, dst, dst_format, range, render_area)) {
-        return;
     }
 
     const state: State = .{
@@ -118,8 +108,6 @@ pub fn clear(pixel: vk.ClearValue, format: vk.Format, dst: *SoftImage, view_form
         .extent = .{ .width = 0, .height = 0 },
     };
 
-    const dst_memory = if (dst.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
-
     while (subresource.mip_level <= last_mip_level) : (subresource.mip_level += 1) {
         const extent = dst.getMipLevelExtent(subresource.mip_level);
 
@@ -132,11 +120,10 @@ pub fn clear(pixel: vk.ClearValue, format: vk.Format, dst: *SoftImage, view_form
         while (subresource.array_layer <= last_layer) : (subresource.array_layer += 1) {
             for (0..@intCast(extent.depth)) |depth| {
                 const dst_texel_offset = try dst.getTexelMemoryOffset(.{ .x = 0, .y = 0, .z = @intCast(depth) }, subresource);
-                const dst_size = try dst.interface.getTotalSizeForAspect(subresource.aspect_mask) - dst_texel_offset;
-                const dst_map: []u8 = @as([*]u8, @ptrCast(try dst_memory.map(dst.interface.memory_offset + dst_texel_offset, dst_size)))[0..dst_size];
+                const dst_map = try dst.mapAsSliceWithAddedOffset(u8, dst_texel_offset, vk.WHOLE_SIZE);
 
                 blit(state, .{
-                    .src_map = std.mem.asBytes(&pixel),
+                    .src_map = std.mem.asBytes(&clamped_pixel),
                     .dst_map = dst_map,
 
                     .src_slice_pitch_bytes = base.format.texelSize(format),
@@ -159,112 +146,12 @@ pub fn clear(pixel: vk.ClearValue, format: vk.Format, dst: *SoftImage, view_form
     }
 }
 
-fn fastClear(clear_value: vk.ClearValue, clear_format: vk.Format, dst: *SoftImage, view_format: vk.Format, range: vk.ImageSubresourceRange, render_area: ?vk.Rect2D) VkError!bool {
-    if (clear_format != .r32g32b32a32_sfloat and clear_format != .d32_sfloat and clear_format != .s8_uint) {
-        return false;
-    }
-
-    const r, const g, const b, const a = clear_value.color.float_32;
-    const d = clear_value.depth_stencil.depth;
-    const s = clear_value.depth_stencil.stencil;
-
-    var pack: u32 = 0;
-    switch (view_format) {
-        .r5g6b5_unorm_pack16 => pack = @as(u16, @intFromFloat(31.0 * b + 0.5)) |
-            (@as(u16, @intFromFloat(63.0 * g + 0.5)) << 5) |
-            (@as(u16, @intFromFloat(31.0 * r + 0.5)) << 11),
-        .b5g6r5_unorm_pack16 => pack = @as(u16, @intFromFloat(31.0 * r + 0.5)) |
-            (@as(u16, @intFromFloat(63.0 * g + 0.5)) << 5) |
-            (@as(u16, @intFromFloat(31.0 * b + 0.5)) << 11),
-
-        .a8b8g8r8_uint_pack32,
-        .a8b8g8r8_unorm_pack32,
-        .r8g8b8a8_unorm,
-        => pack = (@as(u32, @intFromFloat(255.0 * a + 0.5)) << 24) |
-            (@as(u32, @intFromFloat(255.0 * b + 0.5)) << 16) |
-            (@as(u32, @intFromFloat(255.0 * g + 0.5)) << 8) |
-            (@as(u32, @intFromFloat(255.0 * r + 0.5))),
-
-        .b8g8r8a8_unorm => pack = (@as(u32, @intFromFloat(255.0 * a + 0.5)) << 24) |
-            (@as(u32, @intFromFloat(255.0 * r + 0.5)) << 16) |
-            (@as(u32, @intFromFloat(255.0 * g + 0.5)) << 8) |
-            (@as(u32, @intFromFloat(255.0 * b + 0.5))),
-        .d32_sfloat => {
-            std.debug.assert(clear_format == .d32_sfloat);
-            pack = @bitCast(d); // f32 reinterpreted as u32
-        },
-        .s8_uint => {
-            std.debug.assert(clear_format == .s8_uint);
-            pack = @as(u8, @intCast(s));
-        },
-        else => return false,
-    }
-
-    var subresource: vk.ImageSubresource = .{
-        .aspect_mask = range.aspect_mask,
-        .mip_level = range.base_mip_level,
-        .array_layer = range.base_array_layer,
-    };
-    const last_mip_level = dst.interface.getLastMipLevel(range);
-    const last_layer = dst.interface.getLastLayerIndex(range);
-
-    var area: vk.Rect2D = if (render_area) |ra| ra else .{
-        .offset = .{ .x = 0, .y = 0 },
-        .extent = .{ .width = 0, .height = 0 },
-    };
-
-    while (subresource.mip_level <= last_mip_level) : (subresource.mip_level += 1) {
-        const dst_slice_pitch_bytes = dst.interface.getSliceMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level);
-        const dst_row_pitch_bytes = dst.interface.getRowPitchMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level);
-        const extent = dst.getMipLevelExtent(subresource.mip_level);
-
-        if (render_area == null) {
-            area.extent.width = extent.width;
-            area.extent.height = extent.height;
-        }
-
-        subresource.array_layer = range.base_array_layer;
-        while (subresource.array_layer <= last_layer) : (subresource.array_layer += 1) {
-            for (0..@intCast(extent.depth)) |depth| {
-                const dst_texel_offset = try dst.getTexelMemoryOffset(.{ .x = area.offset.x, .y = area.offset.y, .z = @intCast(depth) }, subresource);
-                const dst_size = try dst.interface.getTotalSizeForAspect(subresource.aspect_mask);
-                var dst_map = try dst.mapAsSliceWithAddedOffset(u8, dst_texel_offset, dst_size);
-
-                for (0..dst.interface.samples.toInt()) |_| {
-                    var dst_pixel = dst_map[0..];
-                    switch (base.format.texelSize(view_format)) {
-                        4 => for (0..@intCast(area.extent.height)) |_| {
-                            var dst_pixel_4bytes = std.mem.bytesAsSlice(u32, dst_pixel);
-                            @memset(dst_pixel_4bytes[0..area.extent.width], pack);
-                            dst_pixel = if (dst_pixel.len < dst_row_pitch_bytes) break else dst_pixel[dst_row_pitch_bytes..];
-                        },
-                        2 => for (0..@intCast(area.extent.height)) |_| {
-                            var dst_pixel_2bytes = std.mem.bytesAsSlice(u16, dst_pixel);
-                            @memset(dst_pixel_2bytes[0..area.extent.width], @as(u16, @truncate(pack)));
-                            dst_pixel = if (dst_pixel.len < dst_row_pitch_bytes) break else dst_pixel[dst_row_pitch_bytes..];
-                        },
-                        1 => for (0..@intCast(area.extent.height)) |_| {
-                            @memset(dst_pixel[0..area.extent.width], @as(u8, @truncate(pack)));
-                            dst_pixel = if (dst_pixel.len < dst_row_pitch_bytes) break else dst_pixel[dst_row_pitch_bytes..];
-                        },
-                        else => unreachable,
-                    }
-
-                    dst_map = if (dst_map.len < dst_slice_pitch_bytes) break else dst_map[dst_slice_pitch_bytes..];
-                }
-            }
-        }
-    }
-
-    return true;
-}
-
 fn sample(src: []const u8, pos: F32x4, dim: F32x4, slice_bytes: usize, pitch_bytes: usize, state: State) F32x4 {
     var color: F32x4 = .{ 0.0, 0.0, 0.0, 1.0 };
     const src_texel_size = base.format.texelSize(state.src_format);
     var apply_srgb_convertion = true;
 
-    if (state.filter == .nearest or base.format.isUnsignedUnnormalizedInteger(state.src_format)) {
+    if (state.filter == .nearest or base.format.isUnnormalizedInteger(state.src_format)) {
         var x: usize = @intFromFloat(pos[0]);
         var y: usize = @intFromFloat(pos[1]);
         var z: usize = @intFromFloat(pos[2]);
@@ -866,16 +753,20 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
 
 pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
     switch (dst_format) {
-        .r8_snorm,
         .r8_unorm,
+        .r8_srgb,
         .s8_uint,
         => map[0] = @intFromFloat(@round(color[0] * std.math.maxInt(u8))),
+
+        .r8_snorm,
+        => map[0] = @intFromFloat(@round(color[0] * std.math.maxInt(i8))),
 
         .r16_sint,
         .r16_uint,
         .d16_unorm,
         => std.mem.bytesAsValue(u16, map).* = @intFromFloat(@round(color[0])),
 
+        .r16_snorm => std.mem.bytesAsValue(u16, map).* = @intFromFloat(@round(color[0] * std.math.maxInt(i16))),
         .r16_unorm => std.mem.bytesAsValue(u16, map).* = @intFromFloat(@round(color[0] * std.math.maxInt(u16))),
 
         .r16_sfloat => std.mem.bytesAsValue(f16, map).* = @floatCast(color[0]),
@@ -888,7 +779,14 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
         .d32_sfloat,
         => std.mem.bytesAsValue(f32, map).* = color[0],
 
-        .r8g8_unorm => {
+        .r8g8_snorm => {
+            map[0] = @intFromFloat(@round(color[0] * std.math.maxInt(i8)));
+            map[1] = @intFromFloat(@round(color[1] * std.math.maxInt(i8)));
+        },
+
+        .r8g8_unorm,
+        .r8g8_srgb,
+        => {
             map[0] = @intFromFloat(@round(color[0] * std.math.maxInt(u8)));
             map[1] = @intFromFloat(@round(color[1] * std.math.maxInt(u8)));
         },
@@ -916,12 +814,18 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
         .r16g16b16a16_sint,
         .r16g16b16a16_uint,
         .r16g16b16a16_unorm,
-        .r16g16b16a16_snorm,
         => {
             std.mem.bytesAsValue(u16, map[0..]).* = @intFromFloat(@round(color[0] * std.math.maxInt(u16)));
             std.mem.bytesAsValue(u16, map[2..]).* = @intFromFloat(@round(color[1] * std.math.maxInt(u16)));
             std.mem.bytesAsValue(u16, map[4..]).* = @intFromFloat(@round(color[2] * std.math.maxInt(u16)));
             std.mem.bytesAsValue(u16, map[6..]).* = @intFromFloat(@round(color[3] * std.math.maxInt(u16)));
+        },
+
+        .r16g16b16a16_snorm => {
+            std.mem.bytesAsValue(u16, map[0..]).* = @intFromFloat(@round(color[0] * std.math.maxInt(i16)));
+            std.mem.bytesAsValue(u16, map[2..]).* = @intFromFloat(@round(color[1] * std.math.maxInt(i16)));
+            std.mem.bytesAsValue(u16, map[4..]).* = @intFromFloat(@round(color[2] * std.math.maxInt(i16)));
+            std.mem.bytesAsValue(u16, map[6..]).* = @intFromFloat(@round(color[3] * std.math.maxInt(i16)));
         },
 
         .r16g16b16a16_sfloat => {
@@ -964,6 +868,30 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
                 (@as(u16, a) << 0);
         },
 
+        .a4r4g4b4_unorm_pack16 => {
+            const r: u4 = @intFromFloat(@round(color[0] * std.math.maxInt(u4)));
+            const g: u4 = @intFromFloat(@round(color[1] * std.math.maxInt(u4)));
+            const b: u4 = @intFromFloat(@round(color[2] * std.math.maxInt(u4)));
+            const a: u4 = @intFromFloat(@round(color[3] * std.math.maxInt(u4)));
+            std.mem.bytesAsValue(u16, map[0..]).* =
+                (@as(u16, a) << 12) |
+                (@as(u16, r) << 8) |
+                (@as(u16, g) << 4) |
+                (@as(u16, b) << 0);
+        },
+
+        .a4b4g4r4_unorm_pack16 => {
+            const r: u4 = @intFromFloat(@round(color[0] * std.math.maxInt(u4)));
+            const g: u4 = @intFromFloat(@round(color[1] * std.math.maxInt(u4)));
+            const b: u4 = @intFromFloat(@round(color[2] * std.math.maxInt(u4)));
+            const a: u4 = @intFromFloat(@round(color[3] * std.math.maxInt(u4)));
+            std.mem.bytesAsValue(u16, map[0..]).* =
+                (@as(u16, a) << 12) |
+                (@as(u16, b) << 8) |
+                (@as(u16, g) << 4) |
+                (@as(u16, r) << 0);
+        },
+
         .r8g8b8a8_unorm,
         .r8g8b8a8_srgb,
         .r8g8b8a8_uint,
@@ -977,6 +905,22 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
             map[1] = @intFromFloat(@round(color[1] * std.math.maxInt(u8)));
             map[2] = @intFromFloat(@round(color[2] * std.math.maxInt(u8)));
             map[3] = @intFromFloat(@round(color[3] * std.math.maxInt(u8)));
+        },
+
+        .a8b8g8r8_sint_pack32,
+        .a8b8g8r8_snorm_pack32,
+        => {
+            map[0] = @intFromFloat(@round(color[0] * std.math.maxInt(i8)));
+            map[1] = @intFromFloat(@round(color[1] * std.math.maxInt(i8)));
+            map[2] = @intFromFloat(@round(color[2] * std.math.maxInt(i8)));
+            map[3] = @intFromFloat(@round(color[3] * std.math.maxInt(i8)));
+        },
+
+        .r8g8b8a8_snorm => {
+            map[0] = @intFromFloat(@round(color[0] * std.math.maxInt(i8)));
+            map[1] = @intFromFloat(@round(color[1] * std.math.maxInt(i8)));
+            map[2] = @intFromFloat(@round(color[2] * std.math.maxInt(i8)));
+            map[3] = @intFromFloat(@round(color[3] * std.math.maxInt(i8)));
         },
 
         .a2r10g10b10_uint_pack32,
@@ -1075,6 +1019,8 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
                 (g << 11) |
                 (b << 22);
         },
+
+        .e5b9g9r9_ufloat_pack32 => std.mem.bytesAsValue(u32, map).* = encodeE5B9G9R9(color),
 
         else => base.unsupported("Blitter: write float to destination format {any}", .{dst_format}),
     }
@@ -1392,4 +1338,66 @@ fn encodeUFloat(value: f32, mantissa_bits: comptime_int) u32 {
     }
 
     return (exp_bits << mantissa_bits) | mantissa;
+}
+
+fn clampE5B9G9R9Component(value: f32) f32 {
+    const mantissa_bits = 9;
+    const exponent_bits = 5;
+    const exponent_bias = 15;
+    const max_mantissa = (1 << mantissa_bits) - 1;
+    const max_exponent = (1 << exponent_bits) - 1;
+
+    const max_value = @as(f32, @floatFromInt(max_mantissa)) *
+        std.math.ldexp(@as(f32, 1.0), max_exponent - exponent_bias - mantissa_bits);
+
+    if (std.math.isNan(value) or value <= 0.0)
+        return 0.0;
+
+    if (std.math.isInf(value) or value >= max_value)
+        return max_value;
+
+    return value;
+}
+
+fn encodeE5B9G9R9Mantissa(value: f32, scale: f32) u32 {
+    const max_mantissa = 0x1FF;
+    return @min(@as(u32, @intFromFloat(@round(value / scale))), max_mantissa);
+}
+
+fn encodeE5B9G9R9(color: F32x4) u32 {
+    const mantissa_bits = 9;
+    const exponent_bits = 5;
+    const exponent_bias = 15;
+    const max_mantissa = (1 << mantissa_bits) - 1;
+    const max_exponent = (1 << exponent_bits) - 1;
+
+    const r = clampE5B9G9R9Component(color[0]);
+    const g = clampE5B9G9R9Component(color[1]);
+    const b = clampE5B9G9R9Component(color[2]);
+
+    const max_component = @max(r, @max(g, b));
+    if (max_component == 0.0)
+        return 0;
+
+    const parts = std.math.frexp(max_component);
+    var exponent_i = std.math.clamp(parts.exponent + exponent_bias, 0, max_exponent);
+    var exponent: u32 = @intCast(exponent_i);
+
+    var scale = std.math.ldexp(@as(f32, 1.0), exponent_i - exponent_bias - mantissa_bits);
+
+    const rounded_max: u32 = @intFromFloat(@round(max_component / scale));
+    if (rounded_max > max_mantissa and exponent < max_exponent) {
+        exponent += 1;
+        exponent_i += 1;
+        scale *= 2.0;
+    }
+
+    const r_mantissa = encodeE5B9G9R9Mantissa(r, scale);
+    const g_mantissa = encodeE5B9G9R9Mantissa(g, scale);
+    const b_mantissa = encodeE5B9G9R9Mantissa(b, scale);
+
+    return (r_mantissa << 0) |
+        (g_mantissa << 9) |
+        (b_mantissa << 18) |
+        (exponent << 27);
 }

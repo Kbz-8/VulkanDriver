@@ -1,3 +1,55 @@
+//! Image layout representation in contiguous memory
+//!
+//! ```text
+//! ┌──────────────────────────────────────────────────┐
+//! │ Device memory at image offset                    │
+//! │ ┌──────────────────────────────────────────────┐ │
+//! │ │ Aspect 0, e.g. color/depth                   │ │
+//! │ │                                              │ │
+//! │ │  Layer 0                                     │ │
+//! │ │  ┌────────────────────────────────────────┐  │ │
+//! │ │  │ Mip 0                                  │  │ │
+//! │ │  │ ┌──────────────────────────────────┐   │  │ │
+//! │ │  │ │ z=0 slice                        │   │  │ │
+//! │ │  │ │ row 0: [px][px][px][px]          │   │  │ │
+//! │ │  │ │ row 1: [px][px][px][px]          │   │  │ │
+//! │ │  │ │ row 2: [px][px][px][px]          │   │  │ │
+//! │ │  │ └──────────────────────────────────┘   │  │ │
+//! │ │  │                                        │  │ │
+//! │ │  │ Mip 1                                  │  │ │
+//! │ │  │ ┌──────────────────────────────────┐   │  │ │
+//! │ │  │ │ row 0: [px][px]                  │   │  │ │
+//! │ │  │ │ row 1: [px][px]                  │   │  │ │
+//! │ │  │ └──────────────────────────────────┘   │  │ │
+//! │ │  │                                        │  │ │
+//! │ │  │ Mip 2                                  │  │ │
+//! │ │  │ ┌──────────────────────────────────┐   │  │ │
+//! │ │  │ │ row 0: [px]                      │   │  │ │
+//! │ │  │ └──────────────────────────────────┘   │  │ │
+//! │ │  └────────────────────────────────────────┘  │ │
+//! │ │                                              │ │
+//! │ │  Layer 1                                     │ │
+//! │ │  ┌────────────────────────────────────────┐  │ │
+//! │ │  │ Mip 0                                  │  │ │
+//! │ │  │   row 0: [px][px][px][px]              │  │ │
+//! │ │  │   row 1: [px][px][px][px]              │  │ │
+//! │ │  │   row 2: [px][px][px][px]              │  │ │
+//! │ │  │                                        │  │ │
+//! │ │  │ Mip 1                                  │  │ │
+//! │ │  │   row 0: [px][px]                      │  │ │
+//! │ │  │   row 1: [px][px]                      │  │ │
+//! │ │  │                                        │  │ │
+//! │ │  │ Mip 2                                  │  │ │
+//! │ │  │   row 0: [px]                          │  │ │
+//! │ │  └────────────────────────────────────────┘  │ │
+//! │ └──────────────────────────────────────────────┘ │
+//! │ ┌──────────────────────────────────────────────┐ │
+//! │ │ Aspect 1, e.g. stencil                       │ │
+//! │ │ ...                                          │ │
+//! │ └──────────────────────────────────────────────┘ │
+//! └──────────────────────────────────────────────────┘
+//! ```
+
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
@@ -58,7 +110,6 @@ pub fn getClearFormat(self: *Self) VkError!vk.Format {
         .r32g32b32a32_sfloat;
 }
 
-/// Based on SwiftShader vk::Image::copyTo
 pub fn copyToImage(self: *const Self, dst: *Self, region: vk.ImageCopy) VkError!void {
     const combined_depth_stencil_aspect: vk.ImageAspectFlags = .{
         .depth_bit = true,
@@ -82,7 +133,6 @@ pub fn copyToImage(self: *const Self, dst: *Self, region: vk.ImageCopy) VkError!
     }
 }
 
-/// Based on SwiftShader vk::Image::copySingleAspectTo
 pub fn copyToImageSingleAspect(self: *const Self, dst: *Self, region: vk.ImageCopy) VkError!void {
     if (!(region.src_subresource.aspect_mask == vk.ImageAspectFlags{ .color_bit = true } or
         region.src_subresource.aspect_mask == vk.ImageAspectFlags{ .depth_bit = true } or
@@ -234,7 +284,6 @@ pub fn copyToMemory(interface: *const Interface, memory: []u8, subresource: vk.I
     try self.copy(null, memory, subresource, .{ .x = 0, .y = 0, .z = 0 }, interface.extent, 0, 0);
 }
 
-/// Based on SwiftShader vk::Image::copy
 pub fn copy(
     self: *const Self,
     base_src_memory: ?[]const u8,
