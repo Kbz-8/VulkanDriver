@@ -97,18 +97,18 @@ pub inline fn mapAsSliceWithAddedOffset(self: *const Self, comptime T: type, off
 
 pub fn mapAsWithOffset(self: *const Self, comptime T: type, offset: usize) VkError!*T {
     const memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
-    const map = @as([*]u8, @ptrCast(@alignCast(try memory.map(offset, @sizeOf(T)))))[0..@sizeOf(T)];
+    const map = try memory.map(offset, @sizeOf(T));
     return @alignCast(std.mem.bytesAsValue(T, map));
 }
 
 pub fn mapToWithOffset(self: *const Self, comptime T: type, offset: usize) VkError!T {
     const memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
-    const map = @as([*]u8, @ptrCast(@alignCast(try memory.map(offset, @sizeOf(T)))))[0..@sizeOf(T)];
+    const map = try memory.map(offset, @sizeOf(T));
     return std.mem.bytesToValue(T, map);
 }
 
 pub fn mapAsSliceWithOffset(self: *const Self, comptime T: type, offset: usize, size: usize) VkError![]T {
     const memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
-    const map = @as([*]u8, @ptrCast(@alignCast(try memory.map(offset, size))))[0..size];
+    const map = try memory.map(offset, size);
     return @alignCast(std.mem.bytesAsSlice(T, map));
 }

@@ -54,12 +54,12 @@ pub fn invalidateRange(interface: *Interface, offset: vk.DeviceSize, size: vk.De
     _ = size;
 }
 
-pub fn map(interface: *Interface, offset: vk.DeviceSize, size: vk.DeviceSize) VkError!?*anyopaque {
+pub fn map(interface: *Interface, offset: vk.DeviceSize, size: vk.DeviceSize) VkError![]u8 {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     if (offset >= self.data.len or (size != vk.WHOLE_SIZE and offset + size > self.data.len)) {
         return VkError.MemoryMapFailed;
     }
-    return @ptrCast(&self.data[offset]);
+    return if (size == vk.WHOLE_SIZE) self.data[offset..] else self.data[offset..(offset + size)];
 }
 
 pub fn unmap(_: *Interface) void {

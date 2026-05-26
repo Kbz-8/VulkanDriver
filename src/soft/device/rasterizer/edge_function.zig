@@ -103,7 +103,8 @@ pub fn drawTriangle(
         }
     }
 
-    // To avoid mess with pixel render order without depth buffer to sort them
+    // Not syncing workers between triangles when rendering without depth buffer
+    // will lead to pixel rendering order issues between triangles.
     if (depth_attachment_access == null)
         draw_call.rasterizer_wait_group.await(io) catch return VkError.DeviceLost;
 }

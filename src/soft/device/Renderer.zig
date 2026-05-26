@@ -244,7 +244,7 @@ fn readIndexBuffer(self: *Self, allocator: std.mem.Allocator, index_count: usize
 
     const byte_offset = buffer.interface.offset + index_buffer.offset + (first_index * index_size);
     const byte_size = index_count * index_size;
-    const index_memory: []const u8 = @as([*]const u8, @ptrCast(@alignCast(try buffer_memory.map(byte_offset, byte_size))))[0..byte_size];
+    const index_memory: []const u8 = try buffer_memory.map(byte_offset, byte_size);
 
     const indices = allocator.alloc(i32, index_count) catch return VkError.OutOfDeviceMemory;
     for (indices, 0..) |*index, i| {

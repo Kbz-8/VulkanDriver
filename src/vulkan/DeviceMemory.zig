@@ -18,7 +18,7 @@ pub const VTable = struct {
     destroy: *const fn (*Self, std.mem.Allocator) void,
     flushRange: *const fn (*Self, vk.DeviceSize, vk.DeviceSize) VkError!void,
     invalidateRange: *const fn (*Self, vk.DeviceSize, vk.DeviceSize) VkError!void,
-    map: *const fn (*Self, vk.DeviceSize, vk.DeviceSize) VkError!?*anyopaque,
+    map: *const fn (*Self, vk.DeviceSize, vk.DeviceSize) VkError![]u8,
     unmap: *const fn (*Self) void,
 };
 
@@ -44,7 +44,7 @@ pub inline fn invalidateRange(self: *Self, offset: vk.DeviceSize, size: vk.Devic
     try self.vtable.invalidateRange(self, offset, size);
 }
 
-pub inline fn map(self: *Self, offset: vk.DeviceSize, size: vk.DeviceSize) VkError!?*anyopaque {
+pub inline fn map(self: *Self, offset: vk.DeviceSize, size: vk.DeviceSize) VkError![]u8 {
     return self.vtable.map(self, offset, size);
 }
 

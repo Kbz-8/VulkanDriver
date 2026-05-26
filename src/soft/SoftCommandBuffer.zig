@@ -53,6 +53,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .blitImage = blitImage,
         .clearAttachment = clearAttachment,
         .clearColorImage = clearColorImage,
+        .clearDepthStencilImage = clearDepthStencilImage,
         .copyBuffer = copyBuffer,
         .copyBufferToImage = copyBufferToImage,
         .copyImage = copyImage,
@@ -426,6 +427,34 @@ pub fn clearColorImage(interface: *Interface, image: *base.Image, _: vk.ImageLay
     cmd.* = .{
         .image = @alignCast(@fieldParentPtr("interface", image)),
         .clear_color = color.*,
+        .range = range,
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn clearDepthStencilImage(interface: *Interface, image: *base.Image, _: vk.ImageLayout, value: *const vk.ClearDepthStencilValue, range: vk.ImageSubresourceRange) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        image: *SoftImage,
+        value: vk.ClearDepthStencilValue,
+        range: vk.ImageSubresourceRange,
+
+        pub fn execute(context: *anyopaque, _: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            const clear_format = try impl.image.getClearFormat();
+            try blitter.clear(.{ .depth_stencil = impl.value }, clear_format, impl.image, impl.image.interface.format, impl.range, null);
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .image = @alignCast(@fieldParentPtr("interface", image)),
+        .value = value.*,
         .range = range,
     };
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;

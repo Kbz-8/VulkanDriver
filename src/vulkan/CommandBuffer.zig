@@ -47,6 +47,7 @@ pub const DispatchTable = struct {
     blitImage: *const fn (*Self, *Image, vk.ImageLayout, *Image, vk.ImageLayout, []const vk.ImageBlit, vk.Filter) VkError!void,
     clearAttachment: *const fn (*Self, vk.ClearAttachment, vk.ClearRect) VkError!void,
     clearColorImage: *const fn (*Self, *Image, vk.ImageLayout, *const vk.ClearColorValue, vk.ImageSubresourceRange) VkError!void,
+    clearDepthStencilImage: *const fn (*Self, *Image, vk.ImageLayout, *const vk.ClearDepthStencilValue, vk.ImageSubresourceRange) VkError!void,
     copyBuffer: *const fn (*Self, *Buffer, *Buffer, []const vk.BufferCopy) VkError!void,
     copyBufferToImage: *const fn (*Self, *Buffer, *Image, vk.ImageLayout, []const vk.BufferImageCopy) VkError!void,
     copyImage: *const fn (*Self, *Image, vk.ImageLayout, *Image, vk.ImageLayout, []const vk.ImageCopy) VkError!void,
@@ -188,6 +189,12 @@ pub fn clearAttachment(self: *Self, attachment: vk.ClearAttachment, rect: vk.Cle
 pub fn clearColorImage(self: *Self, image: *Image, layout: vk.ImageLayout, color: *const vk.ClearColorValue, ranges: []const vk.ImageSubresourceRange) VkError!void {
     for (ranges) |range| {
         try self.dispatch_table.clearColorImage(self, image, layout, color, range);
+    }
+}
+
+pub fn clearDepthStencilImage(self: *Self, image: *Image, layout: vk.ImageLayout, value: *const vk.ClearDepthStencilValue, ranges: []const vk.ImageSubresourceRange) VkError!void {
+    for (ranges) |range| {
+        try self.dispatch_table.clearDepthStencilImage(self, image, layout, value, range);
     }
 }
 

@@ -97,9 +97,6 @@ pub fn clear(pixel: vk.ClearValue, format: vk.Format, dst: *SoftImage, view_form
         .array_layer = range.base_array_layer,
     };
 
-    const dst_slice_pitch_bytes = dst.interface.getSliceMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level);
-    const dst_row_pitch_bytes = dst.interface.getRowPitchMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level);
-
     const last_mip_level = dst.interface.getLastMipLevel(range);
     const last_layer = dst.interface.getLastLayerIndex(range);
 
@@ -128,8 +125,8 @@ pub fn clear(pixel: vk.ClearValue, format: vk.Format, dst: *SoftImage, view_form
 
                     .src_slice_pitch_bytes = base.format.texelSize(format),
                     .src_row_pitch_bytes = 0,
-                    .dst_slice_pitch_bytes = dst_slice_pitch_bytes,
-                    .dst_row_pitch_bytes = dst_row_pitch_bytes,
+                    .dst_slice_pitch_bytes = dst.interface.getSliceMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level),
+                    .dst_row_pitch_bytes = dst.interface.getRowPitchMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level),
 
                     .pos = zm.f32x4s(0.5),
                     .dim = zm.f32x4s(0.0),
@@ -355,11 +352,11 @@ pub fn blitRegion(src: *const SoftImage, dst: *SoftImage, region: vk.ImageBlit, 
     }) {
         const src_texel_offset = try src.getTexelMemoryOffset(.{ .x = 0, .y = 0, .z = 0 }, src_subresource);
         const src_size = try src.interface.getTotalSizeForAspect(src_subresource.aspect_mask) - src_texel_offset;
-        const src_map: []u8 = @as([*]u8, @ptrCast(try src_memory.map(src.interface.memory_offset + src_texel_offset, src_size)))[0..src_size];
+        const src_map: []u8 = try src_memory.map(src.interface.memory_offset + src_texel_offset, src_size);
 
         const dst_texel_offset = try dst.getTexelMemoryOffset(.{ .x = 0, .y = 0, .z = 0 }, dst_subresource);
         const dst_size = try dst.interface.getTotalSizeForAspect(dst_subresource.aspect_mask) - dst_texel_offset;
-        const dst_map: []u8 = @as([*]u8, @ptrCast(try dst_memory.map(dst.interface.memory_offset + dst_texel_offset, dst_size)))[0..dst_size];
+        const dst_map: []u8 = try dst_memory.map(dst.interface.memory_offset + dst_texel_offset, dst_size);
 
         blit(state, .{
             .src_map = src_map,
@@ -400,15 +397,24 @@ fn blit(state: State, data: BlitData) void {
 
     for (@intCast(data.dst_offset_0.z)..@intCast(data.dst_offset_1.z)) |k| {
         const z = if (state.clear) data.pos[2] else data.pos[2] + @as(f32, @floatFromInt(k)) * data.depth_ratio;
-        var dst_slice = data.dst_map[(k * data.dst_slice_pitch_bytes)..];
+        const z_offset = k * data.dst_slice_pitch_bytes;
+        if (z_offset > data.dst_map.len)
+            break;
+        var dst_slice = data.dst_map[z_offset..];
 
         for (@intCast(data.dst_offset_0.y)..@intCast(data.dst_offset_1.y)) |j| {
             const y = if (state.clear) data.pos[1] else data.pos[1] + @as(f32, @floatFromInt(j)) * data.height_ratio;
-            var dst_line = dst_slice[(j * data.dst_row_pitch_bytes)..];
+            const y_offset = j * data.dst_row_pitch_bytes;
+            if (y_offset > dst_slice.len)
+                break;
+            var dst_line = dst_slice[y_offset..];
 
             for (@intCast(data.dst_offset_0.x)..@intCast(data.dst_offset_1.x)) |i| {
                 const x = if (state.clear) data.pos[0] else data.pos[0] + @as(f32, @floatFromInt(i)) * data.width_ratio;
-                var dst_pixel = dst_line[(i * base.format.texelSize(state.dst_format))..];
+                const x_offset = i * base.format.texelSize(state.dst_format);
+                if (x_offset > dst_line.len)
+                    break;
+                var dst_pixel = dst_line[x_offset..];
 
                 if (clear_color_i) |color| {
                     for (0..state.dst_samples) |_| {
@@ -763,11 +769,13 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
 
         .r16_sint,
         .r16_uint,
-        .d16_unorm,
         => std.mem.bytesAsValue(u16, map).* = @intFromFloat(@round(color[0])),
 
         .r16_snorm => std.mem.bytesAsValue(u16, map).* = @intFromFloat(@round(color[0] * std.math.maxInt(i16))),
-        .r16_unorm => std.mem.bytesAsValue(u16, map).* = @intFromFloat(@round(color[0] * std.math.maxInt(u16))),
+
+        .r16_unorm,
+        .d16_unorm,
+        => std.mem.bytesAsValue(u16, map).* = @intFromFloat(@round(color[0] * std.math.maxInt(u16))),
 
         .r16_sfloat => std.mem.bytesAsValue(f16, map).* = @floatCast(color[0]),
 
@@ -1181,6 +1189,7 @@ pub fn writeInt4(c: U32x4, map: []u8, dst_format: vk.Format) void {
     switch (dst_format) {
         .r8_sint,
         .r8_uint,
+        .s8_uint,
         => map[0] = @truncate(color[0]),
 
         .r8g8_sint,

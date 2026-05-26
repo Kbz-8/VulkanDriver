@@ -1497,7 +1497,7 @@ pub export fn strollMapMemory(p_device: vk.Device, p_memory: vk.DeviceMemory, of
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
 
     const device_memory = NonDispatchable(DeviceMemory).fromHandleObject(p_memory) catch |err| return toVkResult(err);
-    pp_data.* = device_memory.map(offset, size) catch |err| return toVkResult(err);
+    pp_data.* = @ptrCast((device_memory.map(offset, size) catch |err| return toVkResult(err)).ptr);
     return .success;
 }
 
@@ -1746,21 +1746,13 @@ pub export fn strollCmdClearColorImage(p_cmd: vk.CommandBuffer, p_image: vk.Imag
     cmd.clearColorImage(image, layout, color, ranges[0..count]) catch |err| return errorLogger(err);
 }
 
-pub export fn strollCmdClearDepthStencilImage(p_cmd: vk.CommandBuffer, p_image: vk.Image, layout: vk.ImageLayout, stencil: *const vk.ClearDepthStencilValue, count: u32, ranges: [*]const vk.ImageSubresourceRange) callconv(vk.vulkan_call_conv) void {
+pub export fn strollCmdClearDepthStencilImage(p_cmd: vk.CommandBuffer, p_image: vk.Image, layout: vk.ImageLayout, value: *const vk.ClearDepthStencilValue, count: u32, ranges: [*]const vk.ImageSubresourceRange) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkCmdClearDepthStencilImage);
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
     const image = NonDispatchable(Image).fromHandleObject(p_image) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = image;
-    _ = layout;
-    _ = stencil;
-    _ = count;
-    _ = ranges;
+    cmd.clearDepthStencilImage(image, layout, value, ranges[0..count]) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdCopyBuffer(p_cmd: vk.CommandBuffer, p_src: vk.Buffer, p_dst: vk.Buffer, count: u32, regions: [*]const vk.BufferCopy) callconv(vk.vulkan_call_conv) void {

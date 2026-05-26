@@ -64,7 +64,7 @@ inline fn run(data: RunData) !void {
                 const buffer_memory = if (buffer.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
                 const offset = buffer.interface.offset + vertex_buffer.offset + (binding_info.stride * vertex_index) + attribute.offset;
 
-                const buffer_memory_map: []u8 = @as([*]u8, @ptrCast(@alignCast(try buffer_memory.map(offset, buffer_memory_size))))[0..buffer_memory_size];
+                const buffer_memory_map: []u8 = try buffer_memory.map(offset, buffer_memory_size);
 
                 try rt.writeInput(buffer_memory_map, location_result);
             }
