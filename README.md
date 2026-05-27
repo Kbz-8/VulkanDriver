@@ -16,8 +16,8 @@ It does not seek to produce a performant or production-worthy driver. \
 
 ## Soft [software implementation]
 
-Soft be a software implementation of the Vulkan specification, abiding within this driver’s own codebase.\
-It maketh use of a bespoke SPIR-V interpreter and renderer, by whose workings its labours are carried forth.
+Soft be a software implementation of the Vulkan specification, abiding within this driver's own codebase.\
+It maketh use of a bespoke [SPIR-V interpreter](https://git.kbz8.me/kbz_8/SPIRV-Interpreter) and renderer, by whose workings its labours are carried forth.
 
 ### Build
 

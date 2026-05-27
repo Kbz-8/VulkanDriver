@@ -788,6 +788,11 @@ pub fn endRenderPass(interface: *Interface) VkError!void {
 
     const CommandImpl = struct {
         pub fn execute(_: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const framebuffer = device.renderer.framebuffer orelse return;
+            const render_pass = device.renderer.render_pass orelse return;
+
+            try framebuffer.resolveAttachments(render_pass, device.renderer.subpass_index);
+
             device.renderer.render_pass = null;
             device.renderer.framebuffer = null;
         }
@@ -856,6 +861,11 @@ pub fn nextSubpass(interface: *Interface, _: vk.SubpassContents) VkError!void {
         const Impl = @This();
 
         pub fn execute(_: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const framebuffer = device.renderer.framebuffer orelse return;
+            const render_pass = device.renderer.render_pass orelse return;
+
+            try framebuffer.resolveAttachments(render_pass, device.renderer.subpass_index);
+
             device.renderer.subpass_index += 1;
         }
     };
