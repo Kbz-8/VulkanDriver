@@ -1,8 +1,8 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const vk = @import("vulkan");
 const base = @import("base");
 const lib = @import("lib.zig");
-const cpuinfo = lib.c;
 
 const SoftDevice = @import("SoftDevice.zig");
 
@@ -189,9 +189,6 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
         .shader_float_64 = .true,
         .shader_int_64 = .true,
         .shader_int_16 = .true,
-        .texture_compression_etc2 = .false,
-        .texture_compression_bc = .false,
-        .texture_compression_astc_ldr = .false,
     };
 
     var queue_family_props = [_]vk.QueueFamilyProperties{
@@ -201,30 +198,47 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
             .timestamp_valid_bits = 0,
             .min_image_transfer_granularity = .{ .width = 1, .height = 1, .depth = 1 },
         },
-        .{
-            .queue_flags = .{ .graphics_bit = true },
-            .queue_count = 1,
-            .timestamp_valid_bits = 0,
-            .min_image_transfer_granularity = .{ .width = 1, .height = 1, .depth = 1 },
-        },
-        .{
-            .queue_flags = .{ .transfer_bit = true },
-            .queue_count = 1,
-            .timestamp_valid_bits = 0,
-            .min_image_transfer_granularity = .{ .width = 1, .height = 1, .depth = 1 },
-        },
-        // TODO: maybe add a compute specialized queue
     };
     interface.queue_family_props.appendSlice(allocator, queue_family_props[0..]) catch return VkError.OutOfHostMemory;
 
     if (device_name[0] == 0) {
         const name = blk: {
-            if (cpuinfo.cpuinfo_initialize()) {
-                const package = cpuinfo.cpuinfo_get_package(0).*;
-                const non_sentinel_name = package.name[0..(std.mem.len(@as([*:0]const u8, @ptrCast(&package.name))))];
-                break :blk std.fmt.allocPrint(command_allocator, "{s} ({d} threads)", .{ non_sentinel_name, package.processor_count }) catch return VkError.OutOfHostMemory;
+
+            // If arch is x86 we try to get precise CPU name through CPUID
+            // and fallback to vendor name if not available
+            if (comptime builtin.cpu.arch.isX86()) {
+                const max_extended_leaf = cpuid(0x80000000, 0).eax;
+
+                if (max_extended_leaf >= 0x80000004) {
+                    var brand: [49]u8 = @splat(0);
+
+                    for (0..3) |i| {
+                        const regs = cpuid(0x80000002 + @as(u32, @intCast(i)), 0);
+                        const offset = i * 16;
+
+                        writeU32Le(brand[0..], offset + 0, regs.eax);
+                        writeU32Le(brand[0..], offset + 4, regs.ebx);
+                        writeU32Le(brand[0..], offset + 8, regs.ecx);
+                        writeU32Le(brand[0..], offset + 12, regs.edx);
+                    }
+
+                    const brand_str = std.mem.trim(u8, brand[0..48], " \x00");
+                    break :blk command_allocator.dupe(u8, brand_str) catch return VkError.OutOfHostMemory;
+                } else {
+                    var vendor: [13]u8 = @splat(0);
+
+                    const leaf0 = cpuid(0, 0);
+
+                    writeU32Le(vendor[0..], 0, leaf0.ebx);
+                    writeU32Le(vendor[0..], 4, leaf0.edx);
+                    writeU32Le(vendor[0..], 8, leaf0.ecx);
+
+                    const vendor_str = std.mem.trim(u8, vendor[0..12], " \x00");
+                    break :blk command_allocator.dupe(u8, vendor_str) catch return VkError.OutOfHostMemory;
+                }
             }
-            break :blk command_allocator.dupe(u8, "Unkown") catch return VkError.OutOfHostMemory;
+
+            break :blk command_allocator.dupe(u8, lib.PHYSICAL_DEVICE_DEFAULT_NAME) catch return VkError.OutOfHostMemory;
         };
         defer command_allocator.free(name);
 
@@ -856,4 +870,48 @@ fn checkFormatUsage(usage: vk.ImageUsageFlags, features: vk.FormatFeatureFlags) 
 
 pub fn getSurfaceSupportKHR(_: *Interface, _: u32, _: *SurfaceKHR) VkError!bool {
     return true;
+}
+
+const CpuidRegs = packed struct {
+    eax: u32,
+    ebx: u32,
+    ecx: u32,
+    edx: u32,
+};
+
+fn cpuid(leaf_id: u32, subleaf_id: u32) CpuidRegs {
+    comptime {
+        switch (builtin.cpu.arch) {
+            .x86, .x86_64 => {},
+            else => @compileError("cpuid is only available on x86/x86_64"),
+        }
+    }
+
+    var eax: u32 = undefined;
+    var ebx: u32 = undefined;
+    var ecx: u32 = undefined;
+    var edx: u32 = undefined;
+
+    asm volatile ("cpuid"
+        : [_] "={eax}" (eax),
+          [_] "={ebx}" (ebx),
+          [_] "={ecx}" (ecx),
+          [_] "={edx}" (edx),
+        : [_] "{eax}" (leaf_id),
+          [_] "{ecx}" (subleaf_id),
+    );
+
+    return .{
+        .eax = eax,
+        .ebx = ebx,
+        .ecx = ecx,
+        .edx = edx,
+    };
+}
+
+fn writeU32Le(dst: []u8, offset: usize, value: u32) void {
+    dst[offset + 0] = @truncate(value);
+    dst[offset + 1] = @truncate(value >> 8);
+    dst[offset + 2] = @truncate(value >> 16);
+    dst[offset + 3] = @truncate(value >> 24);
 }

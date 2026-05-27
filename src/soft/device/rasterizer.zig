@@ -20,7 +20,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
     const pipeline_data = (renderer.state.pipeline orelse return VkError.InvalidHandleDrv).interface.mode.graphics;
     const topology = pipeline_data.input_assembly.topology;
 
-    const color_attachment = if (draw_call.render_pass.interface.subpasses[0].color_attachments) |attachments| attachments[0].attachment else return VkError.InvalidAttachmentDrv;
+    const color_attachment = if (draw_call.render_pass.interface.subpasses[renderer.subpass_index].color_attachments) |attachments| attachments[0].attachment else return VkError.InvalidAttachmentDrv;
     const render_target_view: *base.ImageView = draw_call.color_attachments[color_attachment];
     const render_target: *SoftImage = @alignCast(@fieldParentPtr("interface", render_target_view.image));
 

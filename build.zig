@@ -176,31 +176,17 @@ pub fn build(b: *std.Build) !void {
 fn customSoft(
     b: *std.Build,
     lib: *Step.Compile,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    _: std.Build.ResolvedTarget,
+    _: std.builtin.OptimizeMode,
     options: *Step.Options,
     use_llvm: bool,
 ) !void {
-    const cpuinfo = b.lazyDependency("cpuinfo", .{}) orelse return error.UnresolvedDependency;
-    lib.root_module.linkLibrary(cpuinfo.artifact("cpuinfo"));
-
     const spv = b.lazyDependency("SPIRV_Interpreter", .{
         .@"no-example" = true,
         .@"no-test" = true,
         .@"use-llvm" = use_llvm,
     }) orelse return error.UnresolvedDependency;
     lib.root_module.addImport("spv", spv.module("spv"));
-
-    const c_includes = b.addTranslateC(.{
-        .root_source_file = b.path("src/soft/c_includes.h"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = false,
-    });
-
-    c_includes.addIncludePath(cpuinfo.path("include"));
-
-    lib.root_module.addImport("soft_c", c_includes.createModule());
 
     const single_threaded_option = b.option(bool, "single-threaded", "Single threaded runtime mode") orelse false;
     const debug_allocator_option = b.option(bool, "debug-allocator", "Debug device allocator") orelse false;

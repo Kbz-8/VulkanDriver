@@ -82,7 +82,7 @@ pub const DrawCall = struct {
             .viewport = undefined,
             .scissor = undefined,
             .color_attachments = framebuffer.interface.attachments[0..],
-            .depth_attachment = if (render_pass.interface.subpasses[0].depth_stencil_attachments) |desc| framebuffer.interface.attachments[desc.attachment] else null,
+            .depth_attachment = if (render_pass.interface.subpasses[renderer.subpass_index].depth_stencil_attachments) |desc| framebuffer.interface.attachments[desc.attachment] else null,
             .render_pass = render_pass,
             .framebuffer = framebuffer,
             .rasterizer_wait_group = .init,
@@ -117,6 +117,8 @@ render_pass: ?*SoftRenderPass,
 framebuffer: ?*SoftFramebuffer,
 dynamic_state: DynamicState,
 
+subpass_index: usize,
+
 pub fn init(device: *SoftDevice, state: *PipelineState) Self {
     return .{
         .device = device,
@@ -128,6 +130,7 @@ pub fn init(device: *SoftDevice, state: *PipelineState) Self {
             .scissor = null,
             .line_width = null,
         },
+        .subpass_index = 0,
     };
 }
 

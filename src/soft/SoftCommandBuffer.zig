@@ -68,10 +68,12 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .endRenderPass = endRenderPass,
         .executeCommands = executeCommands,
         .fillBuffer = fillBuffer,
+        .nextSubpass = nextSubpass,
         .pipelineBarrier = pipelineBarrier,
         .pushConstants = pushConstants,
         .reset = reset,
         .resetEvent = resetEvent,
+        .resolveImage = resolveImage,
         .setEvent = setEvent,
         .setScissor = setScissor,
         .setViewport = setViewport,
@@ -144,6 +146,7 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
             const impl: *Impl = @ptrCast(@alignCast(context));
             device.renderer.render_pass = impl.render_pass;
             device.renderer.framebuffer = impl.framebuffer;
+            device.renderer.subpass_index = 0;
 
             for (impl.render_pass.interface.attachments, impl.framebuffer.interface.attachments, 0..) |desc, attachment, index| {
                 const image: *SoftImage = @alignCast(@fieldParentPtr("interface", attachment.image));
@@ -378,20 +381,44 @@ pub fn clearAttachment(interface: *Interface, attachment: vk.ClearAttachment, re
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
 
-            if (device.renderer.framebuffer) |framebuffer| {
-                const image_view = framebuffer.interface.attachments[impl.attachment.color_attachment];
-                const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.image));
-                const clear_format = try image.getClearFormat();
+            const framebuffer = device.renderer.framebuffer orelse return;
+            const render_pass = device.renderer.render_pass orelse return;
+            const subpass = render_pass.interface.subpasses[device.renderer.subpass_index];
 
-                try blitter.clear(
-                    impl.attachment.clear_value,
-                    clear_format,
-                    image,
-                    image_view.format,
-                    image_view.subresource_range,
-                    null,
-                );
-            }
+            const image_view = blk: {
+                if (impl.attachment.aspect_mask.toInt() == (vk.ImageAspectFlags{ .color_bit = true }).toInt()) {
+                    const fb_attachment_index = (subpass.color_attachments orelse return)[impl.attachment.color_attachment].attachment;
+
+                    if (fb_attachment_index != vk.ATTACHMENT_UNUSED)
+                        break :blk framebuffer.interface.attachments[impl.attachment.color_attachment];
+                } else if (impl.attachment.aspect_mask.depth_bit or impl.attachment.aspect_mask.stencil_bit) {
+                    if (render_pass.interface.subpasses[device.renderer.subpass_index].depth_stencil_attachments) |desc| {
+                        if (desc.attachment != vk.ATTACHMENT_UNUSED)
+                            break :blk framebuffer.interface.attachments[desc.attachment];
+                    }
+                }
+                return;
+            };
+
+            const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.image));
+            const clear_format = try image.getClearFormat();
+
+            const range: vk.ImageSubresourceRange = .{
+                .aspect_mask = impl.attachment.aspect_mask,
+                .base_mip_level = image_view.subresource_range.base_mip_level,
+                .level_count = image_view.subresource_range.level_count,
+                .base_array_layer = impl.rect.base_array_layer + image_view.subresource_range.base_array_layer,
+                .layer_count = impl.rect.layer_count,
+            };
+
+            try blitter.clear(
+                impl.attachment.clear_value,
+                clear_format,
+                image,
+                image_view.format,
+                range,
+                impl.rect.rect,
+            );
         }
     };
 
@@ -821,27 +848,26 @@ pub fn fillBuffer(interface: *Interface, buffer: *base.Buffer, offset: vk.Device
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
-pub fn pipelineBarrier(interface: *Interface, src_stage: vk.PipelineStageFlags, dst_stage: vk.PipelineStageFlags, dependency: vk.DependencyFlags, memory_barriers: []const vk.MemoryBarrier, buffer_barriers: []const vk.BufferMemoryBarrier, image_barriers: []const vk.ImageMemoryBarrier) VkError!void {
+pub fn nextSubpass(interface: *Interface, _: vk.SubpassContents) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     const allocator = self.command_allocator.allocator();
 
     const CommandImpl = struct {
         const Impl = @This();
 
-        pub fn execute(_: *anyopaque, _: *ExecutionDevice) VkError!void {}
+        pub fn execute(_: *anyopaque, device: *ExecutionDevice) VkError!void {
+            device.renderer.subpass_index += 1;
+        }
     };
 
     const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(cmd);
     cmd.* = .{};
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
 
-    _ = src_stage;
-    _ = dst_stage;
-    _ = dependency;
-    _ = memory_barriers;
-    _ = buffer_barriers;
-    _ = image_barriers;
+pub fn pipelineBarrier(_: *Interface, _: vk.PipelineStageFlags, _: vk.PipelineStageFlags, _: vk.DependencyFlags, _: []const vk.MemoryBarrier, _: []const vk.BufferMemoryBarrier, _: []const vk.ImageMemoryBarrier) VkError!void {
+    // No-op
 }
 
 pub fn pushConstants(interface: *Interface, stages: vk.ShaderStageFlags, offset: u32, blob: []const u8) VkError!void {
@@ -880,11 +906,9 @@ pub fn pushConstants(interface: *Interface, stages: vk.ShaderStageFlags, offset:
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
-pub fn resetEvent(interface: *Interface, event: *base.Event, stage: vk.PipelineStageFlags) VkError!void {
+pub fn resetEvent(interface: *Interface, event: *base.Event, _: vk.PipelineStageFlags) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     const allocator = self.command_allocator.allocator();
-
-    _ = stage;
 
     const CommandImpl = struct {
         const Impl = @This();
@@ -901,6 +925,33 @@ pub fn resetEvent(interface: *Interface, event: *base.Event, stage: vk.PipelineS
     errdefer allocator.destroy(cmd);
     cmd.* = .{
         .event = event,
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn resolveImage(interface: *Interface, src: *base.Image, _: vk.ImageLayout, dst: *base.Image, _: vk.ImageLayout, region: vk.ImageResolve) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        src: *const SoftImage,
+        dst: *SoftImage,
+        region: vk.ImageResolve,
+
+        pub fn execute(context: *anyopaque, _: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            try blitter.resolve(impl.src, impl.dst, impl.region);
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .src = @alignCast(@fieldParentPtr("interface", src)),
+        .dst = @alignCast(@fieldParentPtr("interface", dst)),
+        .region = region,
     };
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }

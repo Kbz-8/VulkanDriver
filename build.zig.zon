@@ -25,11 +25,6 @@
             .url = "git+https://git.kbz8.me/kbz_8/Vulkan-CTS-bin.git#a5f787d80f14f136e3cb3e1185c35e298846c1d7",
             .hash = "N-V-__8AAMpOQxkHCKTw9i-NwmmQ3ks1ndFDXcVLlic4KjK3",
         },
-        .cpuinfo = .{
-            .url = "git+https://github.com/Kbz-8/cpuinfo.git#c9bea4f6c166a495ee0ce117821f9627d4aed118",
-            .hash = "cpuinfo-0.0.1-RLgIQYrTMgGqfQMOd1nAa2EuglXOh5gR9bNzwMzQTemt",
-            .lazy = true,
-        },
         .SPIRV_Interpreter = .{
             .url = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#1ffa20d07c59da34300dd97e16b72a7320f5af6c",
             .hash = "SPIRV_Interpreter-0.0.1-ajmpn25qBQByByo4yetC7ZS63JxLvuwXMknTMWnbaYAb",

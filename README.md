@@ -4,7 +4,7 @@
 
 A driver as slow as Lance Stroll.
 
-Here lies the source code of a rather calamitous attempt at the Vulkan specification, shaped into an Installable Client Driver for a software-based renderer, all written in Zig.
+Here lies the source code of a rather calamitous attempt at the Vulkan specification, shaped into an Installable Client Driver all written in Zig.
 
 It was forged for my own learning and amusement alone. Pray, do not wield it in any earnest project, lest thy hopes and frame rates both find themselves entombed.
 
@@ -14,7 +14,12 @@ To understand Vulkan - not as a humble API mere mortals call upon, but as a laby
 It does not seek to produce a performant or production-worthy driver. \
 *The gods are merciful, but not that merciful.*
 
-## Build
+## Soft [software implementation]
+
+Soft be a software implementation of the Vulkan specification, abiding within this driver’s own codebase.\
+It maketh use of a bespoke SPIR-V interpreter and renderer, by whose workings its labours are carried forth.
+
+### Build
 
 If thou art truly determined:
 ```
@@ -26,8 +31,7 @@ The precise ritual varies by system - consult the tomes of your operating system
 
 Use at your own risk. If thy machine shudders, weeps, or attempts to flee - know that it was warned.
 
-## Vulkan 1.0 specification
-
+#### Vulkan 1.0 specification
 <details>
     <summary>
         The present standing of thy Vulkan 1.0 specification's implementation
@@ -55,7 +59,7 @@ vkCmdBindVertexBuffers                           | ✅ Implemented
 vkCmdBlitImage                                   | ✅ Implemented
 vkCmdClearAttachments                            | ✅ Implemented
 vkCmdClearColorImage                             | ✅ Implemented
-vkCmdClearDepthStencilImage                      | ⚙️ WIP
+vkCmdClearDepthStencilImage                      | ✅ Implemented
 vkCmdCopyBuffer                                  | ✅ Implemented
 vkCmdCopyBufferToImage                           | ✅ Implemented
 vkCmdCopyImage                                   | ✅ Implemented
@@ -71,12 +75,12 @@ vkCmdEndQuery                                    | ⚙️ WIP
 vkCmdEndRenderPass                               | ✅ Implemented
 vkCmdExecuteCommands                             | ✅ Implemented
 vkCmdFillBuffer                                  | ✅ Implemented
-vkCmdNextSubpass                                 | ⚙️ WIP
+vkCmdNextSubpass                                 | ✅ Implemented
 vkCmdPipelineBarrier                             | ✅ Implemented
 vkCmdPushConstants                               | ✅ Implemented
 vkCmdResetEvent                                  | ✅ Implemented
 vkCmdResetQueryPool                              | ⚙️ WIP
-vkCmdResolveImage                                | ⚙️ WIP
+vkCmdResolveImage                                | ✅ Implemented
 vkCmdSetBlendConstants                           | ⚙️ WIP
 vkCmdSetDepthBias                                | ⚙️ WIP
 vkCmdSetDepthBounds                              | ⚙️ WIP
@@ -108,7 +112,7 @@ vkCreatePipelineCache                            | ⚙️ WIP
 vkCreatePipelineLayout                           | ✅ Implemented
 vkCreateQueryPool                                | ⚙️ WIP
 vkCreateRenderPass                               | ✅ Implemented
-vkCreateSampler                                  | ⚙️ WIP
+vkCreateSampler                                  | ✅ Implemented
 vkCreateSemaphore                                | ⚙️ WIP
 vkCreateShaderModule                             | ✅ Implemented
 vkCreateSwapchainKHR                             | ✅ Implemented
@@ -156,7 +160,7 @@ vkGetDeviceQueue                                 | ✅ Implemented
 vkGetEventStatus                                 | ✅ Implemented
 vkGetFenceStatus                                 | ✅ Implemented
 vkGetImageMemoryRequirements                     | ✅ Implemented
-vkGetImageSparseMemoryRequirements               | ⚙️ WIP
+vkGetImageSparseMemoryRequirements               | ❎ Unsupported
 vkGetImageSubresourceLayout                      | ✅ Implemented
 vkGetInstanceProcAddr                            | ✅ Implemented
 vkGetPhysicalDeviceFeatures                      | ✅ Implemented
@@ -165,7 +169,7 @@ vkGetPhysicalDeviceImageFormatProperties         | ✅ Implemented
 vkGetPhysicalDeviceMemoryProperties              | ✅ Implemented
 vkGetPhysicalDeviceProperties                    | ✅ Implemented
 vkGetPhysicalDeviceQueueFamilyProperties         | ✅ Implemented
-vkGetPhysicalDeviceSparseImageFormatProperties   | ⚙️ WIP
+vkGetPhysicalDeviceSparseImageFormatProperties   | ❎ Unsupported
 vkGetPhysicalDeviceSurfaceCapabilitiesKHR        | ✅ Implemented
 vkGetPhysicalDeviceSurfaceFormatsKHR             | ✅ Implemented
 vkGetPhysicalDeviceSurfacePresentModesKHR        | ✅ Implemented
@@ -181,7 +185,7 @@ vkGetSwapchainImagesKHR                          | ✅ Implemented
 vkInvalidateMappedMemoryRanges                   | ✅ Implemented
 vkMapMemory                                      | ✅ Implemented
 vkMergePipelineCaches                            | ⚙️ WIP
-vkQueueBindSparse                                | ⚙️ WIP
+vkQueueBindSparse                                | ❎ Unsupported
 vkQueuePresentKHR                                | ✅ Implemented
 vkQueueSubmit                                    | ✅ Implemented
 vkQueueWaitIdle                                  | ✅ Implemented

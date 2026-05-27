@@ -1912,11 +1912,7 @@ pub export fn strollCmdNextSubpass(p_cmd: vk.CommandBuffer, contents: vk.Subpass
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = contents;
+    cmd.nextSubpass(contents) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdPipelineBarrier(
@@ -1991,18 +1987,9 @@ pub export fn strollCmdResolveImage(
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-    const src = Dispatchable(Image).fromHandleObject(p_src) catch |err| return errorLogger(err);
-    const dst = Dispatchable(Image).fromHandleObject(p_dst) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = src;
-    _ = src_layout;
-    _ = dst;
-    _ = dst_layout;
-    _ = count;
-    _ = regions;
+    const src = NonDispatchable(Image).fromHandleObject(p_src) catch |err| return errorLogger(err);
+    const dst = NonDispatchable(Image).fromHandleObject(p_dst) catch |err| return errorLogger(err);
+    cmd.resolveImage(src, src_layout, dst, dst_layout, regions[0..count]) catch |err| return errorLogger(err);
 }
 
 pub export fn strollCmdSetBlendConstants(p_cmd: vk.CommandBuffer, p_constants: [*]f32) callconv(vk.vulkan_call_conv) void {

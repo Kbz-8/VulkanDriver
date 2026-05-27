@@ -50,6 +50,18 @@ fn computeOffset3D(x: usize, y: usize, z: usize, slice_bytes: usize, pitch_bytes
 }
 
 pub fn clear(pixel: vk.ClearValue, format: vk.Format, dst: *SoftImage, view_format: vk.Format, range: vk.ImageSubresourceRange, render_area: ?vk.Rect2D) VkError!void {
+    if (range.aspect_mask.depth_bit and range.aspect_mask.stencil_bit) {
+        var depth_range = range;
+        depth_range.aspect_mask = .{ .depth_bit = true };
+        try clear(pixel, format, dst, view_format, depth_range, render_area);
+
+        var stencil_range = range;
+        stencil_range.aspect_mask = .{ .stencil_bit = true };
+        try clear(pixel, format, dst, view_format, stencil_range, render_area);
+
+        return;
+    }
+
     const dst_format = base.format.fromAspect(view_format, range.aspect_mask);
     if (dst_format == .undefined) {
         return;
@@ -64,23 +76,38 @@ pub fn clear(pixel: vk.ClearValue, format: vk.Format, dst: *SoftImage, view_form
     };
 
     var clamped_pixel: vk.ClearValue = pixel;
-    if (base.format.isSnorm(view_format) or base.format.isUnorm(view_format)) {
+    if (range.aspect_mask.color_bit and (base.format.isSnorm(view_format) or base.format.isUnorm(view_format))) {
         const min_value: f32 = if (base.format.isSnorm(view_format)) -1.0 else 0.0;
 
-        if (range.aspect_mask.color_bit) {
-            clamped_pixel.color.float_32[0] = std.math.clamp(pixel.color.float_32[0], min_value, 1.0);
-            clamped_pixel.color.float_32[1] = std.math.clamp(pixel.color.float_32[1], min_value, 1.0);
-            clamped_pixel.color.float_32[2] = std.math.clamp(pixel.color.float_32[2], min_value, 1.0);
-            clamped_pixel.color.float_32[3] = std.math.clamp(pixel.color.float_32[3], min_value, 1.0);
-        }
-
-        if (range.aspect_mask.depth_bit) {
-            clamped_pixel.depth_stencil.depth = std.math.clamp(pixel.depth_stencil.depth, min_value, 1.0);
-        }
+        clamped_pixel.color.float_32[0] = std.math.clamp(pixel.color.float_32[0], min_value, 1.0);
+        clamped_pixel.color.float_32[1] = std.math.clamp(pixel.color.float_32[1], min_value, 1.0);
+        clamped_pixel.color.float_32[2] = std.math.clamp(pixel.color.float_32[2], min_value, 1.0);
+        clamped_pixel.color.float_32[3] = std.math.clamp(pixel.color.float_32[3], min_value, 1.0);
     }
 
+    if (range.aspect_mask.depth_bit) {
+        clamped_pixel.depth_stencil.depth = std.math.clamp(pixel.depth_stencil.depth, 0.0, 1.0);
+    }
+
+    const depth_clear: F32x4 = @splat(clamped_pixel.depth_stencil.depth);
+    const stencil_clear: U32x4 = @splat(clamped_pixel.depth_stencil.stencil);
+
+    const src_format: vk.Format = if (range.aspect_mask.stencil_bit)
+        .r32g32b32a32_uint
+    else if (range.aspect_mask.depth_bit)
+        .r32g32b32a32_sfloat
+    else
+        format;
+
+    const src_map: []const u8 = if (range.aspect_mask.stencil_bit)
+        std.mem.asBytes(&stencil_clear)
+    else if (range.aspect_mask.depth_bit)
+        std.mem.asBytes(&depth_clear)
+    else
+        std.mem.asBytes(&clamped_pixel);
+
     const state: State = .{
-        .src_format = format,
+        .src_format = src_format,
         .dst_format = dst_format,
         .filter = .nearest,
         .allow_srgb_conversion = true,
@@ -120,10 +147,10 @@ pub fn clear(pixel: vk.ClearValue, format: vk.Format, dst: *SoftImage, view_form
                 const dst_map = try dst.mapAsSliceWithAddedOffset(u8, dst_texel_offset, vk.WHOLE_SIZE);
 
                 blit(state, .{
-                    .src_map = std.mem.asBytes(&clamped_pixel),
+                    .src_map = src_map,
                     .dst_map = dst_map,
 
-                    .src_slice_pitch_bytes = base.format.texelSize(format),
+                    .src_slice_pitch_bytes = base.format.texelSize(src_format),
                     .src_row_pitch_bytes = 0,
                     .dst_slice_pitch_bytes = dst.interface.getSliceMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level),
                     .dst_row_pitch_bytes = dst.interface.getRowPitchMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level),
@@ -456,6 +483,26 @@ fn blit(state: State, data: BlitData) void {
     }
 }
 
+/// Using image blitting to resolve
+pub inline fn resolve(src: *const SoftImage, dst: *SoftImage, region: vk.ImageResolve) VkError!void {
+    var blit_region: vk.ImageBlit = .{
+        .src_offsets = .{ region.src_offset, region.src_offset },
+        .src_subresource = region.src_subresource,
+        .dst_offsets = .{ region.dst_offset, region.dst_offset },
+        .dst_subresource = region.dst_subresource,
+    };
+
+    blit_region.src_offsets[1].x += @intCast(region.extent.width);
+    blit_region.src_offsets[1].y += @intCast(region.extent.height);
+    blit_region.src_offsets[1].z += @intCast(region.extent.depth);
+
+    blit_region.dst_offsets[1].x += @intCast(region.extent.width);
+    blit_region.dst_offsets[1].y += @intCast(region.extent.height);
+    blit_region.dst_offsets[1].z += @intCast(region.extent.depth);
+
+    try blitRegion(src, dst, blit_region, .nearest);
+}
+
 fn applyScaleAndClamp(base_color: F32x4, state: State, apply_srgb_convertion: bool) F32x4 {
     var color: F32x4 = base_color;
 
@@ -764,8 +811,7 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
         .s8_uint,
         => map[0] = @intFromFloat(@round(color[0] * std.math.maxInt(u8))),
 
-        .r8_snorm,
-        => map[0] = @intFromFloat(@round(color[0] * std.math.maxInt(i8))),
+        .r8_snorm => map[0] = @intFromFloat(@round(color[0] * std.math.maxInt(i8))),
 
         .r16_sint,
         .r16_uint,
@@ -1150,7 +1196,6 @@ pub fn writeInt4(c: U32x4, map: []u8, dst_format: vk.Format) void {
         .r8g8b8_uscaled,
         .r8g8_uscaled,
         .r8_uscaled,
-        .s8_uint,
         => color = @min(color, U32x4{ 0xFF, 0xFF, 0xFF, 0xFF }),
 
         .r16g16b16a16_uint,

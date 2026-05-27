@@ -62,10 +62,12 @@ pub const DispatchTable = struct {
     endRenderPass: *const fn (*Self) VkError!void,
     executeCommands: *const fn (*Self, *Self) VkError!void,
     fillBuffer: *const fn (*Self, *Buffer, vk.DeviceSize, vk.DeviceSize, u32) VkError!void,
+    nextSubpass: *const fn (*Self, vk.SubpassContents) VkError!void,
     pipelineBarrier: *const fn (*Self, vk.PipelineStageFlags, vk.PipelineStageFlags, vk.DependencyFlags, []const vk.MemoryBarrier, []const vk.BufferMemoryBarrier, []const vk.ImageMemoryBarrier) VkError!void,
     pushConstants: *const fn (*Self, vk.ShaderStageFlags, u32, []const u8) VkError!void,
     reset: *const fn (*Self, vk.CommandBufferResetFlags) VkError!void,
     resetEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
+    resolveImage: *const fn (*Self, *Image, vk.ImageLayout, *Image, vk.ImageLayout, vk.ImageResolve) VkError!void,
     setEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
     setScissor: *const fn (*Self, u32, []const vk.Rect2D) VkError!void,
     setViewport: *const fn (*Self, u32, []const vk.Viewport) VkError!void,
@@ -250,6 +252,10 @@ pub inline fn fillBuffer(self: *Self, buffer: *Buffer, offset: vk.DeviceSize, si
     try self.dispatch_table.fillBuffer(self, buffer, offset, size, data);
 }
 
+pub inline fn nextSubpass(self: *Self, contents: vk.SubpassContents) VkError!void {
+    try self.dispatch_table.nextSubpass(self, contents);
+}
+
 pub inline fn pipelineBarrier(
     self: *Self,
     src_stage: vk.PipelineStageFlags,
@@ -268,6 +274,12 @@ pub inline fn pushConstants(self: *Self, stages: vk.ShaderStageFlags, offset: u3
 
 pub inline fn resetEvent(self: *Self, event: *Event, stage: vk.PipelineStageFlags) VkError!void {
     try self.dispatch_table.resetEvent(self, event, stage);
+}
+
+pub inline fn resolveImage(self: *Self, src: *Image, src_layout: vk.ImageLayout, dst: *Image, dst_layout: vk.ImageLayout, regions: []const vk.ImageResolve) VkError!void {
+    for (regions[0..]) |region| {
+        try self.dispatch_table.resolveImage(self, src, src_layout, dst, dst_layout, region);
+    }
 }
 
 pub inline fn setEvent(self: *Self, event: *Event, stage: vk.PipelineStageFlags) VkError!void {
