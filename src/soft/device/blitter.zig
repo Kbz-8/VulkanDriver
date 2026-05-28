@@ -804,20 +804,22 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
     return c;
 }
 
-pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
+pub fn writeFloat4(c: F32x4, map: []u8, dst_format: vk.Format) void {
+    const color = std.math.clamp(c, zm.f32x4s(base.format.minElementValue(dst_format)), zm.f32x4s(base.format.maxElementValue(dst_format)));
+
     switch (dst_format) {
         .r8_unorm,
         .r8_srgb,
         .s8_uint,
         => map[0] = @intFromFloat(@round(color[0] * std.math.maxInt(u8))),
 
-        .r8_snorm => map[0] = @intFromFloat(@round(color[0] * std.math.maxInt(i8))),
+        .r8_snorm => map[0] = @bitCast(@as(i8, @intFromFloat(@round(color[0] * std.math.maxInt(i8))))),
 
         .r16_sint,
         .r16_uint,
         => std.mem.bytesAsValue(u16, map).* = @intFromFloat(@round(color[0])),
 
-        .r16_snorm => std.mem.bytesAsValue(u16, map).* = @intFromFloat(@round(color[0] * std.math.maxInt(i16))),
+        .r16_snorm => std.mem.bytesAsValue(u16, map).* = @bitCast(@as(i16, @intFromFloat(@round(color[0] * std.math.maxInt(i16))))),
 
         .r16_unorm,
         .d16_unorm,
@@ -834,8 +836,8 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
         => std.mem.bytesAsValue(f32, map).* = color[0],
 
         .r8g8_snorm => {
-            map[0] = @intFromFloat(@round(color[0] * std.math.maxInt(i8)));
-            map[1] = @intFromFloat(@round(color[1] * std.math.maxInt(i8)));
+            map[0] = @bitCast(@as(i8, @intFromFloat(@round(color[0] * std.math.maxInt(i8)))));
+            map[1] = @bitCast(@as(i8, @intFromFloat(@round(color[1] * std.math.maxInt(i8)))));
         },
 
         .r8g8_unorm,
@@ -846,13 +848,18 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
         },
 
         .r16g16_snorm => {
-            std.mem.bytesAsValue(u16, map[0..]).* = @intFromFloat(@round(color[0] * std.math.maxInt(i16)));
-            std.mem.bytesAsValue(u16, map[2..]).* = @intFromFloat(@round(color[1] * std.math.maxInt(i16)));
+            std.mem.bytesAsValue(u16, map[0..]).* = @bitCast(@as(i16, @intFromFloat(@round(color[0] * std.math.maxInt(i16)))));
+            std.mem.bytesAsValue(u16, map[2..]).* = @bitCast(@as(i16, @intFromFloat(@round(color[1] * std.math.maxInt(i16)))));
         },
 
         .r16g16_unorm => {
             std.mem.bytesAsValue(u16, map[0..]).* = @intFromFloat(@round(color[0] * std.math.maxInt(u16)));
             std.mem.bytesAsValue(u16, map[2..]).* = @intFromFloat(@round(color[1] * std.math.maxInt(u16)));
+        },
+
+        .r16g16_uint => {
+            std.mem.bytesAsValue(u16, map[0..]).* = @intFromFloat(@round(color[0]));
+            std.mem.bytesAsValue(u16, map[2..]).* = @intFromFloat(@round(color[1]));
         },
 
         .r16g16_sfloat => {
@@ -865,7 +872,6 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
             std.mem.bytesAsValue(f32, map[4..]).* = color[1];
         },
 
-        .r16g16b16a16_sint,
         .r16g16b16a16_uint,
         .r16g16b16a16_unorm,
         => {
@@ -875,11 +881,13 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
             std.mem.bytesAsValue(u16, map[6..]).* = @intFromFloat(@round(color[3] * std.math.maxInt(u16)));
         },
 
-        .r16g16b16a16_snorm => {
-            std.mem.bytesAsValue(u16, map[0..]).* = @intFromFloat(@round(color[0] * std.math.maxInt(i16)));
-            std.mem.bytesAsValue(u16, map[2..]).* = @intFromFloat(@round(color[1] * std.math.maxInt(i16)));
-            std.mem.bytesAsValue(u16, map[4..]).* = @intFromFloat(@round(color[2] * std.math.maxInt(i16)));
-            std.mem.bytesAsValue(u16, map[6..]).* = @intFromFloat(@round(color[3] * std.math.maxInt(i16)));
+        .r16g16b16a16_sint,
+        .r16g16b16a16_snorm,
+        => {
+            std.mem.bytesAsValue(u16, map[0..]).* = @bitCast(@as(i16, @intFromFloat(@round(color[0] * std.math.maxInt(i16)))));
+            std.mem.bytesAsValue(u16, map[2..]).* = @bitCast(@as(i16, @intFromFloat(@round(color[1] * std.math.maxInt(i16)))));
+            std.mem.bytesAsValue(u16, map[4..]).* = @bitCast(@as(i16, @intFromFloat(@round(color[2] * std.math.maxInt(i16)))));
+            std.mem.bytesAsValue(u16, map[6..]).* = @bitCast(@as(i16, @intFromFloat(@round(color[3] * std.math.maxInt(i16)))));
         },
 
         .r16g16b16a16_sfloat => {
@@ -964,17 +972,17 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
         .a8b8g8r8_sint_pack32,
         .a8b8g8r8_snorm_pack32,
         => {
-            map[0] = @intFromFloat(@round(color[0] * std.math.maxInt(i8)));
-            map[1] = @intFromFloat(@round(color[1] * std.math.maxInt(i8)));
-            map[2] = @intFromFloat(@round(color[2] * std.math.maxInt(i8)));
-            map[3] = @intFromFloat(@round(color[3] * std.math.maxInt(i8)));
+            map[0] = @bitCast(@as(i8, @intFromFloat(@round(color[0] * std.math.maxInt(i8)))));
+            map[1] = @bitCast(@as(i8, @intFromFloat(@round(color[1] * std.math.maxInt(i8)))));
+            map[2] = @bitCast(@as(i8, @intFromFloat(@round(color[2] * std.math.maxInt(i8)))));
+            map[3] = @bitCast(@as(i8, @intFromFloat(@round(color[3] * std.math.maxInt(i8)))));
         },
 
         .r8g8b8a8_snorm => {
-            map[0] = @intFromFloat(@round(color[0] * std.math.maxInt(i8)));
-            map[1] = @intFromFloat(@round(color[1] * std.math.maxInt(i8)));
-            map[2] = @intFromFloat(@round(color[2] * std.math.maxInt(i8)));
-            map[3] = @intFromFloat(@round(color[3] * std.math.maxInt(i8)));
+            map[0] = @bitCast(@as(i8, @intFromFloat(@round(color[0] * std.math.maxInt(i8)))));
+            map[1] = @bitCast(@as(i8, @intFromFloat(@round(color[1] * std.math.maxInt(i8)))));
+            map[2] = @bitCast(@as(i8, @intFromFloat(@round(color[2] * std.math.maxInt(i8)))));
+            map[3] = @bitCast(@as(i8, @intFromFloat(@round(color[3] * std.math.maxInt(i8)))));
         },
 
         .a2r10g10b10_uint_pack32,
@@ -1003,6 +1011,11 @@ pub fn writeFloat4(color: F32x4, map: []u8, dst_format: vk.Format) void {
                 (@as(u32, g) << 10) |
                 (@as(u32, b) << 20) |
                 (@as(u32, a) << 30);
+        },
+
+        .r32g32b32a32_uint => {
+            std.debug.print("{}\n", .{@as(@Vector(4, f64), color) * @as(@Vector(4, f64), @splat(std.math.maxInt(u32)))});
+            std.mem.bytesAsValue(U32x4, map).* = @intFromFloat(@round(@as(@Vector(4, f64), color) * @as(@Vector(4, f64), @splat(std.math.maxInt(u32)))));
         },
 
         .r32g32b32a32_sfloat => std.mem.bytesAsValue(F32x4, map).* = color,

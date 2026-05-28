@@ -427,3 +427,148 @@ pub inline fn isUnsigned(format: vk.Format) bool {
 pub inline fn isUnnormalizedInteger(format: vk.Format) bool {
     return isSint(format) or isUint(format);
 }
+
+pub inline fn isSscaled(format: vk.Format) bool {
+    return lib.c.vkuFormatIsSSCALED(@intCast(@intFromEnum(format)));
+}
+
+pub inline fn isUscaled(format: vk.Format) bool {
+    return lib.c.vkuFormatIsUSCALED(@intCast(@intFromEnum(format)));
+}
+
+fn maxComponentBits(format: vk.Format) u32 {
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 64)) return 64;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 32)) return 32;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 24)) return 24;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 16)) return 16;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 11)) return 11;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 10)) return 10;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 8)) return 8;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 6)) return 6;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 5)) return 5;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 4)) return 4;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 2)) return 2;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 1)) return 1;
+
+    lib.unsupported("format component bits {any}", .{format});
+    return 0;
+}
+
+fn maxUnsignedValue(bits: u32) f32 {
+    return switch (bits) {
+        1 => 1.0,
+        2 => 3.0,
+        4 => 15.0,
+        5 => 31.0,
+        6 => 63.0,
+        8 => @as(f32, @floatFromInt(std.math.maxInt(u8))),
+        10 => 1023.0,
+        11 => 2047.0,
+        16 => @as(f32, @floatFromInt(std.math.maxInt(u16))),
+        24 => 0xffffff,
+        32 => @as(f32, @floatFromInt(std.math.maxInt(u32))),
+        64 => @as(f32, @floatFromInt(std.math.maxInt(u64))),
+        else => blk: {
+            lib.unsupported("format component bits {d}", .{bits});
+            break :blk 1.0;
+        },
+    };
+}
+
+fn maxSignedValue(bits: u32) f32 {
+    return switch (bits) {
+        2 => 1.0,
+        4 => 7.0,
+        5 => 15.0,
+        6 => 31.0,
+        8 => @as(f32, @floatFromInt(std.math.maxInt(i8))),
+        10 => 511.0,
+        11 => 1023.0,
+        16 => @as(f32, @floatFromInt(std.math.maxInt(i16))),
+        24 => 0x7fffff,
+        32 => @as(f32, @floatFromInt(std.math.maxInt(i32))),
+        64 => @as(f32, @floatFromInt(std.math.maxInt(i64))),
+        else => blk: {
+            lib.unsupported("format component bits {d}", .{bits});
+            break :blk 1.0;
+        },
+    };
+}
+
+fn minSignedValue(bits: u32) f32 {
+    return switch (bits) {
+        2 => -2.0,
+        4 => -8.0,
+        5 => -16.0,
+        6 => -32.0,
+        8 => @as(f32, @floatFromInt(std.math.minInt(i8))),
+        10 => -512.0,
+        11 => -1024.0,
+        16 => @as(f32, @floatFromInt(std.math.minInt(i16))),
+        24 => -0x800000,
+        32 => @as(f32, @floatFromInt(std.math.minInt(i32))),
+        64 => @as(f32, @floatFromInt(std.math.minInt(i64))),
+        else => blk: {
+            lib.unsupported("format component bits {d}", .{bits});
+            break :blk -1.0;
+        },
+    };
+}
+
+fn maxFloatValue(format: vk.Format) f32 {
+    return switch (format) {
+        .r16_sfloat,
+        .r16g16_sfloat,
+        .r16g16b16_sfloat,
+        .r16g16b16a16_sfloat,
+        .b10g11r11_ufloat_pack32,
+        .e5b9g9r9_ufloat_pack32,
+        .bc6h_ufloat_block,
+        .bc6h_sfloat_block,
+        => std.math.floatMax(f16),
+        else => std.math.floatMax(f32),
+    };
+}
+
+pub fn maxElementValue(format: vk.Format) f32 {
+    if (isDepth(format))
+        return 1.0;
+
+    if (isStencil(format))
+        return maxUnsignedValue(8);
+
+    if (isSnorm(format) or isUnorm(format) or isSrgb(format))
+        return 1.0;
+
+    if (isUscaled(format) or isUint(format))
+        return maxUnsignedValue(maxComponentBits(format));
+
+    if (isSscaled(format) or isSint(format))
+        return maxSignedValue(maxComponentBits(format));
+
+    if (isUfloat(format) or isSfloat(format))
+        return maxFloatValue(format);
+
+    lib.unsupported("format max element value {any}", .{format});
+    return 1.0;
+}
+
+pub fn minElementValue(format: vk.Format) f32 {
+    if (isDepth(format) or isStencil(format))
+        return 0.0;
+
+    if (isSnorm(format))
+        return -1.0;
+
+    if (isUnorm(format) or isSrgb(format) or isUscaled(format) or isUint(format) or isUfloat(format))
+        return 0.0;
+
+    if (isSscaled(format) or isSint(format))
+        return minSignedValue(maxComponentBits(format));
+
+    if (isSfloat(format))
+        return -maxFloatValue(format);
+
+    lib.unsupported("format min element value {any}", .{format});
+    return 0.0;
+}

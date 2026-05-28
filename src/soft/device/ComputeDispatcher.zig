@@ -58,6 +58,14 @@ pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count
 
     self.invocation_index.store(0, .monotonic);
 
+    const io = self.device.interface.io();
+    const timer = std.Io.Timestamp.now(io, .real);
+    defer if (comptime base.config.logs != .none) {
+        const duration = timer.untilNow(io, .real);
+        const ms: f32 = @floatFromInt(duration.toMicroseconds());
+        std.log.scoped(.ComputeDispatcher).debug("Compute dispatch took {}ms", .{ms / 1000});
+    };
+
     var wg: std.Io.Group = .init;
     for (0..@min(self.batch_size, group_count)) |batch_id| {
         const run_data: RunData = .{
