@@ -18,13 +18,13 @@ pub fn shaderInvocation(
     batch_id: usize,
     position: zm.F32x4,
     inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolation,
-) SpvRuntimeError!zm.F32x4 {
+) SpvRuntimeError![spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8 {
     const io = draw_call.renderer.device.interface.io();
 
     _ = position;
-    const pipeline = draw_call.renderer.state.pipeline orelse return zm.f32x4s(0.0);
+    const pipeline = draw_call.renderer.state.pipeline orelse return undefined;
 
-    const shader = pipeline.stages.getPtrAssertContains(.fragment);
+    const shader = pipeline.stages.getPtr(.fragment) orelse return undefined;
     const runtime = &shader.runtimes[batch_id];
     const mutex = &runtime.mutex;
     const rt = &runtime.rt;
@@ -53,10 +53,11 @@ pub fn shaderInvocation(
         else => return err,
     };
 
-    var color = zm.f32x4s(0.0);
-    try rt.readOutput(std.mem.asBytes(&color), output_result);
+    var outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8 = undefined;
+
+    try rt.readOutput(std.mem.asBytes(&outputs), output_result);
 
     try rt.flushDescriptorSets(allocator);
 
-    return std.math.clamp(color, zm.f32x4s(0.0), zm.f32x4s(1.0));
+    return outputs;
 }

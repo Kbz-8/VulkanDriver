@@ -673,7 +673,10 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
         },
 
         .r16g16b16a16_sfloat => c = std.mem.bytesToValue(@Vector(4, f16), map),
+
         .r32g32b32a32_sfloat => c = std.mem.bytesToValue(F32x4, map),
+
+        .r32g32b32a32_uint => c = @floatFromInt(std.mem.bytesToValue(U32x4, map)),
 
         .s8_uint => c[0] = @floatFromInt(map[0]),
 

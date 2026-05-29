@@ -162,7 +162,7 @@ inline fn run(data: RunData) !void {
                     continue;
             }
 
-            const pixel = fragment.shaderInvocation(
+            const outputs = fragment.shaderInvocation(
                 data.allocator,
                 data.draw_call,
                 data.batch_id,
@@ -175,7 +175,6 @@ inline fn run(data: RunData) !void {
                         std.debug.dumpErrorReturnTrace(trace);
                     }
                 }
-
                 return;
             };
 
@@ -192,9 +191,17 @@ inline fn run(data: RunData) !void {
                 if (z >= depth_value[0])
                     continue;
                 blitter.writeFloat4(zm.f32x4s(z), depth.base[depth_offset..], depth.format);
-                blitter.writeFloat4(pixel, data.color_attachment_access.base[color_offset..], data.color_attachment_access.format);
+
+                // Doubled line to stay inside the critical section
+                if (base.format.isUnnormalizedInteger(data.color_attachment_access.format))
+                    blitter.writeInt4(std.mem.bytesToValue(@Vector(4, u32), &outputs[0]), data.color_attachment_access.base[color_offset..], data.color_attachment_access.format)
+                else
+                    blitter.writeFloat4(std.mem.bytesToValue(@Vector(4, f32), &outputs[0]), data.color_attachment_access.base[color_offset..], data.color_attachment_access.format);
             } else {
-                blitter.writeFloat4(pixel, data.color_attachment_access.base[color_offset..], data.color_attachment_access.format);
+                if (base.format.isUnnormalizedInteger(data.color_attachment_access.format))
+                    blitter.writeInt4(std.mem.bytesToValue(@Vector(4, u32), &outputs[0]), data.color_attachment_access.base[color_offset..], data.color_attachment_access.format)
+                else
+                    blitter.writeFloat4(std.mem.bytesToValue(@Vector(4, f32), &outputs[0]), data.color_attachment_access.base[color_offset..], data.color_attachment_access.format);
             }
         }
     }

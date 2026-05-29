@@ -157,19 +157,22 @@ inline fn run(data: RunData) !void {
             return;
         };
 
-        try render_target.writeFloat4(
-            .{
-                .x = pixel_x,
-                .y = pixel_y,
-                .z = 0, // FIXME
-            },
-            .{
-                .aspect_mask = render_target_view.subresource_range.aspect_mask,
-                .mip_level = render_target_view.subresource_range.base_mip_level,
-                .array_layer = render_target_view.subresource_range.base_array_layer,
-            },
-            render_target_view.format,
-            pixel,
-        );
+        _ = pixel;
+        _ = render_target;
+
+        //try render_target.writeFloat4(
+        //    .{
+        //        .x = pixel_x,
+        //        .y = pixel_y,
+        //        .z = 0, // FIXME
+        //    },
+        //    .{
+        //        .aspect_mask = render_target_view.subresource_range.aspect_mask,
+        //        .mip_level = render_target_view.subresource_range.base_mip_level,
+        //        .array_layer = render_target_view.subresource_range.base_array_layer,
+        //    },
+        //    render_target_view.format,
+        //    pixel,
+        //);
     }
 }
