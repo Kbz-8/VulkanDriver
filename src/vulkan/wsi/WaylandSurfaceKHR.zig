@@ -156,7 +156,7 @@ pub fn presentImage(interface: *Interface, allocator: std.mem.Allocator, image: 
 }
 
 fn createShmFile(size: usize) VkError!std.posix.fd_t {
-    const name = "stroll_vk_wayland_surface";
+    const name = "ape_vk_wayland_surface";
 
     const fd = std.posix.memfd_create(name, std.posix.FD_CLOEXEC) catch return VkError.Unknown;
     errdefer std.c.close(fd);

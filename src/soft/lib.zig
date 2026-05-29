@@ -68,7 +68,7 @@ pub const MAX_IMAGE_LEVELS_3D = 12;
 pub const MAX_IMAGE_LEVELS_CUBE = 15;
 pub const MAX_IMAGE_ARRAY_LAYERS = 2048;
 
-pub const PHYSICAL_DEVICE_DEFAULT_NAME = "StrollSoft device";
+pub const PHYSICAL_DEVICE_DEFAULT_NAME = "Ape software device";
 pub const PHYSICAL_DEVICE_FALLBACK_HEAP_SIZE = 0x10000000; // 256MB
 
 pub const std_options = base.std_options;

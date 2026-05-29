@@ -9,6 +9,7 @@ scripts/__pycache__/
 .gdb_history
 *.json
 *.png
+!logo.png
 *.bin
 *.qpa
 *.xml

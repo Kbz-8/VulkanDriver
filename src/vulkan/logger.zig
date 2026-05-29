@@ -87,7 +87,7 @@ pub fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), compti
         };
 
         term.setColor(.magenta) catch {};
-        writer.writeAll("[StrollDriver") catch continue;
+        writer.writeAll("[ApeDriver") catch continue;
         if (!builtin.is_test) {
             term.setColor(.cyan) catch {};
             writer.writeAll(" " ++ root.DRIVER_NAME ++ " ") catch continue;

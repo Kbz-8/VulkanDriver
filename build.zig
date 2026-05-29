@@ -108,7 +108,7 @@ pub fn build(b: *std.Build) !void {
         }
 
         const icd_file = b.addWriteFile(
-            b.getInstallPath(.lib, b.fmt("vk_stroll_{s}.json", .{impl.name})),
+            b.getInstallPath(.lib, b.fmt("vk_ape_{s}.json", .{impl.name})),
             b.fmt(
                 \\{{
                 \\    "file_format_version": "1.0.1",

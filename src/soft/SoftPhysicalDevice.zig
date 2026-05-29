@@ -243,7 +243,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
         defer command_allocator.free(name);
 
         var writer = std.Io.Writer.fixed(device_name[0 .. vk.MAX_PHYSICAL_DEVICE_NAME_SIZE - 1]);
-        writer.print("{s} [" ++ lib.DRIVER_NAME ++ " StrollDriver]", .{name}) catch return VkError.InitializationFailed;
+        writer.print("{s} [" ++ lib.DRIVER_NAME ++ " ApeDriver]", .{name}) catch return VkError.InitializationFailed;
     }
 
     @memcpy(&interface.props.device_name, &device_name);
