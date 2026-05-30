@@ -1016,7 +1016,7 @@ pub fn writeFloat4(c: F32x4, map: []u8, dst_format: vk.Format) void {
                 (@as(u32, a) << 30);
         },
 
-        .r32g32b32a32_uint => std.mem.bytesAsValue(U32x4, map).* = @intFromFloat(@round(@as(@Vector(4, f64), color) * @as(@Vector(4, f64), @splat(std.math.maxInt(u32))))),
+        .r32g32b32a32_uint => std.mem.bytesAsValue(U32x4, map).* = @intFromFloat(@round(@as(@Vector(4, f64), color))),
 
         .r32g32b32a32_sfloat => std.mem.bytesAsValue(F32x4, map).* = color,
 

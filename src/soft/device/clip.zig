@@ -22,6 +22,11 @@ const ClipPlane = enum {
 
 const MAX_CLIPPED_POLYGON_VERTICES = 16;
 
+pub const ClippedLine = struct {
+    v0: Vertex,
+    v1: Vertex,
+};
+
 const ClippedPolygon = struct {
     vertices: [MAX_CLIPPED_POLYGON_VERTICES]Vertex = undefined,
     len: usize = 0,
@@ -57,6 +62,46 @@ pub fn clipTriangle(allocator: std.mem.Allocator, v0: *const Vertex, v1: *const 
     }
 
     return polygon;
+}
+
+pub fn clipLine(allocator: std.mem.Allocator, v0: *const Vertex, v1: *const Vertex) VkError!?ClippedLine {
+    var line: ClippedLine = .{
+        .v0 = v0.*,
+        .v1 = v1.*,
+    };
+
+    const planes = [_]ClipPlane{
+        .Left,
+        .Right,
+        .Bottom,
+        .Top,
+        .Near,
+        .Far,
+    };
+
+    for (planes) |plane| {
+        const v0_distance = clipDistance(line.v0.position, plane);
+        const v1_distance = clipDistance(line.v1.position, plane);
+        const v0_inside = v0_distance >= 0.0;
+        const v1_inside = v1_distance >= 0.0;
+
+        if (!v0_inside and !v1_inside)
+            return null;
+
+        if (v0_inside and v1_inside)
+            continue;
+
+        const t = v0_distance / (v0_distance - v1_distance);
+        const clipped_vertex = try interpolateVertexForClipping(allocator, &line.v0, &line.v1, t);
+
+        if (v0_inside) {
+            line.v1 = clipped_vertex;
+        } else {
+            line.v0 = clipped_vertex;
+        }
+    }
+
+    return line;
 }
 
 pub fn viewportTransformVertex(viewport: vk.Viewport, vertex: *Vertex) void {

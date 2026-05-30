@@ -3,6 +3,7 @@ const base = @import("base");
 const spv = @import("spv");
 const zm = base.zm;
 
+const blitter = @import("../blitter.zig");
 const common = @import("common.zig");
 const fragment = @import("../fragment.zig");
 
@@ -27,9 +28,18 @@ const RunData = struct {
     end_vertex: *Renderer.Vertex,
     start_step: usize,
     end_step: usize,
+    color_attachment_access: *const common.RenderTargetAccess,
+    depth_attachment_access: ?*common.RenderTargetAccess,
 };
 
-pub fn drawLine(allocator: std.mem.Allocator, draw_call: *Renderer.DrawCall, v0: *Renderer.Vertex, v1: *Renderer.Vertex) VkError!void {
+pub fn drawLine(
+    allocator: std.mem.Allocator,
+    draw_call: *Renderer.DrawCall,
+    v0: *Renderer.Vertex,
+    v1: *Renderer.Vertex,
+    color_attachment_access: *const common.RenderTargetAccess,
+    depth_attachment_access: ?*common.RenderTargetAccess,
+) VkError!void {
     const io = draw_call.renderer.device.interface.io();
 
     var x0: i32 = @intFromFloat(v0.position[0]);
@@ -60,7 +70,6 @@ pub fn drawLine(allocator: std.mem.Allocator, draw_call: *Renderer.DrawCall, v0:
 
     const pipeline = draw_call.renderer.state.pipeline orelse return;
 
-    var wg: std.Io.Group = .init;
     const runtimes_count = (pipeline.stages.getPtr(.fragment) orelse return).runtimes.len;
     if (runtimes_count == 0)
         return;
@@ -93,11 +102,17 @@ pub fn drawLine(allocator: std.mem.Allocator, draw_call: *Renderer.DrawCall, v0:
             .end_vertex = end_vertex,
             .start_step = start_step,
             .end_step = end_step,
+            .color_attachment_access = color_attachment_access,
+            .depth_attachment_access = depth_attachment_access,
         };
 
-        wg.async(io, runWrapper, .{run_data});
+        draw_call.rasterizer_wait_group.async(io, runWrapper, .{run_data});
     }
-    wg.await(io) catch return VkError.DeviceLost;
+
+    // Not syncing workers between triangles when rendering without depth buffer
+    // will lead to pixel rendering order issues between triangles.
+    if (depth_attachment_access == null)
+        draw_call.rasterizer_wait_group.await(io) catch return VkError.DeviceLost;
 }
 
 fn bresenhamYAtStep(y0: i32, d_x: i32, d_err: i32, y_step: i32, step: usize) i32 {
@@ -121,10 +136,6 @@ fn runWrapper(data: RunData) void {
 }
 
 inline fn run(data: RunData) !void {
-    const color_attachment = if (data.draw_call.render_pass.interface.subpasses[data.draw_call.renderer.subpass_index].color_attachments) |attachments| attachments[0].attachment else return VkError.InvalidAttachmentDrv;
-    const render_target_view: *base.ImageView = data.draw_call.color_attachments[color_attachment];
-    const render_target: *SoftImage = @alignCast(@fieldParentPtr("interface", render_target_view.image));
-
     var step = data.start_step;
     while (step <= data.end_step) : (step += 1) {
         const x = data.x0 + @as(i32, @intCast(step));
@@ -140,7 +151,15 @@ inline fn run(data: RunData) !void {
         const t = @as(f32, @floatFromInt(step)) / @as(f32, @floatFromInt(@max(data.d_x, 1)));
         const z = ((1.0 - t) * data.start_vertex.position[2]) + (t * data.end_vertex.position[2]);
 
-        const pixel = fragment.shaderInvocation(
+        // Early depth test to avoid unnecesary computations
+        if (data.depth_attachment_access) |depth| {
+            const offset = @as(usize, @intCast(pixel_x)) * depth.texel_size + @as(usize, @intCast(pixel_y)) * depth.row_pitch;
+            const depth_value = blitter.readFloat4(depth.base[offset..], depth.format);
+            if (z >= depth_value[0])
+                continue;
+        }
+
+        const outputs = fragment.shaderInvocation(
             data.allocator,
             data.draw_call,
             data.batch_id,
@@ -157,22 +176,6 @@ inline fn run(data: RunData) !void {
             return;
         };
 
-        _ = pixel;
-        _ = render_target;
-
-        //try render_target.writeFloat4(
-        //    .{
-        //        .x = pixel_x,
-        //        .y = pixel_y,
-        //        .z = 0, // FIXME
-        //    },
-        //    .{
-        //        .aspect_mask = render_target_view.subresource_range.aspect_mask,
-        //        .mip_level = render_target_view.subresource_range.base_mip_level,
-        //        .array_layer = render_target_view.subresource_range.base_array_layer,
-        //    },
-        //    render_target_view.format,
-        //    pixel,
-        //);
+        try common.writeToTargets(outputs, data.draw_call, data.color_attachment_access, data.depth_attachment_access, @intCast(pixel_x), @intCast(pixel_y), z);
     }
 }

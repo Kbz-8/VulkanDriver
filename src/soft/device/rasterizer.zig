@@ -133,10 +133,65 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                 }
             }
         },
+        .line_list => for (0..@divTrunc(draw_call.vertices.len, 2)) |line_index| {
+            const first_vertex = line_index * 2;
+            const v0 = &draw_call.vertices[first_vertex + 0];
+            const v1 = &draw_call.vertices[first_vertex + 1];
+
+            try clipTransformAndRasterizeLine(
+                allocator,
+                draw_call,
+                v0,
+                v1,
+                &color_attachment_access,
+                if (depth_attachment_access) |*access| access else null,
+            );
+        },
+        .line_strip => if (draw_call.vertices.len >= 2) {
+            for (0..(draw_call.vertices.len - 1)) |vertex_index| {
+                const v0 = &draw_call.vertices[vertex_index + 0];
+                const v1 = &draw_call.vertices[vertex_index + 1];
+
+                try clipTransformAndRasterizeLine(
+                    allocator,
+                    draw_call,
+                    v0,
+                    v1,
+                    &color_attachment_access,
+                    if (depth_attachment_access) |*access| access else null,
+                );
+            }
+        },
         else => base.unsupported("primitive topology {any}", .{topology}),
     }
 
     draw_call.rasterizer_wait_group.await(io) catch return VkError.DeviceLost;
+}
+
+fn clipTransformAndRasterizeLine(
+    allocator: std.mem.Allocator,
+    draw_call: *DrawCall,
+    v0: *Vertex,
+    v1: *Vertex,
+    color_attachment_access: *const common.RenderTargetAccess,
+    depth_attachment_access: ?*common.RenderTargetAccess,
+) VkError!void {
+    const clipped_line = (try clip.clipLine(allocator, v0, v1)) orelse return;
+
+    var tv0 = clipped_line.v0;
+    var tv1 = clipped_line.v1;
+
+    clip.viewportTransformVertex(draw_call.viewport, &tv0);
+    clip.viewportTransformVertex(draw_call.viewport, &tv1);
+
+    try bresenham.drawLine(
+        allocator,
+        draw_call,
+        &tv0,
+        &tv1,
+        color_attachment_access,
+        depth_attachment_access,
+    );
 }
 
 fn clipTransformAndRasterizeTriangle(
@@ -193,19 +248,11 @@ fn rasterizeTriangle(
 
     const pipeline_data = (renderer.state.pipeline orelse return VkError.InvalidHandleDrv).interface.mode.graphics;
     switch (pipeline_data.rasterization.polygon_mode) {
-        .fill => try edge_function.drawTriangle(
-            allocator,
-            draw_call,
-            v0,
-            v1,
-            v2,
-            color_attachment_access,
-            depth_attachment_access,
-        ),
+        .fill => try edge_function.drawTriangle(allocator, draw_call, v0, v1, v2, color_attachment_access, depth_attachment_access),
         .line => {
-            try bresenham.drawLine(allocator, draw_call, v0, v1);
-            try bresenham.drawLine(allocator, draw_call, v1, v2);
-            try bresenham.drawLine(allocator, draw_call, v2, v0);
+            try bresenham.drawLine(allocator, draw_call, v0, v1, color_attachment_access, depth_attachment_access);
+            try bresenham.drawLine(allocator, draw_call, v1, v2, color_attachment_access, depth_attachment_access);
+            try bresenham.drawLine(allocator, draw_call, v2, v0, color_attachment_access, depth_attachment_access);
         },
         .point => {}, // TODO
         else => base.unsupported("polygon mode {any}", .{pipeline_data.rasterization.polygon_mode}),

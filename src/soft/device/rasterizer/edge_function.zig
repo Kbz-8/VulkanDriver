@@ -125,8 +125,6 @@ fn runWrapper(data: RunData) void {
 }
 
 inline fn run(data: RunData) !void {
-    const io = data.draw_call.renderer.device.interface.io();
-
     var y = data.min_y;
     while (y <= data.max_y) : (y += 1) {
         var x = data.min_x;
@@ -178,31 +176,7 @@ inline fn run(data: RunData) !void {
                 return;
             };
 
-            const color_offset = @as(usize, @intCast(x)) * data.color_attachment_access.texel_size + @as(usize, @intCast(y)) * data.color_attachment_access.row_pitch;
-
-            // After work depth test to avoid overwritten depth pixels during fragment invocations
-            if (data.depth_attachment_access) |depth| {
-                const depth_offset = @as(usize, @intCast(x)) * depth.texel_size + @as(usize, @intCast(y)) * depth.row_pitch;
-
-                depth.mutex.lock(io) catch return VkError.DeviceLost;
-                defer depth.mutex.unlock(io);
-
-                const depth_value = blitter.readFloat4(depth.base[depth_offset..], depth.format);
-                if (z >= depth_value[0])
-                    continue;
-                blitter.writeFloat4(zm.f32x4s(z), depth.base[depth_offset..], depth.format);
-
-                // Doubled line to stay inside the critical section
-                if (base.format.isUnnormalizedInteger(data.color_attachment_access.format))
-                    blitter.writeInt4(std.mem.bytesToValue(@Vector(4, u32), &outputs[0]), data.color_attachment_access.base[color_offset..], data.color_attachment_access.format)
-                else
-                    blitter.writeFloat4(std.mem.bytesToValue(@Vector(4, f32), &outputs[0]), data.color_attachment_access.base[color_offset..], data.color_attachment_access.format);
-            } else {
-                if (base.format.isUnnormalizedInteger(data.color_attachment_access.format))
-                    blitter.writeInt4(std.mem.bytesToValue(@Vector(4, u32), &outputs[0]), data.color_attachment_access.base[color_offset..], data.color_attachment_access.format)
-                else
-                    blitter.writeFloat4(std.mem.bytesToValue(@Vector(4, f32), &outputs[0]), data.color_attachment_access.base[color_offset..], data.color_attachment_access.format);
-            }
+            try common.writeToTargets(outputs, data.draw_call, data.color_attachment_access, data.depth_attachment_access, @intCast(x), @intCast(y), z);
         }
     }
 }
