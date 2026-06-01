@@ -101,18 +101,21 @@ inline fn interpolateF32x4(value0: F32x4, value1: F32x4, value2: F32x4, b0: f32,
     return (value0 * zm.f32x4s(b0)) + (value1 * zm.f32x4s(b1)) + (value2 * zm.f32x4s(b2));
 }
 
+inline fn fragmentOutputFloat4(output: [@sizeOf(F32x4)]u8, format: vk.Format) F32x4 {
+    const color = std.mem.bytesToValue(F32x4, &output);
+    return if (base.format.isSrgb(format)) zm.rgbToSrgb(color) else color;
+}
+
 pub fn writeToTargets(
     outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8,
     draw_call: *Renderer.DrawCall,
-    color_attachment_access: *const RenderTargetAccess,
+    color_attachment_access: []const ?RenderTargetAccess,
     depth_attachment_access: ?*RenderTargetAccess,
     x: usize,
     y: usize,
     z: f32,
 ) VkError!void {
     const io = draw_call.renderer.device.interface.io();
-
-    const color_offset = @as(usize, @intCast(x)) * color_attachment_access.texel_size + @as(usize, @intCast(y)) * color_attachment_access.row_pitch;
 
     // After work depth test to avoid overwritten depth pixels during fragment invocations
     if (depth_attachment_access) |depth| {
@@ -125,18 +128,16 @@ pub fn writeToTargets(
         if (z >= depth_value[0])
             return;
         blitter.writeFloat4(zm.f32x4s(z), depth.base[depth_offset..], depth.format);
+    }
 
-        // Doubled line to stay inside the critical section
-        if (base.format.isUnnormalizedInteger(color_attachment_access.format)) {
-            blitter.writeInt4(std.mem.bytesToValue(U32x4, &outputs[0]), color_attachment_access.base[color_offset..], color_attachment_access.format);
+    for (color_attachment_access, 0..) |maybe_color, location| {
+        const color = maybe_color orelse continue;
+        const color_offset = @as(usize, @intCast(x)) * color.texel_size + @as(usize, @intCast(y)) * color.row_pitch;
+
+        if (base.format.isUnnormalizedInteger(color.format)) {
+            blitter.writeInt4(std.mem.bytesToValue(U32x4, &outputs[location]), color.base[color_offset..], color.format);
         } else {
-            blitter.writeFloat4(std.mem.bytesToValue(F32x4, &outputs[0]), color_attachment_access.base[color_offset..], color_attachment_access.format);
-        }
-    } else {
-        if (base.format.isUnnormalizedInteger(color_attachment_access.format)) {
-            blitter.writeInt4(std.mem.bytesToValue(U32x4, &outputs[0]), color_attachment_access.base[color_offset..], color_attachment_access.format);
-        } else {
-            blitter.writeFloat4(std.mem.bytesToValue(F32x4, &outputs[0]), color_attachment_access.base[color_offset..], color_attachment_access.format);
+            blitter.writeFloat4(fragmentOutputFloat4(outputs[location], color.format), color.base[color_offset..], color.format);
         }
     }
 }

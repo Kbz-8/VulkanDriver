@@ -28,7 +28,7 @@ const RunData = struct {
     end_vertex: *Renderer.Vertex,
     start_step: usize,
     end_step: usize,
-    color_attachment_access: *const common.RenderTargetAccess,
+    color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
 };
 
@@ -37,7 +37,7 @@ pub fn drawLine(
     draw_call: *Renderer.DrawCall,
     v0: *Renderer.Vertex,
     v1: *Renderer.Vertex,
-    color_attachment_access: *const common.RenderTargetAccess,
+    color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
 ) VkError!void {
     const io = draw_call.renderer.device.interface.io();

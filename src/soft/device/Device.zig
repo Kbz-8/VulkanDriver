@@ -71,7 +71,7 @@ pub fn writeDescriptorSets(state: *PipelineState, rt: *spv.Runtime) !void {
             switch (binding) {
                 .buffer => |buffer_data_array| for (buffer_data_array, 0..) |buffer_data, descriptor_index| {
                     if (buffer_data.object) |buffer| {
-                        const map = buffer.mapAsSliceWithOffset(u8, buffer_data.offset, buffer_data.size) catch continue :bindings;
+                        const map = buffer.mapAsSliceWithAddedOffset(u8, buffer_data.offset, buffer_data.size) catch continue :bindings;
                         try rt.writeDescriptorSet(
                             map,
                             @as(u32, @intCast(set_index)),

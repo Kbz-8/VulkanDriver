@@ -49,23 +49,29 @@ pub fn resolveAttachments(self: *Self, render_pass: *SoftRenderPass, subpass_ind
                     const dst_image_view = self.interface.attachments[resolve.attachment];
                     const dst_image: *SoftImage = @alignCast(@fieldParentPtr("interface", dst_image_view.image));
 
-                    try blitter.resolve(src_image, dst_image, .{
-                        .src_subresource = .{
-                            .aspect_mask = src_image_view.subresource_range.aspect_mask,
-                            .base_array_layer = src_image_view.subresource_range.base_array_layer,
-                            .layer_count = src_image_view.subresource_range.layer_count,
-                            .mip_level = src_image_view.subresource_range.base_mip_level,
+                    try blitter.resolveWithFormats(
+                        src_image,
+                        dst_image,
+                        .{
+                            .src_subresource = .{
+                                .aspect_mask = src_image_view.subresource_range.aspect_mask,
+                                .base_array_layer = src_image_view.subresource_range.base_array_layer,
+                                .layer_count = src_image_view.subresource_range.layer_count,
+                                .mip_level = src_image_view.subresource_range.base_mip_level,
+                            },
+                            .src_offset = .{ .x = 0, .y = 0, .z = 0 },
+                            .dst_subresource = .{
+                                .aspect_mask = dst_image_view.subresource_range.aspect_mask,
+                                .base_array_layer = dst_image_view.subresource_range.base_array_layer,
+                                .layer_count = dst_image_view.subresource_range.layer_count,
+                                .mip_level = dst_image_view.subresource_range.base_mip_level,
+                            },
+                            .dst_offset = .{ .x = 0, .y = 0, .z = 0 },
+                            .extent = src_image.getMipLevelExtent(src_image_view.subresource_range.base_mip_level),
                         },
-                        .src_offset = .{ .x = 0, .y = 0, .z = 0 },
-                        .dst_subresource = .{
-                            .aspect_mask = dst_image_view.subresource_range.aspect_mask,
-                            .base_array_layer = dst_image_view.subresource_range.base_array_layer,
-                            .layer_count = dst_image_view.subresource_range.layer_count,
-                            .mip_level = dst_image_view.subresource_range.base_mip_level,
-                        },
-                        .dst_offset = .{ .x = 0, .y = 0, .z = 0 },
-                        .extent = src_image.getMipLevelExtent(src_image_view.subresource_range.base_mip_level),
-                    });
+                        src_image_view.format,
+                        dst_image_view.format,
+                    );
                 }
             }
         }

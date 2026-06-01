@@ -168,7 +168,7 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
                     if (clear_mask.color_bit) {
                         try blitter.clear(
                             (impl.clear_values orelse return VkError.Unknown)[index],
-                            try image.getClearFormat(),
+                            try SoftImage.getClearFormatFor(attachment.format),
                             image,
                             attachment.format,
                             attachment.subresource_range,
@@ -401,7 +401,7 @@ pub fn clearAttachment(interface: *Interface, attachment: vk.ClearAttachment, re
             };
 
             const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.image));
-            const clear_format = try image.getClearFormat();
+            const clear_format = try SoftImage.getClearFormatFor(image_view.format);
 
             const range: vk.ImageSubresourceRange = .{
                 .aspect_mask = impl.attachment.aspect_mask,

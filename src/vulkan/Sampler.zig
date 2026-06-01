@@ -11,6 +11,11 @@ const Self = @This();
 pub const ObjectType: vk.ObjectType = .sampler;
 
 owner: *Device,
+mag_filter: vk.Filter,
+min_filter: vk.Filter,
+address_mode_u: vk.SamplerAddressMode,
+address_mode_v: vk.SamplerAddressMode,
+address_mode_w: vk.SamplerAddressMode,
 
 vtable: *const VTable,
 
@@ -20,9 +25,13 @@ pub const VTable = struct {
 
 pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.SamplerCreateInfo) VkError!Self {
     _ = allocator;
-    _ = info;
     return .{
         .owner = device,
+        .mag_filter = info.mag_filter,
+        .min_filter = info.min_filter,
+        .address_mode_u = info.address_mode_u,
+        .address_mode_v = info.address_mode_v,
+        .address_mode_w = info.address_mode_w,
         .vtable = undefined,
     };
 }

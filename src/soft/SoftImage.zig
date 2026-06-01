@@ -102,9 +102,13 @@ pub fn getMemoryRequirements(_: *Interface, requirements: *vk.MemoryRequirements
 }
 
 pub fn getClearFormat(self: *Self) VkError!vk.Format {
-    return if (base.c.vkuFormatIsSINT(@intCast(@intFromEnum(self.interface.format))))
+    return getClearFormatFor(self.interface.format);
+}
+
+pub fn getClearFormatFor(format: vk.Format) VkError!vk.Format {
+    return if (base.format.isSint(format))
         .r32g32b32a32_sint
-    else if (base.c.vkuFormatIsUINT(@intCast(@intFromEnum(self.interface.format))))
+    else if (base.format.isUint(format))
         .r32g32b32a32_uint
     else
         .r32g32b32a32_sfloat;
@@ -472,8 +476,8 @@ fn getSubresourceLayout(interface: *const Interface, subresource: vk.ImageSubres
         .offset = try self.getSubresourceOffset(subresource.aspect_mask, subresource.mip_level, subresource.array_layer),
         .size = self.getMultiSampledLevelSize(subresource.aspect_mask, subresource.mip_level),
         .row_pitch = self.interface.getRowPitchMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level),
-        .array_pitch = self.interface.getSliceMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level),
-        .depth_pitch = self.getLayerSize(subresource.aspect_mask),
+        .array_pitch = self.getLayerSize(subresource.aspect_mask),
+        .depth_pitch = self.interface.getSliceMemSizeForMipLevel(subresource.aspect_mask, subresource.mip_level),
     };
 }
 

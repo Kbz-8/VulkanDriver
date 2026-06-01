@@ -32,8 +32,9 @@ pub fn shaderInvocation(
     mutex.lock(io) catch return SpvRuntimeError.Unknown;
     defer mutex.unlock(io);
 
+    try rt.populatePushConstants(draw_call.renderer.state.push_constant_blob[0..]);
+
     const entry = try rt.getEntryPointByName(shader.entry);
-    const output_result = try rt.getResultByLocation(0, .output);
 
     for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
         const result_word = rt.getResultByLocation(@intCast(location), .input) catch |err| switch (err) {
@@ -54,8 +55,15 @@ pub fn shaderInvocation(
     };
 
     var outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8 = undefined;
+    @memset(std.mem.asBytes(&outputs), 0);
 
-    try rt.readOutput(std.mem.asBytes(&outputs), output_result);
+    for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
+        const result_word = rt.getResultByLocation(@intCast(location), .output) catch |err| switch (err) {
+            SpvRuntimeError.NotFound => continue,
+            else => return err,
+        };
+        try rt.readOutput(&outputs[location], result_word);
+    }
 
     try rt.flushDescriptorSets(allocator);
 

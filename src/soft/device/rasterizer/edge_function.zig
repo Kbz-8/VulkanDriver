@@ -26,7 +26,7 @@ const RunData = struct {
     v0: Renderer.Vertex,
     v1: Renderer.Vertex,
     v2: Renderer.Vertex,
-    color_attachment_access: *const common.RenderTargetAccess,
+    color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
 };
 
@@ -36,7 +36,7 @@ pub fn drawTriangle(
     v0: *Renderer.Vertex,
     v1: *Renderer.Vertex,
     v2: *Renderer.Vertex,
-    color_attachment_access: *const common.RenderTargetAccess,
+    color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
 ) VkError!void {
     const io = draw_call.renderer.device.interface.io();

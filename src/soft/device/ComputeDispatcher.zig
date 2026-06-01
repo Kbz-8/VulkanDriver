@@ -106,8 +106,28 @@ inline fn run(data: RunData) !void {
     const rt = &shader.runtimes[data.batch_id].rt;
 
     const entry = try rt.getEntryPointByName(shader.entry);
+    const uses_control_barrier = hasControlBarrier(rt.mod.code);
 
-    try ExecutionDevice.writeDescriptorSets(data.self.state, rt);
+    var barrier_runtimes: []spv.Runtime = &.{};
+    var barrier_statuses: []spv.Runtime.EntryPointStatus = &.{};
+    if (uses_control_barrier) {
+        barrier_runtimes = try allocator.alloc(spv.Runtime, data.invocations_per_workgroup);
+        barrier_statuses = try allocator.alloc(spv.Runtime.EntryPointStatus, data.invocations_per_workgroup);
+        for (barrier_runtimes) |*barrier_rt| {
+            barrier_rt.* = try spv.Runtime.init(allocator, rt.mod, rt.image_api);
+            try barrier_rt.copySpecializationConstantsFrom(allocator, rt);
+        }
+    }
+    defer {
+        for (barrier_runtimes) |*barrier_rt| {
+            barrier_rt.deinit(allocator);
+        }
+        allocator.free(barrier_runtimes);
+        allocator.free(barrier_statuses);
+    }
+
+    if (!uses_control_barrier)
+        try ExecutionDevice.writeDescriptorSets(data.self.state, rt);
 
     var group_index: usize = data.batch_id;
     while (group_index < data.group_count) : (group_index += data.self.batch_size) {
@@ -121,15 +141,23 @@ inline fn run(data: RunData) !void {
         modulo -= group_y * data.group_count_x;
         const group_x = modulo;
 
-        try setupWorkgroupBuiltins(data.self, rt, .{
+        const group_count_vec = @Vector(3, u32){
             @as(u32, @intCast(data.group_count_x)),
             @as(u32, @intCast(data.group_count_y)),
             @as(u32, @intCast(data.group_count_z)),
-        }, .{
+        };
+        const group_id_vec = @Vector(3, u32){
             @as(u32, @intCast(group_x)),
             @as(u32, @intCast(group_y)),
             @as(u32, @intCast(group_z)),
-        });
+        };
+
+        if (uses_control_barrier) {
+            try runBarrierWorkgroup(data, barrier_runtimes, barrier_statuses, entry, group_count_vec, group_id_vec);
+            continue;
+        }
+
+        try setupWorkgroupBuiltins(data.self, rt, group_count_vec, group_id_vec);
 
         for (0..data.invocations_per_workgroup) |i| {
             const invocation_index = data.self.invocation_index.fetchAdd(1, .monotonic);
@@ -161,6 +189,58 @@ inline fn run(data: RunData) !void {
             try rt.flushDescriptorSets(allocator);
         }
     }
+}
+
+fn runBarrierWorkgroup(
+    data: RunData,
+    runtimes: []spv.Runtime,
+    statuses: []spv.Runtime.EntryPointStatus,
+    entry: spv.SpvWord,
+    group_count: @Vector(3, u32),
+    group_id: @Vector(3, u32),
+) !void {
+    const allocator = data.self.device.device_allocator.allocator();
+
+    for (runtimes, 0..) |*rt, i| {
+        try ExecutionDevice.writeDescriptorSets(data.self.state, rt);
+        try setupWorkgroupBuiltins(data.self, rt, group_count, group_id);
+        try setupSubgroupBuiltins(data.self, rt, group_id, i);
+        statuses[i] = try rt.beginEntryPoint(allocator, entry);
+        try rt.flushDescriptorSets(allocator);
+    }
+
+    while (true) {
+        var pending = false;
+        for (statuses) |status| {
+            if (status == .barrier) {
+                pending = true;
+                break;
+            }
+        }
+        if (!pending)
+            break;
+
+        for (runtimes, 0..) |*rt, i| {
+            if (statuses[i] == .completed)
+                continue;
+            statuses[i] = try rt.continueEntryPoint(allocator);
+            try rt.flushDescriptorSets(allocator);
+        }
+    }
+}
+
+/// TODO: Move this in the SPIR-V Interpreter
+fn hasControlBarrier(code: []const spv.SpvWord) bool {
+    var i: usize = 5;
+    while (i < code.len) {
+        const opcode_data = code[i];
+        const word_count = (opcode_data & (~spv.spv.SpvOpCodeMask)) >> spv.spv.SpvWordCountShift;
+        const opcode: spv.spv.SpvOp = @enumFromInt(opcode_data & spv.spv.SpvOpCodeMask);
+        if (opcode == .ControlBarrier)
+            return true;
+        i += @max(word_count, 1);
+    }
+    return false;
 }
 
 inline fn dumpResultsTable(allocator: std.mem.Allocator, io: std.Io, rt: *spv.Runtime, is_early: bool) !void {

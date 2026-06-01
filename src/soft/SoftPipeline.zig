@@ -102,6 +102,7 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
                     .writeImageFloat4 = writeImageFloat4,
                     .writeImageInt4 = writeImageInt4,
                     .sampleImageFloat4 = sampleImageFloat4,
+                    .queryImageSize = queryImageSize,
                 },
             ) catch |err| {
                 std.log.scoped(.SpvRuntimeInit).err("SPIR-V Runtime failed to initialize, {s}", .{@errorName(err)});
@@ -187,6 +188,7 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
                         .writeImageFloat4 = writeImageFloat4,
                         .writeImageInt4 = writeImageInt4,
                         .sampleImageFloat4 = sampleImageFloat4,
+                        .queryImageSize = queryImageSize,
                     },
                 ) catch |err| {
                     std.log.scoped(.SpvRuntimeInit).err("SPIR-V Runtime failed to initialize, {s}", .{@errorName(err)});
@@ -264,16 +266,17 @@ fn readImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32)
     } else {
         const image_view: *SoftImageView = @ptrCast(@alignCast(context));
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
+        const cube_face: u32 = if (dim == .Cube) @intCast(z) else 0;
         pixel = image.readFloat4(
             .{
                 .x = x,
                 .y = y,
-                .z = z,
+                .z = if (dim == .Cube) 0 else z,
             },
             .{
                 .aspect_mask = image_view.interface.subresource_range.aspect_mask,
                 .mip_level = image_view.interface.subresource_range.base_mip_level,
-                .array_layer = image_view.interface.subresource_range.base_array_layer,
+                .array_layer = image_view.interface.subresource_range.base_array_layer + cube_face,
             },
             image_view.interface.format,
         ) catch return SpvRuntimeError.Unknown;
@@ -296,16 +299,17 @@ fn readImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32) S
     } else {
         const image_view: *SoftImageView = @ptrCast(@alignCast(context));
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
+        const cube_face: u32 = if (dim == .Cube) @intCast(z) else 0;
         pixel = image.readInt4(
             .{
                 .x = x,
                 .y = y,
-                .z = z,
+                .z = if (dim == .Cube) 0 else z,
             },
             .{
                 .aspect_mask = image_view.interface.subresource_range.aspect_mask,
                 .mip_level = image_view.interface.subresource_range.base_mip_level,
-                .array_layer = image_view.interface.subresource_range.base_array_layer,
+                .array_layer = image_view.interface.subresource_range.base_array_layer + cube_face,
             },
             image_view.interface.format,
         ) catch return SpvRuntimeError.Unknown;
@@ -328,16 +332,17 @@ fn writeImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32
     } else {
         const image_view: *SoftImageView = @ptrCast(@alignCast(context));
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
+        const cube_face: u32 = if (dim == .Cube) @intCast(z) else 0;
         image.writeFloat4(
             .{
                 .x = x,
                 .y = y,
-                .z = z,
+                .z = if (dim == .Cube) 0 else z,
             },
             .{
                 .aspect_mask = image_view.interface.subresource_range.aspect_mask,
                 .mip_level = image_view.interface.subresource_range.base_mip_level,
-                .array_layer = image_view.interface.subresource_range.base_array_layer,
+                .array_layer = image_view.interface.subresource_range.base_array_layer + cube_face,
             },
             image_view.interface.format,
             vec_pixel,
@@ -355,21 +360,173 @@ fn writeImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, 
     } else {
         const image_view: *SoftImageView = @ptrCast(@alignCast(context));
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
+        const cube_face: u32 = if (dim == .Cube) @intCast(z) else 0;
         image.writeInt4(
             .{
                 .x = x,
                 .y = y,
-                .z = z,
+                .z = if (dim == .Cube) 0 else z,
             },
             .{
                 .aspect_mask = image_view.interface.subresource_range.aspect_mask,
                 .mip_level = image_view.interface.subresource_range.base_mip_level,
-                .array_layer = image_view.interface.subresource_range.base_array_layer,
+                .array_layer = image_view.interface.subresource_range.base_array_layer + cube_face,
             },
             image_view.interface.format,
             vec_pixel,
         ) catch return SpvRuntimeError.Unknown;
     }
+}
+
+const CubeCoordinate = struct {
+    face: u32,
+    u: f32,
+    v: f32,
+};
+
+fn resolveCubeCoordinate(x: f32, y: f32, z: f32) CubeCoordinate {
+    const ax = @abs(x);
+    const ay = @abs(y);
+    const az = @abs(z);
+
+    var face: u32 = 0;
+    var sc: f32 = 0.0;
+    var tc: f32 = 0.0;
+    var ma: f32 = 1.0;
+
+    if (ax >= ay and ax >= az) {
+        ma = ax;
+        if (x >= 0.0) {
+            face = 0;
+            sc = -z;
+            tc = -y;
+        } else {
+            face = 1;
+            sc = z;
+            tc = -y;
+        }
+    } else if (ay >= ax and ay >= az) {
+        ma = ay;
+        if (y >= 0.0) {
+            face = 2;
+            sc = x;
+            tc = z;
+        } else {
+            face = 3;
+            sc = x;
+            tc = -z;
+        }
+    } else {
+        ma = az;
+        if (z >= 0.0) {
+            face = 4;
+            sc = x;
+            tc = -y;
+        } else {
+            face = 5;
+            sc = -x;
+            tc = -y;
+        }
+    }
+
+    const inv_ma = if (ma == 0.0) 0.0 else 1.0 / ma;
+    return .{
+        .face = face,
+        .u = (sc * inv_ma + 1.0) * 0.5,
+        .v = (tc * inv_ma + 1.0) * 0.5,
+    };
+}
+
+fn cubeDirection(face: u32, u: f32, v: f32) struct { x: f32, y: f32, z: f32 } {
+    const sc = u * 2.0 - 1.0;
+    const tc = v * 2.0 - 1.0;
+
+    return switch (face) {
+        0 => .{ .x = 1.0, .y = -tc, .z = -sc },
+        1 => .{ .x = -1.0, .y = -tc, .z = sc },
+        2 => .{ .x = sc, .y = 1.0, .z = tc },
+        3 => .{ .x = sc, .y = -1.0, .z = -tc },
+        4 => .{ .x = sc, .y = -tc, .z = 1.0 },
+        5 => .{ .x = -sc, .y = -tc, .z = -1.0 },
+        else => .{ .x = 0.0, .y = 0.0, .z = 0.0 },
+    };
+}
+
+fn readSampledFloat4(
+    image: *SoftImage,
+    image_view: *SoftImageView,
+    dim: spv.SpvDim,
+    coord: CubeCoordinate,
+    ix: i32,
+    iy: i32,
+) VkError!zm.F32x4 {
+    const width_f: f32 = @floatFromInt(image.interface.extent.width);
+    const height_f: f32 = @floatFromInt(image.interface.extent.height);
+
+    const texel = if (dim == .Cube) blk: {
+        const dir = cubeDirection(
+            coord.face,
+            (@as(f32, @floatFromInt(ix)) + 0.5) / width_f,
+            (@as(f32, @floatFromInt(iy)) + 0.5) / height_f,
+        );
+        break :blk resolveCubeCoordinate(dir.x, dir.y, dir.z);
+    } else coord;
+
+    const result = try image.readFloat4(
+        .{
+            .x = if (dim == .Cube)
+                std.math.clamp(@as(i32, @intFromFloat(texel.u * width_f)), 0, image.interface.extent.width - 1)
+            else
+                std.math.clamp(ix, 0, image.interface.extent.width - 1),
+            .y = if (dim == .Cube)
+                std.math.clamp(@as(i32, @intFromFloat(texel.v * height_f)), 0, image.interface.extent.height - 1)
+            else
+                std.math.clamp(iy, 0, image.interface.extent.height - 1),
+            .z = 0,
+        },
+        .{
+            .aspect_mask = image_view.interface.subresource_range.aspect_mask,
+            .mip_level = image_view.interface.subresource_range.base_mip_level,
+            .array_layer = image_view.interface.subresource_range.base_array_layer + texel.face,
+        },
+        image_view.interface.format,
+    );
+    return result;
+}
+
+fn sampleNearestFloat4(image: *SoftImage, image_view: *SoftImageView, dim: spv.SpvDim, coord: CubeCoordinate) VkError!zm.F32x4 {
+    const width_f: f32 = @floatFromInt(image.interface.extent.width);
+    const height_f: f32 = @floatFromInt(image.interface.extent.height);
+    return readSampledFloat4(
+        image,
+        image_view,
+        dim,
+        coord,
+        @intFromFloat(coord.u * width_f),
+        @intFromFloat(coord.v * height_f),
+    );
+}
+
+fn sampleLinearFloat4(image: *SoftImage, image_view: *SoftImageView, dim: spv.SpvDim, coord: CubeCoordinate) VkError!zm.F32x4 {
+    const width_f: f32 = @floatFromInt(image.interface.extent.width);
+    const height_f: f32 = @floatFromInt(image.interface.extent.height);
+    const x = coord.u * width_f - 0.5;
+    const y = coord.v * height_f - 0.5;
+    const x0: i32 = @intFromFloat(@floor(x));
+    const y0: i32 = @intFromFloat(@floor(y));
+    const x1 = x0 + 1;
+    const y1 = y0 + 1;
+    const wx = x - @as(f32, @floatFromInt(x0));
+    const wy = y - @as(f32, @floatFromInt(y0));
+
+    const p00 = try readSampledFloat4(image, image_view, dim, coord, x0, y0);
+    const p10 = try readSampledFloat4(image, image_view, dim, coord, x1, y0);
+    const p01 = try readSampledFloat4(image, image_view, dim, coord, x0, y1);
+    const p11 = try readSampledFloat4(image, image_view, dim, coord, x1, y1);
+
+    const row0 = p00 * zm.f32x4s(1.0 - wx) + p10 * zm.f32x4s(wx);
+    const row1 = p01 * zm.f32x4s(1.0 - wx) + p11 * zm.f32x4s(wx);
+    return row0 * zm.f32x4s(1.0 - wy) + row1 * zm.f32x4s(wy);
 }
 
 fn sampleImageFloat4(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim, x: f32, y: f32, z: f32) SpvRuntimeError!spv.Runtime.Vec4(f32) {
@@ -385,21 +542,28 @@ fn sampleImageFloat4(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim,
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
 
         const sampler: *SoftSampler = @ptrCast(@alignCast(context2));
-        _ = sampler;
 
-        pixel = image.readFloat4(
-            .{
-                .x = std.math.clamp(@as(i32, @intFromFloat(x * @as(f32, @floatFromInt(image.interface.extent.width)))), 0, image.interface.extent.width - 1),
-                .y = std.math.clamp(@as(i32, @intFromFloat(y * @as(f32, @floatFromInt(image.interface.extent.height)))), 0, image.interface.extent.height - 1),
-                .z = std.math.clamp(@as(i32, @intFromFloat(z * @as(f32, @floatFromInt(image.interface.extent.depth)))), 0, image.interface.extent.depth - 1),
-            },
-            .{
-                .aspect_mask = image_view.interface.subresource_range.aspect_mask,
-                .mip_level = image_view.interface.subresource_range.base_mip_level,
-                .array_layer = image_view.interface.subresource_range.base_array_layer,
-            },
-            image_view.interface.format,
-        ) catch return SpvRuntimeError.Unknown;
+        if (dim == .Cube) {
+            const coord = resolveCubeCoordinate(x, y, z);
+            pixel = switch (sampler.interface.mag_filter) {
+                .linear => sampleLinearFloat4(image, image_view, dim, coord),
+                else => sampleNearestFloat4(image, image_view, dim, coord),
+            } catch return SpvRuntimeError.Unknown;
+        } else {
+            pixel = image.readFloat4(
+                .{
+                    .x = std.math.clamp(@as(i32, @intFromFloat(x * @as(f32, @floatFromInt(image.interface.extent.width)))), 0, image.interface.extent.width - 1),
+                    .y = std.math.clamp(@as(i32, @intFromFloat(y * @as(f32, @floatFromInt(image.interface.extent.height)))), 0, image.interface.extent.height - 1),
+                    .z = std.math.clamp(@as(i32, @intFromFloat(z * @as(f32, @floatFromInt(image.interface.extent.depth)))), 0, image.interface.extent.depth - 1),
+                },
+                .{
+                    .aspect_mask = image_view.interface.subresource_range.aspect_mask,
+                    .mip_level = image_view.interface.subresource_range.base_mip_level,
+                    .array_layer = image_view.interface.subresource_range.base_array_layer,
+                },
+                image_view.interface.format,
+            ) catch return SpvRuntimeError.Unknown;
+        }
     }
 
     return .{
@@ -407,5 +571,41 @@ fn sampleImageFloat4(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim,
         .y = pixel[1],
         .z = pixel[2],
         .w = pixel[3],
+    };
+}
+
+fn queryImageSize(context: *anyopaque, dim: spv.SpvDim, arrayed: bool) SpvRuntimeError!spv.Runtime.Vec4(u32) {
+    if (dim == .Buffer) {
+        const buffer_view: *SoftBufferView = @ptrCast(@alignCast(context));
+        const range = if (buffer_view.interface.range == vk.WHOLE_SIZE)
+            buffer_view.interface.buffer.size - buffer_view.interface.offset
+        else
+            buffer_view.interface.range;
+        return .{
+            .x = @intCast(@divTrunc(range, base.format.texelSize(buffer_view.interface.format))),
+            .y = 0,
+            .z = 0,
+            .w = 0,
+        };
+    }
+
+    const image_view: *SoftImageView = @ptrCast(@alignCast(context));
+    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
+    const extent = image.getMipLevelExtent(image_view.interface.subresource_range.base_mip_level);
+    const layers = if (image_view.interface.subresource_range.layer_count == vk.REMAINING_ARRAY_LAYERS)
+        image.interface.array_layers - image_view.interface.subresource_range.base_array_layer
+    else
+        image_view.interface.subresource_range.layer_count;
+    return switch (dim) {
+        .@"1D" => if (arrayed)
+            .{ .x = extent.width, .y = layers, .z = 0, .w = 0 }
+        else
+            .{ .x = extent.width, .y = 0, .z = 0, .w = 0 },
+        .@"2D", .Cube, .Rect => if (arrayed)
+            .{ .x = extent.width, .y = extent.height, .z = layers, .w = 0 }
+        else
+            .{ .x = extent.width, .y = extent.height, .z = 0, .w = 0 },
+        .@"3D" => .{ .x = extent.width, .y = extent.height, .z = extent.depth, .w = 0 },
+        else => .{ .x = extent.width, .y = extent.height, .z = layers, .w = 0 },
     };
 }

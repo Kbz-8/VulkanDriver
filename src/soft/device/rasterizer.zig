@@ -1,4 +1,5 @@
 const std = @import("std");
+const vk = @import("vulkan");
 const base = @import("base");
 
 const clip = @import("clip.zig");
@@ -20,26 +21,34 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
     const pipeline_data = (renderer.state.pipeline orelse return VkError.InvalidHandleDrv).interface.mode.graphics;
     const topology = pipeline_data.input_assembly.topology;
 
-    const color_attachment = if (draw_call.render_pass.interface.subpasses[renderer.subpass_index].color_attachments) |attachments| attachments[0].attachment else return VkError.InvalidAttachmentDrv;
-    const render_target_view: *base.ImageView = draw_call.color_attachments[color_attachment];
-    const render_target: *SoftImage = @alignCast(@fieldParentPtr("interface", render_target_view.image));
+    const color_attachments = draw_call.render_pass.interface.subpasses[renderer.subpass_index].color_attachments orelse return VkError.InvalidAttachmentDrv;
+    const color_attachment_access = allocator.alloc(?common.RenderTargetAccess, color_attachments.len) catch return VkError.OutOfDeviceMemory;
+    @memset(color_attachment_access, null);
 
-    const color_range = render_target_view.subresource_range;
-    const color_format = render_target_view.format;
+    for (color_attachments, color_attachment_access) |attachment_ref, *access| {
+        if (attachment_ref.attachment == vk.ATTACHMENT_UNUSED)
+            continue;
 
-    const color_attachment_subresource_offset = try render_target.getSubresourceOffset(
-        color_range.aspect_mask,
-        color_range.base_mip_level,
-        color_range.base_array_layer,
-    );
-    const color_attachment_subresource_size = render_target.getLayerSize(color_range.aspect_mask);
-    const color_attachment_access: common.RenderTargetAccess = .{
-        .mutex = undefined,
-        .base = try render_target.mapAsSliceWithAddedOffset(u8, color_attachment_subresource_offset, color_attachment_subresource_size),
-        .row_pitch = render_target.getRowPitchMemSizeForMipLevelWithFormat(color_range.aspect_mask, color_range.base_mip_level, color_format),
-        .texel_size = base.format.texelSize(color_format),
-        .format = color_format,
-    };
+        const render_target_view: *base.ImageView = draw_call.color_attachments[attachment_ref.attachment];
+        const render_target: *SoftImage = @alignCast(@fieldParentPtr("interface", render_target_view.image));
+
+        const color_range = render_target_view.subresource_range;
+        const color_format = render_target_view.format;
+
+        const color_attachment_subresource_offset = try render_target.getSubresourceOffset(
+            color_range.aspect_mask,
+            color_range.base_mip_level,
+            color_range.base_array_layer,
+        );
+        const color_attachment_subresource_size = render_target.getLayerSize(color_range.aspect_mask);
+        access.* = .{
+            .mutex = undefined,
+            .base = try render_target.mapAsSliceWithAddedOffset(u8, color_attachment_subresource_offset, color_attachment_subresource_size),
+            .row_pitch = render_target.getRowPitchMemSizeForMipLevelWithFormat(color_range.aspect_mask, color_range.base_mip_level, color_format),
+            .texel_size = base.format.texelSize(color_format),
+            .format = color_format,
+        };
+    }
 
     const depth_attachment_view: ?*base.ImageView = if (draw_call.depth_attachment) |view| view else null;
     const depth_attachment: ?*SoftImage = if (depth_attachment_view) |view| @alignCast(@fieldParentPtr("interface", view.image)) else null;
@@ -60,7 +69,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
         break :blk .{
             .mutex = .init,
             .base = try depth_attachment.?.mapAsSliceWithAddedOffset(u8, attachment_subresource_offset, attachment_subresource_size),
-            .row_pitch = render_target.getRowPitchMemSizeForMipLevelWithFormat(depth_range.aspect_mask, depth_range.base_mip_level, depth_format),
+            .row_pitch = depth_attachment.?.getRowPitchMemSizeForMipLevelWithFormat(depth_range.aspect_mask, depth_range.base_mip_level, depth_format),
             .texel_size = base.format.texelSize(depth_format),
             .format = depth_format,
         };
@@ -80,7 +89,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                 v0,
                 v1,
                 v2,
-                &color_attachment_access,
+                color_attachment_access,
                 if (depth_attachment_access) |*access| access else null,
             );
         },
@@ -97,7 +106,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                     v0,
                     v1,
                     v2,
-                    &color_attachment_access,
+                    color_attachment_access,
                     if (depth_attachment_access) |*access| access else null,
                 );
             }
@@ -116,7 +125,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                         v0,
                         v1,
                         v2,
-                        &color_attachment_access,
+                        color_attachment_access,
                         if (depth_attachment_access) |*access| access else null,
                     );
                 } else {
@@ -127,7 +136,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                         v1,
                         v0,
                         v2,
-                        &color_attachment_access,
+                        color_attachment_access,
                         if (depth_attachment_access) |*access| access else null,
                     );
                 }
@@ -143,7 +152,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                 draw_call,
                 v0,
                 v1,
-                &color_attachment_access,
+                color_attachment_access,
                 if (depth_attachment_access) |*access| access else null,
             );
         },
@@ -157,7 +166,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                     draw_call,
                     v0,
                     v1,
-                    &color_attachment_access,
+                    color_attachment_access,
                     if (depth_attachment_access) |*access| access else null,
                 );
             }
@@ -173,7 +182,7 @@ fn clipTransformAndRasterizeLine(
     draw_call: *DrawCall,
     v0: *Vertex,
     v1: *Vertex,
-    color_attachment_access: *const common.RenderTargetAccess,
+    color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
 ) VkError!void {
     const clipped_line = (try clip.clipLine(allocator, v0, v1)) orelse return;
@@ -201,7 +210,7 @@ fn clipTransformAndRasterizeTriangle(
     v0: *Vertex,
     v1: *Vertex,
     v2: *Vertex,
-    color_attachment_access: *const common.RenderTargetAccess,
+    color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
 ) VkError!void {
     const clipped_polygon = try clip.clipTriangle(allocator, v0, v1, v2);
@@ -238,7 +247,7 @@ fn rasterizeTriangle(
     v0: *Vertex,
     v1: *Vertex,
     v2: *Vertex,
-    color_attachment_access: *const common.RenderTargetAccess,
+    color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
 ) VkError!void {
     if (try triangleIsCulled(renderer, v0, v1, v2))

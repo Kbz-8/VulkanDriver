@@ -286,6 +286,17 @@ fn sample(src: []const u8, pos: F32x4, dim: F32x4, slice_bytes: usize, pitch_byt
 }
 
 pub fn blitRegion(src: *const SoftImage, dst: *SoftImage, region: vk.ImageBlit, filter: vk.Filter) VkError!void {
+    try blitRegionWithFormats(
+        src,
+        dst,
+        region,
+        filter,
+        base.format.fromAspect(src.interface.format, region.src_subresource.aspect_mask),
+        base.format.fromAspect(dst.interface.format, region.dst_subresource.aspect_mask),
+    );
+}
+
+pub fn blitRegionWithFormats(src: *const SoftImage, dst: *SoftImage, region: vk.ImageBlit, filter: vk.Filter, src_format: vk.Format, dst_format: vk.Format) VkError!void {
     const io = dst.interface.owner.io();
     const timer = std.Io.Timestamp.now(io, .real);
     defer if (comptime base.config.logs != .none) {
@@ -323,13 +334,10 @@ pub fn blitRegion(src: *const SoftImage, dst: *SoftImage, region: vk.ImageBlit, 
     const y0 = @as(f32, @floatFromInt(src_offset_0.y)) + (0.5 - @as(f32, @floatFromInt(dst_offset_0.y))) * height_ratio;
     const z0 = @as(f32, @floatFromInt(src_offset_0.z)) + (0.5 - @as(f32, @floatFromInt(dst_offset_0.z))) * depth_ratio;
 
-    const src_slice_pitch_bytes = src.interface.getSliceMemSizeForMipLevel(region.src_subresource.aspect_mask, region.src_subresource.mip_level);
-    const src_row_pitch_bytes = src.interface.getRowPitchMemSizeForMipLevel(region.src_subresource.aspect_mask, region.src_subresource.mip_level);
-    const dst_slice_pitch_bytes = dst.interface.getSliceMemSizeForMipLevel(region.dst_subresource.aspect_mask, region.dst_subresource.mip_level);
-    const dst_row_pitch_bytes = dst.interface.getRowPitchMemSizeForMipLevel(region.dst_subresource.aspect_mask, region.dst_subresource.mip_level);
-
-    const src_format = base.format.fromAspect(src.interface.format, region.src_subresource.aspect_mask);
-    const dst_format = base.format.fromAspect(dst.interface.format, region.dst_subresource.aspect_mask);
+    const src_slice_pitch_bytes = src.getSliceMemSizeForMipLevelWithFormat(region.src_subresource.aspect_mask, region.src_subresource.mip_level, src_format);
+    const src_row_pitch_bytes = src.getRowPitchMemSizeForMipLevelWithFormat(region.src_subresource.aspect_mask, region.src_subresource.mip_level, src_format);
+    const dst_slice_pitch_bytes = dst.getSliceMemSizeForMipLevelWithFormat(region.dst_subresource.aspect_mask, region.dst_subresource.mip_level, dst_format);
+    const dst_row_pitch_bytes = dst.getRowPitchMemSizeForMipLevelWithFormat(region.dst_subresource.aspect_mask, region.dst_subresource.mip_level, dst_format);
 
     const apply_filter = (filter != .nearest);
     const allow_srgb_conversion = apply_filter or base.format.isSrgb(src_format) != base.format.isSrgb(dst_format);
@@ -485,6 +493,16 @@ fn blit(state: State, data: BlitData) void {
 
 /// Using image blitting to resolve
 pub inline fn resolve(src: *const SoftImage, dst: *SoftImage, region: vk.ImageResolve) VkError!void {
+    try resolveWithFormats(
+        src,
+        dst,
+        region,
+        base.format.fromAspect(src.interface.format, region.src_subresource.aspect_mask),
+        base.format.fromAspect(dst.interface.format, region.dst_subresource.aspect_mask),
+    );
+}
+
+pub inline fn resolveWithFormats(src: *const SoftImage, dst: *SoftImage, region: vk.ImageResolve, src_format: vk.Format, dst_format: vk.Format) VkError!void {
     var blit_region: vk.ImageBlit = .{
         .src_offsets = .{ region.src_offset, region.src_offset },
         .src_subresource = region.src_subresource,
@@ -500,7 +518,7 @@ pub inline fn resolve(src: *const SoftImage, dst: *SoftImage, region: vk.ImageRe
     blit_region.dst_offsets[1].y += @intCast(region.extent.height);
     blit_region.dst_offsets[1].z += @intCast(region.extent.depth);
 
-    try blitRegion(src, dst, blit_region, .nearest);
+    try blitRegionWithFormats(src, dst, blit_region, .nearest, src_format, dst_format);
 }
 
 fn applyScaleAndClamp(base_color: F32x4, state: State, apply_srgb_convertion: bool) F32x4 {
@@ -532,6 +550,16 @@ fn applyScaleAndClamp(base_color: F32x4, state: State, apply_srgb_convertion: bo
     return color;
 }
 
+inline fn normalizedI8(value: u8) f32 {
+    const signed: i8 = @bitCast(value);
+    return @max(@as(f32, @floatFromInt(signed)) / @as(f32, @floatFromInt(std.math.maxInt(i8))), -1.0);
+}
+
+inline fn normalizedI16(value: u16) f32 {
+    const signed: i16 = @bitCast(value);
+    return @max(@as(f32, @floatFromInt(signed)) / @as(f32, @floatFromInt(std.math.maxInt(i16))), -1.0);
+}
+
 pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
     var c: F32x4 = .{ 0.0, 0.0, 0.0, 1.0 };
 
@@ -543,9 +571,9 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
 
         .r8_sint,
         .r8_snorm,
-        => c[0] = @as(f32, @floatFromInt(map[0])) / std.math.maxInt(i8),
+        => c[0] = normalizedI8(map[0]),
 
-        .r16_snorm => c[0] = @as(f32, @floatFromInt(std.mem.bytesToValue(u16, map))) / std.math.maxInt(i16),
+        .r16_snorm => c[0] = normalizedI16(std.mem.bytesToValue(u16, map)),
         .r16_unorm => c[0] = @as(f32, @floatFromInt(std.mem.bytesToValue(u16, map))) / std.math.maxInt(u16),
 
         .r8g8b8a8_sint,
@@ -570,15 +598,15 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
         .r8g8_sint,
         .r8g8_snorm,
         => {
-            c[0] = @as(f32, @floatFromInt(map[0])) / std.math.maxInt(i8);
-            c[1] = @as(f32, @floatFromInt(map[1])) / std.math.maxInt(i8);
+            c[0] = normalizedI8(map[0]);
+            c[1] = normalizedI8(map[1]);
         },
 
         .r8g8b8a8_snorm => {
-            c[0] = @as(f32, @floatFromInt(map[0])) / std.math.maxInt(i8);
-            c[1] = @as(f32, @floatFromInt(map[1])) / std.math.maxInt(i8);
-            c[2] = @as(f32, @floatFromInt(map[2])) / std.math.maxInt(i8);
-            c[3] = @as(f32, @floatFromInt(map[3])) / std.math.maxInt(i8);
+            c[0] = normalizedI8(map[0]);
+            c[1] = normalizedI8(map[1]);
+            c[2] = normalizedI8(map[2]);
+            c[3] = normalizedI8(map[3]);
         },
 
         .r4g4b4a4_unorm_pack16 => {
@@ -627,8 +655,8 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
         },
 
         .r16g16_snorm => {
-            c[0] = @as(f32, @floatFromInt(std.mem.bytesToValue(u16, map[0..]))) / std.math.maxInt(i16);
-            c[1] = @as(f32, @floatFromInt(std.mem.bytesToValue(u16, map[2..]))) / std.math.maxInt(i16);
+            c[0] = normalizedI16(std.mem.bytesToValue(u16, map[0..]));
+            c[1] = normalizedI16(std.mem.bytesToValue(u16, map[2..]));
         },
 
         .r16g16_unorm => {
@@ -666,10 +694,10 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
         .r16g16b16a16_sint,
         .r16g16b16a16_snorm,
         => {
-            c[0] = @as(f32, @floatFromInt(std.mem.bytesToValue(u16, map[0..]))) / std.math.maxInt(i16);
-            c[1] = @as(f32, @floatFromInt(std.mem.bytesToValue(u16, map[2..]))) / std.math.maxInt(i16);
-            c[2] = @as(f32, @floatFromInt(std.mem.bytesToValue(u16, map[4..]))) / std.math.maxInt(i16);
-            c[3] = @as(f32, @floatFromInt(std.mem.bytesToValue(u16, map[6..]))) / std.math.maxInt(i16);
+            c[0] = normalizedI16(std.mem.bytesToValue(u16, map[0..]));
+            c[1] = normalizedI16(std.mem.bytesToValue(u16, map[2..]));
+            c[2] = normalizedI16(std.mem.bytesToValue(u16, map[4..]));
+            c[3] = normalizedI16(std.mem.bytesToValue(u16, map[6..]));
         },
 
         .r16g16b16a16_sfloat => c = std.mem.bytesToValue(@Vector(4, f16), map),
@@ -704,10 +732,10 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
         .a8b8g8r8_snorm_pack32,
         => {
             const pack = std.mem.bytesToValue(@Vector(4, u8), map);
-            c[0] = @as(f32, @floatFromInt(pack[0])) / std.math.maxInt(i8);
-            c[1] = @as(f32, @floatFromInt(pack[1])) / std.math.maxInt(i8);
-            c[2] = @as(f32, @floatFromInt(pack[2])) / std.math.maxInt(i8);
-            c[3] = @as(f32, @floatFromInt(pack[3])) / std.math.maxInt(i8);
+            c[0] = normalizedI8(pack[0]);
+            c[1] = normalizedI8(pack[1]);
+            c[2] = normalizedI8(pack[2]);
+            c[3] = normalizedI8(pack[3]);
         },
 
         .a2b10g10r10_uint_pack32,
@@ -1093,35 +1121,53 @@ pub fn writeFloat4(c: F32x4, map: []u8, dst_format: vk.Format) void {
     }
 }
 
+inline fn signExtendI8(value: u8) u32 {
+    return @bitCast(@as(i32, @as(i8, @bitCast(value))));
+}
+
+inline fn signExtendI16(value: u16) u32 {
+    return @bitCast(@as(i32, @as(i16, @bitCast(value))));
+}
+
 pub fn readInt4(map: []const u8, src_format: vk.Format) U32x4 {
     var c: U32x4 = .{ 0, 0, 0, 1 };
 
     switch (src_format) {
-        .r8_sint,
         .r8_uint,
         .s8_uint,
         => c[0] = map[0],
 
-        .r16_sint,
+        .r8_sint => c[0] = signExtendI8(map[0]),
+
         .r16_uint,
         => c[0] = std.mem.bytesToValue(u16, map),
+
+        .r16_sint => c[0] = signExtendI16(std.mem.bytesToValue(u16, map)),
 
         .r32_sint,
         .r32_uint,
         => c[0] = std.mem.bytesToValue(u32, map),
 
-        .r8g8_sint,
         .r8g8_uint,
         => {
             c[0] = map[0];
             c[1] = map[1];
         },
 
-        .r16g16_sint,
+        .r8g8_sint => {
+            c[0] = signExtendI8(map[0]);
+            c[1] = signExtendI8(map[1]);
+        },
+
         .r16g16_uint,
         => {
             c[0] = std.mem.bytesToValue(u16, map[0..]);
             c[1] = std.mem.bytesToValue(u16, map[2..]);
+        },
+
+        .r16g16_sint => {
+            c[0] = signExtendI16(std.mem.bytesToValue(u16, map[0..]));
+            c[1] = signExtendI16(std.mem.bytesToValue(u16, map[2..]));
         },
 
         .r32g32_sint,
@@ -1131,7 +1177,6 @@ pub fn readInt4(map: []const u8, src_format: vk.Format) U32x4 {
             c[1] = std.mem.bytesToValue(u32, map[4..]);
         },
 
-        .r8g8b8a8_sint,
         .r8g8b8a8_uint,
         => {
             c[0] = map[0];
@@ -1140,7 +1185,13 @@ pub fn readInt4(map: []const u8, src_format: vk.Format) U32x4 {
             c[3] = map[3];
         },
 
-        .r16g16b16a16_sint,
+        .r8g8b8a8_sint => {
+            c[0] = signExtendI8(map[0]);
+            c[1] = signExtendI8(map[1]);
+            c[2] = signExtendI8(map[2]);
+            c[3] = signExtendI8(map[3]);
+        },
+
         .r16g16b16a16_uint,
         => {
             c[0] = std.mem.bytesToValue(u16, map[0..2]);
@@ -1149,12 +1200,18 @@ pub fn readInt4(map: []const u8, src_format: vk.Format) U32x4 {
             c[3] = std.mem.bytesToValue(u16, map[6..8]);
         },
 
+        .r16g16b16a16_sint => {
+            c[0] = signExtendI16(std.mem.bytesToValue(u16, map[0..2]));
+            c[1] = signExtendI16(std.mem.bytesToValue(u16, map[2..4]));
+            c[2] = signExtendI16(std.mem.bytesToValue(u16, map[4..6]));
+            c[3] = signExtendI16(std.mem.bytesToValue(u16, map[6..8]));
+        },
+
         .r32g32b32a32_sint,
         .r32g32b32a32_uint,
         => c = std.mem.bytesToValue(U32x4, map),
 
         .a8b8g8r8_uint_pack32,
-        .a8b8g8r8_sint_pack32,
         .a8b8g8r8_unorm_pack32,
         .a8b8g8r8_snorm_pack32,
         => {
@@ -1163,6 +1220,14 @@ pub fn readInt4(map: []const u8, src_format: vk.Format) U32x4 {
             c[1] = pack[1];
             c[2] = pack[2];
             c[3] = pack[3];
+        },
+
+        .a8b8g8r8_sint_pack32 => {
+            const pack = std.mem.bytesToValue(@Vector(4, u8), map);
+            c[0] = signExtendI8(pack[0]);
+            c[1] = signExtendI8(pack[1]);
+            c[2] = signExtendI8(pack[2]);
+            c[3] = signExtendI8(pack[3]);
         },
 
         .a2b10g10r10_unorm_pack32,
