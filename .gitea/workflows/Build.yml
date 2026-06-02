@@ -24,6 +24,12 @@ jobs:
       - name: Generating docs
         run: zig build docs
 
+      - name: Prepare docs deploy payload
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+        run: |
+          mkdir -p ./deploy-docs
+          cp ./zig-out/docs/index.html ./deploy-docs/404.html
+
       - name: Deploying docs
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
         uses: milanmk/actions-file-deployer@master
@@ -33,6 +39,6 @@ jobs:
           remote-user: ${{ secrets.SFTP_USER_DOCS }}
           remote-password: ${{ secrets.SFTP_PASSWORD_DOCS }}
           remote-port: 6969
-          local-path: ./zig-out/docs/index.html
-          remote-path: /www/error/404.html
+          local-path: "./deploy-docs"
+          remote-path: "/www/error"
           sync: full
