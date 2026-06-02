@@ -9,25 +9,30 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    if: "!contains(github.event.head_commit.message, 'ci skip')"
+    if: ${{ github.event_name != 'push' || !contains(github.event.head_commit.message, 'ci skip') }}
 
     steps:
-    - uses: actions/checkout@v4
-    - uses: https://codeberg.org/mlugg/setup-zig@v2
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Building
-      run: zig build soft
+      - uses: https://codeberg.org/mlugg/setup-zig@v2
 
-    - name: Generating docs
-      run: zig build docs
+      - name: Building
+        run: zig build soft
 
-    - name: Deploying docs
-      uses: milanmk/actions-file-deployer@master
-      with:
-        sftp_only: true
-        server: ${{ secrets.SFTP_HOST_DOCS }}
-        username: ${{ secrets.SFTP_USER_DOCS }}
-        password: ${{ secrets.SFTP_PASSWORD_DOCS }}
-        local_path: './zig-out/docs/*'
-        remote_path: /www
-        port: 6969
+      - name: Generating docs
+        run: zig build docs
+
+      - name: Deploying docs
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+        uses: milanmk/actions-file-deployer@master
+        with:
+          remote-protocol: sftp
+          remote-host: ${{ secrets.SFTP_HOST_DOCS }}
+          remote-user: ${{ secrets.SFTP_USER_DOCS }}
+          remote-password: ${{ secrets.SFTP_PASSWORD_DOCS }}
+          remote-port: 6969
+          local-path: ./zig-out/docs
+          remote-path: /www
+          sync: full
