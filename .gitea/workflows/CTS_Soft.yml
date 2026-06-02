@@ -29,9 +29,6 @@ jobs:
         cache-all-crates: "true"
         cache-on-failure: "false"
 
-    - name: Install cargo tools
-      uses: cargo-bins/cargo-binstall@main
-
     - name: Install deqp-runner
       run: cargo install deqp-runner
 
@@ -55,7 +52,6 @@ jobs:
         zip ./assets/results.zip ./cts/results.csv
 
     - name: Deploying CTS results
-      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
       uses: milanmk/actions-file-deployer@master
       with:
         remote-protocol: sftp
