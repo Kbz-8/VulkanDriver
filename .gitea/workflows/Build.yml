@@ -33,6 +33,6 @@ jobs:
           remote-user: ${{ secrets.SFTP_USER_DOCS }}
           remote-password: ${{ secrets.SFTP_PASSWORD_DOCS }}
           remote-port: 6969
-          local-path: ./zig-out/docs
-          remote-path: /www
+          local-path: ./zig-out/docs/index.html
+          remote-path: /www/error/404.html
           sync: full
