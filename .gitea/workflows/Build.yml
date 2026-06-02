@@ -6,10 +6,6 @@ on:
   pull_request:
     branches: [ "master" ]
 
-permissions:
-  contents: read
-  deployments: write
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -18,9 +14,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - uses: https://codeberg.org/mlugg/setup-zig@v2
-    - uses: actions/setup-node@v6
-      with:
-        node-version: 24
 
     - name: Building
       run: zig build soft
@@ -28,10 +21,13 @@ jobs:
     - name: Generating docs
       run: zig build docs
 
-    - name: Publish to Cloudflare Pages
-      uses: cloudflare/wrangler-action@v3
+    - name: SFTP-Deploy-Action
+      uses: milanmk/actions-file-deployer@master
       with:
-        apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        command: pages deploy zig-out/docs --project-name=vulkan-driver-docs
-        gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+        remote-protocol: sftp
+        remote-host: ${{ secrets.SFTP_HOST_DOCS }}
+        remote-user: ${{ secrets.SFTP_USER_DOCS }}
+        remote-password: ${{ secrets.SFTP_PASSWORD_DOCS }}
+        local_path: './zig-out/docs/*'
+        remote-path: /www
+        remote-port: 6969
