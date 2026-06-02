@@ -1,0 +1,68 @@
+name: CTS Soft
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - uses: https://codeberg.org/mlugg/setup-zig@v2
+    - name: Install system dependencies
+      run: |
+        apt update
+        apt install -y libgl1 libwayland-egl1 libwayland-cursor0 clang libwayland-server0
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+        targets: x86_64-unknown-linux-gnu
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        cache-all-crates: "true"
+        cache-on-failure: "false"
+
+    - name: Install cargo tools
+      uses: cargo-bins/cargo-binstall@main
+
+    - name: Install deqp-runner
+      run: cargo install deqp-runner
+
+    - name: Verify installations
+      shell: bash
+      run: |
+        source $HOME/.cargo/env
+        echo "Verifying tool installations..."
+        which deqp-runner && deqp-runner --version || echo "deqp-runner not found"
+
+    - name: Run Vulkan CTS
+      run: zig build cts-soft --release=fast -- -j4
+      continue-on-error: true
+
+    - name: Verify tests
+      run: ls cts | grep "results.csv";
+
+    - name: Archiving results
+      run: |
+        mkdir -p assets/
+        zip ./assets/results.zip ./cts/results.csv
+
+    - name: Deploying CTS results
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      uses: milanmk/actions-file-deployer@master
+      with:
+        remote-protocol: sftp
+        remote-host: ${{ secrets.SFTP_HOST_CTS_SOFT }}
+        remote-user: ${{ secrets.SFTP_USER_CTS_SOFT }}
+        remote-password: ${{ secrets.SFTP_PASSWORD_CTS_SOFT }}
+        remote-port: 6969
+        local-path: "./assets"
+        remote-path: "/www/assets"
+        sync: full
