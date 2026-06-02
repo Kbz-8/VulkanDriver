@@ -1,5 +1,0 @@
-dEQP-VK.image.mutable.2d.r8g8b8a8_unorm_r8g8b8a8_sint_clear_load
-dEQP-VK.image.mutable.2d.r8g8b8a8_unorm_r32_uint_store_texture_format_list
-dEQP-VK.image.mutable.2d.r8g8b8a8_unorm_r32_uint_draw_copy_format_list
-dEQP-VK.image.mutable.2d.r8g8b8a8_unorm_r32_uint_draw_copy
-dEQP-VK.image.mutable.2d.r8g8b8a8_unorm_r32_uint_draw_copy_resolve

@@ -339,7 +339,7 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
     run.addArg("--deqp");
     run.addArg(cts_exe_path);
     run.addArg("--caselist");
-    run.addArg("./test.txt");
+    run.addArg(caselist_file_path);
     run.addArg("--output");
     run.addArg("./cts");
     if (jobs_count) |count| {
