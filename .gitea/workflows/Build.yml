@@ -21,13 +21,13 @@ jobs:
     - name: Generating docs
       run: zig build docs
 
-    - name: SFTP-Deploy-Action
+    - name: Deploying docs
       uses: milanmk/actions-file-deployer@master
       with:
-        remote-protocol: sftp
-        remote-host: ${{ secrets.SFTP_HOST_DOCS }}
-        remote-user: ${{ secrets.SFTP_USER_DOCS }}
-        remote-password: ${{ secrets.SFTP_PASSWORD_DOCS }}
+        sftp_only: true
+        server: ${{ secrets.SFTP_HOST_DOCS }}
+        username: ${{ secrets.SFTP_USER_DOCS }}
+        password: ${{ secrets.SFTP_PASSWORD_DOCS }}
         local_path: './zig-out/docs/*'
-        remote-path: /www
-        remote-port: 6969
+        remote_path: /www
+        port: 6969
