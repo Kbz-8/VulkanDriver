@@ -69,7 +69,11 @@ pub const DispatchTable = struct {
     resetEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
     resolveImage: *const fn (*Self, *Image, vk.ImageLayout, *Image, vk.ImageLayout, vk.ImageResolve) VkError!void,
     setEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
+    setBlendConstants: *const fn (*Self, [4]f32) VkError!void,
     setScissor: *const fn (*Self, u32, []const vk.Rect2D) VkError!void,
+    setStencilCompareMask: *const fn (*Self, vk.StencilFaceFlags, u32) VkError!void,
+    setStencilReference: *const fn (*Self, vk.StencilFaceFlags, u32) VkError!void,
+    setStencilWriteMask: *const fn (*Self, vk.StencilFaceFlags, u32) VkError!void,
     setViewport: *const fn (*Self, u32, []const vk.Viewport) VkError!void,
     waitEvent: *const fn (*Self, *Event, vk.PipelineStageFlags, vk.PipelineStageFlags, []const vk.MemoryBarrier, []const vk.BufferMemoryBarrier, []const vk.ImageMemoryBarrier) VkError!void,
 };
@@ -162,8 +166,10 @@ pub inline fn beginRenderPass(self: *Self, render_pass: *RenderPass, framebuffer
 }
 
 pub fn bindDescriptorSets(self: *Self, bind_point: vk.PipelineBindPoint, first_set: u32, sets: []const vk.DescriptorSet, dynamic_offsets: []const u32) VkError!void {
-    std.debug.assert(sets.len < lib.VULKAN_MAX_DESCRIPTOR_SETS);
-    var inner_sets = [_]?*DescriptorSet{null} ** lib.VULKAN_MAX_DESCRIPTOR_SETS;
+    if (sets.len > lib.VULKAN_MAX_DESCRIPTOR_SETS or first_set > lib.VULKAN_MAX_DESCRIPTOR_SETS or first_set + sets.len > lib.VULKAN_MAX_DESCRIPTOR_SETS)
+        return VkError.ValidationFailed;
+
+    var inner_sets: [lib.VULKAN_MAX_DESCRIPTOR_SETS]?*DescriptorSet = @splat(null);
     for (sets, inner_sets[0..sets.len]) |set, *inner_set| {
         inner_set.* = try NonDispatchable(DescriptorSet).fromHandleObject(set);
     }
@@ -288,8 +294,24 @@ pub inline fn setEvent(self: *Self, event: *Event, stage: vk.PipelineStageFlags)
     try self.dispatch_table.setEvent(self, event, stage);
 }
 
+pub inline fn setBlendConstants(self: *Self, constants: [4]f32) VkError!void {
+    try self.dispatch_table.setBlendConstants(self, constants);
+}
+
 pub inline fn setScissor(self: *Self, first: u32, scissor: []const vk.Rect2D) VkError!void {
     try self.dispatch_table.setScissor(self, first, scissor);
+}
+
+pub inline fn setStencilCompareMask(self: *Self, face_mask: vk.StencilFaceFlags, compare_mask: u32) VkError!void {
+    try self.dispatch_table.setStencilCompareMask(self, face_mask, compare_mask);
+}
+
+pub inline fn setStencilReference(self: *Self, face_mask: vk.StencilFaceFlags, reference: u32) VkError!void {
+    try self.dispatch_table.setStencilReference(self, face_mask, reference);
+}
+
+pub inline fn setStencilWriteMask(self: *Self, face_mask: vk.StencilFaceFlags, write_mask: u32) VkError!void {
+    try self.dispatch_table.setStencilWriteMask(self, face_mask, write_mask);
 }
 
 pub inline fn setViewport(self: *Self, first: u32, viewports: []const vk.Viewport) VkError!void {

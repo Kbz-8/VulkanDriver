@@ -48,6 +48,11 @@ mode: union(enum) {
             front_face: vk.FrontFace,
             line_width: f32,
         },
+        color_blend: struct {
+            attachments: ?[]vk.PipelineColorBlendAttachmentState,
+            constants: [4]f32,
+        },
+        depth_stencil: ?vk.PipelineDepthStencilStateCreateInfo,
         dynamic_state: DynamicState,
     },
 },
@@ -142,6 +147,23 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
                     .front_face = if (info.p_rasterization_state) |state| state.front_face else return VkError.ValidationFailed,
                     .line_width = if (info.p_rasterization_state) |state| state.line_width else return VkError.ValidationFailed,
                 },
+                .color_blend = blk: {
+                    if (info.p_color_blend_state) |state| {
+                        break :blk .{
+                            .attachments = if (state.p_attachments) |attachments|
+                                allocator.dupe(vk.PipelineColorBlendAttachmentState, attachments[0..state.attachment_count]) catch return VkError.OutOfHostMemory
+                            else
+                                null,
+                            .constants = state.blend_constants,
+                        };
+                    }
+
+                    break :blk .{
+                        .attachments = null,
+                        .constants = .{ 0.0, 0.0, 0.0, 0.0 },
+                    };
+                },
+                .depth_stencil = if (info.p_depth_stencil_state) |state| state.* else null,
                 .dynamic_state = blk: {
                     var state: DynamicState = .{};
 
@@ -180,6 +202,9 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
             }
             if (graphics.input_assembly.attribute_description) |attribute_description| {
                 allocator.free(attribute_description);
+            }
+            if (graphics.color_blend.attachments) |attachments| {
+                allocator.free(attachments);
             }
         },
     }

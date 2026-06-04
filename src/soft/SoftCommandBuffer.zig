@@ -75,7 +75,11 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .resetEvent = resetEvent,
         .resolveImage = resolveImage,
         .setEvent = setEvent,
+        .setBlendConstants = setBlendConstants,
         .setScissor = setScissor,
+        .setStencilCompareMask = setStencilCompareMask,
+        .setStencilReference = setStencilReference,
+        .setStencilWriteMask = setStencilWriteMask,
         .setViewport = setViewport,
         .waitEvent = waitEvent,
     };
@@ -1055,6 +1059,85 @@ pub fn setViewport(interface: *Interface, first: u32, viewports: []const vk.View
     cmd.* = .{
         .first = first,
         .viewports = allocator.dupe(vk.Viewport, viewports) catch return VkError.OutOfHostMemory, // Will be freed on cmdbuf reset or destroy
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn setBlendConstants(interface: *Interface, constants: [4]f32) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        constants: [4]f32,
+
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            device.renderer.dynamic_state.blend_constants = impl.constants;
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{ .constants = constants };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn setStencilCompareMask(interface: *Interface, face_mask: vk.StencilFaceFlags, compare_mask: u32) VkError!void {
+    try setStencilDynamicState(interface, face_mask, compare_mask, .compare_mask);
+}
+
+pub fn setStencilReference(interface: *Interface, face_mask: vk.StencilFaceFlags, reference: u32) VkError!void {
+    try setStencilDynamicState(interface, face_mask, reference, .reference);
+}
+
+pub fn setStencilWriteMask(interface: *Interface, face_mask: vk.StencilFaceFlags, write_mask: u32) VkError!void {
+    try setStencilDynamicState(interface, face_mask, write_mask, .write_mask);
+}
+
+fn setStencilDynamicState(interface: *Interface, face_mask: vk.StencilFaceFlags, value: u32, comptime kind: enum { compare_mask, reference, write_mask }) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        face_mask: vk.StencilFaceFlags,
+        value: u32,
+
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            if (!impl.face_mask.front_bit and !impl.face_mask.back_bit)
+                return;
+            switch (kind) {
+                .compare_mask => {
+                    if (impl.face_mask.front_bit)
+                        device.renderer.dynamic_state.stencil_front_compare_mask = impl.value;
+                    if (impl.face_mask.back_bit)
+                        device.renderer.dynamic_state.stencil_back_compare_mask = impl.value;
+                },
+                .reference => {
+                    if (impl.face_mask.front_bit)
+                        device.renderer.dynamic_state.stencil_front_reference = impl.value;
+                    if (impl.face_mask.back_bit)
+                        device.renderer.dynamic_state.stencil_back_reference = impl.value;
+                },
+                .write_mask => {
+                    if (impl.face_mask.front_bit)
+                        device.renderer.dynamic_state.stencil_front_write_mask = impl.value;
+                    if (impl.face_mask.back_bit)
+                        device.renderer.dynamic_state.stencil_back_write_mask = impl.value;
+                },
+            }
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .face_mask = face_mask,
+        .value = value,
     };
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }

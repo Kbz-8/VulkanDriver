@@ -173,20 +173,24 @@ fn interpolateVertexForClipping(allocator: std.mem.Allocator, a: *const Vertex, 
         .outputs = undefined,
     };
 
-    @memset(result.outputs[0..], null);
+    for (&result.outputs) |*location| {
+        @memset(location, null);
+    }
 
     for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
-        const out_a = a.outputs[location] orelse continue;
-        const out_b = b.outputs[location] orelse continue;
+        for (0..4) |component| {
+            const out_a = a.outputs[location][component] orelse continue;
+            const out_b = b.outputs[location][component] orelse continue;
 
-        result.outputs[location] = .{
-            .interpolation_type = out_a.interpolation_type,
-            .blob = if (out_a.interpolation_type == .flat)
-                allocator.dupe(u8, out_a.blob) catch return VkError.OutOfDeviceMemory
-            else
-                try interpolateBlob(allocator, out_a.blob, out_b.blob, @min(out_a.size, out_b.size), t),
-            .size = @min(out_a.size, out_b.size),
-        };
+            result.outputs[location][component] = .{
+                .interpolation_type = out_a.interpolation_type,
+                .blob = if (out_a.interpolation_type == .flat)
+                    allocator.dupe(u8, out_a.blob) catch return VkError.OutOfDeviceMemory
+                else
+                    try interpolateBlob(allocator, out_a.blob, out_b.blob, @min(out_a.size, out_b.size), t),
+                .size = @min(out_a.size, out_b.size),
+            };
+        }
     }
 
     return result;

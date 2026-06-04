@@ -3,7 +3,6 @@ const base = @import("base");
 const spv = @import("spv");
 const zm = base.zm;
 
-const blitter = @import("../blitter.zig");
 const common = @import("common.zig");
 const fragment = @import("../fragment.zig");
 
@@ -30,6 +29,8 @@ const RunData = struct {
     end_step: usize,
     color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
+    stencil_attachment_access: ?*common.RenderTargetAccess,
+    has_fragment_shader: bool,
 };
 
 pub fn drawLine(
@@ -39,6 +40,7 @@ pub fn drawLine(
     v1: *Renderer.Vertex,
     color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
+    stencil_attachment_access: ?*common.RenderTargetAccess,
 ) VkError!void {
     const io = draw_call.renderer.device.interface.io();
 
@@ -69,8 +71,8 @@ pub fn drawLine(
     const y_step: i32 = if (y0 > y1) -1 else 1;
 
     const pipeline = draw_call.renderer.state.pipeline orelse return;
-
-    const runtimes_count = (pipeline.stages.getPtr(.fragment) orelse return).runtimes.len;
+    const fragment_stage = pipeline.stages.getPtr(.fragment);
+    const runtimes_count = if (fragment_stage) |stage| stage.runtimes.len else 1;
     if (runtimes_count == 0)
         return;
 
@@ -104,15 +106,14 @@ pub fn drawLine(
             .end_step = end_step,
             .color_attachment_access = color_attachment_access,
             .depth_attachment_access = depth_attachment_access,
+            .stencil_attachment_access = stencil_attachment_access,
+            .has_fragment_shader = fragment_stage != null,
         };
 
         draw_call.rasterizer_wait_group.async(io, runWrapper, .{run_data});
     }
 
-    // Not syncing workers between triangles when rendering without depth buffer
-    // will lead to pixel rendering order issues between triangles.
-    if (depth_attachment_access == null)
-        draw_call.rasterizer_wait_group.await(io) catch return VkError.DeviceLost;
+    draw_call.rasterizer_wait_group.await(io) catch return VkError.DeviceLost;
 }
 
 fn bresenhamYAtStep(y0: i32, d_x: i32, d_err: i32, y_step: i32, step: usize) i32 {
@@ -151,31 +152,27 @@ inline fn run(data: RunData) !void {
         const t = @as(f32, @floatFromInt(step)) / @as(f32, @floatFromInt(@max(data.d_x, 1)));
         const z = ((1.0 - t) * data.start_vertex.position[2]) + (t * data.end_vertex.position[2]);
 
-        // Early depth test to avoid unnecesary computations
-        if (data.depth_attachment_access) |depth| {
-            const offset = @as(usize, @intCast(pixel_x)) * depth.texel_size + @as(usize, @intCast(pixel_y)) * depth.row_pitch;
-            const depth_value = blitter.readFloat4(depth.base[offset..], depth.format);
-            if (z >= depth_value[0])
-                continue;
+        var outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8 = undefined;
+        @memset(std.mem.asBytes(&outputs), 0);
+        if (data.has_fragment_shader) {
+            outputs = fragment.shaderInvocation(
+                data.allocator,
+                data.draw_call,
+                data.batch_id,
+                zm.f32x4(@floatFromInt(pixel_x), @floatFromInt(pixel_y), z, 1.0),
+                try common.interpolateLineOutputs(data.allocator, data.start_vertex, data.end_vertex, t),
+            ) catch |err| {
+                std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
+                if (comptime base.config.logs == .verbose) {
+                    if (@errorReturnTrace()) |trace| {
+                        std.debug.dumpErrorReturnTrace(trace);
+                    }
+                }
+
+                return;
+            };
         }
 
-        const outputs = fragment.shaderInvocation(
-            data.allocator,
-            data.draw_call,
-            data.batch_id,
-            zm.f32x4(@floatFromInt(pixel_x), @floatFromInt(pixel_y), z, 1.0),
-            try common.interpolateLineOutputs(data.allocator, data.start_vertex, data.end_vertex, t),
-        ) catch |err| {
-            std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
-            if (comptime base.config.logs == .verbose) {
-                if (@errorReturnTrace()) |trace| {
-                    std.debug.dumpErrorReturnTrace(trace);
-                }
-            }
-
-            return;
-        };
-
-        try common.writeToTargets(outputs, data.draw_call, data.color_attachment_access, data.depth_attachment_access, @intCast(pixel_x), @intCast(pixel_y), z);
+        try common.writeToTargets(outputs, data.draw_call, data.color_attachment_access, data.depth_attachment_access, data.stencil_attachment_access, true, @intCast(pixel_x), @intCast(pixel_y), z);
     }
 }

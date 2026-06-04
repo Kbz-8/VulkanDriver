@@ -1096,7 +1096,7 @@ pub fn writeFloat4(c: F32x4, map: []u8, dst_format: vk.Format) void {
             const r: u5 = @intFromFloat(@round(color[0] * std.math.maxInt(u5)));
             const g: u5 = @intFromFloat(@round(color[1] * std.math.maxInt(u5)));
             const b: u5 = @intFromFloat(@round(color[2] * std.math.maxInt(u5)));
-            const a: u1 = @intFromFloat(color[3]);
+            const a: u1 = @intFromFloat(@round(color[3]));
             std.mem.bytesAsValue(u16, map).* =
                 (@as(u16, b) << 0) |
                 (@as(u16, g) << 5) |

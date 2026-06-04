@@ -129,6 +129,8 @@ inline fn run(data: RunData) !void {
     if (!uses_control_barrier)
         try ExecutionDevice.writeDescriptorSets(data.self.state, rt);
 
+    try rt.populatePushConstants(data.self.state.push_constant_blob[0..]);
+
     var group_index: usize = data.batch_id;
     while (group_index < data.group_count) : (group_index += data.self.batch_size) {
         var modulo: usize = group_index;
@@ -205,6 +207,7 @@ fn runBarrierWorkgroup(
     for (runtimes, 0..) |*rt, i| {
         rt.resetInvocation(allocator);
         try ExecutionDevice.writeDescriptorSets(data.self.state, rt);
+        try rt.populatePushConstants(data.self.state.push_constant_blob[0..]);
         try setupWorkgroupBuiltins(data.self, rt, group_count, group_id);
         try setupSubgroupBuiltins(data.self, rt, group_id, i);
         statuses[i] = try rt.beginEntryPoint(allocator, entry);

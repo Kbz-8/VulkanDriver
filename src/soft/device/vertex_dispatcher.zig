@@ -45,6 +45,10 @@ inline fn run(data: RunData) !void {
 
     var invocation_index: usize = data.batch_id;
     while (invocation_index < data.vertex_count) : (invocation_index += data.batch_size) {
+        const io = data.draw_call.renderer.device.interface.io();
+        data.draw_call.allocator_mutex.lock(io) catch return VkError.DeviceLost;
+        defer data.draw_call.allocator_mutex.unlock(io);
+
         rt.resetInvocation(data.allocator);
         try rt.populatePushConstants(data.draw_call.renderer.state.push_constant_blob[0..]);
 
@@ -84,18 +88,20 @@ inline fn run(data: RunData) !void {
         try rt.readBuiltIn(std.mem.asBytes(&output.position), .Position);
 
         for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
-            const result_word = rt.getResultByLocation(@intCast(location), .output) catch |err| switch (err) {
-                SpvRuntimeError.NotFound => continue,
-                else => return err,
-            };
-            const memory_size = try rt.getResultMemorySize(result_word);
-            output.outputs[location] = .{
-                .interpolation_type = if (rt.hasResultDecoration(result_word, .Flat)) .flat else .smooth, // TODO : handle noperspective
-                .blob = data.allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return VkError.OutOfDeviceMemory,
-                .size = memory_size,
-            };
-            @memset(output.outputs[location].?.blob, 0);
-            try rt.readOutput(output.outputs[location].?.blob, result_word);
+            for (0..4) |component| {
+                const result_word = rt.getResultByLocationComponent(@intCast(location), @intCast(component), .output) catch |err| switch (err) {
+                    SpvRuntimeError.NotFound => continue,
+                    else => return err,
+                };
+                const memory_size = try rt.getResultMemorySize(result_word);
+                output.outputs[location][component] = .{
+                    .interpolation_type = if (rt.hasResultDecoration(result_word, .Flat) or resultIsInteger(rt, result_word)) .flat else .smooth, // TODO : handle noperspective
+                    .blob = data.allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return VkError.OutOfDeviceMemory,
+                    .size = memory_size,
+                };
+                @memset(output.outputs[location][component].?.blob, 0);
+                try rt.readOutput(output.outputs[location][component].?.blob, result_word);
+            }
         }
 
         try rt.flushDescriptorSets(data.allocator);
@@ -110,6 +116,25 @@ fn setupBuiltins(rt: *spv.Runtime, vertex_index: usize, instance_index: usize) !
     try rt.writeBuiltIn(std.mem.asBytes(&instance_index_u32), .InstanceIndex);
 }
 
+fn resultIsInteger(rt: *spv.Runtime, result_word: spv.SpvWord) bool {
+    const value = rt.results[result_word].getConstValue() catch return false;
+    return switch (value.*) {
+        .Int,
+        .Vector2i32,
+        .Vector3i32,
+        .Vector4i32,
+        .Vector2u32,
+        .Vector3u32,
+        .Vector4u32,
+        => true,
+        .Vector => |lanes| lanes.len != 0 and switch (lanes[0]) {
+            .Int => true,
+            else => false,
+        },
+        else => false,
+    };
+}
+
 fn writeVertexInput(
     rt: *spv.Runtime,
     allocator: std.mem.Allocator,
@@ -117,6 +142,54 @@ fn writeVertexInput(
     format: vk.Format,
     location: u32,
 ) !void {
+    var has_split_components = false;
+    for (1..4) |component| {
+        _ = rt.getResultByLocationComponent(location, @intCast(component), .input) catch |err| switch (err) {
+            SpvRuntimeError.NotFound => continue,
+            else => return err,
+        };
+        has_split_components = true;
+        break;
+    }
+
+    if (has_split_components) {
+        for (0..4) |component| {
+            const result_word = rt.getResultByLocationComponent(location, @intCast(component), .input) catch |err| switch (err) {
+                SpvRuntimeError.NotFound => continue,
+                else => return err,
+            };
+            const input_memory_size = try rt.getResultMemorySize(result_word);
+            const raw_offset = component * @sizeOf(f32);
+
+            if (raw_offset + input_memory_size <= raw_input.len) {
+                try rt.writeInput(raw_input[raw_offset .. raw_offset + input_memory_size], result_word);
+                continue;
+            }
+
+            const input = allocator.alloc(u8, input_memory_size) catch return VkError.OutOfDeviceMemory;
+            defer allocator.free(input);
+
+            @memset(input, 0);
+            if (raw_offset < raw_input.len) {
+                const copy_size = @min(input_memory_size, raw_input.len - raw_offset);
+                @memcpy(input[0..copy_size], raw_input[raw_offset .. raw_offset + copy_size]);
+            }
+
+            if (component == 3 and input_memory_size >= @sizeOf(f32)) {
+                if (base.format.isUnnormalizedInteger(format)) {
+                    const one: u32 = 1;
+                    @memcpy(input[0..@sizeOf(u32)], std.mem.asBytes(&one));
+                } else {
+                    const one: f32 = 1.0;
+                    @memcpy(input[0..@sizeOf(f32)], std.mem.asBytes(&one));
+                }
+            }
+
+            try rt.writeInput(input, result_word);
+        }
+        return;
+    }
+
     const input_memory_size = try rt.getInputLocationMemorySize(location);
 
     if (raw_input.len >= input_memory_size) {

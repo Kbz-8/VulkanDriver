@@ -1997,10 +1997,7 @@ pub export fn apeCmdSetBlendConstants(p_cmd: vk.CommandBuffer, p_constants: [*]f
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
     const constants = [4]f32{ p_constants[0], p_constants[1], p_constants[2], p_constants[3] };
 
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = constants;
+    cmd.setBlendConstants(constants) catch |err| return errorLogger(err);
 }
 
 pub export fn apeCmdSetDepthBias(p_cmd: vk.CommandBuffer, constant_factor: f32, clamp: f32, slope_factor: f32) callconv(vk.vulkan_call_conv) void {
@@ -2064,12 +2061,7 @@ pub export fn apeCmdSetStencilCompareMask(p_cmd: vk.CommandBuffer, face_mask: vk
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = face_mask;
-    _ = compare_mask;
+    cmd.setStencilCompareMask(face_mask, compare_mask) catch |err| return errorLogger(err);
 }
 
 pub export fn apeCmdSetStencilReference(p_cmd: vk.CommandBuffer, face_mask: vk.StencilFaceFlags, reference: u32) callconv(vk.vulkan_call_conv) void {
@@ -2077,12 +2069,7 @@ pub export fn apeCmdSetStencilReference(p_cmd: vk.CommandBuffer, face_mask: vk.S
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = face_mask;
-    _ = reference;
+    cmd.setStencilReference(face_mask, reference) catch |err| return errorLogger(err);
 }
 
 pub export fn apeCmdSetStencilWriteMask(p_cmd: vk.CommandBuffer, face_mask: vk.StencilFaceFlags, write_mask: u32) callconv(vk.vulkan_call_conv) void {
@@ -2090,12 +2077,7 @@ pub export fn apeCmdSetStencilWriteMask(p_cmd: vk.CommandBuffer, face_mask: vk.S
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = face_mask;
-    _ = write_mask;
+    cmd.setStencilWriteMask(face_mask, write_mask) catch |err| return errorLogger(err);
 }
 
 pub export fn apeCmdSetViewport(p_cmd: vk.CommandBuffer, first: u32, count: u32, viewports: [*]const vk.Viewport) callconv(vk.vulkan_call_conv) void {

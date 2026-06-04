@@ -6,7 +6,6 @@ const zm = base.zm;
 
 const common = @import("common.zig");
 const fragment = @import("../fragment.zig");
-const blitter = @import("../blitter.zig");
 
 const Renderer = @import("../Renderer.zig");
 
@@ -28,6 +27,9 @@ const RunData = struct {
     v2: Renderer.Vertex,
     color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
+    stencil_attachment_access: ?*common.RenderTargetAccess,
+    front_face: bool,
+    has_fragment_shader: bool,
 };
 
 pub fn drawTriangle(
@@ -38,6 +40,8 @@ pub fn drawTriangle(
     v2: *Renderer.Vertex,
     color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
+    stencil_attachment_access: ?*common.RenderTargetAccess,
+    front_face: bool,
 ) VkError!void {
     const io = draw_call.renderer.device.interface.io();
 
@@ -51,8 +55,10 @@ pub fn drawTriangle(
         return;
 
     const pipeline = draw_call.renderer.state.pipeline orelse return;
-
-    const runtimes_count = (pipeline.stages.getPtr(.fragment) orelse return).runtimes.len;
+    const fragment_stage = pipeline.stages.getPtr(.fragment);
+    const runtimes_count = if (fragment_stage) |stage| stage.runtimes.len else 1;
+    if (runtimes_count == 0)
+        return;
     const grid_size: usize = @intFromFloat(@ceil(@sqrt(@as(f32, @floatFromInt(runtimes_count)))));
 
     const width: usize = @intCast(max_x - min_x + 1);
@@ -97,20 +103,33 @@ pub fn drawTriangle(
                 .max_y = run_max_y,
                 .color_attachment_access = color_attachment_access,
                 .depth_attachment_access = depth_attachment_access,
+                .stencil_attachment_access = stencil_attachment_access,
+                .front_face = front_face,
+                .has_fragment_shader = fragment_stage != null,
             };
 
             draw_call.rasterizer_wait_group.async(io, runWrapper, .{run_data});
         }
     }
 
-    // Not syncing workers between triangles when rendering without depth buffer
-    // will lead to pixel rendering order issues between triangles.
-    if (depth_attachment_access == null)
-        draw_call.rasterizer_wait_group.await(io) catch return VkError.DeviceLost;
+    draw_call.rasterizer_wait_group.await(io) catch return VkError.DeviceLost;
 }
 
 inline fn edgeFunction(a: F32x4, b: F32x4, p: F32x4) f32 {
     return ((p[0] - a[0]) * (b[1] - a[1])) - ((p[1] - a[1]) * (b[0] - a[0]));
+}
+
+inline fn isInclusiveEdge(a: F32x4, b: F32x4) bool {
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    return dy < 0.0 or (dy == 0.0 and dx > 0.0);
+}
+
+inline fn edgeContainsPixel(a: F32x4, b: F32x4, edge_value: f32, area: f32) bool {
+    return if (area > 0.0)
+        edge_value > 0.0 or (edge_value == 0.0 and isInclusiveEdge(a, b))
+    else
+        edge_value < 0.0 or (edge_value == 0.0 and isInclusiveEdge(b, a));
 }
 
 fn runWrapper(data: RunData) void {
@@ -139,10 +158,10 @@ inline fn run(data: RunData) !void {
             const w1 = edgeFunction(data.v2.position, data.v0.position, p);
             const w2 = edgeFunction(data.v0.position, data.v1.position, p);
 
-            const inside = if (data.area > 0.0)
-                w0 >= 0.0 and w1 >= 0.0 and w2 >= 0.0
-            else
-                w0 <= 0.0 and w1 <= 0.0 and w2 <= 0.0;
+            const inside =
+                edgeContainsPixel(data.v1.position, data.v2.position, w0, data.area) and
+                edgeContainsPixel(data.v2.position, data.v0.position, w1, data.area) and
+                edgeContainsPixel(data.v0.position, data.v1.position, w2, data.area);
 
             if (!inside)
                 continue;
@@ -152,31 +171,27 @@ inline fn run(data: RunData) !void {
             const b2 = w2 / data.area;
             const z = (b0 * data.v0.position[2]) + (b1 * data.v1.position[2]) + (b2 * data.v2.position[2]);
 
-            // Early depth test to avoid unnecesary computations
-            if (data.depth_attachment_access) |depth| {
-                const offset = @as(usize, @intCast(x)) * depth.texel_size + @as(usize, @intCast(y)) * depth.row_pitch;
-                const depth_value = blitter.readFloat4(depth.base[offset..], depth.format);
-                if (z >= depth_value[0])
-                    continue;
+            var outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8 = undefined;
+            @memset(std.mem.asBytes(&outputs), 0);
+            if (data.has_fragment_shader) {
+                outputs = fragment.shaderInvocation(
+                    data.allocator,
+                    data.draw_call,
+                    data.batch_id,
+                    zm.f32x4(@floatFromInt(x), @floatFromInt(y), z, 1.0),
+                    try common.interpolateVertexOutputs(data.allocator, &data.v0, &data.v1, &data.v2, b0, b1, b2),
+                ) catch |err| {
+                    std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
+                    if (comptime base.config.logs == .verbose) {
+                        if (@errorReturnTrace()) |trace| {
+                            std.debug.dumpErrorReturnTrace(trace);
+                        }
+                    }
+                    return;
+                };
             }
 
-            const outputs = fragment.shaderInvocation(
-                data.allocator,
-                data.draw_call,
-                data.batch_id,
-                zm.f32x4(@floatFromInt(x), @floatFromInt(y), z, 1.0),
-                try common.interpolateVertexOutputs(data.allocator, &data.v0, &data.v1, &data.v2, b0, b1, b2),
-            ) catch |err| {
-                std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
-                if (comptime base.config.logs == .verbose) {
-                    if (@errorReturnTrace()) |trace| {
-                        std.debug.dumpErrorReturnTrace(trace);
-                    }
-                }
-                return;
-            };
-
-            try common.writeToTargets(outputs, data.draw_call, data.color_attachment_access, data.depth_attachment_access, @intCast(x), @intCast(y), z);
+            try common.writeToTargets(outputs, data.draw_call, data.color_attachment_access, data.depth_attachment_access, data.stencil_attachment_access, data.front_face, @intCast(x), @intCast(y), z);
         }
     }
 }

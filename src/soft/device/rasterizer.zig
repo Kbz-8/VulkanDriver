@@ -1,6 +1,7 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
+const spv = @import("spv");
 const zm = base.zm;
 
 const clip = @import("clip.zig");
@@ -9,7 +10,6 @@ const bresenham = @import("rasterizer/bresenham.zig");
 const edge_function = @import("rasterizer/edge_function.zig");
 const common = @import("rasterizer/common.zig");
 const fragment = @import("fragment.zig");
-const blitter = @import("blitter.zig");
 
 const Renderer = @import("Renderer.zig");
 const Vertex = Renderer.Vertex;
@@ -37,6 +37,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
 
         const color_range = render_target_view.subresource_range;
         const color_format = render_target_view.format;
+        const color_extent = render_target.getMipLevelExtent(color_range.base_mip_level);
 
         const color_attachment_subresource_offset = try render_target.getSubresourceOffset(
             color_range.aspect_mask,
@@ -49,6 +50,8 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
             .base = try render_target.mapAsSliceWithAddedOffset(u8, color_attachment_subresource_offset, color_attachment_subresource_size),
             .row_pitch = render_target.getRowPitchMemSizeForMipLevelWithFormat(color_range.aspect_mask, color_range.base_mip_level, color_format),
             .texel_size = base.format.texelSize(color_format),
+            .width = color_extent.width,
+            .height = color_extent.height,
             .format = color_format,
         };
     }
@@ -61,20 +64,58 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
             break :blk null;
 
         const depth_range = depth_attachment_view.?.subresource_range;
+        if (!depth_range.aspect_mask.depth_bit)
+            break :blk null;
+
         const depth_format = depth_attachment_view.?.format;
+        const depth_aspect: vk.ImageAspectFlags = .{ .depth_bit = true };
+        const depth_aspect_format = base.format.fromAspect(depth_format, depth_aspect);
+        const depth_extent = depth_attachment.?.getMipLevelExtent(depth_range.base_mip_level);
 
         const attachment_subresource_offset = try depth_attachment.?.getSubresourceOffset(
-            depth_range.aspect_mask,
+            depth_aspect,
             depth_range.base_mip_level,
             depth_range.base_array_layer,
         );
-        const attachment_subresource_size = depth_attachment.?.getLayerSize(depth_range.aspect_mask);
+        const attachment_subresource_size = depth_attachment.?.getLayerSize(depth_aspect);
         break :blk .{
             .mutex = .init,
             .base = try depth_attachment.?.mapAsSliceWithAddedOffset(u8, attachment_subresource_offset, attachment_subresource_size),
-            .row_pitch = depth_attachment.?.getRowPitchMemSizeForMipLevelWithFormat(depth_range.aspect_mask, depth_range.base_mip_level, depth_format),
-            .texel_size = base.format.texelSize(depth_format),
-            .format = depth_format,
+            .row_pitch = depth_attachment.?.getRowPitchMemSizeForMipLevelWithFormat(depth_aspect, depth_range.base_mip_level, depth_format),
+            .texel_size = base.format.texelSize(depth_aspect_format),
+            .width = depth_extent.width,
+            .height = depth_extent.height,
+            .format = depth_aspect_format,
+        };
+    };
+
+    var stencil_attachment_access: ?common.RenderTargetAccess = blk: {
+        if (depth_attachment == null)
+            break :blk null;
+
+        const stencil_range = depth_attachment_view.?.subresource_range;
+        if (!stencil_range.aspect_mask.stencil_bit)
+            break :blk null;
+
+        const stencil_format = depth_attachment_view.?.format;
+        const stencil_aspect: vk.ImageAspectFlags = .{ .stencil_bit = true };
+        const stencil_aspect_format = base.format.fromAspect(stencil_format, stencil_aspect);
+        const stencil_extent = depth_attachment.?.getMipLevelExtent(stencil_range.base_mip_level);
+
+        const attachment_subresource_offset = try depth_attachment.?.getSubresourceOffset(
+            stencil_aspect,
+            stencil_range.base_mip_level,
+            stencil_range.base_array_layer,
+        );
+        const attachment_subresource_size = depth_attachment.?.getLayerSize(stencil_aspect);
+        break :blk .{
+            .mutex = .init,
+            .base = try depth_attachment.?.mapAsSliceWithAddedOffset(u8, attachment_subresource_offset, attachment_subresource_size),
+            .row_pitch = depth_attachment.?.getRowPitchMemSizeForMipLevelWithFormat(stencil_aspect, stencil_range.base_mip_level, stencil_format),
+            .texel_size = base.format.texelSize(stencil_aspect_format),
+            .width = stencil_extent.width,
+            .height = stencil_extent.height,
+            .format = stencil_aspect_format,
         };
     };
 
@@ -86,6 +127,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                 vertex,
                 color_attachment_access,
                 if (depth_attachment_access) |*access| access else null,
+                if (stencil_attachment_access) |*access| access else null,
             );
         },
         .triangle_list => for (0..@divTrunc(draw_call.vertices.len, 3)) |triangle_index| {
@@ -103,6 +145,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                 v2,
                 color_attachment_access,
                 if (depth_attachment_access) |*access| access else null,
+                if (stencil_attachment_access) |*access| access else null,
             );
         },
         .triangle_fan => if (draw_call.vertices.len >= 3) {
@@ -120,6 +163,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                     v2,
                     color_attachment_access,
                     if (depth_attachment_access) |*access| access else null,
+                    if (stencil_attachment_access) |*access| access else null,
                 );
             }
         },
@@ -139,6 +183,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                         v2,
                         color_attachment_access,
                         if (depth_attachment_access) |*access| access else null,
+                        if (stencil_attachment_access) |*access| access else null,
                     );
                 } else {
                     try clipTransformAndRasterizeTriangle(
@@ -150,6 +195,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                         v2,
                         color_attachment_access,
                         if (depth_attachment_access) |*access| access else null,
+                        if (stencil_attachment_access) |*access| access else null,
                     );
                 }
             }
@@ -166,6 +212,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                 v1,
                 color_attachment_access,
                 if (depth_attachment_access) |*access| access else null,
+                if (stencil_attachment_access) |*access| access else null,
             );
         },
         .line_strip => if (draw_call.vertices.len >= 2) {
@@ -180,6 +227,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                     v1,
                     color_attachment_access,
                     if (depth_attachment_access) |*access| access else null,
+                    if (stencil_attachment_access) |*access| access else null,
                 );
             }
         },
@@ -195,6 +243,7 @@ fn clipTransformAndRasterizePoint(
     vertex: *Vertex,
     color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
+    stencil_attachment_access: ?*common.RenderTargetAccess,
 ) VkError!void {
     const x, const y, const z, const w = vertex.position;
     if (w == 0.0 or x < -w or x > w or y < -w or y > w or z < 0.0 or z > w)
@@ -208,6 +257,8 @@ fn clipTransformAndRasterizePoint(
     const max_x: i32 = @intFromFloat(@ceil(transformed.position[0] + (point_size / 2.0)) - 1.0);
     const min_y: i32 = @intFromFloat(@floor(transformed.position[1] - (point_size / 2.0)));
     const max_y: i32 = @intFromFloat(@ceil(transformed.position[1] + (point_size / 2.0)) - 1.0);
+    const pipeline = draw_call.renderer.state.pipeline orelse return;
+    const has_fragment_shader = pipeline.stages.getPtr(.fragment) != null;
 
     var py = min_y;
     while (py <= max_y) : (py += 1) {
@@ -216,30 +267,27 @@ fn clipTransformAndRasterizePoint(
             if (!common.scissorContainsPixel(draw_call.scissor, px, py))
                 continue;
 
-            if (depth_attachment_access) |depth| {
-                const offset = @as(usize, @intCast(px)) * depth.texel_size + @as(usize, @intCast(py)) * depth.row_pitch;
-                const depth_value = blitter.readFloat4(depth.base[offset..], depth.format);
-                if (transformed.position[2] >= depth_value[0])
-                    continue;
+            var outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8 = undefined;
+            @memset(std.mem.asBytes(&outputs), 0);
+            if (has_fragment_shader) {
+                outputs = fragment.shaderInvocation(
+                    allocator,
+                    draw_call,
+                    0,
+                    zm.f32x4(@floatFromInt(px), @floatFromInt(py), transformed.position[2], 1.0),
+                    try common.interpolateVertexOutputs(allocator, &transformed, &transformed, &transformed, 1.0, 0.0, 0.0),
+                ) catch |err| {
+                    std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
+                    if (comptime base.config.logs == .verbose) {
+                        if (@errorReturnTrace()) |trace| {
+                            std.debug.dumpErrorReturnTrace(trace);
+                        }
+                    }
+                    return;
+                };
             }
 
-            const outputs = fragment.shaderInvocation(
-                allocator,
-                draw_call,
-                0,
-                zm.f32x4(@floatFromInt(px), @floatFromInt(py), transformed.position[2], 1.0),
-                try common.interpolateVertexOutputs(allocator, &transformed, &transformed, &transformed, 1.0, 0.0, 0.0),
-            ) catch |err| {
-                std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
-                if (comptime base.config.logs == .verbose) {
-                    if (@errorReturnTrace()) |trace| {
-                        std.debug.dumpErrorReturnTrace(trace);
-                    }
-                }
-                return;
-            };
-
-            try common.writeToTargets(outputs, draw_call, color_attachment_access, depth_attachment_access, @intCast(px), @intCast(py), transformed.position[2]);
+            try common.writeToTargets(outputs, draw_call, color_attachment_access, depth_attachment_access, stencil_attachment_access, true, @intCast(px), @intCast(py), transformed.position[2]);
         }
     }
 }
@@ -251,6 +299,7 @@ fn clipTransformAndRasterizeLine(
     v1: *Vertex,
     color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
+    stencil_attachment_access: ?*common.RenderTargetAccess,
 ) VkError!void {
     const clipped_line = (try clip.clipLine(allocator, v0, v1)) orelse return;
 
@@ -267,6 +316,7 @@ fn clipTransformAndRasterizeLine(
         &tv1,
         color_attachment_access,
         depth_attachment_access,
+        stencil_attachment_access,
     );
 }
 
@@ -279,6 +329,7 @@ fn clipTransformAndRasterizeTriangle(
     v2: *Vertex,
     color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
+    stencil_attachment_access: ?*common.RenderTargetAccess,
 ) VkError!void {
     const clipped_polygon = try clip.clipTriangle(allocator, v0, v1, v2);
 
@@ -303,6 +354,7 @@ fn clipTransformAndRasterizeTriangle(
             &tv2,
             color_attachment_access,
             depth_attachment_access,
+            stencil_attachment_access,
         );
     }
 }
@@ -316,29 +368,32 @@ fn rasterizeTriangle(
     v2: *Vertex,
     color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
+    stencil_attachment_access: ?*common.RenderTargetAccess,
 ) VkError!void {
-    if (try triangleIsCulled(renderer, v0, v1, v2))
+    const maybe_front_face = try triangleFrontFace(renderer, v0, v1, v2);
+    const front_face = maybe_front_face orelse return;
+
+    if (try triangleIsCulled(renderer, front_face))
         return;
 
     draw_call.stats.polygons_drawn += 1;
 
     const pipeline_data = (renderer.state.pipeline orelse return VkError.InvalidHandleDrv).interface.mode.graphics;
     switch (pipeline_data.rasterization.polygon_mode) {
-        .fill => try edge_function.drawTriangle(allocator, draw_call, v0, v1, v2, color_attachment_access, depth_attachment_access),
+        .fill => try edge_function.drawTriangle(allocator, draw_call, v0, v1, v2, color_attachment_access, depth_attachment_access, stencil_attachment_access, front_face),
         .line => {
-            try bresenham.drawLine(allocator, draw_call, v0, v1, color_attachment_access, depth_attachment_access);
-            try bresenham.drawLine(allocator, draw_call, v1, v2, color_attachment_access, depth_attachment_access);
-            try bresenham.drawLine(allocator, draw_call, v2, v0, color_attachment_access, depth_attachment_access);
+            try bresenham.drawLine(allocator, draw_call, v0, v1, color_attachment_access, depth_attachment_access, stencil_attachment_access);
+            try bresenham.drawLine(allocator, draw_call, v1, v2, color_attachment_access, depth_attachment_access, stencil_attachment_access);
+            try bresenham.drawLine(allocator, draw_call, v2, v0, color_attachment_access, depth_attachment_access, stencil_attachment_access);
         },
         .point => {}, // TODO
         else => base.unsupported("polygon mode {any}", .{pipeline_data.rasterization.polygon_mode}),
     }
 }
 
-fn triangleIsCulled(renderer: *Renderer, v0: *const Vertex, v1: *const Vertex, v2: *const Vertex) VkError!bool {
+fn triangleIsCulled(renderer: *Renderer, front_face: bool) VkError!bool {
     const pipeline_data = (renderer.state.pipeline orelse return VkError.InvalidHandleDrv).interface.mode.graphics;
-    const rasterization = pipeline_data.rasterization;
-    const cull_mode = rasterization.cull_mode;
+    const cull_mode = pipeline_data.rasterization.cull_mode;
 
     if (!cull_mode.front_bit and !cull_mode.back_bit)
         return false;
@@ -346,17 +401,21 @@ fn triangleIsCulled(renderer: *Renderer, v0: *const Vertex, v1: *const Vertex, v
     if (cull_mode.front_bit and cull_mode.back_bit)
         return true;
 
+    return (cull_mode.front_bit and front_face) or (cull_mode.back_bit and !front_face);
+}
+
+fn triangleFrontFace(renderer: *Renderer, v0: *const Vertex, v1: *const Vertex, v2: *const Vertex) VkError!?bool {
+    const pipeline_data = (renderer.state.pipeline orelse return VkError.InvalidHandleDrv).interface.mode.graphics;
+    const rasterization = pipeline_data.rasterization;
     const area = triangleArea(v0, v1, v2);
     if (area == 0.0)
-        return true;
+        return null;
 
-    const front_face = switch (rasterization.front_face) {
+    return switch (rasterization.front_face) {
         .counter_clockwise => area < 0.0,
         .clockwise => area > 0.0,
-        else => return false,
+        else => false,
     };
-
-    return (cull_mode.front_bit and front_face) or (cull_mode.back_bit and !front_face);
 }
 
 inline fn triangleArea(v0: *const Vertex, v1: *const Vertex, v2: *const Vertex) f32 {

@@ -43,11 +43,18 @@ pub const DynamicState = struct {
     viewports: ?[]const vk.Viewport,
     scissor: ?[]const vk.Rect2D,
     line_width: ?f32,
+    blend_constants: ?[4]f32,
+    stencil_front_compare_mask: ?u32,
+    stencil_back_compare_mask: ?u32,
+    stencil_front_write_mask: ?u32,
+    stencil_back_write_mask: ?u32,
+    stencil_front_reference: ?u32,
+    stencil_back_reference: ?u32,
 };
 
 pub const Vertex = struct {
     position: F32x4,
-    outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]?struct {
+    outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][4]?struct {
         interpolation_type: enum { smooth, flat, noperspective },
         blob: []u8,
         size: usize,
@@ -67,6 +74,7 @@ pub const DrawCall = struct {
     render_pass: *SoftRenderPass,
     framebuffer: *SoftFramebuffer,
 
+    allocator_mutex: std.Io.Mutex,
     rasterizer_wait_group: std.Io.Group,
 
     stats: struct {
@@ -86,6 +94,7 @@ pub const DrawCall = struct {
             .depth_attachment = if (render_pass.interface.subpasses[renderer.subpass_index].depth_stencil_attachments) |desc| framebuffer.interface.attachments[desc.attachment] else null,
             .render_pass = render_pass,
             .framebuffer = framebuffer,
+            .allocator_mutex = .init,
             .rasterizer_wait_group = .init,
             .stats = .{
                 .polygons_drawn = 0,
@@ -93,7 +102,9 @@ pub const DrawCall = struct {
         };
 
         for (self.vertices) |*vertex| {
-            @memset(vertex.outputs[0..], null);
+            for (&vertex.outputs) |*location| {
+                @memset(location, null);
+            }
         }
 
         return self;
@@ -102,8 +113,10 @@ pub const DrawCall = struct {
     fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         for (self.vertices) |*vertex| {
             for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
-                if (vertex.outputs[location]) |output| {
-                    allocator.free(output.blob);
+                for (0..4) |component| {
+                    if (vertex.outputs[location][component]) |output| {
+                        allocator.free(output.blob);
+                    }
                 }
             }
         }
@@ -130,6 +143,13 @@ pub fn init(device: *SoftDevice, state: *PipelineState) Self {
             .viewports = null,
             .scissor = null,
             .line_width = null,
+            .blend_constants = null,
+            .stencil_front_compare_mask = null,
+            .stencil_back_compare_mask = null,
+            .stencil_front_write_mask = null,
+            .stencil_back_write_mask = null,
+            .stencil_front_reference = null,
+            .stencil_back_reference = null,
         },
         .subpass_index = 0,
     };
@@ -189,9 +209,10 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
     for (vertex_shader.runtimes[0..]) |*runtime| {
         ExecutionDevice.writeDescriptorSets(self.state, &runtime.rt) catch return VkError.Unknown;
     }
-    const fragment_shader = pipeline.stages.getPtrAssertContains(.fragment);
-    for (fragment_shader.runtimes[0..]) |*runtime| {
-        ExecutionDevice.writeDescriptorSets(self.state, &runtime.rt) catch return VkError.Unknown;
+    if (pipeline.stages.getPtr(.fragment)) |fragment_shader| {
+        for (fragment_shader.runtimes[0..]) |*runtime| {
+            ExecutionDevice.writeDescriptorSets(self.state, &runtime.rt) catch return VkError.Unknown;
+        }
     }
 
     self.vertexShaderStage(allocator, &draw_call, vertex_count, instance_count, first_vertex, first_instance, indices) catch |err| {

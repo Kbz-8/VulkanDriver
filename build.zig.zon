@@ -25,16 +25,16 @@
             .url = "git+https://git.kbz8.me/kbz_8/Vulkan-CTS-bin.git#a5f787d80f14f136e3cb3e1185c35e298846c1d7",
             .hash = "N-V-__8AAMpOQxkHCKTw9i-NwmmQ3ks1ndFDXcVLlic4KjK3",
         },
-        .SPIRV_Interpreter = .{
-            .url = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#8677e8a6833d39e9169460fd75de2d7c70fab4b8",
-            .hash = "SPIRV_Interpreter-0.0.1-ajmpn_HtBQBR82M2KlR_yuUvdHUVdXrYVGRh5YNqVFqQ",
-            .lazy = true,
-        },
         //.SPIRV_Interpreter = .{
-        //    // For development
-        //    .path = "../SPIRV-Interpreter",
+        //    .url = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#8677e8a6833d39e9169460fd75de2d7c70fab4b8",
+        //    .hash = "SPIRV_Interpreter-0.0.1-ajmpn_HtBQBR82M2KlR_yuUvdHUVdXrYVGRh5YNqVFqQ",
         //    .lazy = true,
         //},
+        .SPIRV_Interpreter = .{
+            // For development
+            .path = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#ee5a400010b3a5852606b2f8593bd5c745bf0a26",
+            .lazy = true,
+        },
     },
 
     .paths = .{
