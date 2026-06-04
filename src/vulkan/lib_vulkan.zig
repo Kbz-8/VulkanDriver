@@ -1470,11 +1470,9 @@ pub export fn apeGetRenderAreaGranularity(p_device: vk.Device, p_pass: vk.Render
     defer entryPointEndLogTrace();
 
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
+    const pass = NonDispatchable(RenderPass).fromHandleObject(p_pass) catch |err| return errorLogger(err);
 
-    notImplementedWarning();
-
-    _ = p_pass;
-    _ = granularity;
+    granularity.* = pass.getRenderAreaGranularity();
 }
 
 pub export fn apeInvalidateMappedMemoryRanges(p_device: vk.Device, count: u32, p_ranges: [*]const vk.MappedMemoryRange) callconv(vk.vulkan_call_conv) vk.Result {

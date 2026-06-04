@@ -3,6 +3,7 @@ const vk = @import("vulkan");
 
 const VulkanAllocator = @import("VulkanAllocator.zig");
 
+const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
 const VkError = @import("error_set.zig").VkError;
 const Device = @import("Device.zig");
 const Sampler = @import("Sampler.zig");
@@ -16,7 +17,7 @@ const BindingLayout = struct {
     array_size: usize,
 
     /// This slice points to an array located after the binding layouts array
-    immutable_samplers: []*const Sampler,
+    immutable_samplers: []const *const Sampler,
 
     driver_data: *anyopaque,
 };
@@ -68,8 +69,21 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Descr
 
     const bindings = local_allocator.alloc(BindingLayout, binding_count) catch return VkError.OutOfHostMemory;
     const immutable_samplers = local_allocator.alloc(*const Sampler, immutable_samplers_count) catch return VkError.OutOfHostMemory;
+    var immutable_samplers_offset: usize = 0;
+
+    for (bindings) |*binding| {
+        binding.* = .{
+            .descriptor_type = .sampler,
+            .array_size = 0,
+            .dynamic_index = 0,
+            .immutable_samplers = &.{},
+            .driver_data = undefined,
+        };
+    }
 
     var stages: vk.ShaderStageFlags = .{};
+    var dynamic_descriptor_count: usize = 0;
+    var dynamic_offset_count: usize = 0;
 
     if (info.p_bindings) |binding_infos| {
         const sorted_bindings = command_allocator.dupe(vk.DescriptorSetLayoutBinding, binding_infos[0..info.binding_count]) catch return VkError.OutOfHostMemory;
@@ -84,11 +98,27 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Descr
                 else => binding_info.descriptor_count,
             };
 
+            const binding_immutable_samplers = if (bindingHasImmutableSamplers(binding_info)) blk: {
+                const base = binding_info.p_immutable_samplers orelse return VkError.ValidationFailed;
+                const binding_immutable_samplers = immutable_samplers[immutable_samplers_offset .. immutable_samplers_offset + descriptor_count];
+                immutable_samplers_offset += descriptor_count;
+                for (binding_immutable_samplers, base[0..descriptor_count]) |*dst, src| {
+                    dst.* = try NonDispatchable(Sampler).fromHandleObject(src);
+                }
+                break :blk binding_immutable_samplers;
+            } else &.{};
+
+            const dynamic_index = dynamic_descriptor_count;
+            if (bindingHasDynamicOffset(binding_info)) {
+                dynamic_descriptor_count += descriptor_count;
+                dynamic_offset_count += descriptor_count;
+            }
+
             bindings[binding_index] = .{
                 .descriptor_type = binding_info.descriptor_type,
                 .array_size = descriptor_count,
-                .dynamic_index = 0,
-                .immutable_samplers = immutable_samplers[0..],
+                .dynamic_index = dynamic_index,
+                .immutable_samplers = binding_immutable_samplers,
                 .driver_data = undefined,
             };
 
@@ -100,8 +130,8 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Descr
         .owner = device,
         .heap = heap,
         .bindings = bindings,
-        .dynamic_offset_count = 0,
-        .dynamic_descriptor_count = 0,
+        .dynamic_offset_count = dynamic_offset_count,
+        .dynamic_descriptor_count = dynamic_descriptor_count,
         .stages = stages,
         .ref_count = std.atomic.Value(usize).init(1),
         .vtable = undefined,
@@ -115,6 +145,13 @@ fn sortBindings(_: @TypeOf(.{}), lhs: vk.DescriptorSetLayoutBinding, rhs: vk.Des
 inline fn bindingHasImmutableSamplers(binding: vk.DescriptorSetLayoutBinding) bool {
     return switch (binding.descriptor_type) {
         .sampler, .combined_image_sampler => binding.p_immutable_samplers != null,
+        else => false,
+    };
+}
+
+inline fn bindingHasDynamicOffset(binding: vk.DescriptorSetLayoutBinding) bool {
+    return switch (binding.descriptor_type) {
+        .uniform_buffer_dynamic, .storage_buffer_dynamic => true,
         else => false,
     };
 }

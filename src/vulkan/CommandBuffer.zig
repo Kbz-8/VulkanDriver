@@ -108,12 +108,14 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
 }
 
 pub fn begin(self: *Self, info: *const vk.CommandBufferBeginInfo) VkError!void {
-    if (!self.pool.flags.reset_command_buffer_bit) {
-        self.transitionState(.Recording, &.{.Initial}) catch return VkError.ValidationFailed;
-    } else {
-        try self.reset(.{});
-        self.transitionState(.Recording, &.{ .Initial, .Recording, .Executable, .Invalid }) catch return VkError.ValidationFailed;
+    const implicitly_reset = self.state == .Executable;
+
+    self.transitionState(.Recording, &.{ .Initial, .Executable }) catch return VkError.ValidationFailed;
+    if (implicitly_reset) {
+        try self.dispatch_table.reset(self, .{});
+        self.begin_info = null;
     }
+
     try self.dispatch_table.begin(self, info);
     self.begin_info = info.*;
 }

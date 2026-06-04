@@ -40,6 +40,10 @@ pub inline fn texelSize(format: vk.Format) usize {
     return lib.c.vkuFormatTexelBlockSize(@intCast(@intFromEnum(format)));
 }
 
+pub inline fn componentCount(format: vk.Format) usize {
+    return @intCast(lib.c.vkuFormatComponentCount(@intCast(@intFromEnum(format))));
+}
+
 pub fn supportsColorAttachemendBlend(format: vk.Format) bool {
     return switch (format) {
         // Vulkan 1.1 mandatory

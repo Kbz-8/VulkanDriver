@@ -34,6 +34,10 @@ const DescriptorImage = struct {
     object: ?*SoftImageView,
 };
 
+const DescriptorSampler = struct {
+    object: ?*SoftSampler,
+};
+
 const DescriptorTexel = struct {
     object: ?*SoftBufferView,
 };
@@ -42,6 +46,7 @@ const Descriptor = union(enum) {
     buffer: []DescriptorBuffer,
     texture: []DescriptorTexture,
     image: []DescriptorImage,
+    sampler: []DescriptorSampler,
     texel_buffer: []DescriptorTexel,
     unsupported: struct {},
 };
@@ -70,13 +75,18 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, layout: *base.
         for (layout.bindings) |binding| {
             const struct_size: usize = switch (binding.descriptor_type) {
                 .uniform_buffer,
+                .uniform_buffer_dynamic,
                 .storage_buffer,
                 .storage_buffer_dynamic,
                 => @sizeOf(DescriptorBuffer),
 
+                .sampled_image,
                 .storage_image,
                 .input_attachment,
                 => @sizeOf(DescriptorImage),
+
+                .sampler,
+                => @sizeOf(DescriptorSampler),
 
                 .storage_texel_buffer,
                 .uniform_texel_buffer,
@@ -103,6 +113,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, layout: *base.
     for (descriptors, layout.bindings) |*descriptor, binding| {
         switch (binding.descriptor_type) {
             .uniform_buffer,
+            .uniform_buffer_dynamic,
             .storage_buffer,
             .storage_buffer_dynamic,
             => descriptor.* = blk: {
@@ -119,6 +130,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, layout: *base.
                 break :blk desc;
             },
 
+            .sampled_image,
             .storage_image,
             .input_attachment,
             => descriptor.* = blk: {
@@ -127,6 +139,22 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, layout: *base.
                 };
                 for (desc.image[0..]) |*d| {
                     d.* = .{ .object = null };
+                }
+                break :blk desc;
+            },
+
+            .sampler,
+            => descriptor.* = blk: {
+                const desc: Descriptor = .{
+                    .sampler = local_allocator.alloc(DescriptorSampler, binding.array_size) catch return VkError.OutOfHostMemory,
+                };
+                for (desc.sampler[0..], 0..) |*d, i| {
+                    d.* = .{
+                        .object = if (i < binding.immutable_samplers.len)
+                            @as(*SoftSampler, @alignCast(@fieldParentPtr("interface", @constCast(binding.immutable_samplers[i]))))
+                        else
+                            null,
+                    };
                 }
                 break :blk desc;
             },
@@ -148,9 +176,12 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, layout: *base.
                 const desc: Descriptor = .{
                     .texture = local_allocator.alloc(DescriptorTexture, binding.array_size) catch return VkError.OutOfHostMemory,
                 };
-                for (desc.texture[0..]) |*d| {
+                for (desc.texture[0..], 0..) |*d, i| {
                     d.* = .{
-                        .sampler = null,
+                        .sampler = if (i < binding.immutable_samplers.len)
+                            @as(*SoftSampler, @alignCast(@fieldParentPtr("interface", @constCast(binding.immutable_samplers[i]))))
+                        else
+                            null,
                         .view = null,
                     };
                 }
@@ -179,6 +210,7 @@ fn descriptorLen(descriptor: Descriptor) usize {
     return switch (descriptor) {
         .buffer => |buffer| buffer.len,
         .image => |image| image.len,
+        .sampler => |sampler| sampler.len,
         .texel_buffer => |texel_buffer| texel_buffer.len,
         .texture => |texture| texture.len,
         .unsupported => 0,
@@ -227,6 +259,17 @@ fn copyDescriptorRange(dst_desc: *Descriptor, dst_array_element: usize, src_desc
             );
         },
 
+        .sampler => |dst_sampler| {
+            const src_sampler = switch (src_desc) {
+                .sampler => |sampler| sampler,
+                else => return false,
+            };
+            @memcpy(
+                dst_sampler[dst_array_element .. dst_array_element + descriptor_count],
+                src_sampler[src_array_element .. src_array_element + descriptor_count],
+            );
+        },
+
         .texel_buffer => |dst_texel_buffer| {
             const src_texel_buffer = switch (src_desc) {
                 .texel_buffer => |texel_buffer| texel_buffer,
@@ -250,6 +293,33 @@ fn copyDescriptorRange(dst_desc: *Descriptor, dst_array_element: usize, src_desc
         },
 
         .unsupported => return false,
+    }
+
+    return true;
+}
+
+fn copyDescriptorRangePreservingImmutableSamplers(self: *Self, dst_binding: usize, dst_desc: *Descriptor, dst_array_element: usize, src_desc: Descriptor, src_array_element: usize, descriptor_count: usize) bool {
+    const immutable_samplers = self.interface.layout.bindings[dst_binding].immutable_samplers;
+    if (immutable_samplers.len == 0) {
+        return copyDescriptorRange(dst_desc, dst_array_element, src_desc, src_array_element, descriptor_count);
+    }
+
+    const dst_texture = switch (dst_desc.*) {
+        .texture => |texture| texture,
+        else => return copyDescriptorRange(dst_desc, dst_array_element, src_desc, src_array_element, descriptor_count),
+    };
+    const src_texture = switch (src_desc) {
+        .texture => |texture| texture,
+        else => return false,
+    };
+
+    for (0..descriptor_count) |i| {
+        const dst_index = dst_array_element + i;
+        const src_index = src_array_element + i;
+        dst_texture[dst_index].view = src_texture[src_index].view;
+        if (dst_index < immutable_samplers.len) {
+            dst_texture[dst_index].sampler = @as(*SoftSampler, @alignCast(@fieldParentPtr("interface", @constCast(immutable_samplers[dst_index]))));
+        }
     }
 
     return true;
@@ -285,7 +355,7 @@ pub fn copy(interface: *Interface, src_interface: *const Interface, data: vk.Cop
         const src_remaining = src_len - src_array_element;
         const copy_count = @min(descriptor_count, dst_remaining, src_remaining);
 
-        if (!copyDescriptorRange(dst_desc, dst_array_element, src_desc, src_array_element, copy_count)) {
+        if (!self.copyDescriptorRangePreservingImmutableSamplers(dst_binding, dst_desc, dst_array_element, src_desc, src_array_element, copy_count)) {
             base.unsupported("descriptor type for copy", .{});
             return;
         }
@@ -301,11 +371,12 @@ pub fn write(interface: *Interface, write_data: vk.WriteDescriptorSet) VkError!v
 
     switch (write_data.descriptor_type) {
         .uniform_buffer,
+        .uniform_buffer_dynamic,
         .storage_buffer,
         .storage_buffer_dynamic,
         => {
             for (write_data.p_buffer_info, 0..write_data.descriptor_count) |buffer_info, i| {
-                const desc = &self.descriptors[write_data.dst_binding].buffer[i];
+                const desc = &self.descriptors[write_data.dst_binding].buffer[write_data.dst_array_element + i];
                 desc.* = .{
                     .object = null,
                     .offset = buffer_info.offset,
@@ -321,11 +392,12 @@ pub fn write(interface: *Interface, write_data: vk.WriteDescriptorSet) VkError!v
             }
         },
 
+        .sampled_image,
         .storage_image,
         .input_attachment,
         => {
             for (write_data.p_image_info, 0..write_data.descriptor_count) |image_info, i| {
-                const desc = &self.descriptors[write_data.dst_binding].image[i];
+                const desc = &self.descriptors[write_data.dst_binding].image[write_data.dst_array_element + i];
                 desc.* = .{ .object = null };
                 if (image_info.image_view != .null_handle) {
                     const image_view = try NonDispatchable(ImageView).fromHandleObject(image_info.image_view);
@@ -334,11 +406,30 @@ pub fn write(interface: *Interface, write_data: vk.WriteDescriptorSet) VkError!v
             }
         },
 
+        .sampler,
+        => {
+            for (write_data.p_image_info, 0..write_data.descriptor_count) |image_info, i| {
+                const desc = &self.descriptors[write_data.dst_binding].sampler[write_data.dst_array_element + i];
+                const immutable_samplers = self.interface.layout.bindings[write_data.dst_binding].immutable_samplers;
+                const array_element = write_data.dst_array_element + i;
+                desc.* = .{
+                    .object = if (array_element < immutable_samplers.len)
+                        @as(*SoftSampler, @alignCast(@fieldParentPtr("interface", @constCast(immutable_samplers[array_element]))))
+                    else
+                        null,
+                };
+                if (immutable_samplers.len == 0 and image_info.sampler != .null_handle) {
+                    const sampler = try NonDispatchable(Sampler).fromHandleObject(image_info.sampler);
+                    desc.object = @as(*SoftSampler, @alignCast(@fieldParentPtr("interface", sampler)));
+                }
+            }
+        },
+
         .storage_texel_buffer,
         .uniform_texel_buffer,
         => {
             for (write_data.p_texel_buffer_view, 0..write_data.descriptor_count) |view, i| {
-                const desc = &self.descriptors[write_data.dst_binding].texel_buffer[i];
+                const desc = &self.descriptors[write_data.dst_binding].texel_buffer[write_data.dst_array_element + i];
                 desc.* = .{ .object = null };
                 if (view != .null_handle) {
                     const buffer_view = try NonDispatchable(BufferView).fromHandleObject(view);
@@ -350,16 +441,21 @@ pub fn write(interface: *Interface, write_data: vk.WriteDescriptorSet) VkError!v
         .combined_image_sampler,
         => {
             for (write_data.p_image_info, 0..write_data.descriptor_count) |image_info, i| {
-                const desc = &self.descriptors[write_data.dst_binding].texture[i];
+                const desc = &self.descriptors[write_data.dst_binding].texture[write_data.dst_array_element + i];
+                const immutable_samplers = self.interface.layout.bindings[write_data.dst_binding].immutable_samplers;
+                const array_element = write_data.dst_array_element + i;
                 desc.* = .{
-                    .sampler = null,
+                    .sampler = if (array_element < immutable_samplers.len)
+                        @as(*SoftSampler, @alignCast(@fieldParentPtr("interface", @constCast(immutable_samplers[array_element]))))
+                    else
+                        null,
                     .view = null,
                 };
                 if (image_info.image_view != .null_handle) {
                     const image_view = try NonDispatchable(ImageView).fromHandleObject(image_info.image_view);
                     desc.view = @as(*SoftImageView, @alignCast(@fieldParentPtr("interface", image_view)));
                 }
-                if (image_info.sampler != .null_handle) {
+                if (immutable_samplers.len == 0 and image_info.sampler != .null_handle) {
                     const sampler = try NonDispatchable(Sampler).fromHandleObject(image_info.sampler);
                     desc.sampler = @as(*SoftSampler, @alignCast(@fieldParentPtr("interface", sampler)));
                 }

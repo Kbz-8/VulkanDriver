@@ -11,6 +11,7 @@ const SoftImage = @import("../SoftImage.zig");
 
 const VkError = base.VkError;
 const SpvRuntimeError = spv.Runtime.RuntimeError;
+const INTERFACE_BLOB_PADDING = @sizeOf(zm.F32x4);
 
 pub fn shaderInvocation(
     allocator: std.mem.Allocator,
@@ -19,9 +20,11 @@ pub fn shaderInvocation(
     position: zm.F32x4,
     inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolation,
 ) SpvRuntimeError![spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8 {
+    var fragment_inputs = inputs;
+    errdefer freeOwnedInputs(allocator, fragment_inputs);
+
     const io = draw_call.renderer.device.interface.io();
 
-    _ = position;
     const pipeline = draw_call.renderer.state.pipeline orelse return undefined;
 
     const shader = pipeline.stages.getPtr(.fragment) orelse return undefined;
@@ -32,7 +35,12 @@ pub fn shaderInvocation(
     mutex.lock(io) catch return SpvRuntimeError.Unknown;
     defer mutex.unlock(io);
 
+    rt.resetInvocation(allocator);
     try rt.populatePushConstants(draw_call.renderer.state.push_constant_blob[0..]);
+    rt.writeBuiltIn(std.mem.asBytes(&position), .FragCoord) catch |err| switch (err) {
+        SpvRuntimeError.NotFound => {},
+        else => return err,
+    };
 
     const entry = try rt.getEntryPointByName(shader.entry);
 
@@ -41,9 +49,23 @@ pub fn shaderInvocation(
             SpvRuntimeError.NotFound => continue,
             else => return err,
         };
-        try rt.writeInput(inputs[location].blob, result_word);
-        if (inputs[location].free_responsability)
-            allocator.free(inputs[location].blob);
+
+        var input = fragment_inputs[location];
+        if (input.blob.len == 0) {
+            const memory_size = try rt.getResultMemorySize(result_word);
+            const zeroes = allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return SpvRuntimeError.OutOfMemory;
+            @memset(zeroes, 0);
+            fragment_inputs[location] = .{
+                .blob = zeroes,
+                .size = memory_size,
+                .free_responsability = true,
+            };
+            input = fragment_inputs[location];
+        }
+
+        if (input.blob.len != 0) {
+            try rt.writeInput(input.blob, result_word);
+        }
     }
 
     rt.callEntryPoint(allocator, entry) catch |err| switch (err) {
@@ -66,6 +88,14 @@ pub fn shaderInvocation(
     }
 
     try rt.flushDescriptorSets(allocator);
+    freeOwnedInputs(allocator, fragment_inputs);
 
     return outputs;
+}
+
+fn freeOwnedInputs(allocator: std.mem.Allocator, inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolation) void {
+    for (inputs) |input| {
+        if (input.free_responsability)
+            allocator.free(input.blob);
+    }
 }

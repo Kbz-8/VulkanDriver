@@ -231,13 +231,31 @@ pub fn bindDescriptorSets(interface: *Interface, bind_point: vk.PipelineBindPoin
 
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
+            var dynamic_offset_index: usize = 0;
             for (impl.first_set.., impl.sets[0..]) |i, set| {
                 if (set == null)
                     break;
-                device.pipeline_states[@intCast(@intFromEnum(impl.bind_point))].sets[i] = @alignCast(@fieldParentPtr("interface", set.?));
+                const state = &device.pipeline_states[@intCast(@intFromEnum(impl.bind_point))];
+                const soft_set: *SoftDescriptorSet = @alignCast(@fieldParentPtr("interface", set.?));
+                state.sets[i] = soft_set;
+
+                const dynamic_count = soft_set.interface.layout.dynamic_descriptor_count;
+                if (dynamic_count > ExecutionDevice.MAX_DYNAMIC_DESCRIPTORS_PER_SET or
+                    dynamic_offset_index + dynamic_count > impl.dynamic_offsets.len)
+                {
+                    return VkError.ValidationFailed;
+                }
+                @memcpy(
+                    state.dynamic_offsets[i][0..dynamic_count],
+                    impl.dynamic_offsets[dynamic_offset_index .. dynamic_offset_index + dynamic_count],
+                );
+                dynamic_offset_index += dynamic_count;
             }
         }
     };
+
+    const dynamic_offsets_copy = allocator.dupe(u32, dynamic_offsets) catch return VkError.OutOfHostMemory;
+    errdefer allocator.free(dynamic_offsets_copy);
 
     const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(cmd);
@@ -245,7 +263,7 @@ pub fn bindDescriptorSets(interface: *Interface, bind_point: vk.PipelineBindPoin
         .bind_point = bind_point,
         .first_set = first_set,
         .sets = sets,
-        .dynamic_offsets = dynamic_offsets,
+        .dynamic_offsets = dynamic_offsets_copy,
     };
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }

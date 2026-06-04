@@ -1,12 +1,15 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
+const zm = base.zm;
 
 const clip = @import("clip.zig");
 
 const bresenham = @import("rasterizer/bresenham.zig");
 const edge_function = @import("rasterizer/edge_function.zig");
 const common = @import("rasterizer/common.zig");
+const fragment = @import("fragment.zig");
+const blitter = @import("blitter.zig");
 
 const Renderer = @import("Renderer.zig");
 const Vertex = Renderer.Vertex;
@@ -21,7 +24,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
     const pipeline_data = (renderer.state.pipeline orelse return VkError.InvalidHandleDrv).interface.mode.graphics;
     const topology = pipeline_data.input_assembly.topology;
 
-    const color_attachments = draw_call.render_pass.interface.subpasses[renderer.subpass_index].color_attachments orelse return VkError.InvalidAttachmentDrv;
+    const color_attachments = draw_call.render_pass.interface.subpasses[renderer.subpass_index].color_attachments orelse &.{};
     const color_attachment_access = allocator.alloc(?common.RenderTargetAccess, color_attachments.len) catch return VkError.OutOfDeviceMemory;
     @memset(color_attachment_access, null);
 
@@ -76,6 +79,15 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
     };
 
     switch (topology) {
+        .point_list => for (draw_call.vertices) |*vertex| {
+            try clipTransformAndRasterizePoint(
+                allocator,
+                draw_call,
+                vertex,
+                color_attachment_access,
+                if (depth_attachment_access) |*access| access else null,
+            );
+        },
         .triangle_list => for (0..@divTrunc(draw_call.vertices.len, 3)) |triangle_index| {
             const first_vertex = triangle_index * 3;
             const v0 = &draw_call.vertices[first_vertex + 0];
@@ -175,6 +187,61 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
     }
 
     draw_call.rasterizer_wait_group.await(io) catch return VkError.DeviceLost;
+}
+
+fn clipTransformAndRasterizePoint(
+    allocator: std.mem.Allocator,
+    draw_call: *DrawCall,
+    vertex: *Vertex,
+    color_attachment_access: []const ?common.RenderTargetAccess,
+    depth_attachment_access: ?*common.RenderTargetAccess,
+) VkError!void {
+    const x, const y, const z, const w = vertex.position;
+    if (w == 0.0 or x < -w or x > w or y < -w or y > w or z < 0.0 or z > w)
+        return;
+
+    var transformed = vertex.*;
+    clip.viewportTransformVertex(draw_call.viewport, &transformed);
+
+    const point_size = 1.0;
+    const min_x: i32 = @intFromFloat(@floor(transformed.position[0] - (point_size / 2.0)));
+    const max_x: i32 = @intFromFloat(@ceil(transformed.position[0] + (point_size / 2.0)) - 1.0);
+    const min_y: i32 = @intFromFloat(@floor(transformed.position[1] - (point_size / 2.0)));
+    const max_y: i32 = @intFromFloat(@ceil(transformed.position[1] + (point_size / 2.0)) - 1.0);
+
+    var py = min_y;
+    while (py <= max_y) : (py += 1) {
+        var px = min_x;
+        while (px <= max_x) : (px += 1) {
+            if (!common.scissorContainsPixel(draw_call.scissor, px, py))
+                continue;
+
+            if (depth_attachment_access) |depth| {
+                const offset = @as(usize, @intCast(px)) * depth.texel_size + @as(usize, @intCast(py)) * depth.row_pitch;
+                const depth_value = blitter.readFloat4(depth.base[offset..], depth.format);
+                if (transformed.position[2] >= depth_value[0])
+                    continue;
+            }
+
+            const outputs = fragment.shaderInvocation(
+                allocator,
+                draw_call,
+                0,
+                zm.f32x4(@floatFromInt(px), @floatFromInt(py), transformed.position[2], 1.0),
+                try common.interpolateVertexOutputs(allocator, &transformed, &transformed, &transformed, 1.0, 0.0, 0.0),
+            ) catch |err| {
+                std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
+                if (comptime base.config.logs == .verbose) {
+                    if (@errorReturnTrace()) |trace| {
+                        std.debug.dumpErrorReturnTrace(trace);
+                    }
+                }
+                return;
+            };
+
+            try common.writeToTargets(outputs, draw_call, color_attachment_access, depth_attachment_access, @intCast(px), @intCast(py), transformed.position[2]);
+        }
+    }
 }
 
 fn clipTransformAndRasterizeLine(

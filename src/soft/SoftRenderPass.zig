@@ -18,6 +18,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 
     interface.vtable = &.{
         .destroy = destroy,
+        .getRenderAreaGranularity = getRenderAreaGranularity,
     };
 
     self.* = .{
@@ -29,4 +30,11 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     allocator.destroy(self);
+}
+
+pub fn getRenderAreaGranularity(_: *Interface) vk.Extent2D {
+    return .{
+        .width = 1,
+        .height = 1,
+    };
 }

@@ -180,7 +180,7 @@ vkGetPhysicalDeviceXcbPresentationSupportKHR     | ⚙️ WIP
 vkGetPhysicalDeviceXlibPresentationSupportKHR    | ⚙️ WIP
 vkGetPipelineCacheData                           | ⚙️ WIP
 vkGetQueryPoolResults                            | ⚙️ WIP
-vkGetRenderAreaGranularity                       | ⚙️ WIP
+vkGetRenderAreaGranularity                       | ✅ Implemented
 vkGetSwapchainImagesKHR                          | ✅ Implemented
 vkInvalidateMappedMemoryRanges                   | ✅ Implemented
 vkMapMemory                                      | ✅ Implemented
@@ -200,7 +200,7 @@ vkUpdateDescriptorSets                           | ✅ Implemented
 vkWaitForFences                                  | ✅ Implemented
 </details>
 
-[Here](https://vulkan-driver-cts-report.kbz8.me/) shalt thou find a most meticulous account of the Vulkan 1.0 conformance trials, set forth for thy scrutiny.
+[Here](https://vulkan-driver.kbz8.me/cts/soft/) shalt thou find a most meticulous account of the Vulkan 1.0 conformance trials, set forth for thy scrutiny.
 
 ## License
 

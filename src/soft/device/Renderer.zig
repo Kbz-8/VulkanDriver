@@ -50,6 +50,7 @@ pub const Vertex = struct {
     outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]?struct {
         interpolation_type: enum { smooth, flat, noperspective },
         blob: []u8,
+        size: usize,
     },
 };
 

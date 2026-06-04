@@ -16,6 +16,7 @@ min_filter: vk.Filter,
 address_mode_u: vk.SamplerAddressMode,
 address_mode_v: vk.SamplerAddressMode,
 address_mode_w: vk.SamplerAddressMode,
+border_color: vk.BorderColor,
 
 vtable: *const VTable,
 
@@ -32,6 +33,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Sampl
         .address_mode_u = info.address_mode_u,
         .address_mode_v = info.address_mode_v,
         .address_mode_w = info.address_mode_w,
+        .border_color = info.border_color,
         .vtable = undefined,
     };
 }

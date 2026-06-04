@@ -21,6 +21,7 @@ pub const RenderTargetAccess = struct {
 
 pub const VertexInterpolation = struct {
     blob: []const u8,
+    size: usize,
     free_responsability: bool,
 };
 
@@ -49,20 +50,25 @@ pub fn interpolateVertexOutputs(
     b1: f32,
     b2: f32,
 ) VkError![spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolation {
-    var inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolation = undefined;
+    var inputs = [_]VertexInterpolation{.{
+        .blob = &.{},
+        .size = 0,
+        .free_responsability = false,
+    }} ** spv.SPIRV_MAX_OUTPUT_LOCATIONS;
 
     for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
         const out0 = v0.outputs[location] orelse continue;
         const out1 = v1.outputs[location] orelse continue;
         const out2 = v2.outputs[location] orelse continue;
 
-        if (out0.interpolation_type == .flat or out0.blob.len == 0) {
-            inputs[location] = .{ .blob = out0.blob, .free_responsability = false };
+        if (out0.interpolation_type == .flat or out0.size == 0) {
+            inputs[location] = .{ .blob = out0.blob, .size = out0.size, .free_responsability = false };
             continue;
         }
 
-        const len = @min(out0.blob.len, out1.blob.len, out2.blob.len);
-        const input = allocator.alloc(u8, len) catch return VkError.OutOfDeviceMemory;
+        const len = @min(out0.size, out1.size, out2.size);
+        const input = allocator.alloc(u8, len + @sizeOf(F32x4)) catch return VkError.OutOfDeviceMemory;
+        @memset(input, 0);
 
         var byte_index: usize = 0;
         while (byte_index + @sizeOf(F32x4) <= len) : (byte_index += @sizeOf(F32x4)) {
@@ -80,9 +86,9 @@ pub fn interpolateVertexOutputs(
         }
 
         if (byte_index < len)
-            @memcpy(input[byte_index..], out0.blob[byte_index..len]);
+            @memcpy(input[byte_index..len], out0.blob[byte_index..len]);
 
-        inputs[location] = .{ .blob = input, .free_responsability = true };
+        inputs[location] = .{ .blob = input, .size = len, .free_responsability = true };
     }
 
     return inputs;

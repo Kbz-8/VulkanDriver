@@ -157,9 +157,10 @@ inline fn run(data: RunData) !void {
             continue;
         }
 
-        try setupWorkgroupBuiltins(data.self, rt, group_count_vec, group_id_vec);
-
         for (0..data.invocations_per_workgroup) |i| {
+            rt.resetInvocation(allocator);
+            try setupWorkgroupBuiltins(data.self, rt, group_count_vec, group_id_vec);
+
             const invocation_index = data.self.invocation_index.fetchAdd(1, .monotonic);
 
             try setupSubgroupBuiltins(data.self, rt, .{
@@ -202,6 +203,7 @@ fn runBarrierWorkgroup(
     const allocator = data.self.device.device_allocator.allocator();
 
     for (runtimes, 0..) |*rt, i| {
+        rt.resetInvocation(allocator);
         try ExecutionDevice.writeDescriptorSets(data.self.state, rt);
         try setupWorkgroupBuiltins(data.self, rt, group_count, group_id);
         try setupSubgroupBuiltins(data.self, rt, group_id, i);

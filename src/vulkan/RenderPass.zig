@@ -28,6 +28,7 @@ vtable: *const VTable,
 
 pub const VTable = struct {
     destroy: *const fn (*Self, std.mem.Allocator) void,
+    getRenderAreaGranularity: *const fn (*Self) vk.Extent2D,
 };
 
 pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.RenderPassCreateInfo) VkError!Self {
@@ -40,7 +41,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Rende
         for (base_attachements, attachments, 0..info.attachment_count) |base_attachment, *attachment, _| {
             attachment.* = base_attachment;
         }
-    } else {
+    } else if (info.attachment_count != 0) {
         return VkError.ValidationFailed;
     }
 
@@ -92,4 +93,8 @@ pub fn destroy(self: *Self, allocator: std.mem.Allocator) void {
     }
     allocator.free(self.subpasses);
     self.vtable.destroy(self, allocator);
+}
+
+pub inline fn getRenderAreaGranularity(self: *Self) vk.Extent2D {
+    return self.vtable.getRenderAreaGranularity(self);
 }

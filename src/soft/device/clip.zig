@@ -10,6 +10,7 @@ const Renderer = @import("Renderer.zig");
 const Vertex = Renderer.Vertex;
 
 const VkError = base.VkError;
+const INTERFACE_BLOB_PADDING = @sizeOf(F32x4);
 
 const ClipPlane = enum {
     Left,
@@ -142,9 +143,10 @@ fn isVertexInsidePlane(vertex: *const Vertex, plane: ClipPlane) bool {
     return clipDistance(vertex.position, plane) >= 0.0;
 }
 
-fn interpolateBlob(allocator: std.mem.Allocator, a: []const u8, b: []const u8, t: f32) VkError![]u8 {
-    const len = @min(a.len, b.len);
-    const result = allocator.alloc(u8, len) catch return VkError.OutOfDeviceMemory;
+fn interpolateBlob(allocator: std.mem.Allocator, a: []const u8, b: []const u8, size: usize, t: f32) VkError![]u8 {
+    const len = @min(size, a.len, b.len);
+    const result = allocator.alloc(u8, len + INTERFACE_BLOB_PADDING) catch return VkError.OutOfDeviceMemory;
+    @memset(result, 0);
 
     var byte_index: usize = 0;
     while (byte_index + @sizeOf(F32x4) <= len) : (byte_index += @sizeOf(F32x4)) {
@@ -160,7 +162,7 @@ fn interpolateBlob(allocator: std.mem.Allocator, a: []const u8, b: []const u8, t
     }
 
     if (byte_index < len)
-        @memcpy(result[byte_index..], a[byte_index..len]);
+        @memcpy(result[byte_index..len], a[byte_index..len]);
 
     return result;
 }
@@ -182,7 +184,8 @@ fn interpolateVertexForClipping(allocator: std.mem.Allocator, a: *const Vertex, 
             .blob = if (out_a.interpolation_type == .flat)
                 allocator.dupe(u8, out_a.blob) catch return VkError.OutOfDeviceMemory
             else
-                try interpolateBlob(allocator, out_a.blob, out_b.blob, t),
+                try interpolateBlob(allocator, out_a.blob, out_b.blob, @min(out_a.size, out_b.size), t),
+            .size = @min(out_a.size, out_b.size),
         };
     }
 

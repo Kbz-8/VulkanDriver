@@ -34,7 +34,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Frame
         for (base_attachements, attachments, 0..info.attachment_count) |base_attachment, *attachment, _| {
             attachment.* = try NonDispatchable(ImageView).fromHandleObject(base_attachment);
         }
-    } else {
+    } else if (info.attachment_count != 0) {
         return VkError.ValidationFailed;
     }
 

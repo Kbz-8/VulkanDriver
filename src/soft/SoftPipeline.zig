@@ -382,6 +382,7 @@ const CubeCoordinate = struct {
     face: u32,
     u: f32,
     v: f32,
+    w: f32 = 0.0,
 };
 
 fn resolveCubeCoordinate(x: f32, y: f32, z: f32) CubeCoordinate {
@@ -455,13 +456,17 @@ fn cubeDirection(face: u32, u: f32, v: f32) struct { x: f32, y: f32, z: f32 } {
 fn readSampledFloat4(
     image: *SoftImage,
     image_view: *SoftImageView,
+    sampler: *SoftSampler,
     dim: spv.SpvDim,
     coord: CubeCoordinate,
     ix: i32,
     iy: i32,
+    iz: i32,
 ) VkError!zm.F32x4 {
-    const width_f: f32 = @floatFromInt(image.interface.extent.width);
-    const height_f: f32 = @floatFromInt(image.interface.extent.height);
+    const range = image_view.interface.subresource_range;
+    const extent = image.getMipLevelExtent(range.base_mip_level);
+    const width_f: f32 = @floatFromInt(extent.width);
+    const height_f: f32 = @floatFromInt(extent.height);
 
     const texel = if (dim == .Cube) blk: {
         const dir = cubeDirection(
@@ -472,61 +477,127 @@ fn readSampledFloat4(
         break :blk resolveCubeCoordinate(dir.x, dir.y, dir.z);
     } else coord;
 
+    const z: i32, const layer: u32 = switch (image_view.interface.view_type) {
+        .@"1d_array" => .{ 0, range.base_array_layer + @as(u32, @intCast(sampleAddress(@intFromFloat(coord.v), viewLayerCount(image, range), .clamp_to_edge))) },
+        .@"2d_array", .cube_array => .{ 0, range.base_array_layer + @as(u32, @intCast(sampleAddress(@intFromFloat(coord.w), viewLayerCount(image, range), .clamp_to_edge))) },
+        .@"3d" => .{ sampleAddressOrBorder(iz, extent.depth, sampler.interface.address_mode_w) orelse return samplerBorderColor(sampler), range.base_array_layer },
+        .cube => .{ 0, range.base_array_layer + texel.face },
+        else => .{ 0, range.base_array_layer },
+    };
+
+    const sx = if (dim == .Cube)
+        std.math.clamp(@as(i32, @intFromFloat(texel.u * width_f)), 0, @as(i32, @intCast(extent.width)) - 1)
+    else
+        sampleAddressOrBorder(ix, extent.width, sampler.interface.address_mode_u) orelse return samplerBorderColor(sampler);
+    const sy = if (dim == .Cube)
+        std.math.clamp(@as(i32, @intFromFloat(texel.v * height_f)), 0, @as(i32, @intCast(extent.height)) - 1)
+    else
+        sampleAddressOrBorder(iy, extent.height, sampler.interface.address_mode_v) orelse return samplerBorderColor(sampler);
+
     const result = try image.readFloat4(
         .{
-            .x = if (dim == .Cube)
-                std.math.clamp(@as(i32, @intFromFloat(texel.u * width_f)), 0, image.interface.extent.width - 1)
-            else
-                std.math.clamp(ix, 0, image.interface.extent.width - 1),
-            .y = if (dim == .Cube)
-                std.math.clamp(@as(i32, @intFromFloat(texel.v * height_f)), 0, image.interface.extent.height - 1)
-            else
-                std.math.clamp(iy, 0, image.interface.extent.height - 1),
-            .z = 0,
+            .x = sx,
+            .y = sy,
+            .z = z,
         },
         .{
-            .aspect_mask = image_view.interface.subresource_range.aspect_mask,
-            .mip_level = image_view.interface.subresource_range.base_mip_level,
-            .array_layer = image_view.interface.subresource_range.base_array_layer + texel.face,
+            .aspect_mask = range.aspect_mask,
+            .mip_level = range.base_mip_level,
+            .array_layer = layer,
         },
         image_view.interface.format,
     );
     return result;
 }
 
-fn sampleNearestFloat4(image: *SoftImage, image_view: *SoftImageView, dim: spv.SpvDim, coord: CubeCoordinate) VkError!zm.F32x4 {
-    const width_f: f32 = @floatFromInt(image.interface.extent.width);
-    const height_f: f32 = @floatFromInt(image.interface.extent.height);
+fn sampleAddress(coord: i32, extent: u32, mode: vk.SamplerAddressMode) i32 {
+    return sampleAddressOrBorder(coord, extent, mode).?;
+}
+
+fn sampleAddressOrBorder(coord: i32, extent: u32, mode: vk.SamplerAddressMode) ?i32 {
+    const extent_i: i32 = @intCast(extent);
+    return switch (mode) {
+        .repeat => @mod(coord, extent_i),
+        .mirrored_repeat => blk: {
+            const period = extent_i * 2;
+            const mirrored = @mod(coord, period);
+            break :blk if (mirrored < extent_i) mirrored else period - mirrored - 1;
+        },
+        .clamp_to_border => if (coord < 0 or coord >= extent_i) null else coord,
+        else => std.math.clamp(coord, 0, extent_i - 1),
+    };
+}
+
+fn samplerBorderColor(sampler: *SoftSampler) zm.F32x4 {
+    return switch (sampler.interface.border_color) {
+        .float_opaque_white, .int_opaque_white => .{ 1.0, 1.0, 1.0, 1.0 },
+        .float_opaque_black, .int_opaque_black => .{ 0.0, 0.0, 0.0, 1.0 },
+        else => .{ 0.0, 0.0, 0.0, 0.0 },
+    };
+}
+
+fn viewLayerCount(image: *SoftImage, range: vk.ImageSubresourceRange) u32 {
+    return if (range.layer_count == vk.REMAINING_ARRAY_LAYERS)
+        image.interface.array_layers - range.base_array_layer
+    else
+        range.layer_count;
+}
+
+fn sampleNearestFloat4(image: *SoftImage, image_view: *SoftImageView, sampler: *SoftSampler, dim: spv.SpvDim, coord: CubeCoordinate) VkError!zm.F32x4 {
+    const extent = image.getMipLevelExtent(image_view.interface.subresource_range.base_mip_level);
+    const width_f: f32 = @floatFromInt(extent.width);
+    const height_f: f32 = @floatFromInt(extent.height);
     return readSampledFloat4(
         image,
         image_view,
+        sampler,
         dim,
         coord,
         @intFromFloat(coord.u * width_f),
         @intFromFloat(coord.v * height_f),
+        @intFromFloat(coord.w * @as(f32, @floatFromInt(extent.depth))),
     );
 }
 
-fn sampleLinearFloat4(image: *SoftImage, image_view: *SoftImageView, dim: spv.SpvDim, coord: CubeCoordinate) VkError!zm.F32x4 {
-    const width_f: f32 = @floatFromInt(image.interface.extent.width);
-    const height_f: f32 = @floatFromInt(image.interface.extent.height);
+fn sampleLinearFloat4(image: *SoftImage, image_view: *SoftImageView, sampler: *SoftSampler, dim: spv.SpvDim, coord: CubeCoordinate) VkError!zm.F32x4 {
+    const extent = image.getMipLevelExtent(image_view.interface.subresource_range.base_mip_level);
+    const width_f: f32 = @floatFromInt(extent.width);
+    const height_f: f32 = @floatFromInt(extent.height);
     const x = coord.u * width_f - 0.5;
     const y = coord.v * height_f - 0.5;
+    const z = coord.w * @as(f32, @floatFromInt(extent.depth)) - 0.5;
     const x0: i32 = @intFromFloat(@floor(x));
     const y0: i32 = @intFromFloat(@floor(y));
+    const z0: i32 = @intFromFloat(@floor(z));
     const x1 = x0 + 1;
     const y1 = y0 + 1;
+    const z1 = z0 + 1;
     const wx = x - @as(f32, @floatFromInt(x0));
     const wy = y - @as(f32, @floatFromInt(y0));
+    const wz = z - @as(f32, @floatFromInt(z0));
 
-    const p00 = try readSampledFloat4(image, image_view, dim, coord, x0, y0);
-    const p10 = try readSampledFloat4(image, image_view, dim, coord, x1, y0);
-    const p01 = try readSampledFloat4(image, image_view, dim, coord, x0, y1);
-    const p11 = try readSampledFloat4(image, image_view, dim, coord, x1, y1);
+    const p000 = try readSampledFloat4(image, image_view, sampler, dim, coord, x0, y0, z0);
+    const p100 = try readSampledFloat4(image, image_view, sampler, dim, coord, x1, y0, z0);
+    const p010 = try readSampledFloat4(image, image_view, sampler, dim, coord, x0, y1, z0);
+    const p110 = try readSampledFloat4(image, image_view, sampler, dim, coord, x1, y1, z0);
 
-    const row0 = p00 * zm.f32x4s(1.0 - wx) + p10 * zm.f32x4s(wx);
-    const row1 = p01 * zm.f32x4s(1.0 - wx) + p11 * zm.f32x4s(wx);
-    return row0 * zm.f32x4s(1.0 - wy) + row1 * zm.f32x4s(wy);
+    const row00 = p000 * zm.f32x4s(1.0 - wx) + p100 * zm.f32x4s(wx);
+    const row10 = p010 * zm.f32x4s(1.0 - wx) + p110 * zm.f32x4s(wx);
+    const slice0 = row00 * zm.f32x4s(1.0 - wy) + row10 * zm.f32x4s(wy);
+
+    if (image_view.interface.view_type != .@"3d")
+        return slice0;
+
+    const p001 = try readSampledFloat4(image, image_view, sampler, dim, coord, x0, y0, z1);
+    const p101 = try readSampledFloat4(image, image_view, sampler, dim, coord, x1, y0, z1);
+    const p011 = try readSampledFloat4(image, image_view, sampler, dim, coord, x0, y1, z1);
+    const p111 = try readSampledFloat4(image, image_view, sampler, dim, coord, x1, y1, z1);
+
+    const row01 = p001 * zm.f32x4s(1.0 - wx) + p101 * zm.f32x4s(wx);
+    const row11 = p011 * zm.f32x4s(1.0 - wx) + p111 * zm.f32x4s(wx);
+    const slice1 = row01 * zm.f32x4s(1.0 - wy) + row11 * zm.f32x4s(wy);
+
+    return slice0 * zm.f32x4s(1.0 - wz) + slice1 * zm.f32x4s(wz);
 }
 
 fn sampleImageFloat4(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim, x: f32, y: f32, z: f32) SpvRuntimeError!spv.Runtime.Vec4(f32) {
@@ -546,23 +617,20 @@ fn sampleImageFloat4(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim,
         if (dim == .Cube) {
             const coord = resolveCubeCoordinate(x, y, z);
             pixel = switch (sampler.interface.mag_filter) {
-                .linear => sampleLinearFloat4(image, image_view, dim, coord),
-                else => sampleNearestFloat4(image, image_view, dim, coord),
+                .linear => sampleLinearFloat4(image, image_view, sampler, dim, coord),
+                else => sampleNearestFloat4(image, image_view, sampler, dim, coord),
             } catch return SpvRuntimeError.Unknown;
         } else {
-            pixel = image.readFloat4(
-                .{
-                    .x = std.math.clamp(@as(i32, @intFromFloat(x * @as(f32, @floatFromInt(image.interface.extent.width)))), 0, image.interface.extent.width - 1),
-                    .y = std.math.clamp(@as(i32, @intFromFloat(y * @as(f32, @floatFromInt(image.interface.extent.height)))), 0, image.interface.extent.height - 1),
-                    .z = std.math.clamp(@as(i32, @intFromFloat(z * @as(f32, @floatFromInt(image.interface.extent.depth)))), 0, image.interface.extent.depth - 1),
-                },
-                .{
-                    .aspect_mask = image_view.interface.subresource_range.aspect_mask,
-                    .mip_level = image_view.interface.subresource_range.base_mip_level,
-                    .array_layer = image_view.interface.subresource_range.base_array_layer,
-                },
-                image_view.interface.format,
-            ) catch return SpvRuntimeError.Unknown;
+            const coord: CubeCoordinate = .{
+                .u = x,
+                .v = y,
+                .w = z,
+                .face = 0,
+            };
+            pixel = switch (sampler.interface.mag_filter) {
+                .linear => sampleLinearFloat4(image, image_view, sampler, dim, coord),
+                else => sampleNearestFloat4(image, image_view, sampler, dim, coord),
+            } catch return SpvRuntimeError.Unknown;
         }
     }
 
