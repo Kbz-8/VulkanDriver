@@ -211,6 +211,7 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
     const cts_exe_name = cts.path(b.fmt("deqp-vk-{s}", .{
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
             .linux => "linux.x86_64",
+            .windows => "windows.exe",
             else => unreachable,
         },
     }));
@@ -287,6 +288,7 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
     const cts_exe_name = cts.path(b.fmt("deqp-vk-{s}", .{
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
             .linux => "linux.x86_64",
+            .windows => "windows.exe",
             else => unreachable,
         },
     }));

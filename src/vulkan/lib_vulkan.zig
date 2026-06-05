@@ -46,7 +46,13 @@ pub const ShaderModule = @import("ShaderModule.zig");
 
 pub const SurfaceKHR = @import("wsi/SurfaceKHR.zig");
 pub const SwapchainKHR = @import("wsi/SwapchainKHR.zig");
-pub const WaylandSurfaceKHR = @import("wsi/WaylandSurfaceKHR.zig");
+
+const has_wayland = switch (builtin.os.tag) {
+    .linux, .freebsd, .netbsd, .openbsd, .dragonfly => true,
+    else => false,
+};
+
+pub const WaylandSurfaceKHR = if (has_wayland) @import("wsi/WaylandSurfaceKHR.zig") else undefined;
 
 inline fn entryPointBeginLogTrace(comptime scope: @EnumLiteral()) void {
     std.log.scoped(scope).debug("Calling {s}...", .{@tagName(scope)});
@@ -2173,17 +2179,21 @@ pub export fn apeCreateSwapchainKHR(p_device: vk.Device, info: *const vk.Swapcha
 }
 
 pub export fn apeCreateWaylandSurfaceKHR(p_instance: vk.Instance, info: *const vk.WaylandSurfaceCreateInfoKHR, callbacks: ?*const vk.AllocationCallbacks, p_surface: *vk.SurfaceKHR) callconv(vk.vulkan_call_conv) vk.Result {
-    entryPointBeginLogTrace(.vkCreateWaylandSurfaceKHR);
-    defer entryPointEndLogTrace();
+    if (comptime has_wayland) {
+        entryPointBeginLogTrace(.vkCreateWaylandSurfaceKHR);
+        defer entryPointEndLogTrace();
 
-    if (info.s_type != .wayland_surface_create_info_khr) {
-        return .error_validation_failed;
+        if (info.s_type != .wayland_surface_create_info_khr) {
+            return .error_validation_failed;
+        }
+        const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+        const instance = Dispatchable(Instance).fromHandleObject(p_instance) catch |err| return toVkResult(err);
+        const surface = WaylandSurfaceKHR.create(instance, allocator, info) catch |err| return toVkResult(err);
+        p_surface.* = (NonDispatchable(SurfaceKHR).wrap(allocator, surface) catch |err| return toVkResult(err)).toVkHandle(vk.SurfaceKHR);
+        return .success;
+    } else {
+        return .error_unknown;
     }
-    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
-    const instance = Dispatchable(Instance).fromHandleObject(p_instance) catch |err| return toVkResult(err);
-    const surface = WaylandSurfaceKHR.create(instance, allocator, info) catch |err| return toVkResult(err);
-    p_surface.* = (NonDispatchable(SurfaceKHR).wrap(allocator, surface) catch |err| return toVkResult(err)).toVkHandle(vk.SurfaceKHR);
-    return .success;
 }
 
 pub export fn apeDestroySurfaceKHR(p_instance: vk.Instance, p_surface: vk.SurfaceKHR, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
