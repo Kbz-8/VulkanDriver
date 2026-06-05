@@ -74,7 +74,6 @@ pub const DrawCall = struct {
     render_pass: *SoftRenderPass,
     framebuffer: *SoftFramebuffer,
 
-    allocator_mutex: std.Io.Mutex,
     rasterizer_wait_group: std.Io.Group,
 
     stats: struct {
@@ -94,7 +93,6 @@ pub const DrawCall = struct {
             .depth_attachment = if (render_pass.interface.subpasses[renderer.subpass_index].depth_stencil_attachments) |desc| framebuffer.interface.attachments[desc.attachment] else null,
             .render_pass = render_pass,
             .framebuffer = framebuffer,
-            .allocator_mutex = .init,
             .rasterizer_wait_group = .init,
             .stats = .{
                 .polygons_drawn = 0,
@@ -132,8 +130,9 @@ framebuffer: ?*SoftFramebuffer,
 dynamic_state: DynamicState,
 
 subpass_index: usize,
+active_occlusion_queries: *std.ArrayList(ExecutionDevice.ActiveOcclusionQuery),
 
-pub fn init(device: *SoftDevice, state: *PipelineState) Self {
+pub fn init(device: *SoftDevice, state: *PipelineState, active_occlusion_queries: *std.ArrayList(ExecutionDevice.ActiveOcclusionQuery)) Self {
     return .{
         .device = device,
         .state = state,
@@ -152,6 +151,7 @@ pub fn init(device: *SoftDevice, state: *PipelineState) Self {
             .stencil_back_reference = null,
         },
         .subpass_index = 0,
+        .active_occlusion_queries = active_occlusion_queries,
     };
 }
 

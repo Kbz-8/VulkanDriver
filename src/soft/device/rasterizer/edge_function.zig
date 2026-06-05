@@ -191,7 +191,17 @@ inline fn run(data: RunData) !void {
                 };
             }
 
-            try common.writeToTargets(outputs, data.draw_call, data.color_attachment_access, data.depth_attachment_access, data.stencil_attachment_access, data.front_face, @intCast(x), @intCast(y), z);
+            try common.writeToTargets(
+                outputs,
+                data.draw_call,
+                data.color_attachment_access,
+                data.depth_attachment_access,
+                data.stencil_attachment_access,
+                data.front_face,
+                @intCast(x),
+                @intCast(y),
+                z,
+            );
         }
     }
 }

@@ -14,6 +14,7 @@ const Event = @import("Event.zig");
 const Framebuffer = @import("Framebuffer.zig");
 const Image = @import("Image.zig");
 const Pipeline = @import("Pipeline.zig");
+const QueryPool = @import("QueryPool.zig");
 const RenderPass = @import("RenderPass.zig");
 
 const State = enum {
@@ -39,6 +40,7 @@ dispatch_table: *const DispatchTable,
 
 pub const DispatchTable = struct {
     begin: *const fn (*Self, *const vk.CommandBufferBeginInfo) VkError!void,
+    beginQuery: *const fn (*Self, *QueryPool, u32, vk.QueryControlFlags) VkError!void,
     beginRenderPass: *const fn (*Self, *RenderPass, *Framebuffer, vk.Rect2D, ?[]const vk.ClearValue) VkError!void,
     bindDescriptorSets: *const fn (*Self, vk.PipelineBindPoint, u32, [lib.VULKAN_MAX_DESCRIPTOR_SETS]?*DescriptorSet, []const u32) VkError!void,
     bindPipeline: *const fn (*Self, vk.PipelineBindPoint, *Pipeline) VkError!void,
@@ -52,6 +54,7 @@ pub const DispatchTable = struct {
     copyBufferToImage: *const fn (*Self, *Buffer, *Image, vk.ImageLayout, []const vk.BufferImageCopy) VkError!void,
     copyImage: *const fn (*Self, *Image, vk.ImageLayout, *Image, vk.ImageLayout, []const vk.ImageCopy) VkError!void,
     copyImageToBuffer: *const fn (*Self, *Image, vk.ImageLayout, *Buffer, []const vk.BufferImageCopy) VkError!void,
+    copyQueryPoolResults: *const fn (*Self, *QueryPool, u32, u32, *Buffer, vk.DeviceSize, vk.DeviceSize, vk.QueryResultFlags) VkError!void,
     dispatch: *const fn (*Self, u32, u32, u32) VkError!void,
     dispatchIndirect: *const fn (*Self, *Buffer, vk.DeviceSize) VkError!void,
     draw: *const fn (*Self, usize, usize, usize, usize) VkError!void,
@@ -59,6 +62,7 @@ pub const DispatchTable = struct {
     drawIndexedIndirect: *const fn (*Self, *Buffer, usize, usize, usize) VkError!void,
     drawIndirect: *const fn (*Self, *Buffer, usize, usize, usize) VkError!void,
     end: *const fn (*Self) VkError!void,
+    endQuery: *const fn (*Self, *QueryPool, u32) VkError!void,
     endRenderPass: *const fn (*Self) VkError!void,
     executeCommands: *const fn (*Self, *Self) VkError!void,
     fillBuffer: *const fn (*Self, *Buffer, vk.DeviceSize, vk.DeviceSize, u32) VkError!void,
@@ -66,6 +70,7 @@ pub const DispatchTable = struct {
     pipelineBarrier: *const fn (*Self, vk.PipelineStageFlags, vk.PipelineStageFlags, vk.DependencyFlags, []const vk.MemoryBarrier, []const vk.BufferMemoryBarrier, []const vk.ImageMemoryBarrier) VkError!void,
     pushConstants: *const fn (*Self, vk.ShaderStageFlags, u32, []const u8) VkError!void,
     reset: *const fn (*Self, vk.CommandBufferResetFlags) VkError!void,
+    resetQueryPool: *const fn (*Self, *QueryPool, u32, u32) VkError!void,
     resetEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
     resolveImage: *const fn (*Self, *Image, vk.ImageLayout, *Image, vk.ImageLayout, vk.ImageResolve) VkError!void,
     setEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
@@ -165,6 +170,10 @@ pub inline fn beginRenderPass(self: *Self, render_pass: *RenderPass, framebuffer
     try self.dispatch_table.beginRenderPass(self, render_pass, framebuffer, render_area, clear_values);
 }
 
+pub inline fn beginQuery(self: *Self, pool: *QueryPool, query: u32, flags: vk.QueryControlFlags) VkError!void {
+    try self.dispatch_table.beginQuery(self, pool, query, flags);
+}
+
 pub fn bindDescriptorSets(self: *Self, bind_point: vk.PipelineBindPoint, first_set: u32, sets: []const vk.DescriptorSet, dynamic_offsets: []const u32) VkError!void {
     if (sets.len > lib.VULKAN_MAX_DESCRIPTOR_SETS or first_set > lib.VULKAN_MAX_DESCRIPTOR_SETS or first_set + sets.len > lib.VULKAN_MAX_DESCRIPTOR_SETS)
         return VkError.ValidationFailed;
@@ -224,6 +233,10 @@ pub inline fn copyImageToBuffer(self: *Self, src: *Image, src_layout: vk.ImageLa
     try self.dispatch_table.copyImageToBuffer(self, src, src_layout, dst, regions);
 }
 
+pub inline fn copyQueryPoolResults(self: *Self, pool: *QueryPool, first: u32, count: u32, dst: *Buffer, offset: vk.DeviceSize, stride: vk.DeviceSize, flags: vk.QueryResultFlags) VkError!void {
+    try self.dispatch_table.copyQueryPoolResults(self, pool, first, count, dst, offset, stride, flags);
+}
+
 pub inline fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count_z: u32) VkError!void {
     try self.dispatch_table.dispatch(self, group_count_x, group_count_y, group_count_z);
 }
@@ -252,6 +265,10 @@ pub inline fn endRenderPass(self: *Self) VkError!void {
     try self.dispatch_table.endRenderPass(self);
 }
 
+pub inline fn endQuery(self: *Self, pool: *QueryPool, query: u32) VkError!void {
+    try self.dispatch_table.endQuery(self, pool, query);
+}
+
 pub inline fn executeCommands(self: *Self, commands: *Self) VkError!void {
     try self.dispatch_table.executeCommands(self, commands);
 }
@@ -278,6 +295,10 @@ pub inline fn pipelineBarrier(
 
 pub inline fn pushConstants(self: *Self, stages: vk.ShaderStageFlags, offset: u32, blob: []const u8) VkError!void {
     try self.dispatch_table.pushConstants(self, stages, offset, blob);
+}
+
+pub inline fn resetQueryPool(self: *Self, pool: *QueryPool, first: u32, count: u32) VkError!void {
+    try self.dispatch_table.resetQueryPool(self, pool, first, count);
 }
 
 pub inline fn resetEvent(self: *Self, event: *Event, stage: vk.PipelineStageFlags) VkError!void {

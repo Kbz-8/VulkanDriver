@@ -173,6 +173,16 @@ inline fn run(data: RunData) !void {
             };
         }
 
-        try common.writeToTargets(outputs, data.draw_call, data.color_attachment_access, data.depth_attachment_access, data.stencil_attachment_access, true, @intCast(pixel_x), @intCast(pixel_y), z);
+        try common.writeToTargets(
+            outputs,
+            data.draw_call,
+            data.color_attachment_access,
+            data.depth_attachment_access,
+            data.stencil_attachment_access,
+            true,
+            @intCast(pixel_x),
+            @intCast(pixel_y),
+            z,
+        );
     }
 }

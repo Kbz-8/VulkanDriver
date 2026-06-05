@@ -50,7 +50,7 @@ vkAllocateMemory                                 | ✅ Implemented
 vkBeginCommandBuffer                             | ✅ Implemented
 vkBindBufferMemory                               | ✅ Implemented
 vkBindImageMemory                                | ✅ Implemented
-vkCmdBeginQuery                                  | ⚙️ WIP
+vkCmdBeginQuery                                  | ✅ Implemented
 vkCmdBeginRenderPass                             | ✅ Implemented
 vkCmdBindDescriptorSets                          | ✅ Implemented
 vkCmdBindIndexBuffer                             | ✅ Implemented
@@ -64,14 +64,14 @@ vkCmdCopyBuffer                                  | ✅ Implemented
 vkCmdCopyBufferToImage                           | ✅ Implemented
 vkCmdCopyImage                                   | ✅ Implemented
 vkCmdCopyImageToBuffer                           | ✅ Implemented
-vkCmdCopyQueryPoolResults                        | ⚙️ WIP
+vkCmdCopyQueryPoolResults                        | ✅ Implemented
 vkCmdDispatch                                    | ✅ Implemented
 vkCmdDispatchIndirect                            | ✅ Implemented
 vkCmdDraw                                        | ✅ Implemented
 vkCmdDrawIndexed                                 | ✅ Implemented
 vkCmdDrawIndexedIndirect                         | ✅ Implemented
 vkCmdDrawIndirect                                | ✅ Implemented
-vkCmdEndQuery                                    | ⚙️ WIP
+vkCmdEndQuery                                    | ✅ Implemented
 vkCmdEndRenderPass                               | ✅ Implemented
 vkCmdExecuteCommands                             | ✅ Implemented
 vkCmdFillBuffer                                  | ✅ Implemented
@@ -79,7 +79,7 @@ vkCmdNextSubpass                                 | ✅ Implemented
 vkCmdPipelineBarrier                             | ✅ Implemented
 vkCmdPushConstants                               | ✅ Implemented
 vkCmdResetEvent                                  | ✅ Implemented
-vkCmdResetQueryPool                              | ⚙️ WIP
+vkCmdResetQueryPool                              | ✅ Implemented
 vkCmdResolveImage                                | ✅ Implemented
 vkCmdSetBlendConstants                           | ✅ Implemented
 vkCmdSetDepthBias                                | ⚙️ WIP
@@ -110,7 +110,7 @@ vkCreateImageView                                | ✅ Implemented
 vkCreateInstance                                 | ✅ Implemented
 vkCreatePipelineCache                            | ⚙️ WIP
 vkCreatePipelineLayout                           | ✅ Implemented
-vkCreateQueryPool                                | ⚙️ WIP
+vkCreateQueryPool                                | ✅ Implemented
 vkCreateRenderPass                               | ✅ Implemented
 vkCreateSampler                                  | ✅ Implemented
 vkCreateSemaphore                                | ⚙️ WIP
@@ -194,6 +194,7 @@ vkResetCommandPool                               | ✅ Implemented
 vkResetDescriptorPool                            | ✅ Implemented
 vkResetEvent                                     | ✅ Implemented
 vkResetFences                                    | ✅ Implemented
+vkResetQueryPool                                 | ✅ Implemented
 vkSetEvent                                       | ✅ Implemented
 vkUnmapMemory                                    | ✅ Implemented
 vkUpdateDescriptorSets                           | ✅ Implemented

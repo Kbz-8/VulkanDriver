@@ -1451,18 +1451,11 @@ pub export fn apeGetQueryPoolResults(
     defer entryPointEndLogTrace();
 
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
+    const pool = NonDispatchable(QueryPool).fromHandleObject(p_pool) catch |err| return toVkResult(err);
 
-    notImplementedWarning();
-
-    _ = p_pool;
-    _ = first;
-    _ = count;
-    _ = size;
-    _ = data;
-    _ = stride;
-    _ = flags;
-
-    return .error_unknown;
+    const bytes = @as([*]u8, @ptrCast(data))[0..size];
+    pool.writeResults(first, count, bytes, stride, flags) catch |err| return toVkResult(err);
+    return .success;
 }
 
 pub export fn apeGetRenderAreaGranularity(p_device: vk.Device, p_pass: vk.RenderPass, granularity: *vk.Extent2D) callconv(vk.vulkan_call_conv) void {
@@ -1630,13 +1623,8 @@ pub export fn apeCmdBeginQuery(p_cmd: vk.CommandBuffer, p_pool: vk.QueryPool, qu
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = p_pool;
-    _ = query;
-    _ = flags;
+    const pool = NonDispatchable(QueryPool).fromHandleObject(p_pool) catch |err| return errorLogger(err);
+    cmd.beginQuery(pool, query, flags) catch |err| return errorLogger(err);
 }
 
 pub export fn apeCmdBeginRenderPass(p_cmd: vk.CommandBuffer, info: *const vk.RenderPassBeginInfo, contents: vk.SubpassContents) callconv(vk.vulkan_call_conv) void {
@@ -1799,18 +1787,9 @@ pub export fn apeCmdCopyQueryPoolResults(p_cmd: vk.CommandBuffer, p_pool: vk.Que
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-    const dst = NonDispatchable(Image).fromHandleObject(p_dst) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = p_pool;
-    _ = first;
-    _ = count;
-    _ = dst;
-    _ = offset;
-    _ = stride;
-    _ = flags;
+    const pool = NonDispatchable(QueryPool).fromHandleObject(p_pool) catch |err| return errorLogger(err);
+    const dst = NonDispatchable(Buffer).fromHandleObject(p_dst) catch |err| return errorLogger(err);
+    cmd.copyQueryPoolResults(pool, first, count, dst, offset, stride, flags) catch |err| return errorLogger(err);
 }
 
 pub export fn apeCmdDispatch(p_cmd: vk.CommandBuffer, group_count_x: u32, group_count_y: u32, group_count_z: u32) callconv(vk.vulkan_call_conv) void {
@@ -1869,12 +1848,8 @@ pub export fn apeCmdEndQuery(p_cmd: vk.CommandBuffer, p_pool: vk.QueryPool, quer
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = p_pool;
-    _ = query;
+    const pool = NonDispatchable(QueryPool).fromHandleObject(p_pool) catch |err| return errorLogger(err);
+    cmd.endQuery(pool, query) catch |err| return errorLogger(err);
 }
 
 pub export fn apeCmdEndRenderPass(p_cmd: vk.CommandBuffer) callconv(vk.vulkan_call_conv) void {
@@ -1954,13 +1929,8 @@ pub export fn apeCmdResetQueryPool(p_cmd: vk.CommandBuffer, p_pool: vk.QueryPool
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = p_pool;
-    _ = first;
-    _ = count;
+    const pool = NonDispatchable(QueryPool).fromHandleObject(p_pool) catch |err| return errorLogger(err);
+    cmd.resetQueryPool(pool, first, count) catch |err| return errorLogger(err);
 }
 
 pub export fn apeCmdResetEvent(p_cmd: vk.CommandBuffer, p_event: vk.Event, stage_mask: vk.PipelineStageFlags) callconv(vk.vulkan_call_conv) void {

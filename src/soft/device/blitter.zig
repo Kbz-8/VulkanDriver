@@ -574,7 +574,12 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
         => c[0] = normalizedI8(map[0]),
 
         .r16_snorm => c[0] = normalizedI16(std.mem.bytesToValue(u16, map)),
-        .r16_unorm => c[0] = @as(f32, @floatFromInt(std.mem.bytesToValue(u16, map))) / std.math.maxInt(u16),
+        .r16_unorm,
+        .d16_unorm,
+        => c[0] = @as(f32, @floatFromInt(std.mem.bytesToValue(u16, map))) / std.math.maxInt(u16),
+        .x8_d24_unorm_pack32,
+        .d24_unorm_s8_uint,
+        => c[0] = @as(f32, @floatFromInt(std.mem.bytesToValue(u32, map) & 0x00ff_ffff)) / @as(f32, @floatFromInt(0x00ff_ffff)),
 
         .r8g8b8a8_sint,
         .r8g8b8a8_uint,
@@ -855,6 +860,14 @@ pub fn writeFloat4(c: F32x4, map: []u8, dst_format: vk.Format) void {
         .r16_unorm,
         .d16_unorm,
         => std.mem.bytesAsValue(u16, map).* = @intFromFloat(@round(color[0] * std.math.maxInt(u16))),
+
+        .x8_d24_unorm_pack32,
+        .d24_unorm_s8_uint,
+        => {
+            const depth: u32 = @intFromFloat(@round(color[0] * @as(f32, @floatFromInt(0x00ff_ffff))));
+            const preserved: u32 = std.mem.bytesToValue(u32, map) & 0xff00_0000;
+            std.mem.bytesAsValue(u32, map).* = preserved | depth;
+        },
 
         .r16_sfloat => std.mem.bytesAsValue(f16, map).* = @floatCast(color[0]),
 

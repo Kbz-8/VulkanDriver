@@ -72,9 +72,12 @@ pub fn shaderInvocation(
 
     rt.callEntryPoint(allocator, entry) catch |err| switch (err) {
         // Some errors can be safely ignored
-        SpvRuntimeError.OutOfBounds,
-        SpvRuntimeError.Killed,
-        => {},
+        SpvRuntimeError.OutOfBounds => {},
+        SpvRuntimeError.Killed => {
+            try rt.flushDescriptorSets(allocator);
+            freeOwnedInputs(allocator, fragment_inputs);
+            return undefined; // FIXME
+        },
         else => return err,
     };
 

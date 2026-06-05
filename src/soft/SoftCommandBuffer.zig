@@ -45,6 +45,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 
     interface.dispatch_table = &.{
         .begin = begin,
+        .beginQuery = beginQuery,
         .beginRenderPass = beginRenderPass,
         .bindDescriptorSets = bindDescriptorSets,
         .bindPipeline = bindPipeline,
@@ -58,6 +59,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .copyBufferToImage = copyBufferToImage,
         .copyImage = copyImage,
         .copyImageToBuffer = copyImageToBuffer,
+        .copyQueryPoolResults = copyQueryPoolResults,
         .dispatch = dispatch,
         .dispatchIndirect = dispatchIndirect,
         .draw = draw,
@@ -65,6 +67,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .drawIndexedIndirect = drawIndexedIndirect,
         .drawIndirect = drawIndirect,
         .end = end,
+        .endQuery = endQuery,
         .endRenderPass = endRenderPass,
         .executeCommands = executeCommands,
         .fillBuffer = fillBuffer,
@@ -72,6 +75,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .pipelineBarrier = pipelineBarrier,
         .pushConstants = pushConstants,
         .reset = reset,
+        .resetQueryPool = resetQueryPool,
         .resetEvent = resetEvent,
         .resolveImage = resolveImage,
         .setEvent = setEvent,
@@ -133,6 +137,116 @@ pub fn reset(interface: *Interface, _: vk.CommandBufferResetFlags) VkError!void 
 }
 
 // Commands ====================================================================================================
+
+pub fn beginQuery(interface: *Interface, pool: *base.QueryPool, query: u32, _: vk.QueryControlFlags) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        pool: *base.QueryPool,
+        query: u32,
+
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            try impl.pool.begin(impl.query);
+            if (impl.pool.query_type == .occlusion) {
+                for (device.active_occlusion_queries.items) |active| {
+                    if (active.pool == impl.pool and active.query == impl.query)
+                        return;
+                }
+                device.active_occlusion_queries.append(device.renderer.device.device_allocator.allocator(), .{
+                    .pool = impl.pool,
+                    .query = impl.query,
+                }) catch return VkError.OutOfDeviceMemory;
+            }
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .pool = pool,
+        .query = query,
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn endQuery(interface: *Interface, pool: *base.QueryPool, query: u32) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        pool: *base.QueryPool,
+        query: u32,
+
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            try impl.pool.end(impl.query);
+
+            var i: usize = 0;
+            while (i < device.active_occlusion_queries.items.len) {
+                const active = device.active_occlusion_queries.items[i];
+                if (active.pool == impl.pool and active.query == impl.query) {
+                    _ = device.active_occlusion_queries.swapRemove(i);
+                    continue;
+                }
+                i += 1;
+            }
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .pool = pool,
+        .query = query,
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn resetQueryPool(interface: *Interface, pool: *base.QueryPool, first: u32, count: u32) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        pool: *base.QueryPool,
+        first: u32,
+        count: u32,
+
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            try impl.pool.reset(impl.first, impl.count);
+
+            var i: usize = 0;
+            while (i < device.active_occlusion_queries.items.len) {
+                const active = device.active_occlusion_queries.items[i];
+                if (active.pool == impl.pool and
+                    active.query >= impl.first and
+                    active.query < impl.first + impl.count)
+                {
+                    _ = device.active_occlusion_queries.swapRemove(i);
+                    continue;
+                }
+                i += 1;
+            }
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .pool = pool,
+        .first = first,
+        .count = count,
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
 
 pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, framebuffer: *base.Framebuffer, render_area: vk.Rect2D, clear_values: ?[]const vk.ClearValue) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
@@ -623,6 +737,45 @@ pub fn copyImageToBuffer(interface: *Interface, src: *base.Image, src_layout: vk
         .src_layout = src_layout,
         .dst = @alignCast(@fieldParentPtr("interface", dst)),
         .regions = allocator.dupe(vk.BufferImageCopy, regions) catch return VkError.OutOfHostMemory, // Will be freed on cmdbuf reset or destroy
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn copyQueryPoolResults(interface: *Interface, pool: *base.QueryPool, first: u32, count: u32, dst: *base.Buffer, offset: vk.DeviceSize, stride: vk.DeviceSize, flags: vk.QueryResultFlags) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        pool: *base.QueryPool,
+        dst: *SoftBuffer,
+        first: u32,
+        count: u32,
+        offset: vk.DeviceSize,
+        stride: vk.DeviceSize,
+        flags: vk.QueryResultFlags,
+
+        pub fn execute(context: *anyopaque, _: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            const value_size: vk.DeviceSize = if (impl.flags.@"64_bit") 8 else 4;
+            const item_size = value_size * (1 + @as(vk.DeviceSize, @intFromBool(impl.flags.with_availability_bit)));
+            const byte_size = if (impl.count == 0) 0 else (impl.count - 1) * impl.stride + item_size;
+            const map = try impl.dst.mapAsSliceWithAddedOffset(u8, impl.offset, byte_size);
+            try impl.pool.copyResults(impl.first, impl.count, map, impl.stride, impl.flags);
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .pool = pool,
+        .dst = @alignCast(@fieldParentPtr("interface", dst)),
+        .first = first,
+        .count = count,
+        .offset = offset,
+        .stride = stride,
+        .flags = flags,
     };
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }

@@ -39,16 +39,18 @@ pub fn runWrapper(data: RunData) void {
 
 inline fn run(data: RunData) !void {
     const shader = data.pipeline.stages.getPtrAssertContains(.vertex);
-    const rt = &shader.runtimes[data.batch_id].rt;
+    const runtime = &shader.runtimes[data.batch_id];
+    const mutex = &runtime.mutex;
+    const rt = &runtime.rt;
+
+    const io = data.draw_call.renderer.device.interface.io();
+    mutex.lock(io) catch return VkError.DeviceLost;
+    defer mutex.unlock(io);
 
     const entry = try rt.getEntryPointByName(shader.entry);
 
     var invocation_index: usize = data.batch_id;
     while (invocation_index < data.vertex_count) : (invocation_index += data.batch_size) {
-        const io = data.draw_call.renderer.device.interface.io();
-        data.draw_call.allocator_mutex.lock(io) catch return VkError.DeviceLost;
-        defer data.draw_call.allocator_mutex.unlock(io);
-
         rt.resetInvocation(data.allocator);
         try rt.populatePushConstants(data.draw_call.renderer.state.push_constant_blob[0..]);
 
@@ -78,9 +80,11 @@ inline fn run(data: RunData) !void {
 
         rt.callEntryPoint(data.allocator, entry) catch |err| switch (err) {
             // Some errors can be safely ignored
-            SpvRuntimeError.OutOfBounds,
-            SpvRuntimeError.Killed,
-            => {},
+            SpvRuntimeError.OutOfBounds => {},
+            SpvRuntimeError.Killed => {
+                try rt.flushDescriptorSets(data.allocator);
+                return;
+            },
             else => return err,
         };
 
@@ -95,7 +99,7 @@ inline fn run(data: RunData) !void {
                 };
                 const memory_size = try rt.getResultMemorySize(result_word);
                 output.outputs[location][component] = .{
-                    .interpolation_type = if (rt.hasResultDecoration(result_word, .Flat) or resultIsInteger(rt, result_word)) .flat else .smooth, // TODO : handle noperspective
+                    .interpolation_type = if (rt.hasResultDecoration(result_word, .Flat) or rt.resultIsInteger(result_word)) .flat else .smooth, // TODO : handle noperspective
                     .blob = data.allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return VkError.OutOfDeviceMemory,
                     .size = memory_size,
                 };
@@ -116,32 +120,7 @@ fn setupBuiltins(rt: *spv.Runtime, vertex_index: usize, instance_index: usize) !
     try rt.writeBuiltIn(std.mem.asBytes(&instance_index_u32), .InstanceIndex);
 }
 
-fn resultIsInteger(rt: *spv.Runtime, result_word: spv.SpvWord) bool {
-    const value = rt.results[result_word].getConstValue() catch return false;
-    return switch (value.*) {
-        .Int,
-        .Vector2i32,
-        .Vector3i32,
-        .Vector4i32,
-        .Vector2u32,
-        .Vector3u32,
-        .Vector4u32,
-        => true,
-        .Vector => |lanes| lanes.len != 0 and switch (lanes[0]) {
-            .Int => true,
-            else => false,
-        },
-        else => false,
-    };
-}
-
-fn writeVertexInput(
-    rt: *spv.Runtime,
-    allocator: std.mem.Allocator,
-    raw_input: []const u8,
-    format: vk.Format,
-    location: u32,
-) !void {
+fn writeVertexInput(rt: *spv.Runtime, allocator: std.mem.Allocator, raw_input: []const u8, format: vk.Format, location: u32) !void {
     var has_split_components = false;
     for (1..4) |component| {
         _ = rt.getResultByLocationComponent(location, @intCast(component), .input) catch |err| switch (err) {

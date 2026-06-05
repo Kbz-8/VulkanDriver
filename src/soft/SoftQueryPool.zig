@@ -28,5 +28,6 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    allocator.free(interface.queries);
     allocator.destroy(self);
 }

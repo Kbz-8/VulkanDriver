@@ -98,13 +98,7 @@ fn updateStencilValue(stencil: *RenderTargetAccess, offset: usize, state: vk.Ste
     blitter.writeInt4(@splat(new_value), stencil.base[offset..], stencil.format);
 }
 
-pub fn stencilTestAndUpdate(
-    stencil: *RenderTargetAccess,
-    x: usize,
-    y: usize,
-    state: vk.StencilOpState,
-    depth_passed: ?bool,
-) bool {
+pub fn stencilTestAndUpdate(stencil: *RenderTargetAccess, x: usize, y: usize, state: vk.StencilOpState, depth_passed: ?bool) bool {
     const offset = targetOffset(stencil.*, x, y) orelse return false;
     const current = blitter.readInt4(stencil.base[offset..], stencil.format)[0] & std.math.maxInt(u8);
     const reference = state.reference & std.math.maxInt(u8);
@@ -132,15 +126,27 @@ fn stencilTest(stencil: *RenderTargetAccess, offset: usize, state: vk.StencilOpS
     return compare(u32, state.compare_op, reference & compare_mask, current & compare_mask);
 }
 
+fn quantizeDepthForFormat(format: vk.Format, z: f32) f32 {
+    const clamped = std.math.clamp(z, 0.0, 1.0);
+    return switch (format) {
+        .d16_unorm => @as(f32, @floatFromInt(@as(u16, @intFromFloat(@round(clamped * std.math.maxInt(u16)))))) / std.math.maxInt(u16),
+        .x8_d24_unorm_pack32,
+        .d24_unorm_s8_uint,
+        => @as(f32, @floatFromInt(@as(u32, @intFromFloat(@round(clamped * @as(f32, @floatFromInt(0x00ff_ffff))))))) / @as(f32, @floatFromInt(0x00ff_ffff)),
+        else => z,
+    };
+}
+
 pub fn depthTestAndUpdate(depth: *RenderTargetAccess, x: usize, y: usize, z: f32, state: vk.PipelineDepthStencilStateCreateInfo) bool {
     if (state.depth_test_enable == .false)
         return true;
 
     const offset = targetOffset(depth.*, x, y) orelse return false;
+    const reference = quantizeDepthForFormat(depth.format, z);
     const depth_value = blitter.readFloat4(depth.base[offset..], depth.format);
-    const passed = compare(f32, state.depth_compare_op, z, depth_value[0]);
+    const passed = compare(f32, state.depth_compare_op, reference, depth_value[0]);
     if (passed and state.depth_write_enable == .true)
-        blitter.writeFloat4(zm.f32x4s(z), depth.base[offset..], depth.format);
+        blitter.writeFloat4(zm.f32x4s(reference), depth.base[offset..], depth.format);
     return passed;
 }
 
@@ -312,6 +318,9 @@ pub fn writeToTargets(
     const io = draw_call.renderer.device.interface.io();
     const depth_stencil_state = draw_call.renderer.state.pipeline.?.interface.mode.graphics.depth_stencil;
 
+    if (x >= draw_call.framebuffer.interface.width or y >= draw_call.framebuffer.interface.height)
+        return;
+
     var stencil_state: ?vk.StencilOpState = null;
     var stencil_offset: ?usize = null;
     if (stencil_attachment_access) |stencil| {
@@ -359,6 +368,10 @@ pub fn writeToTargets(
             }
             updateStencilValue(stencil, stencil_offset.?, state, state.pass_op);
         }
+    }
+
+    for (draw_call.renderer.active_occlusion_queries.items) |active| {
+        try active.pool.addSamples(active.query, 1);
     }
 
     for (color_attachment_access, 0..) |maybe_color, location| {

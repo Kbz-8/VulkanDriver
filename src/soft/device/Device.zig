@@ -21,6 +21,11 @@ pub const GRAPHICS_PIPELINE_STATE = 0;
 pub const COMPUTE_PIPELINE_STATE = 1;
 pub const MAX_DYNAMIC_DESCRIPTORS_PER_SET = 64;
 
+pub const ActiveOcclusionQuery = struct {
+    pool: *base.QueryPool,
+    query: u32,
+};
+
 pub const PipelineState = struct {
     pipeline: ?*SoftPipeline,
     sets: [base.VULKAN_MAX_DESCRIPTOR_SETS]?*SoftDescriptorSet,
@@ -39,6 +44,7 @@ compute: ComputeDispatcher,
 renderer: Renderer,
 
 pipeline_states: [2]PipelineState,
+active_occlusion_queries: std.ArrayList(ActiveOcclusionQuery),
 
 /// Initializating an execution device and
 /// not creating one to avoid dangling pointers
@@ -61,8 +67,13 @@ pub fn setup(self: *Self, device: *SoftDevice) void {
             },
         };
     }
+    self.active_occlusion_queries = .empty;
     self.compute = .init(device, &self.pipeline_states[@intFromEnum(vk.PipelineBindPoint.compute)]);
-    self.renderer = .init(device, &self.pipeline_states[@intFromEnum(vk.PipelineBindPoint.graphics)]);
+    self.renderer = .init(device, &self.pipeline_states[@intFromEnum(vk.PipelineBindPoint.graphics)], &self.active_occlusion_queries);
+}
+
+pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+    self.active_occlusion_queries.deinit(allocator);
 }
 
 pub fn writeDescriptorSets(state: *PipelineState, rt: *spv.Runtime) !void {
