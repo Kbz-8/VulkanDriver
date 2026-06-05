@@ -169,6 +169,7 @@ fn interpolateBlob(allocator: std.mem.Allocator, a: []const u8, b: []const u8, s
 
 fn interpolateVertexForClipping(allocator: std.mem.Allocator, a: *const Vertex, b: *const Vertex, t: f32) VkError!Vertex {
     var result: Vertex = .{
+        .primitive_restart = false,
         .position = a.position + ((b.position - a.position) * zm.f32x4s(t)),
         .outputs = undefined,
     };

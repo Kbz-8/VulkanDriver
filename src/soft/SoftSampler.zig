@@ -3,10 +3,12 @@ const vk = @import("vulkan");
 const base = @import("base");
 const spv = @import("spv");
 const zm = base.zm;
+const blitter = @import("device/blitter.zig");
 
 const VkError = base.VkError;
 const Device = base.Device;
 const F32x4 = zm.F32x4;
+const U32x4 = blitter.U32x4;
 
 const SoftImage = @import("SoftImage.zig");
 const SoftImageView = @import("SoftImageView.zig");
@@ -27,6 +29,7 @@ const ImageSamplingContext = struct {
     sampler: *Self,
     dim: spv.SpvDim,
     coord: CubeCoordinate,
+    mip_level: u32,
 };
 
 interface: Interface,
@@ -138,12 +141,52 @@ fn sampleAddressOrBorder(coord: i32, extent: u32, mode: vk.SamplerAddressMode) ?
     };
 }
 
-fn samplerBorderColor(sampler: *Self) F32x4 {
-    return switch (sampler.interface.border_color) {
+fn samplerBorderColor(sampler: *Self, format: vk.Format) F32x4 {
+    var color: F32x4 = switch (sampler.interface.border_color) {
         .float_opaque_white, .int_opaque_white => .{ 1.0, 1.0, 1.0, 1.0 },
         .float_opaque_black, .int_opaque_black => .{ 0.0, 0.0, 0.0, 1.0 },
         else => .{ 0.0, 0.0, 0.0, 0.0 },
     };
+
+    switch (base.format.componentCount(format)) {
+        1 => {
+            color[1] = 0.0;
+            color[2] = 0.0;
+            color[3] = 1.0;
+        },
+        2 => {
+            color[2] = 0.0;
+            color[3] = 1.0;
+        },
+        3 => color[3] = 1.0,
+        else => {},
+    }
+
+    return color;
+}
+
+fn samplerBorderColorInt(sampler: *Self, format: vk.Format) U32x4 {
+    var color: U32x4 = switch (sampler.interface.border_color) {
+        .float_opaque_white, .int_opaque_white => .{ 1, 1, 1, 1 },
+        .float_opaque_black, .int_opaque_black => .{ 0, 0, 0, 1 },
+        else => .{ 0, 0, 0, 0 },
+    };
+
+    switch (base.format.componentCount(format)) {
+        1 => {
+            color[1] = 0;
+            color[2] = 0;
+            color[3] = 1;
+        },
+        2 => {
+            color[2] = 0;
+            color[3] = 1;
+        },
+        3 => color[3] = 1,
+        else => {},
+    }
+
+    return color;
 }
 
 fn viewLayerCount(image: *SoftImage, range: vk.ImageSubresourceRange) u32 {
@@ -153,9 +196,84 @@ fn viewLayerCount(image: *SoftImage, range: vk.ImageSubresourceRange) u32 {
         range.layer_count;
 }
 
+fn viewMipCount(image: *SoftImage, range: vk.ImageSubresourceRange) u32 {
+    return if (range.level_count == vk.REMAINING_MIP_LEVELS)
+        image.interface.mip_levels - range.base_mip_level
+    else
+        range.level_count;
+}
+
+fn sampleMipLevel(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, lod: ?f32) u32 {
+    const range = image_view.interface.subresource_range;
+    const mip_count = viewMipCount(image, range);
+    if (mip_count <= 1)
+        return range.base_mip_level;
+
+    const requested_lod = if (lod) |explicit_lod|
+        explicit_lod + sampler.interface.mip_lod_bias
+    else
+        sampler.interface.min_lod;
+    const clamped_lod = std.math.clamp(requested_lod, sampler.interface.min_lod, sampler.interface.max_lod);
+    const level_float = switch (sampler.interface.mipmap_mode) {
+        .nearest => @round(clamped_lod),
+        else => @floor(clamped_lod),
+    };
+    const level: u32 = @intFromFloat(std.math.clamp(level_float, 0.0, @as(f32, @floatFromInt(mip_count - 1))));
+    return range.base_mip_level + level;
+}
+
 fn sampleArrayLayer(coord: f32, layer_count: u32) u32 {
     const layer_coord: i32 = @intFromFloat(@floor(coord + 0.5));
     return @intCast(sampleAddress(layer_coord, layer_count, .clamp_to_edge));
+}
+
+fn sampledFormat(image_view: *SoftImageView) vk.Format {
+    const range = image_view.interface.subresource_range;
+    return base.format.fromAspect(image_view.interface.format, range.aspect_mask);
+}
+
+fn swizzleFloatComponent(color: F32x4, swizzle: vk.ComponentSwizzle, comptime identity_index: usize) f32 {
+    return switch (swizzle) {
+        .identity => color[identity_index],
+        .zero => 0.0,
+        .one => 1.0,
+        .r => color[0],
+        .g => color[1],
+        .b => color[2],
+        .a => color[3],
+        else => color[identity_index],
+    };
+}
+
+fn swizzleFloat4(color: F32x4, components: vk.ComponentMapping) F32x4 {
+    return .{
+        swizzleFloatComponent(color, components.r, 0),
+        swizzleFloatComponent(color, components.g, 1),
+        swizzleFloatComponent(color, components.b, 2),
+        swizzleFloatComponent(color, components.a, 3),
+    };
+}
+
+fn swizzleIntComponent(color: U32x4, swizzle: vk.ComponentSwizzle, comptime identity_index: usize) u32 {
+    return switch (swizzle) {
+        .identity => color[identity_index],
+        .zero => 0,
+        .one => 1,
+        .r => color[0],
+        .g => color[1],
+        .b => color[2],
+        .a => color[3],
+        else => color[identity_index],
+    };
+}
+
+fn swizzleInt4(color: U32x4, components: vk.ComponentMapping) U32x4 {
+    return .{
+        swizzleIntComponent(color, components.r, 0),
+        swizzleIntComponent(color, components.g, 1),
+        swizzleIntComponent(color, components.b, 2),
+        swizzleIntComponent(color, components.a, 3),
+    };
 }
 
 fn readSampledFloat4(
@@ -164,12 +282,14 @@ fn readSampledFloat4(
     sampler: *Self,
     dim: spv.SpvDim,
     coord: CubeCoordinate,
+    mip_level: u32,
     ix: i32,
     iy: i32,
     iz: i32,
 ) VkError!F32x4 {
     const range = image_view.interface.subresource_range;
-    const extent = image.getMipLevelExtent(range.base_mip_level);
+    const format = sampledFormat(image_view);
+    const extent = image.getMipLevelExtent(mip_level);
     const width_f: f32 = @floatFromInt(extent.width);
     const height_f: f32 = @floatFromInt(extent.height);
 
@@ -186,7 +306,7 @@ fn readSampledFloat4(
         .@"1d_array" => .{ 0, range.base_array_layer + sampleArrayLayer(coord.v, viewLayerCount(image, range)) },
         .@"2d_array" => .{ 0, range.base_array_layer + sampleArrayLayer(coord.w, viewLayerCount(image, range)) },
         .cube_array => .{ 0, range.base_array_layer + sampleArrayLayer(coord.w, @divTrunc(viewLayerCount(image, range), 6)) * 6 + texel.face },
-        .@"3d" => .{ sampleAddressOrBorder(iz, extent.depth, sampler.interface.address_mode_w) orelse return samplerBorderColor(sampler), range.base_array_layer },
+        .@"3d" => .{ sampleAddressOrBorder(iz, extent.depth, sampler.interface.address_mode_w) orelse return samplerBorderColor(sampler, format), range.base_array_layer },
         .cube => .{ 0, range.base_array_layer + texel.face },
         else => .{ 0, range.base_array_layer },
     };
@@ -194,13 +314,13 @@ fn readSampledFloat4(
     const sx = if (dim == .Cube)
         std.math.clamp(@as(i32, @intFromFloat(texel.u * width_f)), 0, @as(i32, @intCast(extent.width)) - 1)
     else
-        sampleAddressOrBorder(ix, extent.width, sampler.interface.address_mode_u) orelse return samplerBorderColor(sampler);
+        sampleAddressOrBorder(ix, extent.width, sampler.interface.address_mode_u) orelse return samplerBorderColor(sampler, format);
     const sy = if (dim == .Cube)
         std.math.clamp(@as(i32, @intFromFloat(texel.v * height_f)), 0, @as(i32, @intCast(extent.height)) - 1)
     else
-        sampleAddressOrBorder(iy, extent.height, sampler.interface.address_mode_v) orelse return samplerBorderColor(sampler);
+        sampleAddressOrBorder(iy, extent.height, sampler.interface.address_mode_v) orelse return samplerBorderColor(sampler, format);
 
-    return image.readFloat4(
+    const color = try image.readFloat4(
         .{
             .x = sx,
             .y = sy,
@@ -208,28 +328,91 @@ fn readSampledFloat4(
         },
         .{
             .aspect_mask = range.aspect_mask,
-            .mip_level = range.base_mip_level,
+            .mip_level = mip_level,
             .array_layer = layer,
         },
-        image_view.interface.format,
+        format,
     );
+    return if (base.format.isSrgb(format)) zm.srgbToRgb(color) else color;
 }
 
 fn readSampledFloat4At(context: *const ImageSamplingContext, ix: i32, iy: i32, iz: i32) VkError!F32x4 {
-    return readSampledFloat4(
+    const color = try readSampledFloat4(
         context.image,
         context.image_view,
         context.sampler,
         context.dim,
         context.coord,
+        context.mip_level,
         ix,
         iy,
         iz,
     );
+    return swizzleFloat4(color, context.image_view.interface.components);
 }
 
-pub fn sampleImageFloat4(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32) VkError!F32x4 {
-    const extent = image.getMipLevelExtent(image_view.interface.subresource_range.base_mip_level);
+fn readSampledInt4(
+    image: *SoftImage,
+    image_view: *SoftImageView,
+    sampler: *Self,
+    dim: spv.SpvDim,
+    coord: CubeCoordinate,
+    mip_level: u32,
+    ix: i32,
+    iy: i32,
+    iz: i32,
+) VkError!U32x4 {
+    const range = image_view.interface.subresource_range;
+    const format = sampledFormat(image_view);
+    const extent = image.getMipLevelExtent(mip_level);
+    const width_f: f32 = @floatFromInt(extent.width);
+    const height_f: f32 = @floatFromInt(extent.height);
+
+    const texel = if (dim == .Cube) blk: {
+        const dir = cubeDirection(
+            coord.face,
+            (@as(f32, @floatFromInt(ix)) + 0.5) / width_f,
+            (@as(f32, @floatFromInt(iy)) + 0.5) / height_f,
+        );
+        break :blk resolveCubeCoordinate(dir.x, dir.y, dir.z);
+    } else coord;
+
+    const z: i32, const layer: u32 = switch (image_view.interface.view_type) {
+        .@"1d_array" => .{ 0, range.base_array_layer + sampleArrayLayer(coord.v, viewLayerCount(image, range)) },
+        .@"2d_array" => .{ 0, range.base_array_layer + sampleArrayLayer(coord.w, viewLayerCount(image, range)) },
+        .cube_array => .{ 0, range.base_array_layer + sampleArrayLayer(coord.w, @divTrunc(viewLayerCount(image, range), 6)) * 6 + texel.face },
+        .@"3d" => .{ sampleAddressOrBorder(iz, extent.depth, sampler.interface.address_mode_w) orelse return samplerBorderColorInt(sampler, format), range.base_array_layer },
+        .cube => .{ 0, range.base_array_layer + texel.face },
+        else => .{ 0, range.base_array_layer },
+    };
+
+    const sx = if (dim == .Cube)
+        std.math.clamp(@as(i32, @intFromFloat(texel.u * width_f)), 0, @as(i32, @intCast(extent.width)) - 1)
+    else
+        sampleAddressOrBorder(ix, extent.width, sampler.interface.address_mode_u) orelse return samplerBorderColorInt(sampler, format);
+    const sy = if (dim == .Cube)
+        std.math.clamp(@as(i32, @intFromFloat(texel.v * height_f)), 0, @as(i32, @intCast(extent.height)) - 1)
+    else
+        sampleAddressOrBorder(iy, extent.height, sampler.interface.address_mode_v) orelse return samplerBorderColorInt(sampler, format);
+
+    return image.readInt4(
+        .{
+            .x = sx,
+            .y = sy,
+            .z = z,
+        },
+        .{
+            .aspect_mask = range.aspect_mask,
+            .mip_level = mip_level,
+            .array_layer = layer,
+        },
+        format,
+    );
+}
+
+pub fn sampleImageFloat4(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, lod: ?f32) VkError!F32x4 {
+    const mip_level = sampleMipLevel(image, image_view, sampler, lod);
+    const extent = image.getMipLevelExtent(mip_level);
     const coord: CubeCoordinate = switch (image_view.interface.view_type) {
         .@"1d_array" => .{
             .u = x,
@@ -255,21 +438,25 @@ pub fn sampleImageFloat4(image: *SoftImage, image_view: *SoftImageView, sampler:
             .face = 0,
         },
     };
+    const scale_u: f32 = if (sampler.interface.unnormalized_coordinates == .true) 1.0 else @floatFromInt(extent.width);
+    const scale_v: f32 = if (sampler.interface.unnormalized_coordinates == .true) 1.0 else @floatFromInt(extent.height);
+    const scale_w: f32 = if (sampler.interface.unnormalized_coordinates == .true) 1.0 else @floatFromInt(extent.depth);
     const context: ImageSamplingContext = .{
         .image = image,
         .image_view = image_view,
         .sampler = sampler,
         .dim = dim,
         .coord = coord,
+        .mip_level = mip_level,
     };
 
     return sampleFloat4(
         *const ImageSamplingContext,
         &context,
         zm.f32x4(
-            coord.u * @as(f32, @floatFromInt(extent.width)),
-            coord.v * @as(f32, @floatFromInt(extent.height)),
-            coord.w * @as(f32, @floatFromInt(extent.depth)),
+            coord.u * scale_u,
+            coord.v * scale_v,
+            coord.w * scale_w,
             0.0,
         ),
         switch (sampler.interface.mag_filter) {
@@ -279,6 +466,52 @@ pub fn sampleImageFloat4(image: *SoftImage, image_view: *SoftImageView, sampler:
         image_view.interface.view_type == .@"3d",
         readSampledFloat4At,
     );
+}
+
+pub fn sampleImageInt4(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, lod: ?f32) VkError!U32x4 {
+    const mip_level = sampleMipLevel(image, image_view, sampler, lod);
+    const extent = image.getMipLevelExtent(mip_level);
+    const coord: CubeCoordinate = switch (image_view.interface.view_type) {
+        .@"1d_array" => .{
+            .u = x,
+            .v = y,
+            .face = 0,
+        },
+        .@"1d" => .{
+            .u = x,
+            .v = 0.0,
+            .face = 0,
+        },
+        .@"2d_array" => .{
+            .u = x,
+            .v = y,
+            .w = z,
+            .face = 0,
+        },
+        .cube, .cube_array => resolveCubeCoordinate(x, y, z),
+        else => .{
+            .u = x,
+            .v = y,
+            .w = z,
+            .face = 0,
+        },
+    };
+    const scale_u: f32 = if (sampler.interface.unnormalized_coordinates == .true) 1.0 else @floatFromInt(extent.width);
+    const scale_v: f32 = if (sampler.interface.unnormalized_coordinates == .true) 1.0 else @floatFromInt(extent.height);
+    const scale_w: f32 = if (sampler.interface.unnormalized_coordinates == .true) 1.0 else @floatFromInt(extent.depth);
+
+    const color = try readSampledInt4(
+        image,
+        image_view,
+        sampler,
+        dim,
+        coord,
+        mip_level,
+        @intFromFloat(@floor(coord.u * scale_u)),
+        @intFromFloat(@floor(coord.v * scale_v)),
+        @intFromFloat(@floor(coord.w * scale_w)),
+    );
+    return swizzleInt4(color, image_view.interface.components);
 }
 
 pub fn sampleFloat4(
@@ -292,9 +525,9 @@ pub fn sampleFloat4(
     if (filter == .nearest) {
         return read(
             context,
-            @intFromFloat(pos[0]),
-            @intFromFloat(pos[1]),
-            @intFromFloat(pos[2]),
+            @intFromFloat(@floor(pos[0])),
+            @intFromFloat(@floor(pos[1])),
+            @intFromFloat(@floor(pos[2])),
         );
     }
 

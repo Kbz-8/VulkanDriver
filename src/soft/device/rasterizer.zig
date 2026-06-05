@@ -121,6 +121,9 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
 
     switch (topology) {
         .point_list => for (draw_call.vertices) |*vertex| {
+            if (vertex.primitive_restart)
+                continue;
+
             try clipTransformAndRasterizePoint(
                 allocator,
                 draw_call,
@@ -148,56 +151,71 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                 if (stencil_attachment_access) |*access| access else null,
             );
         },
-        .triangle_fan => if (draw_call.vertices.len >= 3) {
-            const v0 = &draw_call.vertices[0];
-            for (1..(draw_call.vertices.len - 1)) |vertex_index| {
-                const v1 = &draw_call.vertices[vertex_index];
-                const v2 = &draw_call.vertices[vertex_index + 1];
+        .triangle_fan => {
+            var segment_start = firstNonRestart(draw_call, 0);
+            while (segment_start < draw_call.vertices.len) {
+                const segment_end = nextRestart(draw_call, segment_start);
+                if (segment_end - segment_start >= 3) {
+                    const v0 = &draw_call.vertices[segment_start];
+                    for ((segment_start + 1)..(segment_end - 1)) |vertex_index| {
+                        const v1 = &draw_call.vertices[vertex_index];
+                        const v2 = &draw_call.vertices[vertex_index + 1];
 
-                try clipTransformAndRasterizeTriangle(
-                    renderer,
-                    allocator,
-                    draw_call,
-                    v0,
-                    v1,
-                    v2,
-                    color_attachment_access,
-                    if (depth_attachment_access) |*access| access else null,
-                    if (stencil_attachment_access) |*access| access else null,
-                );
+                        try clipTransformAndRasterizeTriangle(
+                            renderer,
+                            allocator,
+                            draw_call,
+                            v0,
+                            v1,
+                            v2,
+                            color_attachment_access,
+                            if (depth_attachment_access) |*access| access else null,
+                            if (stencil_attachment_access) |*access| access else null,
+                        );
+                    }
+                }
+                segment_start = firstNonRestart(draw_call, segment_end + 1);
             }
         },
-        .triangle_strip => if (draw_call.vertices.len >= 3) {
-            for (0..(draw_call.vertices.len - 2)) |vertex_index| {
-                const v0 = &draw_call.vertices[vertex_index + 0];
-                const v1 = &draw_call.vertices[vertex_index + 1];
-                const v2 = &draw_call.vertices[vertex_index + 2];
+        .triangle_strip => {
+            var segment_start = firstNonRestart(draw_call, 0);
+            while (segment_start < draw_call.vertices.len) {
+                const segment_end = nextRestart(draw_call, segment_start);
+                if (segment_end - segment_start >= 3) {
+                    for (segment_start..(segment_end - 2)) |vertex_index| {
+                        const local_index = vertex_index - segment_start;
+                        const v0 = &draw_call.vertices[vertex_index + 0];
+                        const v1 = &draw_call.vertices[vertex_index + 1];
+                        const v2 = &draw_call.vertices[vertex_index + 2];
 
-                if ((vertex_index & 1) == 0) {
-                    try clipTransformAndRasterizeTriangle(
-                        renderer,
-                        allocator,
-                        draw_call,
-                        v0,
-                        v1,
-                        v2,
-                        color_attachment_access,
-                        if (depth_attachment_access) |*access| access else null,
-                        if (stencil_attachment_access) |*access| access else null,
-                    );
-                } else {
-                    try clipTransformAndRasterizeTriangle(
-                        renderer,
-                        allocator,
-                        draw_call,
-                        v1,
-                        v0,
-                        v2,
-                        color_attachment_access,
-                        if (depth_attachment_access) |*access| access else null,
-                        if (stencil_attachment_access) |*access| access else null,
-                    );
+                        if ((local_index & 1) == 0) {
+                            try clipTransformAndRasterizeTriangle(
+                                renderer,
+                                allocator,
+                                draw_call,
+                                v0,
+                                v1,
+                                v2,
+                                color_attachment_access,
+                                if (depth_attachment_access) |*access| access else null,
+                                if (stencil_attachment_access) |*access| access else null,
+                            );
+                        } else {
+                            try clipTransformAndRasterizeTriangle(
+                                renderer,
+                                allocator,
+                                draw_call,
+                                v1,
+                                v0,
+                                v2,
+                                color_attachment_access,
+                                if (depth_attachment_access) |*access| access else null,
+                                if (stencil_attachment_access) |*access| access else null,
+                            );
+                        }
+                    }
                 }
+                segment_start = firstNonRestart(draw_call, segment_end + 1);
             }
         },
         .line_list => for (0..@divTrunc(draw_call.vertices.len, 2)) |line_index| {
@@ -215,26 +233,45 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                 if (stencil_attachment_access) |*access| access else null,
             );
         },
-        .line_strip => if (draw_call.vertices.len >= 2) {
-            for (0..(draw_call.vertices.len - 1)) |vertex_index| {
-                const v0 = &draw_call.vertices[vertex_index + 0];
-                const v1 = &draw_call.vertices[vertex_index + 1];
+        .line_strip => {
+            var segment_start = firstNonRestart(draw_call, 0);
+            while (segment_start < draw_call.vertices.len) {
+                const segment_end = nextRestart(draw_call, segment_start);
+                if (segment_end - segment_start >= 2) {
+                    for (segment_start..(segment_end - 1)) |vertex_index| {
+                        const v0 = &draw_call.vertices[vertex_index + 0];
+                        const v1 = &draw_call.vertices[vertex_index + 1];
 
-                try clipTransformAndRasterizeLine(
-                    allocator,
-                    draw_call,
-                    v0,
-                    v1,
-                    color_attachment_access,
-                    if (depth_attachment_access) |*access| access else null,
-                    if (stencil_attachment_access) |*access| access else null,
-                );
+                        try clipTransformAndRasterizeLine(
+                            allocator,
+                            draw_call,
+                            v0,
+                            v1,
+                            color_attachment_access,
+                            if (depth_attachment_access) |*access| access else null,
+                            if (stencil_attachment_access) |*access| access else null,
+                        );
+                    }
+                }
+                segment_start = firstNonRestart(draw_call, segment_end + 1);
             }
         },
         else => base.unsupported("primitive topology {any}", .{topology}),
     }
 
     draw_call.rasterizer_wait_group.await(io) catch return VkError.DeviceLost;
+}
+
+fn firstNonRestart(draw_call: *const DrawCall, start: usize) usize {
+    var index = start;
+    while (index < draw_call.vertices.len and draw_call.vertices[index].primitive_restart) : (index += 1) {}
+    return index;
+}
+
+fn nextRestart(draw_call: *const DrawCall, start: usize) usize {
+    var index = start;
+    while (index < draw_call.vertices.len and !draw_call.vertices[index].primitive_restart) : (index += 1) {}
+    return index;
 }
 
 fn clipTransformAndRasterizePoint(
@@ -253,10 +290,10 @@ fn clipTransformAndRasterizePoint(
     clip.viewportTransformVertex(draw_call.viewport, &transformed);
 
     const point_size = 1.0;
-    const min_x: i32 = @intFromFloat(@floor(transformed.position[0] - (point_size / 2.0)));
-    const max_x: i32 = @intFromFloat(@ceil(transformed.position[0] + (point_size / 2.0)) - 1.0);
-    const min_y: i32 = @intFromFloat(@floor(transformed.position[1] - (point_size / 2.0)));
-    const max_y: i32 = @intFromFloat(@ceil(transformed.position[1] + (point_size / 2.0)) - 1.0);
+    const min_x: i32 = @intFromFloat(@ceil(transformed.position[0] - (point_size / 2.0) - 0.5));
+    const max_x: i32 = @intFromFloat(@ceil(transformed.position[0] + (point_size / 2.0) - 0.5) - 1.0);
+    const min_y: i32 = @intFromFloat(@ceil(transformed.position[1] - (point_size / 2.0) - 0.5));
+    const max_y: i32 = @intFromFloat(@ceil(transformed.position[1] + (point_size / 2.0) - 0.5) - 1.0);
     const pipeline = draw_call.renderer.state.pipeline orelse return;
     const has_fragment_shader = pipeline.stages.getPtr(.fragment) != null;
 

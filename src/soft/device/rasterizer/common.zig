@@ -268,27 +268,34 @@ inline fn blendOp(op: vk.BlendOp, src: F32x4, dst: F32x4) F32x4 {
     };
 }
 
-inline fn blendColor(src: F32x4, dst: F32x4, state: vk.PipelineColorBlendAttachmentState, constants: [4]f32) F32x4 {
+inline fn blendColor(src: F32x4, dst: F32x4, state: vk.PipelineColorBlendAttachmentState, constants: [4]f32, format: vk.Format) F32x4 {
     if (state.blend_enable == .false)
         return src;
 
-    const constant = F32x4{ constants[0], constants[1], constants[2], constants[3] };
-    const color_src = if (state.color_blend_op == .min or state.color_blend_op == .max)
-        src
+    const min_value = zm.f32x4s(base.format.minElementValue(format));
+    const max_value = zm.f32x4s(base.format.maxElementValue(format));
+    const clamped_src = if (base.format.isFloat(format)) src else std.math.clamp(src, min_value, max_value);
+    const constant = if (base.format.isFloat(format))
+        F32x4{ constants[0], constants[1], constants[2], constants[3] }
     else
-        src * blendFactor(state.src_color_blend_factor, src, dst, constant);
+        std.math.clamp(F32x4{ constants[0], constants[1], constants[2], constants[3] }, min_value, max_value);
+
+    const color_src = if (state.color_blend_op == .min or state.color_blend_op == .max)
+        clamped_src
+    else
+        clamped_src * blendFactor(state.src_color_blend_factor, clamped_src, dst, constant);
     const color_dst = if (state.color_blend_op == .min or state.color_blend_op == .max)
         dst
     else
-        dst * blendFactor(state.dst_color_blend_factor, src, dst, constant);
+        dst * blendFactor(state.dst_color_blend_factor, clamped_src, dst, constant);
     const alpha_src = if (state.alpha_blend_op == .min or state.alpha_blend_op == .max)
-        src
+        clamped_src
     else
-        src * blendFactor(state.src_alpha_blend_factor, src, dst, constant);
+        clamped_src * blendFactor(state.src_alpha_blend_factor, clamped_src, dst, constant);
     const alpha_dst = if (state.alpha_blend_op == .min or state.alpha_blend_op == .max)
         dst
     else
-        dst * blendFactor(state.dst_alpha_blend_factor, src, dst, constant);
+        dst * blendFactor(state.dst_alpha_blend_factor, clamped_src, dst, constant);
 
     var blended = blendOp(state.color_blend_op, color_src, color_dst);
     blended[3] = blendOp(state.alpha_blend_op, alpha_src, alpha_dst)[3];
@@ -389,7 +396,7 @@ pub fn writeToTargets(
                 if (location >= attachments.len)
                     break :blk src;
                 const constants = draw_call.renderer.dynamic_state.blend_constants orelse pipeline_data.color_blend.constants;
-                const blended = blendColor(src, dst, attachments[location], constants);
+                const blended = blendColor(src, dst, attachments[location], constants, color.format);
                 break :blk applyColorWriteMask(blended, dst, attachments[location].color_write_mask);
             } else src;
             const encoded_color = if (base.format.isSrgb(color.format)) zm.rgbToSrgb(final_color) else final_color;

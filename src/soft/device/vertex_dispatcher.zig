@@ -21,7 +21,8 @@ pub const RunData = struct {
     vertex_count: usize,
     first_vertex: usize,
     first_instance: usize,
-    indices: ?[]const i32,
+    indices: ?[]const u32,
+    primitive_restart: ?[]const bool,
     instance_index: usize,
     draw_call: *Renderer.DrawCall,
 };
@@ -51,13 +52,22 @@ inline fn run(data: RunData) !void {
 
     var invocation_index: usize = data.batch_id;
     while (invocation_index < data.vertex_count) : (invocation_index += data.batch_size) {
+        const output: *Renderer.Vertex = &data.draw_call.vertices[(data.instance_index * data.vertex_count) + invocation_index];
+        if (data.primitive_restart) |primitive_restart| {
+            if (primitive_restart[invocation_index]) {
+                output.primitive_restart = true;
+                continue;
+            }
+        }
+
         rt.resetInvocation(data.allocator);
         try rt.populatePushConstants(data.draw_call.renderer.state.push_constant_blob[0..]);
 
-        const vertex_index: usize = if (data.indices) |indices| @intCast(indices[invocation_index]) else data.first_vertex + invocation_index;
+        const vertex_index_u32: u32 = if (data.indices) |indices| indices[invocation_index] else @intCast(data.first_vertex + invocation_index);
+        const vertex_index: usize = vertex_index_u32;
         const instance_index = data.first_instance + data.instance_index;
 
-        setupBuiltins(rt, vertex_index, instance_index) catch |err| switch (err) {
+        setupBuiltins(rt, vertex_index_u32, instance_index) catch |err| switch (err) {
             SpvRuntimeError.NotFound => {},
             else => return err,
         };
@@ -88,7 +98,6 @@ inline fn run(data: RunData) !void {
             else => return err,
         };
 
-        const output: *Renderer.Vertex = &data.draw_call.vertices[(data.instance_index * data.vertex_count) + invocation_index];
         try rt.readBuiltIn(std.mem.asBytes(&output.position), .Position);
 
         for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
@@ -112,8 +121,7 @@ inline fn run(data: RunData) !void {
     }
 }
 
-fn setupBuiltins(rt: *spv.Runtime, vertex_index: usize, instance_index: usize) !void {
-    const vertex_index_u32: u32 = @intCast(vertex_index);
+fn setupBuiltins(rt: *spv.Runtime, vertex_index_u32: u32, instance_index: usize) !void {
     const instance_index_u32: u32 = @intCast(instance_index);
 
     try rt.writeBuiltIn(std.mem.asBytes(&vertex_index_u32), .VertexIndex);

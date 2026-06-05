@@ -53,6 +53,7 @@ pub const DynamicState = struct {
 };
 
 pub const Vertex = struct {
+    primitive_restart: bool,
     position: F32x4,
     outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][4]?struct {
         interpolation_type: enum { smooth, flat, noperspective },
@@ -100,6 +101,7 @@ pub const DrawCall = struct {
         };
 
         for (self.vertices) |*vertex| {
+            vertex.primitive_restart = false;
             for (&vertex.outputs) |*location| {
                 @memset(location, null);
             }
@@ -157,19 +159,19 @@ pub fn init(device: *SoftDevice, state: *PipelineState, active_occlusion_queries
 
 pub fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize) VkError!void {
     var bounded_allocator: BoundedAllocator = .init(self.device.device_allocator.allocator(), @"1GiB");
-    try self.drawCall(&bounded_allocator, vertex_count, instance_count, first_vertex, first_instance, null);
+    try self.drawCall(&bounded_allocator, vertex_count, instance_count, first_vertex, first_instance, null, null);
 }
 
 pub fn drawIndexed(self: *Self, index_count: usize, instance_count: usize, first_index: usize, first_instance: usize, vertex_offset: i32) VkError!void {
     var bounded_allocator: BoundedAllocator = .init(self.device.device_allocator.allocator(), @"1GiB");
     const allocator = bounded_allocator.allocator();
 
-    const indices = try self.readIndexBuffer(allocator, index_count, first_index, vertex_offset);
+    const indexed_draw = try self.readIndexBuffer(allocator, index_count, first_index, vertex_offset);
 
-    try self.drawCall(&bounded_allocator, index_count, instance_count, 0, first_instance, indices);
+    try self.drawCall(&bounded_allocator, index_count, instance_count, 0, first_instance, indexed_draw.indices, indexed_draw.primitive_restart);
 }
 
-fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize, indices: ?[]const i32) VkError!void {
+fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize, indices: ?[]const u32, primitive_restart: ?[]const bool) VkError!void {
     const io = self.device.interface.io();
     const allocator = bounded_allocator.allocator();
 
@@ -215,7 +217,7 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
         }
     }
 
-    self.vertexShaderStage(allocator, &draw_call, vertex_count, instance_count, first_vertex, first_instance, indices) catch |err| {
+    self.vertexShaderStage(allocator, &draw_call, vertex_count, instance_count, first_vertex, first_instance, indices, primitive_restart) catch |err| {
         std.log.scoped(.@"Vertex stage").err("catched a '{s}'", .{@errorName(err)});
         if (comptime base.config.logs == .verbose) {
             if (@errorReturnTrace()) |trace| {
@@ -232,7 +234,7 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
     try rasterizer.processThenFragmentStage(self, allocator, &draw_call);
 }
 
-fn vertexShaderStage(self: *Self, allocator: std.mem.Allocator, draw_call: *DrawCall, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize, indices: ?[]const i32) !void {
+fn vertexShaderStage(self: *Self, allocator: std.mem.Allocator, draw_call: *DrawCall, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize, indices: ?[]const u32, primitive_restart: ?[]const bool) !void {
     const pipeline = self.state.pipeline orelse return;
     const batch_size = (pipeline.stages.getPtr(.vertex) orelse return).runtimes.len;
 
@@ -248,6 +250,7 @@ fn vertexShaderStage(self: *Self, allocator: std.mem.Allocator, draw_call: *Draw
                 .first_vertex = first_vertex,
                 .first_instance = first_instance,
                 .indices = indices,
+                .primitive_restart = primitive_restart,
                 .instance_index = instance_index,
                 .draw_call = draw_call,
             };
@@ -258,7 +261,12 @@ fn vertexShaderStage(self: *Self, allocator: std.mem.Allocator, draw_call: *Draw
     wg.await(self.device.interface.io()) catch return VkError.DeviceLost;
 }
 
-fn readIndexBuffer(self: *Self, allocator: std.mem.Allocator, index_count: usize, first_index: usize, vertex_offset: i32) VkError![]i32 {
+const IndexedDrawData = struct {
+    indices: []u32,
+    primitive_restart: ?[]bool,
+};
+
+fn readIndexBuffer(self: *Self, allocator: std.mem.Allocator, index_count: usize, first_index: usize, vertex_offset: i32) VkError!IndexedDrawData {
     const index_buffer = self.state.data.graphics.index_buffer;
     const buffer = index_buffer.buffer;
     const buffer_memory = if (buffer.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
@@ -271,7 +279,11 @@ fn readIndexBuffer(self: *Self, allocator: std.mem.Allocator, index_count: usize
     const byte_size = index_count * index_size;
     const index_memory: []const u8 = try buffer_memory.map(byte_offset, byte_size);
 
-    const indices = allocator.alloc(i32, index_count) catch return VkError.OutOfDeviceMemory;
+    const indices = allocator.alloc(u32, index_count) catch return VkError.OutOfDeviceMemory;
+    const restart_enabled = (self.state.pipeline orelse return VkError.InvalidPipelineDrv).interface.mode.graphics.input_assembly.primitive_restart_enable == .true;
+    const restart_index = primitiveRestartIndex(index_buffer.index_type);
+    const primitive_restart = if (restart_enabled) allocator.alloc(bool, index_count) catch return VkError.OutOfDeviceMemory else null;
+
     for (indices, 0..) |*index, i| {
         const offset = i * index_size;
         const raw_index: u32 = switch (index_size) {
@@ -280,10 +292,21 @@ fn readIndexBuffer(self: *Self, allocator: std.mem.Allocator, index_count: usize
             4 => @intCast(std.mem.readInt(u32, index_memory[offset..][0..4], .little)),
             else => unreachable,
         };
-        index.* = vertex_offset + @as(i32, @intCast(raw_index));
+        if (primitive_restart) |restart| {
+            restart[i] = raw_index == restart_index;
+            if (restart[i]) {
+                index.* = 0;
+                continue;
+            }
+        }
+        const shifted = @as(i64, raw_index) + @as(i64, vertex_offset);
+        index.* = @as(u32, @truncate(@as(u64, @bitCast(shifted))));
     }
 
-    return indices;
+    return .{
+        .indices = indices,
+        .primitive_restart = primitive_restart,
+    };
 }
 
 fn indexTypeSize(index_type: vk.IndexType) ?usize {
@@ -292,6 +315,15 @@ fn indexTypeSize(index_type: vk.IndexType) ?usize {
         .uint16 => 2,
         .uint32 => 4,
         else => null,
+    };
+}
+
+fn primitiveRestartIndex(index_type: vk.IndexType) u32 {
+    return switch (index_type) {
+        .uint8 => std.math.maxInt(u8),
+        .uint16 => std.math.maxInt(u16),
+        .uint32 => std.math.maxInt(u32),
+        else => unreachable,
     };
 }
 

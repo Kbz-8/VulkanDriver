@@ -37,6 +37,7 @@ mode: union(enum) {
             binding_description: ?[]vk.VertexInputBindingDescription,
             attribute_description: ?[]vk.VertexInputAttributeDescription,
             topology: vk.PrimitiveTopology,
+            primitive_restart_enable: vk.Bool32,
         },
         viewport_state: struct {
             viewports: ?[]vk.Viewport,
@@ -122,6 +123,7 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
                         break :blk null;
                     },
                     .topology = if (info.p_input_assembly_state) |state| state.topology else return VkError.ValidationFailed,
+                    .primitive_restart_enable = if (info.p_input_assembly_state) |state| state.primitive_restart_enable else return VkError.ValidationFailed,
                 },
                 .viewport_state = .{
                     .viewports = blk: {
@@ -169,7 +171,7 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
 
                     if (info.p_dynamic_state) |dynamic_state| {
                         if (dynamic_state.p_dynamic_states) |states| {
-                            for (states[0..], 0..dynamic_state.dynamic_state_count) |info_state, _| {
+                            for (states[0..dynamic_state.dynamic_state_count]) |info_state| {
                                 switch (info_state) {
                                     .viewport => state.viewport = true,
                                     .scissor => state.scissor = true,
