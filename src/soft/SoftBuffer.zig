@@ -57,10 +57,10 @@ pub fn copyBuffer(self: *const Self, dst: *Self, regions: []const vk.BufferCopy)
 }
 
 pub fn fillBuffer(self: *Self, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) VkError!void {
-    const memory = if (self.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
-    var bytes = if (size == vk.WHOLE_SIZE) memory.size - offset else size;
+    if (self.interface.memory == null) return VkError.InvalidDeviceMemoryDrv;
+    var bytes = if (size == vk.WHOLE_SIZE) self.interface.size - offset else size;
 
-    const map = try self.mapAsSliceWithOffset(u32, offset, @divFloor(bytes, @sizeOf(u32)) * @sizeOf(u32));
+    const map = try self.mapAsSliceWithAddedOffset(u32, offset, @divFloor(bytes, @sizeOf(u32)) * @sizeOf(u32));
 
     var i: usize = 0;
     while (bytes >= 4) : ({

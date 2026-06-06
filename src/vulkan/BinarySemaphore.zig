@@ -16,6 +16,8 @@ vtable: *const VTable,
 
 pub const VTable = struct {
     destroy: *const fn (*Self, std.mem.Allocator) void,
+    signal: *const fn (*Self) VkError!void,
+    wait: *const fn (*Self) VkError!void,
 };
 
 pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.SemaphoreCreateInfo) VkError!Self {
@@ -29,4 +31,12 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Semap
 
 pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
     self.vtable.destroy(self, allocator);
+}
+
+pub inline fn signal(self: *Self) VkError!void {
+    try self.vtable.signal(self);
+}
+
+pub inline fn wait(self: *Self) VkError!void {
+    try self.vtable.wait(self);
 }

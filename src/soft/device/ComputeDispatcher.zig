@@ -47,7 +47,8 @@ pub fn init(device: *SoftDevice, state: *PipelineState) Self {
 }
 
 pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count_z: u32) VkError!void {
-    const group_count: usize = @intCast(group_count_x * group_count_y * group_count_z);
+    const group_count_xy = std.math.mul(usize, group_count_x, group_count_y) catch return VkError.ValidationFailed;
+    const group_count = std.math.mul(usize, group_count_xy, group_count_z) catch return VkError.ValidationFailed;
 
     const pipeline = self.state.pipeline orelse return VkError.InvalidPipelineDrv;
     const shader = pipeline.stages.getPtr(.compute) orelse return VkError.InvalidPipelineDrv;

@@ -80,6 +80,7 @@ pub const DispatchTable = struct {
     setStencilReference: *const fn (*Self, vk.StencilFaceFlags, u32) VkError!void,
     setStencilWriteMask: *const fn (*Self, vk.StencilFaceFlags, u32) VkError!void,
     setViewport: *const fn (*Self, u32, []const vk.Viewport) VkError!void,
+    updateBuffer: *const fn (*Self, *Buffer, vk.DeviceSize, []const u8) VkError!void,
     waitEvent: *const fn (*Self, *Event, vk.PipelineStageFlags, vk.PipelineStageFlags, []const vk.MemoryBarrier, []const vk.BufferMemoryBarrier, []const vk.ImageMemoryBarrier) VkError!void,
 };
 
@@ -243,6 +244,10 @@ pub inline fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, grou
 
 pub inline fn dispatchIndirect(self: *Self, buffer: *Buffer, offset: vk.DeviceSize) VkError!void {
     try self.dispatch_table.dispatchIndirect(self, buffer, offset);
+}
+
+pub inline fn updateBuffer(self: *Self, buffer: *Buffer, offset: vk.DeviceSize, data: []const u8) VkError!void {
+    try self.dispatch_table.updateBuffer(self, buffer, offset, data);
 }
 
 pub inline fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize) VkError!void {

@@ -85,6 +85,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .setStencilReference = setStencilReference,
         .setStencilWriteMask = setStencilWriteMask,
         .setViewport = setViewport,
+        .updateBuffer = updateBuffer,
         .waitEvent = waitEvent,
     };
 
@@ -819,7 +820,7 @@ pub fn dispatchIndirect(interface: *Interface, buffer: *base.Buffer, offset: vk.
 
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
-            const command = try impl.buffer.mapAsWithOffset(vk.DispatchIndirectCommand, impl.offset);
+            const command = try impl.buffer.mapToWithAddedOffset(vk.DispatchIndirectCommand, impl.offset);
             try device.compute.dispatch(command.x, command.y, command.z);
         }
     };
@@ -908,7 +909,7 @@ pub fn drawIndexedIndirect(interface: *Interface, buffer: *base.Buffer, offset: 
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
             for (0..impl.count) |index| {
-                const command = try impl.buffer.mapAsWithOffset(vk.DrawIndexedIndirectCommand, impl.offset + index * impl.stride);
+                const command = try impl.buffer.mapToWithAddedOffset(vk.DrawIndexedIndirectCommand, impl.offset + index * impl.stride);
                 try device.renderer.drawIndexed(command.index_count, command.instance_count, command.first_index, command.first_instance, command.vertex_offset);
             }
         }
@@ -940,7 +941,7 @@ pub fn drawIndirect(interface: *Interface, buffer: *base.Buffer, offset: usize, 
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
             for (0..impl.count) |index| {
-                const command = try impl.buffer.mapAsWithOffset(vk.DrawIndirectCommand, impl.offset + index * impl.stride);
+                const command = try impl.buffer.mapToWithAddedOffset(vk.DrawIndirectCommand, impl.offset + index * impl.stride);
                 try device.renderer.draw(command.vertex_count, command.instance_count, command.first_vertex, command.first_instance);
             }
         }
@@ -1024,6 +1025,36 @@ pub fn fillBuffer(interface: *Interface, buffer: *base.Buffer, offset: vk.Device
         .offset = offset,
         .size = size,
         .data = data,
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn updateBuffer(interface: *Interface, buffer: *base.Buffer, offset: vk.DeviceSize, data: []const u8) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        buffer: *SoftBuffer,
+        offset: vk.DeviceSize,
+        data: []const u8,
+
+        pub fn execute(context: *anyopaque, _: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            const map = try impl.buffer.mapAsSliceWithAddedOffset(u8, impl.offset, impl.data.len);
+            @memcpy(map, impl.data);
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+
+    const data_copy = allocator.dupe(u8, data) catch return VkError.OutOfHostMemory;
+    cmd.* = .{
+        .buffer = @alignCast(@fieldParentPtr("interface", buffer)),
+        .offset = offset,
+        .data = data_copy,
     };
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }

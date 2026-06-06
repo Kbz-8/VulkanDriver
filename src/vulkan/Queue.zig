@@ -34,23 +34,43 @@ pub const DispatchTable = struct {
 };
 
 pub const SubmitInfo = struct {
+    wait_semaphores: std.ArrayList(*BinarySemaphore),
     command_buffers: std.ArrayList(*CommandBuffer),
+    signal_semaphores: std.ArrayList(*BinarySemaphore),
     // TODO: complete
 
     fn initBlob(allocator: std.mem.Allocator, infos: []const vk.SubmitInfo) VkError!std.ArrayList(SubmitInfo) {
         var self = std.ArrayList(SubmitInfo).initCapacity(allocator, infos.len) catch return VkError.OutOfHostMemory;
-        errdefer self.deinit(allocator);
+        errdefer deinitBlob(allocator, &self);
 
         loop: for (infos) |info| {
-            if (info.command_buffer_count == 0) continue :loop;
-            if (info.p_command_buffers == null) continue :loop;
+            if (info.wait_semaphore_count == 0 and info.command_buffer_count == 0 and info.signal_semaphore_count == 0) continue :loop;
 
             var submit_info: SubmitInfo = .{
+                .wait_semaphores = std.ArrayList(*BinarySemaphore).initCapacity(allocator, info.wait_semaphore_count) catch return VkError.OutOfHostMemory,
                 .command_buffers = std.ArrayList(*CommandBuffer).initCapacity(allocator, info.command_buffer_count) catch return VkError.OutOfHostMemory,
+                .signal_semaphores = std.ArrayList(*BinarySemaphore).initCapacity(allocator, info.signal_semaphore_count) catch return VkError.OutOfHostMemory,
             };
+            errdefer submit_info.wait_semaphores.deinit(allocator);
+            errdefer submit_info.command_buffers.deinit(allocator);
+            errdefer submit_info.signal_semaphores.deinit(allocator);
 
-            for (info.p_command_buffers.?[0..info.command_buffer_count]) |vk_command_buffer| {
-                submit_info.command_buffers.append(allocator, try Dispatchable(CommandBuffer).fromHandleObject(vk_command_buffer)) catch return VkError.OutOfHostMemory;
+            if (info.p_wait_semaphores) |p_wait_semaphores| {
+                for (p_wait_semaphores[0..info.wait_semaphore_count]) |p_semaphore| {
+                    submit_info.wait_semaphores.append(allocator, try NonDispatchable(BinarySemaphore).fromHandleObject(p_semaphore)) catch return VkError.OutOfHostMemory;
+                }
+            }
+
+            if (info.p_command_buffers) |p_command_buffers| {
+                for (p_command_buffers[0..info.command_buffer_count]) |vk_command_buffer| {
+                    submit_info.command_buffers.append(allocator, try Dispatchable(CommandBuffer).fromHandleObject(vk_command_buffer)) catch return VkError.OutOfHostMemory;
+                }
+            }
+
+            if (info.p_signal_semaphores) |p_signal_semaphores| {
+                for (p_signal_semaphores[0..info.signal_semaphore_count]) |p_semaphore| {
+                    submit_info.signal_semaphores.append(allocator, try NonDispatchable(BinarySemaphore).fromHandleObject(p_semaphore)) catch return VkError.OutOfHostMemory;
+                }
             }
 
             self.append(allocator, submit_info) catch return VkError.OutOfHostMemory;
@@ -60,7 +80,9 @@ pub const SubmitInfo = struct {
 
     fn deinitBlob(allocator: std.mem.Allocator, self: *std.ArrayList(SubmitInfo)) void {
         for (self.items) |*submit_info| {
+            submit_info.wait_semaphores.deinit(allocator);
             submit_info.command_buffers.deinit(allocator);
+            submit_info.signal_semaphores.deinit(allocator);
         }
         self.deinit(allocator);
     }
@@ -95,15 +117,21 @@ pub fn submit(self: *Self, infos: []const vk.SubmitInfo, p_fence: ?*Fence) VkErr
     var submit_infos = try SubmitInfo.initBlob(allocator, infos);
     defer SubmitInfo.deinitBlob(allocator, &submit_infos);
 
+    if (submit_infos.items.len == 0) {
+        if (p_fence) |fence| {
+            try fence.signal();
+        }
+        return;
+    }
+
     try self.dispatch_table.submit(self, submit_infos.items, p_fence);
 }
 
 pub fn presentKHR(_: *Self, info: *const vk.PresentInfoKHR) VkError!void {
     if (info.p_wait_semaphores) |p_wait_semaphores| {
-        for (p_wait_semaphores[0..], 0..info.wait_semaphore_count) |p_semaphore, _| {
+        for (p_wait_semaphores[0..info.wait_semaphore_count]) |p_semaphore| {
             const semaphore = try NonDispatchable(BinarySemaphore).fromHandleObject(p_semaphore);
-            // TODO: handle semaphores
-            _ = semaphore;
+            try semaphore.wait();
         }
     }
 

@@ -52,7 +52,7 @@ pub const ShaderModule = @import("ShaderModule.zig");
 pub const SurfaceKHR = @import("wsi/SurfaceKHR.zig");
 pub const SwapchainKHR = @import("wsi/SwapchainKHR.zig");
 
-pub const VULKAN_VENDOR_ID = @typeInfo(vk.VendorId).@"enum".fields[@typeInfo(vk.VendorId).@"enum".fields.len - 1].value + 1;
+pub const VULKAN_VENDOR_ID = 0x10008;
 
 /// Default driver name
 pub const DRIVER_NAME = "Unnamed Ape Driver";
@@ -60,10 +60,10 @@ pub const DRIVER_NAME = "Unnamed Ape Driver";
 pub const VULKAN_VERSION = vk.makeApiVersion(0, 1, 0, 0);
 
 /// Maximum number of descriptor sets per pipeline
-pub const VULKAN_MAX_DESCRIPTOR_SETS = 4;
+pub const VULKAN_MAX_DESCRIPTOR_SETS = 8;
 
 /// The number of push constant ranges is effectively bounded
-/// by the number of possible shader stages.  Not the number of stages that can
+/// by the number of possible shader stages. Not the number of stages that can
 /// be compiled together (a pipeline layout can be used in multiple pipelnes
 /// wth different sets of shaders) but the total number of stage bits supported
 /// by the implementation. Currently, those are
@@ -73,15 +73,7 @@ pub const VULKAN_MAX_DESCRIPTOR_SETS = 4;
 /// - VK_SHADER_STAGE_GEOMETRY_BIT
 /// - VK_SHADER_STAGE_FRAGMENT_BIT
 /// - VK_SHADER_STAGE_COMPUTE_BIT
-/// - VK_SHADER_STAGE_RAYGEN_BIT_KHR
-/// - VK_SHADER_STAGE_ANY_HIT_BIT_KHR
-/// - VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR
-/// - VK_SHADER_STAGE_MISS_BIT_KHR
-/// - VK_SHADER_STAGE_INTERSECTION_BIT_KHR
-/// - VK_SHADER_STAGE_CALLABLE_BIT_KHR
-/// - VK_SHADER_STAGE_TASK_BIT_EXT
-/// - VK_SHADER_STAGE_MESH_BIT_EXT
-pub const VULKAN_MAX_PUSH_CONSTANT_RANGES = 14;
+pub const VULKAN_MAX_PUSH_CONSTANT_RANGES = 6;
 
 pub const std_options: std.Options = .{
     .log_level = .debug,

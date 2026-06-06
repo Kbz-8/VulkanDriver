@@ -91,7 +91,7 @@ vkCmdSetStencilCompareMask                       | ✅ Implemented
 vkCmdSetStencilReference                         | ✅ Implemented
 vkCmdSetStencilWriteMask                         | ✅ Implemented
 vkCmdSetViewport                                 | ✅ Implemented
-vkCmdUpdateBuffer                                | ⚙️ WIP
+vkCmdUpdateBuffer                                | ✅ Implemented
 vkCmdWaitEvents                                  | ✅ Implemented
 vkCmdWriteTimestamp                              | ⚙️ WIP
 vkCreateBuffer                                   | ✅ Implemented

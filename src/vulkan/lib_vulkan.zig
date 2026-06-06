@@ -2069,15 +2069,9 @@ pub export fn apeCmdUpdateBuffer(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer, o
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-    const buffer = Dispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = buffer;
-    _ = offset;
-    _ = size;
-    _ = data;
+    const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
+    const data_bytes: [*]const u8 = @ptrCast(data);
+    cmd.updateBuffer(buffer, offset, data_bytes[0..size]) catch |err| return errorLogger(err);
 }
 
 pub export fn apeCmdWaitEvents(
