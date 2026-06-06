@@ -207,3 +207,7 @@ vkWaitForFences                                  | ✅ Implemented
 
 Released unto the world as MIT for study, experimentation, and the occasional horrified whisper.
 Do with it as thou wilt, but accept the consequences as thine own.
+
+## Mirrors
+
+This codebase is maintained chiefly upon [mine own Git forge](https://git.kbz8.me/kbz_8/VulkanDriver), though thou may also find an active mirror upon [GitHub](https://github.com/Kbz-8/VulkanDriver).
