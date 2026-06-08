@@ -27,6 +27,9 @@ const DeviceAllocator = struct {
     }
 };
 
+/// Dummy
+pub const EXTENSIONS = [_]vk.ExtensionProperties{};
+
 physical_devices: std.ArrayList(*Dispatchable(PhysicalDevice)),
 dispatch_table: *const DispatchTable,
 vtable: *const VTable,
@@ -73,10 +76,12 @@ pub fn validateCreateInfo(info: *const vk.InstanceCreateInfo) VkError!void {
 
     if (info.enabled_extension_count != 0) {
         const names = info.pp_enabled_extension_names orelse return VkError.ExtensionNotPresent;
-        const supported_extensions = if (comptime builtin.is_test)
+
+        const supported_extensions = if (comptime !@hasDecl(root, "Instance"))
             &[_]vk.ExtensionProperties{}
         else
             root.Instance.EXTENSIONS[0..];
+
         for (0..info.enabled_extension_count) |i| {
             const name = utils.boundedName(names[i], vk.MAX_EXTENSION_NAME_SIZE) orelse return VkError.ExtensionNotPresent;
             if (!utils.isSupportedExtension(name, supported_extensions)) {
