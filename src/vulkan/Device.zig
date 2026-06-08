@@ -41,7 +41,6 @@ instance: *Instance,
 physical_device: *const PhysicalDevice,
 queues: std.AutoArrayHashMapUnmanaged(u32, std.ArrayList(*Dispatchable(Queue))),
 host_allocator: VulkanAllocator,
-khr_swapchain_enabled: bool,
 
 dispatch_table: *const DispatchTable,
 vtable: *const VTable,
@@ -75,27 +74,15 @@ pub const DispatchTable = struct {
     destroy: *const fn (*Self, std.mem.Allocator) VkError!void,
 };
 
-pub fn init(allocator: std.mem.Allocator, instance: *Instance, physical_device: *const PhysicalDevice, info: *const vk.DeviceCreateInfo) VkError!Self {
+pub fn init(allocator: std.mem.Allocator, instance: *Instance, physical_device: *const PhysicalDevice, _: *const vk.DeviceCreateInfo) VkError!Self {
     return .{
         .instance = instance,
         .physical_device = physical_device,
         .queues = .empty,
         .host_allocator = VulkanAllocator.from(allocator).cloneWithScope(.object),
-        .khr_swapchain_enabled = isExtensionEnabled(info, vk.extensions.khr_swapchain.name),
         .dispatch_table = undefined,
         .vtable = undefined,
     };
-}
-
-fn isExtensionEnabled(info: *const vk.DeviceCreateInfo, extension_name: []const u8) bool {
-    if (info.enabled_extension_count == 0) return false;
-    const names = info.pp_enabled_extension_names orelse return false;
-    for (0..info.enabled_extension_count) |i| {
-        if (std.mem.eql(u8, std.mem.span(names[i]), extension_name)) {
-            return true;
-        }
-    }
-    return false;
 }
 
 pub fn createQueues(self: *Self, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!void {

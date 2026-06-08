@@ -64,14 +64,6 @@ inline fn notImplementedWarning() void {
     logger.fixme("function not yet implemented", .{});
 }
 
-fn isSwapchainDeviceFunction(name: []const u8) bool {
-    return std.mem.eql(u8, name, "vkAcquireNextImageKHR") or
-        std.mem.eql(u8, name, "vkCreateSwapchainKHR") or
-        std.mem.eql(u8, name, "vkDestroySwapchainKHR") or
-        std.mem.eql(u8, name, "vkGetSwapchainImagesKHR") or
-        std.mem.eql(u8, name, "vkQueuePresentKHR");
-}
-
 fn wrapNonDispatchable(comptime T: type, allocator: std.mem.Allocator, object: *T, comptime VkT: type) VkError!VkT {
     const handle = NonDispatchable(T).wrap(allocator, object) catch |err| {
         object.destroy(allocator);
@@ -1427,8 +1419,6 @@ pub export fn apeGetDeviceProcAddr(p_device: vk.Device, p_name: ?[*:0]const u8) 
     const name = std.mem.span(p_name.?);
 
     if (p_device == .null_handle) return null;
-    const device = Dispatchable(Device).fromHandleObject(p_device) catch return null;
-    if (isSwapchainDeviceFunction(name) and !device.khr_swapchain_enabled) return null;
     if (device_pfn_map.get(name)) |pfn| return pfn;
 
     return null;

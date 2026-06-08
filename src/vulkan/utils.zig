@@ -7,11 +7,11 @@ pub fn boundedName(name: [*:0]const u8, max_len: usize) ?[]const u8 {
     return bytes[0..len];
 }
 
-pub fn propertyName(comptime max_len: usize, name: *const [max_len]u8) []const u8 {
+pub inline fn propertyName(comptime max_len: usize, name: *const [max_len]u8) []const u8 {
     return std.mem.sliceTo(name[0..], 0);
 }
 
-pub fn extensionName(name: *const [vk.MAX_EXTENSION_NAME_SIZE]u8) []const u8 {
+pub inline fn extensionName(name: *const [vk.MAX_EXTENSION_NAME_SIZE]u8) []const u8 {
     return propertyName(vk.MAX_EXTENSION_NAME_SIZE, name);
 }
 
