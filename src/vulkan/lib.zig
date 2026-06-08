@@ -52,7 +52,9 @@ pub const ShaderModule = @import("ShaderModule.zig");
 pub const SurfaceKHR = @import("wsi/SurfaceKHR.zig");
 pub const SwapchainKHR = @import("wsi/SwapchainKHR.zig");
 
-pub const VULKAN_VENDOR_ID = 0x10008;
+// To be commented out when spec 1.4.354 is released
+// pub const VULKAN_VENDOR_ID: i32 = @intFromEnum(vk.VendorId.ape);
+pub const VULKAN_VENDOR_ID: i32 = 0x10008;
 
 /// Default driver name
 pub const DRIVER_NAME = "Unnamed Ape Driver";

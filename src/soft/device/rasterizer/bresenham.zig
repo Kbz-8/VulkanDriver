@@ -152,8 +152,7 @@ inline fn run(data: RunData) !void {
         const t = @as(f32, @floatFromInt(step)) / @as(f32, @floatFromInt(@max(data.d_x, 1)));
         const z = ((1.0 - t) * data.start_vertex.position[2]) + (t * data.end_vertex.position[2]);
 
-        var outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8 = undefined;
-        @memset(std.mem.asBytes(&outputs), 0);
+        var outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8);
         if (data.has_fragment_shader) {
             outputs = fragment.shaderInvocation(
                 data.allocator,
@@ -161,6 +160,7 @@ inline fn run(data: RunData) !void {
                 data.batch_id,
                 zm.f32x4(@floatFromInt(pixel_x), @floatFromInt(pixel_y), z, 1.0),
                 try common.interpolateLineOutputs(data.allocator, data.start_vertex, data.end_vertex, t),
+                null,
             ) catch |err| {
                 std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
                 if (comptime base.config.logs == .verbose) {

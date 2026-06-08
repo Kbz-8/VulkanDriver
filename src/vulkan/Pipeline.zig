@@ -93,6 +93,21 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
         }
     }
 
+    var binding_description: ?[]vk.VertexInputBindingDescription = null;
+    errdefer if (binding_description) |value| allocator.free(value);
+
+    var attribute_description: ?[]vk.VertexInputAttributeDescription = null;
+    errdefer if (attribute_description) |value| allocator.free(value);
+
+    var viewports: ?[]vk.Viewport = null;
+    errdefer if (viewports) |value| allocator.free(value);
+
+    var scissors: ?[]vk.Rect2D = null;
+    errdefer if (scissors) |value| allocator.free(value);
+
+    var color_attachments: ?[]vk.PipelineColorBlendAttachmentState = null;
+    errdefer if (color_attachments) |value| allocator.free(value);
+
     return .{
         .owner = device,
         .vtable = undefined,
@@ -105,7 +120,8 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
                     .binding_description = blk: {
                         if (info.p_vertex_input_state) |vertex_input_state| {
                             if (vertex_input_state.p_vertex_binding_descriptions) |vertex_binding_descriptions| {
-                                break :blk allocator.dupe(vk.VertexInputBindingDescription, vertex_binding_descriptions[0..vertex_input_state.vertex_binding_description_count]) catch return VkError.OutOfHostMemory;
+                                binding_description = allocator.dupe(vk.VertexInputBindingDescription, vertex_binding_descriptions[0..vertex_input_state.vertex_binding_description_count]) catch return VkError.OutOfHostMemory;
+                                break :blk binding_description;
                             }
                         } else {
                             return VkError.ValidationFailed;
@@ -115,7 +131,8 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
                     .attribute_description = blk: {
                         if (info.p_vertex_input_state) |vertex_input_state| {
                             if (vertex_input_state.p_vertex_attribute_descriptions) |vertex_attribute_descriptions| {
-                                break :blk allocator.dupe(vk.VertexInputAttributeDescription, vertex_attribute_descriptions[0..vertex_input_state.vertex_attribute_description_count]) catch return VkError.OutOfHostMemory;
+                                attribute_description = allocator.dupe(vk.VertexInputAttributeDescription, vertex_attribute_descriptions[0..vertex_input_state.vertex_attribute_description_count]) catch return VkError.OutOfHostMemory;
+                                break :blk attribute_description;
                             }
                         } else {
                             return VkError.ValidationFailed;
@@ -128,16 +145,20 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
                 .viewport_state = .{
                     .viewports = blk: {
                         if (info.p_viewport_state) |viewport_state| {
-                            if (viewport_state.p_viewports) |viewports| {
-                                break :blk allocator.dupe(vk.Viewport, viewports[0..viewport_state.viewport_count]) catch return VkError.OutOfHostMemory;
+                            if (viewport_state.p_viewports) |p_viewports| {
+                                const copy = allocator.dupe(vk.Viewport, p_viewports[0..viewport_state.viewport_count]) catch return VkError.OutOfHostMemory;
+                                viewports = copy;
+                                break :blk viewports;
                             }
                         }
                         break :blk null;
                     },
                     .scissor = blk: {
                         if (info.p_viewport_state) |viewport_state| {
-                            if (viewport_state.p_scissors) |scissors| {
-                                break :blk allocator.dupe(vk.Rect2D, scissors[0..viewport_state.scissor_count]) catch return VkError.OutOfHostMemory;
+                            if (viewport_state.p_scissors) |p_scissors| {
+                                const copy = allocator.dupe(vk.Rect2D, p_scissors[0..viewport_state.scissor_count]) catch return VkError.OutOfHostMemory;
+                                scissors = copy;
+                                break :blk scissors;
                             }
                         }
                         break :blk null;
@@ -152,10 +173,10 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
                 .color_blend = blk: {
                     if (info.p_color_blend_state) |state| {
                         break :blk .{
-                            .attachments = if (state.p_attachments) |attachments|
-                                allocator.dupe(vk.PipelineColorBlendAttachmentState, attachments[0..state.attachment_count]) catch return VkError.OutOfHostMemory
-                            else
-                                null,
+                            .attachments = if (state.p_attachments) |attachments| blk_attachments: {
+                                color_attachments = allocator.dupe(vk.PipelineColorBlendAttachmentState, attachments[0..state.attachment_count]) catch return VkError.OutOfHostMemory;
+                                break :blk_attachments color_attachments;
+                            } else null,
                             .constants = state.blend_constants,
                         };
                     }
@@ -204,6 +225,12 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
             }
             if (graphics.input_assembly.attribute_description) |attribute_description| {
                 allocator.free(attribute_description);
+            }
+            if (graphics.viewport_state.viewports) |viewports| {
+                allocator.free(viewports);
+            }
+            if (graphics.viewport_state.scissor) |scissor| {
+                allocator.free(scissor);
             }
             if (graphics.color_blend.attachments) |attachments| {
                 allocator.free(attachments);

@@ -683,6 +683,12 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
             c[1] = std.mem.bytesToValue(f32, map[4..]);
         },
 
+        .r32g32b32_sfloat => {
+            c[0] = std.mem.bytesToValue(f32, map[0..]);
+            c[1] = std.mem.bytesToValue(f32, map[4..]);
+            c[2] = std.mem.bytesToValue(f32, map[8..]);
+        },
+
         .d32_sfloat,
         .r32_sfloat,
         => c[0] = std.mem.bytesToValue(f32, map),
@@ -1188,6 +1194,14 @@ pub fn readInt4(map: []const u8, src_format: vk.Format) U32x4 {
         => {
             c[0] = std.mem.bytesToValue(u32, map[0..]);
             c[1] = std.mem.bytesToValue(u32, map[4..]);
+        },
+
+        .r32g32b32_sint,
+        .r32g32b32_uint,
+        => {
+            c[0] = std.mem.bytesToValue(u32, map[0..]);
+            c[1] = std.mem.bytesToValue(u32, map[4..]);
+            c[2] = std.mem.bytesToValue(u32, map[8..]);
         },
 
         .r8g8b8a8_uint,

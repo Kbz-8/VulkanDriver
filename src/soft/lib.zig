@@ -41,6 +41,7 @@ pub const DRIVER_NAME = "Soft";
 pub const VULKAN_VERSION = vk.makeApiVersion(0, 1, 0, 0);
 pub const DRIVER_VERSION = vk.makeApiVersion(0, 0, 0, 1);
 pub const DEVICE_ID = 0x600DCAFE;
+pub const PIPELINE_CACHE_UUID: [vk.UUID_SIZE]u8 = "ApeSoftCacheUUID".*;
 
 /// Generic system memory.
 pub const MEMORY_TYPE_GENERIC_BIT = 0;

@@ -68,8 +68,8 @@ pub fn getNextImage(self: *const Self, timeout: u64, semaphore: ?*BinarySemaphor
         if (image.state == .Available) {
             image.state = .Drawing;
             index.* = @intCast(i);
-            // TODO: signal semaphore
-            _ = semaphore;
+            if (semaphore) |s|
+                try s.signal();
             if (fence) |f|
                 try f.signal();
             return;

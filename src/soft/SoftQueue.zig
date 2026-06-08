@@ -68,11 +68,11 @@ pub fn bindSparse(interface: *Interface, info: []const vk.BindSparseInfo, fence:
 pub fn submit(interface: *Interface, infos: []Interface.SubmitInfo, p_fence: ?*base.Fence) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     const soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", interface.owner));
-    const allocator = soft_device.device_allocator.allocator();
     const io = interface.owner.io();
+    const allocator = soft_device.device_allocator.allocator();
 
-    const task_data = allocator.create(TaskData) catch return VkError.OutOfDeviceMemory;
-    errdefer allocator.destroy(task_data);
+    const data = allocator.create(TaskData) catch return VkError.OutOfDeviceMemory;
+    errdefer allocator.destroy(data);
 
     var cloned_infos = try cloneSubmitInfos(allocator, infos);
     errdefer deinitSubmitInfos(allocator, &cloned_infos);
@@ -87,7 +87,7 @@ pub fn submit(interface: *Interface, infos: []Interface.SubmitInfo, p_fence: ?*b
         break :blk seq;
     };
 
-    task_data.* = .{
+    data.* = .{
         .queue = self,
         .soft_device = soft_device,
         .sequence = sequence,
@@ -95,7 +95,7 @@ pub fn submit(interface: *Interface, infos: []Interface.SubmitInfo, p_fence: ?*b
         .fence = p_fence,
     };
 
-    self.group.async(io, Self.taskRunner, .{task_data});
+    self.group.async(io, taskRunner, .{data});
 }
 
 pub fn waitIdle(interface: *Interface) VkError!void {
@@ -115,7 +115,7 @@ fn executeSubmitInfo(soft_device: *SoftDevice, info: Interface.SubmitInfo) VkErr
 
     for (info.command_buffers.items) |command_buffer| {
         const soft_command_buffer: *SoftCommandBuffer = @alignCast(@fieldParentPtr("interface", command_buffer));
-        soft_command_buffer.execute(&execution_device);
+        try soft_command_buffer.execute(&execution_device);
     }
 
     for (info.signal_semaphores.items) |semaphore| {
@@ -126,6 +126,7 @@ fn executeSubmitInfo(soft_device: *SoftDevice, info: Interface.SubmitInfo) VkErr
 fn taskRunner(data: *TaskData) void {
     const io = data.queue.interface.owner.io();
     const allocator = data.soft_device.device_allocator.allocator();
+
     defer {
         deinitSubmitInfos(allocator, &data.infos);
         allocator.destroy(data);
@@ -140,16 +141,11 @@ fn taskRunner(data: *TaskData) void {
         }
     }
 
-    var submit_err: ?VkError = null;
     for (data.infos.items) |info| {
         executeSubmitInfo(data.soft_device, info) catch |err| {
-            submit_err = err;
+            std.log.scoped(.SoftQueue).err("Command buffer execution failed with '{s}'", .{@errorName(err)});
             break;
         };
-    }
-
-    if (submit_err) |err| {
-        std.log.scoped(.SoftQueue).err("Queue submit failed with '{s}'", .{@errorName(err)});
     }
 
     if (data.fence) |fence| {
@@ -159,9 +155,10 @@ fn taskRunner(data: *TaskData) void {
     }
 
     data.queue.mutex.lock(io) catch return;
+    defer data.queue.mutex.unlock(io);
+
     data.queue.executing_sequence += 1;
     data.queue.condition.broadcast(io);
-    data.queue.mutex.unlock(io);
 }
 
 fn cloneSubmitInfos(allocator: std.mem.Allocator, infos: []Interface.SubmitInfo) VkError!std.ArrayList(Interface.SubmitInfo) {

@@ -1,6 +1,7 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const root = @import("lib.zig");
+const utils = @import("utils.zig");
 
 const Instance = @import("Instance.zig");
 const VkError = @import("error_set.zig").VkError;
@@ -62,6 +63,43 @@ pub fn init(allocator: std.mem.Allocator, instance: *Instance) VkError!Self {
 
 pub inline fn createDevice(self: *Self, allocator: std.mem.Allocator, infos: *const vk.DeviceCreateInfo) VkError!*Device {
     return try self.dispatch_table.createDevice(self, allocator, infos);
+}
+
+pub fn validateCreateInfo(self: *const Self, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!void {
+    if (info.enabled_layer_count != 0) {
+        const names = info.pp_enabled_layer_names orelse return VkError.LayerNotPresent;
+        for (0..info.enabled_layer_count) |i| {
+            _ = utils.boundedName(names[i], vk.MAX_EXTENSION_NAME_SIZE) orelse return VkError.LayerNotPresent;
+            return VkError.LayerNotPresent;
+        }
+    }
+
+    if (info.enabled_extension_count != 0) {
+        const names = info.pp_enabled_extension_names orelse return VkError.ExtensionNotPresent;
+
+        var available_count: u32 = 0;
+        try self.enumerateExtensionProperties(null, &available_count, null);
+        const supported_extensions = allocator.alloc(vk.ExtensionProperties, available_count) catch return VkError.OutOfHostMemory;
+        defer allocator.free(supported_extensions);
+
+        var written_count = available_count;
+        try self.enumerateExtensionProperties(null, &written_count, supported_extensions.ptr);
+
+        for (0..info.enabled_extension_count) |i| {
+            const name = utils.boundedName(names[i], vk.MAX_EXTENSION_NAME_SIZE) orelse return VkError.ExtensionNotPresent;
+            if (!utils.isSupportedExtension(name, supported_extensions[0..written_count])) {
+                return VkError.ExtensionNotPresent;
+            }
+        }
+    }
+
+    if (info.p_enabled_features) |requested_features| {
+        inline for (std.meta.fields(vk.PhysicalDeviceFeatures)) |field| {
+            if (@field(requested_features, field.name) == .true and @field(self.features, field.name) == .false) {
+                return VkError.FeatureNotPresent;
+            }
+        }
+    }
 }
 
 pub inline fn getFormatProperties(self: *Self, format: vk.Format) VkError!vk.FormatProperties {

@@ -304,8 +304,7 @@ fn clipTransformAndRasterizePoint(
             if (!common.scissorContainsPixel(draw_call.scissor, px, py))
                 continue;
 
-            var outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8 = undefined;
-            @memset(std.mem.asBytes(&outputs), 0);
+            var outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8);
             if (has_fragment_shader) {
                 outputs = fragment.shaderInvocation(
                     allocator,
@@ -313,6 +312,7 @@ fn clipTransformAndRasterizePoint(
                     0,
                     zm.f32x4(@floatFromInt(px), @floatFromInt(py), transformed.position[2], 1.0),
                     try common.interpolateVertexOutputs(allocator, &transformed, &transformed, &transformed, 1.0, 0.0, 0.0),
+                    null,
                 ) catch |err| {
                     std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
                     if (comptime base.config.logs == .verbose) {

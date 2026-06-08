@@ -104,8 +104,8 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     allocator.destroy(self);
 }
 
-pub fn execute(self: *Self, device: *ExecutionDevice) void {
-    self.interface.submit() catch return;
+pub fn execute(self: *Self, device: *ExecutionDevice) VkError!void {
+    try self.interface.submit();
     defer self.interface.finish() catch {};
 
     for (self.commands.items) |command| {
@@ -116,7 +116,7 @@ pub fn execute(self: *Self, device: *ExecutionDevice) void {
                     std.debug.dumpErrorReturnTrace(trace);
                 }
             }
-            return; // Should we return or continue ? Maybe device lost ?
+            return VkError.DeviceLost;
         };
     }
 }
@@ -988,7 +988,7 @@ pub fn executeCommands(interface: *Interface, commands: *Interface) VkError!void
 
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
-            impl.cmd.execute(device);
+            try impl.cmd.execute(device);
         }
     };
 

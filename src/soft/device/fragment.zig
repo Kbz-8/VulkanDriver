@@ -13,15 +13,51 @@ const VkError = base.VkError;
 const SpvRuntimeError = spv.Runtime.RuntimeError;
 const INTERFACE_BLOB_PADDING = @sizeOf(zm.F32x4);
 
+pub const DerivativeInputs = struct {
+    dx: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation,
+    dy: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation,
+};
+
+pub fn shaderUsesDerivatives(code: []const spv.SpvWord) bool {
+    var i: usize = 5;
+    while (i < code.len) {
+        const opcode_data = code[i];
+        const word_count = (opcode_data & (~spv.spv.SpvOpCodeMask)) >> spv.spv.SpvWordCountShift;
+        if (word_count == 0)
+            return false;
+
+        const opcode = opcode_data & spv.spv.SpvOpCodeMask;
+        switch (opcode) {
+            @intFromEnum(spv.spv.SpvOp.DPdx),
+            @intFromEnum(spv.spv.SpvOp.DPdy),
+            @intFromEnum(spv.spv.SpvOp.DPdxFine),
+            @intFromEnum(spv.spv.SpvOp.DPdyFine),
+            @intFromEnum(spv.spv.SpvOp.DPdxCoarse),
+            @intFromEnum(spv.spv.SpvOp.DPdyCoarse),
+            => return true,
+            else => {},
+        }
+
+        i += word_count;
+    }
+    return false;
+}
+
 pub fn shaderInvocation(
     allocator: std.mem.Allocator,
     draw_call: *Renderer.DrawCall,
     batch_id: usize,
     position: zm.F32x4,
     inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation,
+    derivative_inputs: ?DerivativeInputs,
 ) SpvRuntimeError![spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8 {
     var fragment_inputs = inputs;
     errdefer freeOwnedInputs(allocator, fragment_inputs);
+    const derivatives = derivative_inputs;
+    errdefer if (derivatives) |owned_derivatives| {
+        freeOwnedInputs(allocator, owned_derivatives.dx);
+        freeOwnedInputs(allocator, owned_derivatives.dy);
+    };
 
     const io = draw_call.renderer.device.interface.io();
 
@@ -66,6 +102,13 @@ pub fn shaderInvocation(
 
             if (input.blob.len != 0) {
                 try rt.writeInput(input.blob, result_word);
+                if (derivatives) |derivative| {
+                    const dx = derivative.dx[location][component];
+                    const dy = derivative.dy[location][component];
+                    if (dx.blob.len != 0 and dy.blob.len != 0) {
+                        try rt.setDerivativeFromMemory(allocator, result_word, dx.blob, dy.blob);
+                    }
+                }
             }
         }
     }
@@ -81,8 +124,7 @@ pub fn shaderInvocation(
         else => return err,
     };
 
-    var outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8 = undefined;
-    @memset(std.mem.asBytes(&outputs), 0);
+    var outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8);
 
     for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
         var has_split_components = false;
@@ -117,6 +159,10 @@ pub fn shaderInvocation(
 
     try rt.flushDescriptorSets(allocator);
     freeOwnedInputs(allocator, fragment_inputs);
+    if (derivatives) |owned_derivatives| {
+        freeOwnedInputs(allocator, owned_derivatives.dx);
+        freeOwnedInputs(allocator, owned_derivatives.dy);
+    }
 
     return outputs;
 }

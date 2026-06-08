@@ -46,7 +46,14 @@ device_allocator: if (config.debug_allocator) std.heap.DebugAllocator(.{}) else 
 
 pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
-    errdefer allocator.destroy(self);
+    var initialized = false;
+    errdefer {
+        if (initialized) {
+            self.interface.destroy(allocator) catch {};
+        } else {
+            allocator.destroy(self);
+        }
+    }
 
     var interface = try Interface.init(allocator, instance, physical_device, info);
 
@@ -83,6 +90,7 @@ pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, a
         .interface = interface,
         .device_allocator = if (config.debug_allocator) .init else .{},
     };
+    initialized = true;
 
     try self.interface.createQueues(allocator, info);
     return self;

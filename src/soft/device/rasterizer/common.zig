@@ -226,6 +226,58 @@ pub fn interpolateLineOutputs(
     return interpolateVertexOutputs(allocator, v0, v1, v0, 1.0 - t, t, 0.0);
 }
 
+pub fn interpolateVertexOutputDerivatives(
+    allocator: std.mem.Allocator,
+    v0: *const Renderer.Vertex,
+    v1: *const Renderer.Vertex,
+    v2: *const Renderer.Vertex,
+    db0: f32,
+    db1: f32,
+    db2: f32,
+) VkError![spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation {
+    var inputs = [_]VertexInterpolationLocation{[_]VertexInterpolation{.{
+        .blob = &.{},
+        .size = 0,
+        .free_responsability = false,
+    }} ** 4} ** spv.SPIRV_MAX_OUTPUT_LOCATIONS;
+
+    for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
+        for (0..4) |component| {
+            const out0 = v0.outputs[location][component] orelse continue;
+            const out1 = v1.outputs[location][component] orelse continue;
+            const out2 = v2.outputs[location][component] orelse continue;
+
+            const len = @min(out0.size, out1.size, out2.size);
+            if (len == 0)
+                continue;
+
+            const input = allocator.alloc(u8, len + @sizeOf(F32x4)) catch return VkError.OutOfDeviceMemory;
+            @memset(input, 0);
+
+            if (out0.interpolation_type != .flat) {
+                var byte_index: usize = 0;
+                while (byte_index + @sizeOf(F32x4) <= len) : (byte_index += @sizeOf(F32x4)) {
+                    const value0 = std.mem.bytesToValue(F32x4, out0.blob[byte_index..]);
+                    const value1 = std.mem.bytesToValue(F32x4, out1.blob[byte_index..]);
+                    const value2 = std.mem.bytesToValue(F32x4, out2.blob[byte_index..]);
+                    base.utils.writePacked(F32x4, input[byte_index..], interpolateF32x4(value0, value1, value2, db0, db1, db2));
+                }
+
+                while (byte_index + @sizeOf(f32) <= len) : (byte_index += @sizeOf(f32)) {
+                    const value0 = std.mem.bytesToValue(f32, out0.blob[byte_index..]);
+                    const value1 = std.mem.bytesToValue(f32, out1.blob[byte_index..]);
+                    const value2 = std.mem.bytesToValue(f32, out2.blob[byte_index..]);
+                    base.utils.writePacked(f32, input[byte_index..], (value0 * db0) + (value1 * db1) + (value2 * db2));
+                }
+            }
+
+            inputs[location][component] = .{ .blob = input, .size = len, .free_responsability = true };
+        }
+    }
+
+    return inputs;
+}
+
 inline fn interpolateF32x4(value0: F32x4, value1: F32x4, value2: F32x4, b0: f32, b1: f32, b2: f32) F32x4 {
     return (value0 * zm.f32x4s(b0)) + (value1 * zm.f32x4s(b1)) + (value2 * zm.f32x4s(b2));
 }

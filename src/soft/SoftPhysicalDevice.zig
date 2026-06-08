@@ -22,7 +22,7 @@ fn castExtension(comptime ext: vk.ApiInfo) vk.ExtensionProperties {
     return props;
 }
 
-const EXTENSIONS = [_]vk.ExtensionProperties{
+pub const EXTENSIONS = [_]vk.ExtensionProperties{
     castExtension(vk.extensions.khr_swapchain),
 };
 
@@ -59,6 +59,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
     interface.props.driver_version = @bitCast(lib.DRIVER_VERSION);
     interface.props.device_id = lib.DEVICE_ID;
     interface.props.device_type = .cpu;
+    interface.props.pipeline_cache_uuid = lib.PIPELINE_CACHE_UUID;
     interface.props.limits = .{
         .max_image_dimension_1d = 4096,
         .max_image_dimension_2d = 4096,
@@ -203,7 +204,6 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
 
     if (device_name[0] == 0) {
         const name = blk: {
-
             // If arch is x86 we try to get precise CPU name through CPUID
             // and fallback to vendor name if not available
             if (comptime builtin.cpu.arch.isX86()) {
@@ -251,6 +251,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
     self.* = .{
         .interface = interface,
     };
+
     return self;
 }
 
@@ -274,11 +275,16 @@ pub fn enumerateExtensionProperties(_: *const Interface, layer_name: ?[]const u8
         return VkError.LayerNotPresent;
     }
 
-    count.* = EXTENSIONS.len;
+    const available = EXTENSIONS.len;
     if (p_properties) |properties| {
-        for (EXTENSIONS, properties[0..]) |ext, *prop| {
+        const write_count = @min(count.*, available);
+        for (EXTENSIONS[0..write_count], properties[0..write_count]) |ext, *prop| {
             prop.* = ext;
         }
+        count.* = @intCast(write_count);
+        if (write_count < available) return VkError.Incomplete;
+    } else {
+        count.* = @intCast(available);
     }
 }
 

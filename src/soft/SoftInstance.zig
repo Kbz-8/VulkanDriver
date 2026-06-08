@@ -25,6 +25,7 @@ fn castExtension(comptime ext: vk.ApiInfo) vk.ExtensionProperties {
 }
 
 pub const EXTENSIONS = [_]vk.ExtensionProperties{
+    castExtension(vk.extensions.khr_device_group_creation),
     castExtension(vk.extensions.khr_get_physical_device_properties_2),
     castExtension(vk.extensions.khr_surface),
     castExtension(vk.extensions.khr_wayland_surface),
@@ -60,13 +61,16 @@ fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator) V
     // Software driver has only one physical device (the CPU)
     const physical_device = try SoftPhysicalDevice.create(allocator, interface);
     errdefer physical_device.interface.releasePhysicalDevice(allocator) catch {};
-    interface.physical_devices.append(allocator, try Dispatchable(base.PhysicalDevice).wrap(allocator, &physical_device.interface)) catch return VkError.OutOfHostMemory;
+    const dispatchable = try Dispatchable(base.PhysicalDevice).wrap(allocator, &physical_device.interface);
+    errdefer dispatchable.destroy(allocator);
+    interface.physical_devices.append(allocator, dispatchable) catch return VkError.OutOfHostMemory;
 }
 
 fn releasePhysicalDevices(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
-    const physical_device = interface.physical_devices.getLast();
-    try physical_device.object.releasePhysicalDevice(allocator);
-    physical_device.destroy(allocator);
+    for (interface.physical_devices.items) |physical_device| {
+        try physical_device.object.releasePhysicalDevice(allocator);
+        physical_device.destroy(allocator);
+    }
 
     interface.physical_devices.deinit(allocator);
     interface.physical_devices = .empty;

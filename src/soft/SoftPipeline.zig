@@ -52,7 +52,8 @@ stages: std.EnumMap(Stages, Shader),
 
 pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: ?*base.PipelineCache, info: *const vk.ComputePipelineCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
-    errdefer allocator.destroy(self);
+    var initialized = false;
+    errdefer if (initialized) self.interface.destroy(allocator) else allocator.destroy(self);
 
     var interface = try Interface.initCompute(device, allocator, cache, info);
 
@@ -71,7 +72,7 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
         .runtimes_allocator = .init(device_allocator),
         .stages = std.EnumMap(Stages, Shader).init(.{}),
     };
-    errdefer self.runtimes_allocator.deinit();
+    initialized = true;
     const runtimes_allocator = self.runtimes_allocator.allocator();
 
     const instance: *SoftInstance = @alignCast(@fieldParentPtr("interface", device.instance));
@@ -138,7 +139,8 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
 
 pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache: ?*base.PipelineCache, info: *const vk.GraphicsPipelineCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
-    errdefer allocator.destroy(self);
+    var initialized = false;
+    errdefer if (initialized) self.interface.destroy(allocator) else allocator.destroy(self);
 
     var interface = try Interface.initGraphics(device, allocator, cache, info);
 
@@ -154,7 +156,7 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
         .runtimes_allocator = .init(device_allocator),
         .stages = std.EnumMap(Stages, Shader).init(.{}),
     };
-    errdefer self.runtimes_allocator.deinit();
+    initialized = true;
     const runtimes_allocator = self.runtimes_allocator.allocator();
 
     const instance: *SoftInstance = @alignCast(@fieldParentPtr("interface", device.instance));

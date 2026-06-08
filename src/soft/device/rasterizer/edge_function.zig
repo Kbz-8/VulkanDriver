@@ -30,6 +30,7 @@ const RunData = struct {
     stencil_attachment_access: ?*common.RenderTargetAccess,
     front_face: bool,
     has_fragment_shader: bool,
+    fragment_uses_derivatives: bool,
 };
 
 pub fn drawTriangle(
@@ -56,6 +57,10 @@ pub fn drawTriangle(
 
     const pipeline = draw_call.renderer.state.pipeline orelse return;
     const fragment_stage = pipeline.stages.getPtr(.fragment);
+    const fragment_uses_derivatives = if (fragment_stage) |stage|
+        fragment.shaderUsesDerivatives(stage.module.module.code)
+    else
+        false;
     const runtimes_count = if (fragment_stage) |stage| stage.runtimes.len else 1;
     if (runtimes_count == 0)
         return;
@@ -106,6 +111,7 @@ pub fn drawTriangle(
                 .stencil_attachment_access = stencil_attachment_access,
                 .front_face = front_face,
                 .has_fragment_shader = fragment_stage != null,
+                .fragment_uses_derivatives = fragment_uses_derivatives,
             };
 
             draw_call.rasterizer_wait_group.async(io, runWrapper, .{run_data});
@@ -171,15 +177,49 @@ inline fn run(data: RunData) !void {
             const b2 = w2 / data.area;
             const z = (b0 * data.v0.position[2]) + (b1 * data.v1.position[2]) + (b2 * data.v2.position[2]);
 
-            var outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8 = undefined;
-            @memset(std.mem.asBytes(&outputs), 0);
+            var outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8);
             if (data.has_fragment_shader) {
+                const inputs = try common.interpolateVertexOutputs(data.allocator, &data.v0, &data.v1, &data.v2, b0, b1, b2);
+                const derivative_inputs: ?fragment.DerivativeInputs = if (data.fragment_uses_derivatives) blk: {
+                    var derivatives: fragment.DerivativeInputs = undefined;
+
+                    const p_dx = zm.f32x4(@as(f32, @floatFromInt(x)) + 1.5, @as(f32, @floatFromInt(y)) + 0.5, 0.0, 1.0);
+                    const dx_w0 = edgeFunction(data.v1.position, data.v2.position, p_dx);
+                    const dx_w1 = edgeFunction(data.v2.position, data.v0.position, p_dx);
+                    const dx_w2 = edgeFunction(data.v0.position, data.v1.position, p_dx);
+                    derivatives.dx = try common.interpolateVertexOutputDerivatives(
+                        data.allocator,
+                        &data.v0,
+                        &data.v1,
+                        &data.v2,
+                        (dx_w0 / data.area) - b0,
+                        (dx_w1 / data.area) - b1,
+                        (dx_w2 / data.area) - b2,
+                    );
+
+                    const p_dy = zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 1.5, 0.0, 1.0);
+                    const dy_w0 = edgeFunction(data.v1.position, data.v2.position, p_dy);
+                    const dy_w1 = edgeFunction(data.v2.position, data.v0.position, p_dy);
+                    const dy_w2 = edgeFunction(data.v0.position, data.v1.position, p_dy);
+                    derivatives.dy = try common.interpolateVertexOutputDerivatives(
+                        data.allocator,
+                        &data.v0,
+                        &data.v1,
+                        &data.v2,
+                        (dy_w0 / data.area) - b0,
+                        (dy_w1 / data.area) - b1,
+                        (dy_w2 / data.area) - b2,
+                    );
+                    break :blk derivatives;
+                } else null;
+
                 outputs = fragment.shaderInvocation(
                     data.allocator,
                     data.draw_call,
                     data.batch_id,
                     zm.f32x4(@floatFromInt(x), @floatFromInt(y), z, 1.0),
-                    try common.interpolateVertexOutputs(data.allocator, &data.v0, &data.v1, &data.v2, b0, b1, b2),
+                    inputs,
+                    derivative_inputs,
                 ) catch |err| {
                     std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
                     if (comptime base.config.logs == .verbose) {

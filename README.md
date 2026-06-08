@@ -113,7 +113,7 @@ vkCreatePipelineLayout                           | ✅ Implemented
 vkCreateQueryPool                                | ✅ Implemented
 vkCreateRenderPass                               | ✅ Implemented
 vkCreateSampler                                  | ✅ Implemented
-vkCreateSemaphore                                | ⚙️ WIP
+vkCreateSemaphore                                | ✅ Implemented
 vkCreateShaderModule                             | ✅ Implemented
 vkCreateSwapchainKHR                             | ✅ Implemented
 vkCreateWaylandSurfaceKHR                        | ✅ Implemented
@@ -149,6 +149,8 @@ vkEnumerateDeviceLayerProperties                 | ✅ Implemented
 vkEnumerateInstanceExtensionProperties           | ✅ Implemented
 vkEnumerateInstanceLayerProperties               | ✅ Implemented
 vkEnumeratePhysicalDevices                       | ✅ Implemented
+vkEnumeratePhysicalDeviceGroups                  | ✅ Implemented
+vkEnumeratePhysicalDeviceGroupsKHR               | ✅ Implemented
 vkFlushMappedMemoryRanges                        | ✅ Implemented
 vkFreeCommandBuffers                             | ✅ Implemented
 vkFreeDescriptorSets                             | ✅ Implemented
@@ -179,7 +181,7 @@ vkGetPhysicalDeviceWin32PresentationSupportKHR   | ⚙️ WIP
 vkGetPhysicalDeviceXcbPresentationSupportKHR     | ⚙️ WIP
 vkGetPhysicalDeviceXlibPresentationSupportKHR    | ⚙️ WIP
 vkGetPipelineCacheData                           | ⚙️ WIP
-vkGetQueryPoolResults                            | ⚙️ WIP
+vkGetQueryPoolResults                            | ✅ Implemented
 vkGetRenderAreaGranularity                       | ✅ Implemented
 vkGetSwapchainImagesKHR                          | ✅ Implemented
 vkInvalidateMappedMemoryRanges                   | ✅ Implemented

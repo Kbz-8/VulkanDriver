@@ -55,10 +55,23 @@ pub fn allocateCommandBuffers(self: *Self, info: *const vk.CommandBufferAllocate
         while (self.buffers.capacity < self.buffers.items.len + info.command_buffer_count) {
             self.buffers.ensureUnusedCapacity(allocator, BUFFER_POOL_BASE_CAPACITY) catch return VkError.OutOfHostMemory;
         }
+        const original_len = self.buffers.items.len;
+        errdefer {
+            for (self.buffers.items[original_len..]) |dis_cmd| {
+                dis_cmd.intrusiveDestroy(allocator);
+            }
+            self.buffers.shrinkRetainingCapacity(original_len);
+        }
         for (0..info.command_buffer_count) |_| {
             const cmd = try self.vtable.createCommandBuffer(self, allocator, info);
+            var cmd_owned = true;
+            errdefer if (cmd_owned) cmd.destroy(allocator);
             const dis_cmd = try Dispatchable(CommandBuffer).wrap(allocator, cmd);
+            cmd_owned = false;
+            var dis_cmd_owned = true;
+            errdefer if (dis_cmd_owned) dis_cmd.intrusiveDestroy(allocator);
             self.buffers.appendAssumeCapacity(dis_cmd);
+            dis_cmd_owned = false;
         }
     }
 
@@ -97,15 +110,7 @@ pub fn reset(self: *Self, flags: vk.CommandPoolResetFlags) VkError!void {
 
     self.first_free_buffer_index = 0;
 
-    if (flags.release_resources_bit) {
-        const allocator = self.host_allocator.allocator();
-        for (self.buffers.items) |dis_cmd| {
-            dis_cmd.intrusiveDestroy(allocator);
-        }
-        self.buffers.clearRetainingCapacity();
-    } else {
-        for (self.buffers.items) |dis_cmd| {
-            _ = dis_cmd.object.reset(.{ .release_resources_bit = true }) catch {};
-        }
+    for (self.buffers.items) |dis_cmd| {
+        _ = dis_cmd.object.resetFromPool(.{ .release_resources_bit = flags.release_resources_bit }) catch {};
     }
 }

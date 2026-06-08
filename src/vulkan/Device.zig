@@ -41,6 +41,7 @@ instance: *Instance,
 physical_device: *const PhysicalDevice,
 queues: std.AutoArrayHashMapUnmanaged(u32, std.ArrayList(*Dispatchable(Queue))),
 host_allocator: VulkanAllocator,
+khr_swapchain_enabled: bool,
 
 dispatch_table: *const DispatchTable,
 vtable: *const VTable,
@@ -75,15 +76,26 @@ pub const DispatchTable = struct {
 };
 
 pub fn init(allocator: std.mem.Allocator, instance: *Instance, physical_device: *const PhysicalDevice, info: *const vk.DeviceCreateInfo) VkError!Self {
-    _ = info;
     return .{
         .instance = instance,
         .physical_device = physical_device,
         .queues = .empty,
         .host_allocator = VulkanAllocator.from(allocator).cloneWithScope(.object),
+        .khr_swapchain_enabled = isExtensionEnabled(info, vk.extensions.khr_swapchain.name),
         .dispatch_table = undefined,
         .vtable = undefined,
     };
+}
+
+fn isExtensionEnabled(info: *const vk.DeviceCreateInfo, extension_name: []const u8) bool {
+    if (info.enabled_extension_count == 0) return false;
+    const names = info.pp_enabled_extension_names orelse return false;
+    for (0..info.enabled_extension_count) |i| {
+        if (std.mem.eql(u8, std.mem.span(names[i]), extension_name)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 pub fn createQueues(self: *Self, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!void {
@@ -102,8 +114,10 @@ pub fn createQueues(self: *Self, allocator: std.mem.Allocator, info: *const vk.D
         }
 
         const queue = try self.vtable.createQueue(allocator, self, queue_info.queue_family_index, @intCast(family_ptr.items.len), queue_info.flags);
+        errdefer self.vtable.destroyQueue(queue, allocator) catch {};
 
         const dispatchable_queue = try Dispatchable(Queue).wrap(allocator, queue);
+        errdefer dispatchable_queue.destroy(allocator);
         family_ptr.append(allocator, dispatchable_queue) catch return VkError.OutOfHostMemory;
     }
 }

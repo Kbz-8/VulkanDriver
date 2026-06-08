@@ -63,7 +63,7 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
 
 pub fn bindMemory(self: *Self, memory: *DeviceMemory, offset: vk.DeviceSize) VkError!void {
     const image_size = try self.getTotalSize();
-    if (offset >= image_size or !self.allowed_memory_types.isSet(memory.memory_type_index)) {
+    if (offset + image_size > memory.size or !self.allowed_memory_types.isSet(memory.memory_type_index)) {
         return VkError.ValidationFailed;
     }
     self.memory = memory;

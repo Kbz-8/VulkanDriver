@@ -46,6 +46,10 @@ pub fn allocateDescriptorSet(interface: *Interface, layout: *base.DescriptorSetL
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const set_allocator = VulkanAllocator.init(null, .object).allocator();
+    for (self.list.items) |set| {
+        set.interface.destroy(set_allocator);
+    }
     self.list.deinit(allocator);
     allocator.destroy(self);
 }
@@ -59,7 +63,7 @@ pub fn freeDescriptorSet(interface: *Interface, set: *base.DescriptorSet) VkErro
     }
 
     const allocator = VulkanAllocator.init(null, .object).allocator();
-    allocator.destroy(soft_set);
+    set.destroy(allocator);
 }
 
 pub fn reset(interface: *Interface, _: vk.DescriptorPoolResetFlags) VkError!void {
@@ -67,7 +71,7 @@ pub fn reset(interface: *Interface, _: vk.DescriptorPoolResetFlags) VkError!void
     const allocator = VulkanAllocator.init(null, .object).allocator();
 
     for (self.list.items) |set| {
-        allocator.destroy(set);
+        set.interface.destroy(allocator);
     }
     self.list.clearRetainingCapacity();
 }

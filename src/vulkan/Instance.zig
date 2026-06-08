@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const vk = @import("vulkan");
 const config = @import("lib.zig").config;
+const utils = @import("utils.zig");
 
 const VkError = @import("error_set.zig").VkError;
 const Dispatchable = @import("Dispatchable.zig").Dispatchable;
@@ -50,6 +51,41 @@ pub fn init(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) V
     };
 }
 
+pub fn validateCreateInfo(info: *const vk.InstanceCreateInfo) VkError!void {
+    if (info.p_application_info) |application_info| {
+        const requested: vk.Version = @bitCast(application_info.api_version);
+        const supported: vk.Version = if (comptime builtin.is_test)
+            vk.API_VERSION_1_0
+        else
+            @bitCast(root.VULKAN_VERSION);
+        if (requested.variant != 0 or requested.major > supported.major or (requested.major == supported.major and requested.minor > supported.minor)) {
+            return VkError.IncompatibleDriver;
+        }
+    }
+
+    if (info.enabled_layer_count != 0) {
+        const names = info.pp_enabled_layer_names orelse return VkError.LayerNotPresent;
+        for (0..info.enabled_layer_count) |i| {
+            _ = utils.boundedName(names[i], vk.MAX_EXTENSION_NAME_SIZE) orelse return VkError.LayerNotPresent;
+            return VkError.LayerNotPresent;
+        }
+    }
+
+    if (info.enabled_extension_count != 0) {
+        const names = info.pp_enabled_extension_names orelse return VkError.ExtensionNotPresent;
+        const supported_extensions = if (comptime builtin.is_test)
+            &[_]vk.ExtensionProperties{}
+        else
+            root.Instance.EXTENSIONS[0..];
+        for (0..info.enabled_extension_count) |i| {
+            const name = utils.boundedName(names[i], vk.MAX_EXTENSION_NAME_SIZE) orelse return VkError.ExtensionNotPresent;
+            if (!utils.isSupportedExtension(name, supported_extensions)) {
+                return VkError.ExtensionNotPresent;
+            }
+        }
+    }
+}
+
 /// Dummy to avoid compile error in tests and doc generation
 pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) VkError!*Self {
     _ = allocator;
@@ -64,11 +100,16 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) VkError!void {
 
 pub fn enumerateLayerProperties(count: *u32, p_properties: ?[*]vk.LayerProperties) VkError!void {
     if (comptime !builtin.is_test and @hasDecl(root.Instance, "LAYERS")) {
-        count.* = root.Instance.LAYERS.len;
+        const available = root.Instance.LAYERS.len;
         if (p_properties) |properties| {
-            for (root.Instance.LAYERS, properties[0..]) |layer, *prop| {
+            const write_count = @min(count.*, available);
+            for (root.Instance.LAYERS[0..write_count], properties[0..write_count]) |layer, *prop| {
                 prop.* = layer;
             }
+            count.* = @intCast(write_count);
+            if (write_count < available) return VkError.Incomplete;
+        } else {
+            count.* = @intCast(available);
         }
     } else {
         count.* = 0;
@@ -81,11 +122,16 @@ pub fn enumerateExtensionProperties(layer_name: ?[]const u8, count: *u32, p_prop
     }
 
     if (comptime !builtin.is_test and @hasDecl(root.Instance, "EXTENSIONS")) {
-        count.* = root.Instance.EXTENSIONS.len;
+        const available = root.Instance.EXTENSIONS.len;
         if (p_properties) |properties| {
-            for (root.Instance.EXTENSIONS, properties[0..]) |ext, *prop| {
+            const write_count = @min(count.*, available);
+            for (root.Instance.EXTENSIONS[0..write_count], properties[0..write_count]) |ext, *prop| {
                 prop.* = ext;
             }
+            count.* = @intCast(write_count);
+            if (write_count < available) return VkError.Incomplete;
+        } else {
+            count.* = @intCast(available);
         }
     } else {
         count.* = 0;

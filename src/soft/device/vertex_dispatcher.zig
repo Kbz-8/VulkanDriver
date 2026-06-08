@@ -9,6 +9,7 @@ const SpvRuntimeError = spv.Runtime.RuntimeError;
 
 const Renderer = @import("Renderer.zig");
 const SoftPipeline = @import("../SoftPipeline.zig");
+const blitter = @import("blitter.zig");
 
 const VkError = base.VkError;
 const INTERFACE_BLOB_PADDING = @sizeOf(F32x4);
@@ -129,6 +130,9 @@ fn setupBuiltins(rt: *spv.Runtime, vertex_index_u32: u32, instance_index: usize)
 }
 
 fn writeVertexInput(rt: *spv.Runtime, allocator: std.mem.Allocator, raw_input: []const u8, format: vk.Format, location: u32) !void {
+    var expanded_input: [@sizeOf(F32x4)]u8 = @splat(0);
+    const expanded_slice = expandedVertexInput(raw_input, format, &expanded_input);
+
     var has_split_components = false;
     for (1..4) |component| {
         _ = rt.getResultByLocationComponent(location, @intCast(component), .input) catch |err| switch (err) {
@@ -148,8 +152,8 @@ fn writeVertexInput(rt: *spv.Runtime, allocator: std.mem.Allocator, raw_input: [
             const input_memory_size = try rt.getResultMemorySize(result_word);
             const raw_offset = component * @sizeOf(f32);
 
-            if (raw_offset + input_memory_size <= raw_input.len) {
-                try rt.writeInput(raw_input[raw_offset .. raw_offset + input_memory_size], result_word);
+            if (raw_offset + input_memory_size <= expanded_slice.len) {
+                try rt.writeInput(expanded_slice[raw_offset .. raw_offset + input_memory_size], result_word);
                 continue;
             }
 
@@ -179,8 +183,8 @@ fn writeVertexInput(rt: *spv.Runtime, allocator: std.mem.Allocator, raw_input: [
 
     const input_memory_size = try rt.getInputLocationMemorySize(location);
 
-    if (raw_input.len >= input_memory_size) {
-        try rt.writeInputLocation(raw_input[0..input_memory_size], location);
+    if (expanded_slice.len >= input_memory_size) {
+        try rt.writeInputLocation(expanded_slice[0..input_memory_size], location);
         return;
     }
 
@@ -188,10 +192,22 @@ fn writeVertexInput(rt: *spv.Runtime, allocator: std.mem.Allocator, raw_input: [
     defer allocator.free(input);
 
     @memset(input, 0);
-    @memcpy(input[0..raw_input.len], raw_input);
+    @memcpy(input[0..expanded_slice.len], expanded_slice);
 
-    fillMissingVertexComponents(input, raw_input.len, format);
+    fillMissingVertexComponents(input, expanded_slice.len, format);
     try rt.writeInputLocation(input, location);
+}
+
+fn expandedVertexInput(raw_input: []const u8, format: vk.Format, expanded: *[@sizeOf(F32x4)]u8) []const u8 {
+    if (base.format.isUnnormalizedInteger(format)) {
+        const value = blitter.readInt4(raw_input, format);
+        @memcpy(expanded, std.mem.asBytes(&value));
+        return expanded;
+    }
+
+    const value = blitter.readFloat4(raw_input, format);
+    @memcpy(expanded, std.mem.asBytes(&value));
+    return expanded;
 }
 
 fn fillMissingVertexComponents(input: []u8, raw_input_size: usize, format: vk.Format) void {

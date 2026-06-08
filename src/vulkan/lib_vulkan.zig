@@ -64,6 +64,22 @@ inline fn notImplementedWarning() void {
     logger.fixme("function not yet implemented", .{});
 }
 
+fn isSwapchainDeviceFunction(name: []const u8) bool {
+    return std.mem.eql(u8, name, "vkAcquireNextImageKHR") or
+        std.mem.eql(u8, name, "vkCreateSwapchainKHR") or
+        std.mem.eql(u8, name, "vkDestroySwapchainKHR") or
+        std.mem.eql(u8, name, "vkGetSwapchainImagesKHR") or
+        std.mem.eql(u8, name, "vkQueuePresentKHR");
+}
+
+fn wrapNonDispatchable(comptime T: type, allocator: std.mem.Allocator, object: *T, comptime VkT: type) VkError!VkT {
+    const handle = NonDispatchable(T).wrap(allocator, object) catch |err| {
+        object.destroy(allocator);
+        return err;
+    };
+    return handle.toVkHandle(VkT);
+}
+
 fn functionMapEntryPoint(comptime name: []const u8) struct { []const u8, vk.PfnVoidFunction } {
     // Mapping 'vkFnName' to 'apeFnName'
     const ape_name = std.fmt.comptimePrint("ape{s}", .{name[2..]});
@@ -94,6 +110,8 @@ const instance_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkCreateWaylandSurfaceKHR"),
     functionMapEntryPoint("vkDestroyInstance"),
     functionMapEntryPoint("vkDestroySurfaceKHR"),
+    functionMapEntryPoint("vkEnumeratePhysicalDeviceGroups"),
+    functionMapEntryPoint("vkEnumeratePhysicalDeviceGroupsKHR"),
     functionMapEntryPoint("vkEnumeratePhysicalDevices"),
     functionMapEntryPoint("vkGetDeviceProcAddr"),
 });
@@ -312,15 +330,23 @@ pub export fn apeCreateInstance(info: *const vk.InstanceCreateInfo, callbacks: ?
         return .error_validation_failed;
     }
     const allocator = VulkanAllocator.init(callbacks, .instance).allocator();
+    Instance.validateCreateInfo(info) catch |err| return toVkResult(err);
 
     var instance: *lib.Instance = undefined;
     if (!builtin.is_test) {
         // Will call impl instead of interface as root refs the impl module
         instance = root.Instance.create(allocator, info) catch |err| return toVkResult(err);
     }
-    instance.requestPhysicalDevices(allocator) catch |err| return toVkResult(err);
+    instance.requestPhysicalDevices(allocator) catch |err| {
+        if (!builtin.is_test) instance.deinit(allocator) catch {};
+        return toVkResult(err);
+    };
 
-    p_instance.* = (Dispatchable(Instance).wrap(allocator, instance) catch |err| return toVkResult(err)).toVkHandle(vk.Instance);
+    const dispatchable = Dispatchable(Instance).wrap(allocator, instance) catch |err| {
+        if (!builtin.is_test) instance.deinit(allocator) catch {};
+        return toVkResult(err);
+    };
+    p_instance.* = dispatchable.toVkHandle(vk.Instance);
     return .success;
 }
 
@@ -370,13 +396,61 @@ pub export fn apeEnumeratePhysicalDevices(p_instance: vk.Instance, count: *u32, 
     defer entryPointEndLogTrace();
 
     const instance = Dispatchable(Instance).fromHandleObject(p_instance) catch |err| return toVkResult(err);
-    count.* = @intCast(instance.physical_devices.items.len);
+    const available = instance.physical_devices.items.len;
     if (p_devices) |devices| {
-        for (0..count.*) |i| {
+        const write_count = @min(count.*, available);
+        for (0..write_count) |i| {
             devices[i] = instance.physical_devices.items[i].toVkHandle(vk.PhysicalDevice);
         }
+        count.* = @intCast(write_count);
+        if (write_count < available) return .incomplete;
+    } else {
+        count.* = @intCast(available);
     }
     return .success;
+}
+
+pub export fn apeEnumeratePhysicalDeviceGroups(
+    p_instance: vk.Instance,
+    count: *u32,
+    p_groups: ?[*]vk.PhysicalDeviceGroupProperties,
+) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkEnumeratePhysicalDeviceGroups);
+    defer entryPointEndLogTrace();
+
+    const instance = Dispatchable(Instance).fromHandleObject(p_instance) catch |err| return toVkResult(err);
+    const available: u32 = 1;
+
+    if (p_groups) |groups| {
+        const write_count = @min(count.*, available);
+        if (write_count == 0) {
+            count.* = 0;
+            return .incomplete;
+        }
+
+        var group = groups[0];
+        group.physical_device_count = @intCast(instance.physical_devices.items.len);
+        group.physical_devices = @splat(.null_handle);
+        for (instance.physical_devices.items, 0..) |physical_device, i| {
+            group.physical_devices[i] = physical_device.toVkHandle(vk.PhysicalDevice);
+        }
+        group.subset_allocation = .false;
+        groups[0] = group;
+
+        count.* = write_count;
+        return .success;
+    }
+
+    count.* = available;
+    return .success;
+}
+
+pub export fn apeEnumeratePhysicalDeviceGroupsKHR(
+    p_instance: vk.Instance,
+    count: *u32,
+    p_groups: ?[*]vk.PhysicalDeviceGroupProperties,
+) callconv(vk.vulkan_call_conv) vk.Result {
+    return apeEnumeratePhysicalDeviceGroups(p_instance, count, p_groups);
 }
 
 // Physical Device functions =================================================================================================================================
@@ -391,11 +465,16 @@ pub export fn apeCreateDevice(p_physical_device: vk.PhysicalDevice, info: *const
 
     const allocator = VulkanAllocator.init(callbacks, .device).allocator();
     const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
+    physical_device.validateCreateInfo(allocator, info) catch |err| return toVkResult(err);
 
     std.log.scoped(.vkCreateDevice).debug("Using VkPhysicalDevice named {s}", .{physical_device.props.device_name});
 
     const device = physical_device.createDevice(allocator, info) catch |err| return toVkResult(err);
-    p_device.* = (Dispatchable(Device).wrap(allocator, device) catch |err| return toVkResult(err)).toVkHandle(vk.Device);
+    const dispatchable = Dispatchable(Device).wrap(allocator, device) catch |err| {
+        device.destroy(allocator) catch {};
+        return toVkResult(err);
+    };
+    p_device.* = dispatchable.toVkHandle(vk.Device);
     return .success;
 }
 
@@ -679,7 +758,7 @@ pub export fn apeAllocateMemory(p_device: vk.Device, info: *const vk.MemoryAlloc
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const device_memory = device.allocateMemory(allocator, info) catch |err| return toVkResult(err);
 
-    p_memory.* = (NonDispatchable(DeviceMemory).wrap(allocator, device_memory) catch |err| return toVkResult(err)).toVkHandle(vk.DeviceMemory);
+    p_memory.* = wrapNonDispatchable(DeviceMemory, allocator, device_memory, vk.DeviceMemory) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -723,7 +802,7 @@ pub export fn apeCreateBuffer(p_device: vk.Device, info: *const vk.BufferCreateI
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const buffer = device.createBuffer(allocator, info) catch |err| return toVkResult(err);
-    p_buffer.* = (NonDispatchable(Buffer).wrap(allocator, buffer) catch |err| return toVkResult(err)).toVkHandle(vk.Buffer);
+    p_buffer.* = wrapNonDispatchable(Buffer, allocator, buffer, vk.Buffer) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -737,7 +816,7 @@ pub export fn apeCreateBufferView(p_device: vk.Device, info: *const vk.BufferVie
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const view = device.createBufferView(allocator, info) catch |err| return toVkResult(err);
-    p_view.* = (NonDispatchable(BufferView).wrap(allocator, view) catch |err| return toVkResult(err)).toVkHandle(vk.BufferView);
+    p_view.* = wrapNonDispatchable(BufferView, allocator, view, vk.BufferView) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -752,7 +831,7 @@ pub export fn apeCreateCommandPool(p_device: vk.Device, info: *const vk.CommandP
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const pool = device.createCommandPool(allocator, info) catch |err| return toVkResult(err);
-    p_pool.* = (NonDispatchable(CommandPool).wrap(allocator, pool) catch |err| return toVkResult(err)).toVkHandle(vk.CommandPool);
+    p_pool.* = wrapNonDispatchable(CommandPool, allocator, pool, vk.CommandPool) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -808,7 +887,7 @@ pub export fn apeCreateDescriptorPool(p_device: vk.Device, info: *const vk.Descr
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const pool = device.createDescriptorPool(allocator, info) catch |err| return toVkResult(err);
-    p_pool.* = (NonDispatchable(DescriptorPool).wrap(allocator, pool) catch |err| return toVkResult(err)).toVkHandle(vk.DescriptorPool);
+    p_pool.* = wrapNonDispatchable(DescriptorPool, allocator, pool, vk.DescriptorPool) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -824,7 +903,7 @@ pub export fn apeCreateDescriptorSetLayout(p_device: vk.Device, info: *const vk.
     const allocator = VulkanAllocator.init(callbacks, .device).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const layout = device.createDescriptorSetLayout(allocator, info) catch |err| return toVkResult(err);
-    p_layout.* = (NonDispatchable(DescriptorSetLayout).wrap(allocator, layout) catch |err| return toVkResult(err)).toVkHandle(vk.DescriptorSetLayout);
+    p_layout.* = wrapNonDispatchable(DescriptorSetLayout, allocator, layout, vk.DescriptorSetLayout) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -839,7 +918,7 @@ pub export fn apeCreateEvent(p_device: vk.Device, info: *const vk.EventCreateInf
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const event = device.createEvent(allocator, info) catch |err| return toVkResult(err);
-    p_event.* = (NonDispatchable(Event).wrap(allocator, event) catch |err| return toVkResult(err)).toVkHandle(vk.Event);
+    p_event.* = wrapNonDispatchable(Event, allocator, event, vk.Event) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -854,7 +933,7 @@ pub export fn apeCreateFence(p_device: vk.Device, info: *const vk.FenceCreateInf
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const fence = device.createFence(allocator, info) catch |err| return toVkResult(err);
-    p_fence.* = (NonDispatchable(Fence).wrap(allocator, fence) catch |err| return toVkResult(err)).toVkHandle(vk.Fence);
+    p_fence.* = wrapNonDispatchable(Fence, allocator, fence, vk.Fence) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -869,7 +948,7 @@ pub export fn apeCreateFramebuffer(p_device: vk.Device, info: *const vk.Framebuf
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const framebuffer = device.createFramebuffer(allocator, info) catch |err| return toVkResult(err);
-    p_framebuffer.* = (NonDispatchable(Framebuffer).wrap(allocator, framebuffer) catch |err| return toVkResult(err)).toVkHandle(vk.Framebuffer);
+    p_framebuffer.* = wrapNonDispatchable(Framebuffer, allocator, framebuffer, vk.Framebuffer) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -922,7 +1001,7 @@ pub export fn apeCreateImage(p_device: vk.Device, info: *const vk.ImageCreateInf
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const image = device.createImage(allocator, info) catch |err| return toVkResult(err);
-    p_image.* = (NonDispatchable(Image).wrap(allocator, image) catch |err| return toVkResult(err)).toVkHandle(vk.Image);
+    p_image.* = wrapNonDispatchable(Image, allocator, image, vk.Image) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -936,7 +1015,7 @@ pub export fn apeCreateImageView(p_device: vk.Device, info: *const vk.ImageViewC
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const image_view = device.createImageView(allocator, info) catch |err| return toVkResult(err);
-    p_image_view.* = (NonDispatchable(ImageView).wrap(allocator, image_view) catch |err| return toVkResult(err)).toVkHandle(vk.ImageView);
+    p_image_view.* = wrapNonDispatchable(ImageView, allocator, image_view, vk.ImageView) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -951,7 +1030,7 @@ pub export fn apeCreatePipelineCache(p_device: vk.Device, info: *const vk.Pipeli
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const cache = device.createPipelineCache(allocator, info) catch |err| return toVkResult(err);
-    p_cache.* = (NonDispatchable(PipelineCache).wrap(allocator, cache) catch |err| return toVkResult(err)).toVkHandle(vk.PipelineCache);
+    p_cache.* = wrapNonDispatchable(PipelineCache, allocator, cache, vk.PipelineCache) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -967,7 +1046,7 @@ pub export fn apeCreatePipelineLayout(p_device: vk.Device, info: *const vk.Pipel
     const allocator = VulkanAllocator.init(callbacks, .device).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const layout = device.createPipelineLayout(allocator, info) catch |err| return toVkResult(err);
-    p_layout.* = (NonDispatchable(PipelineLayout).wrap(allocator, layout) catch |err| return toVkResult(err)).toVkHandle(vk.PipelineLayout);
+    p_layout.* = wrapNonDispatchable(PipelineLayout, allocator, layout, vk.PipelineLayout) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -982,7 +1061,7 @@ pub export fn apeCreateQueryPool(p_device: vk.Device, info: *const vk.QueryPoolC
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const pool = device.createQueryPool(allocator, info) catch |err| return toVkResult(err);
-    p_pool.* = (NonDispatchable(QueryPool).wrap(allocator, pool) catch |err| return toVkResult(err)).toVkHandle(vk.QueryPool);
+    p_pool.* = wrapNonDispatchable(QueryPool, allocator, pool, vk.QueryPool) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -997,7 +1076,7 @@ pub export fn apeCreateRenderPass(p_device: vk.Device, info: *const vk.RenderPas
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const pass = device.createRenderPass(allocator, info) catch |err| return toVkResult(err);
-    p_pass.* = (NonDispatchable(RenderPass).wrap(allocator, pass) catch |err| return toVkResult(err)).toVkHandle(vk.RenderPass);
+    p_pass.* = wrapNonDispatchable(RenderPass, allocator, pass, vk.RenderPass) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -1012,7 +1091,7 @@ pub export fn apeCreateSampler(p_device: vk.Device, info: *const vk.SamplerCreat
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const sampler = device.createSampler(allocator, info) catch |err| return toVkResult(err);
-    p_sampler.* = (NonDispatchable(Sampler).wrap(allocator, sampler) catch |err| return toVkResult(err)).toVkHandle(vk.Sampler);
+    p_sampler.* = wrapNonDispatchable(Sampler, allocator, sampler, vk.Sampler) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -1027,7 +1106,7 @@ pub export fn apeCreateSemaphore(p_device: vk.Device, info: *const vk.SemaphoreC
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const semaphore = device.createSemaphore(allocator, info) catch |err| return toVkResult(err);
-    p_semaphore.* = (NonDispatchable(BinarySemaphore).wrap(allocator, semaphore) catch |err| return toVkResult(err)).toVkHandle(vk.Semaphore);
+    p_semaphore.* = wrapNonDispatchable(BinarySemaphore, allocator, semaphore, vk.Semaphore) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -1042,7 +1121,7 @@ pub export fn apeCreateShaderModule(p_device: vk.Device, info: *const vk.ShaderM
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const module = device.createShaderModule(allocator, info) catch |err| return toVkResult(err);
-    p_module.* = (NonDispatchable(ShaderModule).wrap(allocator, module) catch |err| return toVkResult(err)).toVkHandle(vk.ShaderModule);
+    p_module.* = wrapNonDispatchable(ShaderModule, allocator, module, vk.ShaderModule) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -1348,6 +1427,8 @@ pub export fn apeGetDeviceProcAddr(p_device: vk.Device, p_name: ?[*:0]const u8) 
     const name = std.mem.span(p_name.?);
 
     if (p_device == .null_handle) return null;
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch return null;
+    if (isSwapchainDeviceFunction(name) and !device.khr_swapchain_enabled) return null;
     if (device_pfn_map.get(name)) |pfn| return pfn;
 
     return null;
@@ -1380,7 +1461,7 @@ pub export fn apeGetEventStatus(p_device: vk.Device, p_event: vk.Event) callconv
 
     const event = NonDispatchable(Event).fromHandleObject(p_event) catch |err| return toVkResult(err);
     event.getStatus() catch |err| return toVkResult(err);
-    return .success;
+    return .event_set;
 }
 
 pub export fn apeGetFenceStatus(p_device: vk.Device, p_fence: vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
@@ -1391,7 +1472,7 @@ pub export fn apeGetFenceStatus(p_device: vk.Device, p_fence: vk.Fence) callconv
 
     const fence = NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err);
     fence.getStatus() catch |err| return toVkResult(err);
-    return .event_set;
+    return .success;
 }
 
 pub export fn apeGetImageMemoryRequirements(p_device: vk.Device, p_image: vk.Image, requirements: *vk.MemoryRequirements) callconv(vk.vulkan_call_conv) void {
@@ -1428,19 +1509,20 @@ pub export fn apeGetImageSubresourceLayout(p_device: vk.Device, p_image: vk.Imag
     layout.* = image.getSubresourceLayout(subresource.*) catch |err| return errorLogger(err);
 }
 
-pub export fn apeGetPipelineCacheData(p_device: vk.Device, p_cache: vk.PipelineCache, size: *usize, data: *anyopaque) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn apeGetPipelineCacheData(p_device: vk.Device, p_cache: vk.PipelineCache, size: *usize, data: ?*anyopaque) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkGetPipelineCacheData);
     defer entryPointEndLogTrace();
 
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
+    const cache = NonDispatchable(PipelineCache).fromHandleObject(p_cache) catch |err| return toVkResult(err);
 
-    notImplementedWarning();
-
-    _ = p_cache;
-    _ = size;
-    _ = data;
-
-    return .success;
+    const available = cache.availableDataSize();
+    const result = if (data) |ptr| blk: {
+        const bytes = @as([*]u8, @ptrCast(ptr))[0..size.*];
+        break :blk cache.getData(bytes);
+    } else cache.getData(null);
+    size.* = if (result == .incomplete) 0 else available;
+    return result;
 }
 
 pub export fn apeGetQueryPoolResults(
@@ -1503,14 +1585,14 @@ pub export fn apeMergePipelineCaches(p_device: vk.Device, p_dst: vk.PipelineCach
     defer entryPointEndLogTrace();
 
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
+    const dst = NonDispatchable(PipelineCache).fromHandleObject(p_dst) catch |err| return toVkResult(err);
 
-    notImplementedWarning();
+    for (0..count) |i| {
+        _ = NonDispatchable(PipelineCache).fromHandleObject(p_srcs[i]) catch |err| return toVkResult(err);
+    }
 
-    _ = p_dst;
-    _ = count;
-    _ = p_srcs;
-
-    return .error_unknown;
+    dst.merge() catch |err| return toVkResult(err);
+    return .success;
 }
 
 pub export fn apeResetCommandPool(p_device: vk.Device, p_pool: vk.CommandPool, flags: vk.CommandPoolResetFlags) callconv(vk.vulkan_call_conv) vk.Result {
@@ -1533,7 +1615,7 @@ pub export fn apeResetDescriptorPool(p_device: vk.Device, p_pool: vk.DescriptorP
     return .success;
 }
 
-pub export fn apeResetEvent(p_device: vk.Device, p_event: vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn apeResetEvent(p_device: vk.Device, p_event: vk.Event) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkResetEvent);
     defer entryPointEndLogTrace();
 
@@ -1557,7 +1639,7 @@ pub export fn apeResetFences(p_device: vk.Device, count: u32, p_fences: [*]const
     return .success;
 }
 
-pub export fn apeSetEvent(p_device: vk.Device, p_event: vk.Fence) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn apeSetEvent(p_device: vk.Device, p_event: vk.Event) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkSetEvent);
     defer entryPointEndLogTrace();
 
@@ -2168,7 +2250,7 @@ pub export fn apeCreateSwapchainKHR(p_device: vk.Device, info: *const vk.Swapcha
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
     const surface = NonDispatchable(SurfaceKHR).fromHandleObject(info.surface) catch |err| return toVkResult(err);
     const swapchain = SwapchainKHR.create(device, allocator, surface, info) catch |err| return toVkResult(err);
-    p_swapchain.* = (NonDispatchable(SwapchainKHR).wrap(allocator, swapchain) catch |err| return toVkResult(err)).toVkHandle(vk.SwapchainKHR);
+    p_swapchain.* = wrapNonDispatchable(SwapchainKHR, allocator, swapchain, vk.SwapchainKHR) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -2183,7 +2265,7 @@ pub export fn apeCreateWaylandSurfaceKHR(p_instance: vk.Instance, info: *const v
         const allocator = VulkanAllocator.init(callbacks, .object).allocator();
         const instance = Dispatchable(Instance).fromHandleObject(p_instance) catch |err| return toVkResult(err);
         const surface = WaylandSurfaceKHR.create(instance, allocator, info) catch |err| return toVkResult(err);
-        p_surface.* = (NonDispatchable(SurfaceKHR).wrap(allocator, surface) catch |err| return toVkResult(err)).toVkHandle(vk.SurfaceKHR);
+        p_surface.* = wrapNonDispatchable(SurfaceKHR, allocator, surface, vk.SurfaceKHR) catch |err| return toVkResult(err);
         return .success;
     } else {
         return .error_unknown;
