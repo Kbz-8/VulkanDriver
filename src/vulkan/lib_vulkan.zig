@@ -2326,11 +2326,15 @@ pub export fn apeGetPhysicalDeviceSurfaceSupportKHR(p_physical_device: vk.Physic
 
 /// TODO: proper implementation when adding new drivers
 pub export fn apeGetPhysicalDeviceWaylandPresentationSupportKHR(p_physical_device: vk.PhysicalDevice, _: u32, _: *anyopaque) callconv(vk.vulkan_call_conv) vk.Bool32 {
-    entryPointBeginLogTrace(.vkGetPhysicalDeviceWaylandPresentationSupportKHR);
-    defer entryPointEndLogTrace();
+    if (comptime has_wayland) {
+        entryPointBeginLogTrace(.vkGetPhysicalDeviceWaylandPresentationSupportKHR);
+        defer entryPointEndLogTrace();
 
-    Dispatchable(PhysicalDevice).checkHandleValidity(p_physical_device) catch |err| errorLogger(err);
-    return .true;
+        Dispatchable(PhysicalDevice).checkHandleValidity(p_physical_device) catch |err| errorLogger(err);
+        return .true;
+    } else {
+        return .false;
+    }
 }
 
 pub export fn apeGetSwapchainImagesKHR(p_device: vk.Device, p_swapchain: vk.SwapchainKHR, count: *u32, p_images: ?[*]vk.Image) callconv(vk.vulkan_call_conv) vk.Result {

@@ -86,6 +86,7 @@ pub fn freeCommandBuffers(self: *Self, cmds: []*Dispatchable(CommandBuffer)) VkE
     var len: usize = 0;
     for (cmds) |cmd| {
         if (std.mem.indexOfScalar(*Dispatchable(CommandBuffer), self.buffers.items, cmd)) |i| {
+            try cmd.object.resetFromPool(.{ .release_resources_bit = true });
             const save = self.buffers.orderedRemove(i);
             self.buffers.appendAssumeCapacity(save);
             len += 1;

@@ -149,7 +149,6 @@ vkEnumerateDeviceLayerProperties                 | ✅ Implemented
 vkEnumerateInstanceExtensionProperties           | ✅ Implemented
 vkEnumerateInstanceLayerProperties               | ✅ Implemented
 vkEnumeratePhysicalDevices                       | ✅ Implemented
-vkEnumeratePhysicalDeviceGroups                  | ✅ Implemented
 vkEnumeratePhysicalDeviceGroupsKHR               | ✅ Implemented
 vkFlushMappedMemoryRanges                        | ✅ Implemented
 vkFreeCommandBuffers                             | ✅ Implemented
