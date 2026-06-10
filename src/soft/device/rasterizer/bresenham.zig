@@ -159,6 +159,7 @@ inline fn run(data: RunData) !void {
                 data.draw_call,
                 data.batch_id,
                 zm.f32x4(@floatFromInt(pixel_x), @floatFromInt(pixel_y), z, 1.0),
+                true,
                 try common.interpolateLineOutputs(data.allocator, data.start_vertex, data.end_vertex, t),
                 null,
             ) catch |err| {

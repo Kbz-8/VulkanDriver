@@ -55,7 +55,7 @@ pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count
     const spv_module = &shader.module.module;
     self.batch_size = shader.runtimes.len;
 
-    const invocations_per_workgroup = spv_module.local_size_x * spv_module.local_size_y * spv_module.local_size_z;
+    const invocations_per_workgroup = spv_module.reflection_infos.local_size_x * spv_module.reflection_infos.local_size_y * spv_module.reflection_infos.local_size_z;
 
     self.invocation_index.store(0, .monotonic);
 
@@ -107,7 +107,7 @@ inline fn run(data: RunData) !void {
     const rt = &shader.runtimes[data.batch_id].rt;
 
     const entry = try rt.getEntryPointByName(shader.entry);
-    const uses_control_barrier = hasControlBarrier(rt.mod.code);
+    const uses_control_barrier = rt.mod.reflection_infos.has_control_barriers;
 
     var barrier_runtimes: []spv.Runtime = &.{};
     var barrier_statuses: []spv.Runtime.EntryPointStatus = &.{};
@@ -235,20 +235,6 @@ fn runBarrierWorkgroup(
     }
 }
 
-/// TODO: Move this in the SPIR-V Interpreter
-fn hasControlBarrier(code: []const spv.SpvWord) bool {
-    var i: usize = 5;
-    while (i < code.len) {
-        const opcode_data = code[i];
-        const word_count = (opcode_data & (~spv.spv.SpvOpCodeMask)) >> spv.spv.SpvWordCountShift;
-        const opcode: spv.spv.SpvOp = @enumFromInt(opcode_data & spv.spv.SpvOpCodeMask);
-        if (opcode == .ControlBarrier)
-            return true;
-        i += @max(word_count, 1);
-    }
-    return false;
-}
-
 inline fn dumpResultsTable(allocator: std.mem.Allocator, io: std.Io, rt: *spv.Runtime, is_early: bool) !void {
     @branchHint(.cold);
     const file = try std.Io.Dir.cwd().createFile(
@@ -262,17 +248,12 @@ inline fn dumpResultsTable(allocator: std.mem.Allocator, io: std.Io, rt: *spv.Ru
     try rt.dumpResultsTable(allocator, &writer.interface);
 }
 
-fn setupWorkgroupBuiltins(
-    self: *Self,
-    rt: *spv.Runtime,
-    group_count: @Vector(3, u32),
-    group_id: @Vector(3, u32),
-) spv.Runtime.RuntimeError!void {
+fn setupWorkgroupBuiltins(self: *Self, rt: *spv.Runtime, group_count: @Vector(3, u32), group_id: @Vector(3, u32)) spv.Runtime.RuntimeError!void {
     const spv_module = &self.state.pipeline.?.stages.getPtrAssertContains(.compute).module.module;
     const workgroup_size = @Vector(3, u32){
-        spv_module.local_size_x,
-        spv_module.local_size_y,
-        spv_module.local_size_z,
+        spv_module.reflection_infos.local_size_x,
+        spv_module.reflection_infos.local_size_y,
+        spv_module.reflection_infos.local_size_z,
     };
 
     rt.writeBuiltIn(std.mem.asBytes(&workgroup_size), .WorkgroupSize) catch {};
@@ -280,17 +261,12 @@ fn setupWorkgroupBuiltins(
     rt.writeBuiltIn(std.mem.asBytes(&group_id), .WorkgroupId) catch {};
 }
 
-fn setupSubgroupBuiltins(
-    self: *Self,
-    rt: *spv.Runtime,
-    group_id: @Vector(3, u32),
-    local_invocation_index: usize,
-) spv.Runtime.RuntimeError!void {
+fn setupSubgroupBuiltins(self: *Self, rt: *spv.Runtime, group_id: @Vector(3, u32), local_invocation_index: usize) spv.Runtime.RuntimeError!void {
     const spv_module = &self.state.pipeline.?.stages.getPtrAssertContains(.compute).module.module;
     const workgroup_size = @Vector(3, u32){
-        spv_module.local_size_x,
-        spv_module.local_size_y,
-        spv_module.local_size_z,
+        spv_module.reflection_infos.local_size_x,
+        spv_module.reflection_infos.local_size_y,
+        spv_module.reflection_infos.local_size_z,
     };
     const local_base = workgroup_size * group_id;
     var local_invocation = @Vector(3, u32){ 0, 0, 0 };

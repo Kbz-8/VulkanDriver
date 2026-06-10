@@ -88,6 +88,7 @@ pub fn build(b: *std.Build) !void {
             .root_source_file = b.path(impl.root_source_file),
             .target = target,
             .optimize = optimize,
+            //.error_tracing = true,
             .imports = &.{
                 .{ .name = "base", .module = base_mod },
                 .{ .name = "vulkan", .module = vulkan },
@@ -133,13 +134,10 @@ pub fn build(b: *std.Build) !void {
         const test_step = b.step(b.fmt("test-{s}", .{impl.name}), b.fmt("Run libvulkan_{s} tests", .{impl.name}));
         test_step.dependOn(&run_tests.step);
 
-        (try addCTS(b, target, &impl, lib, .normal)).dependOn(&lib_install.step);
-        (try addCTS(b, target, &impl, lib, .gdb)).dependOn(&lib_install.step);
-        (try addCTS(b, target, &impl, lib, .valgrind)).dependOn(&lib_install.step);
-
-        (try addMultithreadedCTS(b, target, &impl, lib, .normal)).dependOn(&lib_install.step);
-        (try addMultithreadedCTS(b, target, &impl, lib, .gdb)).dependOn(&lib_install.step);
-        (try addMultithreadedCTS(b, target, &impl, lib, .valgrind)).dependOn(&lib_install.step);
+        inline for (std.enums.values(RunningMode)) |mode| {
+            (try addCTS(b, target, &impl, lib, mode)).dependOn(&lib_install.step);
+            (try addMultithreadedCTS(b, target, &impl, lib, mode)).dependOn(&lib_install.step);
+        }
 
         const impl_autodoc_test = b.addObject(.{
             .name = "lib",
@@ -212,7 +210,7 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
             .linux => "linux.x86_64",
             .windows => "windows.exe",
-            else => unreachable,
+            else => return error.NoCTSForPlatform,
         },
     }));
 
@@ -289,7 +287,7 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
             .linux => "linux.x86_64",
             .windows => "windows.exe",
-            else => unreachable,
+            else => return error.NoCTSForPlatform,
         },
     }));
 

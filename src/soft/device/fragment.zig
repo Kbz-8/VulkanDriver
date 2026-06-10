@@ -18,36 +18,12 @@ pub const DerivativeInputs = struct {
     dy: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation,
 };
 
-pub fn shaderUsesDerivatives(code: []const spv.SpvWord) bool {
-    var i: usize = 5;
-    while (i < code.len) {
-        const opcode_data = code[i];
-        const word_count = (opcode_data & (~spv.spv.SpvOpCodeMask)) >> spv.spv.SpvWordCountShift;
-        if (word_count == 0)
-            return false;
-
-        const opcode = opcode_data & spv.spv.SpvOpCodeMask;
-        switch (opcode) {
-            @intFromEnum(spv.spv.SpvOp.DPdx),
-            @intFromEnum(spv.spv.SpvOp.DPdy),
-            @intFromEnum(spv.spv.SpvOp.DPdxFine),
-            @intFromEnum(spv.spv.SpvOp.DPdyFine),
-            @intFromEnum(spv.spv.SpvOp.DPdxCoarse),
-            @intFromEnum(spv.spv.SpvOp.DPdyCoarse),
-            => return true,
-            else => {},
-        }
-
-        i += word_count;
-    }
-    return false;
-}
-
 pub fn shaderInvocation(
     allocator: std.mem.Allocator,
     draw_call: *Renderer.DrawCall,
     batch_id: usize,
     position: zm.F32x4,
+    front_face: bool,
     inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation,
     derivative_inputs: ?DerivativeInputs,
 ) SpvRuntimeError![spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8 {
@@ -74,6 +50,10 @@ pub fn shaderInvocation(
     rt.resetInvocation(allocator);
     try rt.populatePushConstants(draw_call.renderer.state.push_constant_blob[0..]);
     rt.writeBuiltIn(std.mem.asBytes(&position), .FragCoord) catch |err| switch (err) {
+        SpvRuntimeError.NotFound => {},
+        else => return err,
+    };
+    rt.writeBuiltIn(std.mem.asBytes(&front_face), .FrontFacing) catch |err| switch (err) {
         SpvRuntimeError.NotFound => {},
         else => return err,
     };
@@ -143,9 +123,7 @@ pub fn shaderInvocation(
                     SpvRuntimeError.NotFound => continue,
                     else => return err,
                 };
-                const memory_size = try rt.getResultMemorySize(result_word);
-                const offset = component * @sizeOf(f32);
-                try rt.readOutput(outputs[location][offset .. offset + memory_size], result_word);
+                try readFragmentOutput(allocator, rt, &outputs, location, component, result_word);
             }
             continue;
         }
@@ -154,7 +132,7 @@ pub fn shaderInvocation(
             SpvRuntimeError.NotFound => continue,
             else => return err,
         };
-        try rt.readOutput(&outputs[location], result_word);
+        try readFragmentOutput(allocator, rt, &outputs, location, 0, result_word);
     }
 
     try rt.flushDescriptorSets(allocator);
@@ -165,6 +143,48 @@ pub fn shaderInvocation(
     }
 
     return outputs;
+}
+
+fn readFragmentOutput(
+    allocator: std.mem.Allocator,
+    rt: anytype,
+    outputs: *[spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8,
+    location: usize,
+    component: usize,
+    result_word: spv.SpvWord,
+) SpvRuntimeError!void {
+    const memory_size = try rt.getResultMemorySize(result_word);
+    const offset = component * @sizeOf(f32);
+    const location_size = @sizeOf(zm.F32x4);
+    const direct_capacity = location_size - offset;
+
+    if (memory_size <= direct_capacity) {
+        try rt.readOutput(outputs[location][offset .. offset + memory_size], result_word);
+        return;
+    }
+
+    const output = allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return SpvRuntimeError.OutOfMemory;
+    defer allocator.free(output);
+    @memset(output, 0);
+
+    try rt.readOutput(output, result_word);
+
+    var source_offset: usize = 0;
+    var target_location = location;
+    var target_offset = offset;
+    while (source_offset < memory_size and target_location < outputs.len) {
+        const copy_size = @min(memory_size - source_offset, location_size - target_offset);
+        @memcpy(
+            outputs[target_location][target_offset .. target_offset + copy_size],
+            output[source_offset .. source_offset + copy_size],
+        );
+        source_offset += copy_size;
+        target_location += 1;
+        target_offset = offset;
+    }
+
+    if (source_offset != memory_size)
+        return SpvRuntimeError.OutOfBounds;
 }
 
 fn freeOwnedInputs(allocator: std.mem.Allocator, inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation) void {

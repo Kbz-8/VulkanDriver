@@ -58,9 +58,10 @@ pub fn drawTriangle(
     const pipeline = draw_call.renderer.state.pipeline orelse return;
     const fragment_stage = pipeline.stages.getPtr(.fragment);
     const fragment_uses_derivatives = if (fragment_stage) |stage|
-        fragment.shaderUsesDerivatives(stage.module.module.code)
+        stage.module.module.reflection_infos.needs_derivatives
     else
         false;
+
     const runtimes_count = if (fragment_stage) |stage| stage.runtimes.len else 1;
     if (runtimes_count == 0)
         return;
@@ -218,6 +219,7 @@ inline fn run(data: RunData) !void {
                     data.draw_call,
                     data.batch_id,
                     zm.f32x4(@floatFromInt(x), @floatFromInt(y), z, 1.0),
+                    data.front_face,
                     inputs,
                     derivative_inputs,
                 ) catch |err| {

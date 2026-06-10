@@ -311,6 +311,7 @@ fn clipTransformAndRasterizePoint(
                     draw_call,
                     0,
                     zm.f32x4(@floatFromInt(px), @floatFromInt(py), transformed.position[2], 1.0),
+                    true,
                     try common.interpolateVertexOutputs(allocator, &transformed, &transformed, &transformed, 1.0, 0.0, 0.0),
                     null,
                 ) catch |err| {
