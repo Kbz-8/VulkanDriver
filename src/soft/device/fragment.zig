@@ -29,6 +29,7 @@ pub fn shaderInvocation(
 ) SpvRuntimeError![spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8 {
     var fragment_inputs = inputs;
     errdefer freeOwnedInputs(allocator, fragment_inputs);
+
     const derivatives = derivative_inputs;
     errdefer if (derivatives) |owned_derivatives| {
         freeOwnedInputs(allocator, owned_derivatives.dx);

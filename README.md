@@ -23,7 +23,12 @@ It maketh use of a bespoke [SPIR-V interpreter](https://git.kbz8.me/kbz_8/SPIRV-
 
 If thou art truly determined:
 ```
-zig build soft
+zig build soft --release=[fast|safe|small]
+```
+
+And should thou seek additional build options with:
+```
+zig build --help
 ```
 
 Then ensure thy Vulkan loader is pointed toward the ICD manifest.

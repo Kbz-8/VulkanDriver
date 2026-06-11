@@ -119,6 +119,7 @@ inline fn run(data: RunData) !void {
             try barrier_rt.copySpecializationConstantsFrom(allocator, rt);
         }
     }
+
     defer {
         for (barrier_runtimes) |*barrier_rt| {
             barrier_rt.deinit(allocator);
@@ -179,9 +180,8 @@ inline fn run(data: RunData) !void {
 
             rt.callEntryPoint(allocator, entry) catch |err| switch (err) {
                 // Some errors can be ignored
-                SpvRuntimeError.OutOfBounds,
-                SpvRuntimeError.Killed,
-                => {},
+                SpvRuntimeError.OutOfBounds => {},
+                SpvRuntimeError.Killed => continue,
                 else => return err,
             };
 
@@ -235,7 +235,7 @@ fn runBarrierWorkgroup(
     }
 }
 
-inline fn dumpResultsTable(allocator: std.mem.Allocator, io: std.Io, rt: *spv.Runtime, is_early: bool) !void {
+fn dumpResultsTable(allocator: std.mem.Allocator, io: std.Io, rt: *spv.Runtime, comptime is_early: bool) !void {
     @branchHint(.cold);
     const file = try std.Io.Dir.cwd().createFile(
         io,

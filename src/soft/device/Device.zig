@@ -87,9 +87,13 @@ pub fn writeDescriptorSets(state: *PipelineState, rt: *spv.Runtime) !void {
                     if (buffer_data.object) |buffer| {
                         const binding_layout = set.?.interface.layout.bindings[binding_index];
                         const dynamic_offset: vk.DeviceSize = switch (binding_layout.descriptor_type) {
-                            .uniform_buffer_dynamic, .storage_buffer_dynamic => state.dynamic_offsets[set_index][binding_layout.dynamic_index + descriptor_index],
+                            .uniform_buffer_dynamic,
+                            .storage_buffer_dynamic,
+                            => state.dynamic_offsets[set_index][binding_layout.dynamic_index + descriptor_index],
+
                             else => 0,
                         };
+
                         const map = buffer.mapAsSliceWithAddedOffset(u8, buffer_data.offset + dynamic_offset, buffer_data.size) catch continue :bindings;
                         rt.writeDescriptorSet(
                             map,
@@ -163,6 +167,7 @@ pub fn writeDescriptorSets(state: *PipelineState, rt: *spv.Runtime) !void {
                         const addr: usize = @intFromPtr(image_view);
                         data.image = addr;
                     }
+
                     if (texture_data.sampler) |sampler| {
                         const addr: usize = @intFromPtr(sampler);
                         data.sampler = addr;
