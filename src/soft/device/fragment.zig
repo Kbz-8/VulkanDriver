@@ -181,7 +181,7 @@ fn readFragmentOutput(
         );
         source_offset += copy_size;
         target_location += 1;
-        target_offset = offset;
+        target_offset = 0;
     }
 
     if (source_offset != memory_size)
