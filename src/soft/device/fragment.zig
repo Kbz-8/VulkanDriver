@@ -99,8 +99,7 @@ pub fn shaderInvocation(
         SpvRuntimeError.OutOfBounds => {},
         SpvRuntimeError.Killed => {
             try rt.flushDescriptorSets(allocator);
-            freeOwnedInputs(allocator, fragment_inputs);
-            return undefined; // FIXME
+            return SpvRuntimeError.Killed;
         },
         else => return err,
     };
@@ -154,13 +153,32 @@ fn readFragmentOutput(
     component: usize,
     result_word: spv.SpvWord,
 ) SpvRuntimeError!void {
-    const memory_size = try rt.getResultMemorySize(result_word);
-    const offset = component * @sizeOf(f32);
-    const location_size = @sizeOf(zm.F32x4);
-    const direct_capacity = location_size - offset;
+    const value = try rt.results[result_word].getConstValue();
+    switch (value.*) {
+        .Array => |array| {
+            for (array.values, 0..) |element, element_index| {
+                const target_location = location + element_index;
+                if (target_location >= outputs.len)
+                    return SpvRuntimeError.OutOfBounds;
 
-    if (memory_size <= direct_capacity) {
-        try rt.readOutput(outputs[location][offset .. offset + memory_size], result_word);
+                const memory_size = try element.getPlainMemorySize();
+                const output = allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return SpvRuntimeError.OutOfMemory;
+                defer allocator.free(output);
+                @memset(output, 0);
+
+                _ = try element.read(output);
+                try copyFragmentOutputBytes(outputs, output[0..memory_size], target_location, component);
+            }
+            return;
+        },
+        else => {},
+    }
+
+    const memory_size = try rt.getResultMemorySize(result_word);
+    if (memory_size <= INTERFACE_BLOB_PADDING) {
+        var output = std.mem.zeroes([INTERFACE_BLOB_PADDING]u8);
+        try rt.readOutput(output[0..memory_size], result_word);
+        try copyFragmentOutputBytes(outputs, output[0..memory_size], location, component);
         return;
     }
 
@@ -168,7 +186,25 @@ fn readFragmentOutput(
     defer allocator.free(output);
     @memset(output, 0);
 
-    try rt.readOutput(output, result_word);
+    try rt.readOutput(output[0..memory_size], result_word);
+    try copyFragmentOutputBytes(outputs, output[0..memory_size], location, component);
+}
+
+fn copyFragmentOutputBytes(
+    outputs: *[spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8,
+    output: []const u8,
+    location: usize,
+    component: usize,
+) SpvRuntimeError!void {
+    const memory_size = output.len;
+    const offset = component * @sizeOf(f32);
+    const location_size = @sizeOf(zm.F32x4);
+    const direct_capacity = location_size - offset;
+
+    if (memory_size <= direct_capacity) {
+        @memcpy(outputs[location][offset .. offset + memory_size], output);
+        return;
+    }
 
     var source_offset: usize = 0;
     var target_location = location;

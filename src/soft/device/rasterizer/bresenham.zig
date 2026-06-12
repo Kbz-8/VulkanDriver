@@ -163,6 +163,9 @@ inline fn run(data: RunData) !void {
                 try common.interpolateLineOutputs(data.allocator, data.start_vertex, data.end_vertex, t),
                 null,
             ) catch |err| {
+                if (err == SpvRuntimeError.Killed)
+                    continue;
+
                 std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
                 if (comptime base.config.logs == .verbose) {
                     if (@errorReturnTrace()) |trace| {

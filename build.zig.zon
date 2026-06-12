@@ -6,8 +6,8 @@
 
     .dependencies = .{
         .vulkan_headers = .{
-            .url = "git+https://github.com/KhronosGroup/Vulkan-Headers?ref=v1.4.330#ee3b5caaa7e372715873c7b9c390ee1c3ca5db25",
-            .hash = "N-V-__8AAFXYAQKsK51AAGXB9HziPDFjS_DVUq6_QHVxHrBM",
+            .url = "git+https://github.com/KhronosGroup/Vulkan-Headers/#01393c3df0e5285b54ee6527466513f9e614be94",
+            .hash = "N-V-__8AAEu6eQLGuoPmVY5dM6IQxznJGorQMHhLn5xFnn_8",
         },
         .vulkan_zig = .{
             .url = "git+https://github.com/Snektron/vulkan-zig#be16fc99f7f794cba90334978c6c5aadeda8094f",
@@ -26,8 +26,8 @@
             .hash = "N-V-__8AAF9uOh0I4P_99za7N822J3JwsDaqONrFVrcEQo59",
         },
         .SPIRV_Interpreter = .{
-            .url = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#089a33981c449220fd74287560347e72e5ce53fa",
-            .hash = "SPIRV_Interpreter-0.0.1-ajmpn8hBBwCp53qmU9TiIKGybBRsx-edOSeE44gnNgQR",
+            .url = "git+https://git.kbz8.me/kbz_8/SPIRV-Interpreter#c7320325fdf6b1e5e6371ff620ed08b926587eed",
+            .hash = "SPIRV_Interpreter-0.0.1-ajmpn5F_BwBQHPDX6S9rSgLls4FYjpdxGD30B17paW7L",
             .lazy = true,
         },
         //.SPIRV_Interpreter = .{

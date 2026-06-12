@@ -15,6 +15,7 @@ const SoftImageView = @import("SoftImageView.zig");
 
 const Self = @This();
 pub const Interface = base.Sampler;
+pub const ImageOffset = spv.Runtime.ImageOffset;
 
 const CubeCoordinate = struct {
     face: u32,
@@ -276,6 +277,20 @@ fn swizzleInt4(color: U32x4, components: vk.ComponentMapping) U32x4 {
     };
 }
 
+fn compareDepth(op: vk.CompareOp, reference: f32, value: f32) bool {
+    return switch (op) {
+        .never => false,
+        .less => reference < value,
+        .equal => reference == value,
+        .less_or_equal => reference <= value,
+        .greater => reference > value,
+        .not_equal => reference != value,
+        .greater_or_equal => reference >= value,
+        .always => true,
+        else => false,
+    };
+}
+
 fn readSampledFloat4(
     image: *SoftImage,
     image_view: *SoftImageView,
@@ -410,7 +425,7 @@ fn readSampledInt4(
     );
 }
 
-pub fn sampleImageFloat4(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, lod: ?f32) VkError!F32x4 {
+pub fn sampleImageFloat4(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, lod: ?f32, offset: ImageOffset) VkError!F32x4 {
     const mip_level = sampleMipLevel(image, image_view, sampler, lod);
     const extent = image.getMipLevelExtent(mip_level);
     const coord: CubeCoordinate = switch (image_view.interface.view_type) {
@@ -454,9 +469,9 @@ pub fn sampleImageFloat4(image: *SoftImage, image_view: *SoftImageView, sampler:
         *const ImageSamplingContext,
         &context,
         zm.f32x4(
-            coord.u * scale_u,
-            coord.v * scale_v,
-            coord.w * scale_w,
+            coord.u * scale_u + @as(f32, @floatFromInt(offset.x)),
+            coord.v * scale_v + @as(f32, @floatFromInt(offset.y)),
+            coord.w * scale_w + @as(f32, @floatFromInt(offset.z)),
             0.0,
         ),
         switch (sampler.interface.mag_filter) {
@@ -468,7 +483,7 @@ pub fn sampleImageFloat4(image: *SoftImage, image_view: *SoftImageView, sampler:
     );
 }
 
-pub fn sampleImageInt4(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, lod: ?f32) VkError!U32x4 {
+pub fn sampleImageInt4(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, lod: ?f32, offset: ImageOffset) VkError!U32x4 {
     const mip_level = sampleMipLevel(image, image_view, sampler, lod);
     const extent = image.getMipLevelExtent(mip_level);
     const coord: CubeCoordinate = switch (image_view.interface.view_type) {
@@ -507,11 +522,18 @@ pub fn sampleImageInt4(image: *SoftImage, image_view: *SoftImageView, sampler: *
         dim,
         coord,
         mip_level,
-        @intFromFloat(@floor(coord.u * scale_u)),
-        @intFromFloat(@floor(coord.v * scale_v)),
-        @intFromFloat(@floor(coord.w * scale_w)),
+        @as(i32, @intFromFloat(@floor(coord.u * scale_u))) + offset.x,
+        @as(i32, @intFromFloat(@floor(coord.v * scale_v))) + offset.y,
+        @as(i32, @intFromFloat(@floor(coord.w * scale_w))) + offset.z,
     );
     return swizzleInt4(color, image_view.interface.components);
+}
+
+pub fn sampleImageDref(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, dref: f32, lod: ?f32, offset: ImageOffset) VkError!f32 {
+    const color = try sampleImageFloat4(image, image_view, sampler, dim, x, y, z, lod, offset);
+    if (sampler.interface.compare_enable == .false)
+        return color[0];
+    return if (compareDepth(sampler.interface.compare_op, dref, color[0])) 1.0 else 0.0;
 }
 
 pub fn sampleFloat4(

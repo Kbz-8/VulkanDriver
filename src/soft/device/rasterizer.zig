@@ -17,6 +17,7 @@ const DrawCall = Renderer.DrawCall;
 const SoftImage = @import("../SoftImage.zig");
 
 const VkError = base.VkError;
+const SpvRuntimeError = spv.Runtime.RuntimeError;
 
 pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocator, draw_call: *DrawCall) VkError!void {
     const io = draw_call.renderer.device.interface.io();
@@ -315,6 +316,9 @@ fn clipTransformAndRasterizePoint(
                     try common.interpolateVertexOutputs(allocator, &transformed, &transformed, &transformed, 1.0, 0.0, 0.0),
                     null,
                 ) catch |err| {
+                    if (err == SpvRuntimeError.Killed)
+                        continue;
+
                     std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
                     if (comptime base.config.logs == .verbose) {
                         if (@errorReturnTrace()) |trace| {

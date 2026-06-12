@@ -223,6 +223,9 @@ inline fn run(data: RunData) !void {
                     inputs,
                     derivative_inputs,
                 ) catch |err| {
+                    if (err == SpvRuntimeError.Killed)
+                        continue;
+
                     std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
                     if (comptime base.config.logs == .verbose) {
                         if (@errorReturnTrace()) |trace| {

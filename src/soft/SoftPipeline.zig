@@ -104,6 +104,7 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
                     .writeImageInt4 = writeImageInt4,
                     .sampleImageFloat4 = sampleImageFloat4,
                     .sampleImageInt4 = sampleImageInt4,
+                    .sampleImageDref = sampleImageDref,
                     .queryImageSize = queryImageSize,
                 },
             ) catch |err| {
@@ -192,6 +193,7 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
                         .writeImageInt4 = writeImageInt4,
                         .sampleImageFloat4 = sampleImageFloat4,
                         .sampleImageInt4 = sampleImageInt4,
+                        .sampleImageDref = sampleImageDref,
                         .queryImageSize = queryImageSize,
                     },
                 ) catch |err| {
@@ -382,7 +384,7 @@ fn writeImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, 
     }
 }
 
-fn sampleImageFloat4(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim, x: f32, y: f32, z: f32, lod: ?f32) SpvRuntimeError!spv.Runtime.Vec4(f32) {
+fn sampleImageFloat4(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim, x: f32, y: f32, z: f32, lod: ?f32, offset: spv.Runtime.ImageOffset) SpvRuntimeError!spv.Runtime.Vec4(f32) {
     var pixel = zm.f32x4s(0.0);
 
     if (dim == .Buffer) {
@@ -395,7 +397,7 @@ fn sampleImageFloat4(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim,
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
 
         const sampler: *SoftSampler = @ptrCast(@alignCast(context2));
-        pixel = SoftSampler.sampleImageFloat4(image, image_view, sampler, dim, x, y, z, lod) catch return SpvRuntimeError.Unknown;
+        pixel = SoftSampler.sampleImageFloat4(image, image_view, sampler, dim, x, y, z, lod, offset) catch return SpvRuntimeError.Unknown;
     }
 
     return .{
@@ -406,7 +408,7 @@ fn sampleImageFloat4(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim,
     };
 }
 
-fn sampleImageInt4(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim, x: f32, y: f32, z: f32, lod: ?f32) SpvRuntimeError!spv.Runtime.Vec4(u32) {
+fn sampleImageInt4(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim, x: f32, y: f32, z: f32, lod: ?f32, offset: spv.Runtime.ImageOffset) SpvRuntimeError!spv.Runtime.Vec4(u32) {
     var pixel = @Vector(4, u32){ 0, 0, 0, 0 };
 
     if (dim == .Buffer) {
@@ -419,7 +421,7 @@ fn sampleImageInt4(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim, x
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
 
         const sampler: *SoftSampler = @ptrCast(@alignCast(context2));
-        pixel = SoftSampler.sampleImageInt4(image, image_view, sampler, dim, x, y, z, lod) catch return SpvRuntimeError.Unknown;
+        pixel = SoftSampler.sampleImageInt4(image, image_view, sampler, dim, x, y, z, lod, offset) catch return SpvRuntimeError.Unknown;
     }
 
     return .{
@@ -428,6 +430,16 @@ fn sampleImageInt4(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim, x
         .z = pixel[2],
         .w = pixel[3],
     };
+}
+
+fn sampleImageDref(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim, x: f32, y: f32, z: f32, dref: f32, lod: ?f32, offset: spv.Runtime.ImageOffset) SpvRuntimeError!f32 {
+    if (dim == .Buffer)
+        return SpvRuntimeError.UnsupportedSpirV;
+
+    const image_view: *SoftImageView = @ptrCast(@alignCast(context));
+    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
+    const sampler: *SoftSampler = @ptrCast(@alignCast(context2));
+    return SoftSampler.sampleImageDref(image, image_view, sampler, dim, x, y, z, dref, lod, offset) catch return SpvRuntimeError.Unknown;
 }
 
 fn queryImageSize(context: *anyopaque, dim: spv.SpvDim, arrayed: bool) SpvRuntimeError!spv.Runtime.Vec4(u32) {

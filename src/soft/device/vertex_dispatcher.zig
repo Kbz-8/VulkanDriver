@@ -107,9 +107,16 @@ inline fn run(data: RunData) !void {
                     SpvRuntimeError.NotFound => continue,
                     else => return err,
                 };
+
                 const memory_size = try rt.getResultMemorySize(result_word);
+
+                const result_is_integer = blk: {
+                    const result_type = rt.getResultPrimitiveType(result_word) catch break :blk false;
+                    break :blk result_type == .SInt or result_type == .UInt;
+                };
+
                 output.outputs[location][component] = .{
-                    .interpolation_type = if (rt.hasResultDecoration(result_word, .Flat) or rt.resultIsInteger(result_word)) .flat else .smooth, // TODO : handle noperspective
+                    .interpolation_type = if (rt.hasResultDecoration(result_word, .Flat) or result_is_integer) .flat else .smooth, // TODO : handle noperspective
                     .blob = data.allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return VkError.OutOfDeviceMemory,
                     .size = memory_size,
                 };
@@ -181,7 +188,10 @@ fn writeVertexInput(rt: *spv.Runtime, allocator: std.mem.Allocator, raw_input: [
         return;
     }
 
-    const input_memory_size = try rt.getInputLocationMemorySize(location);
+    const input_memory_size = rt.getInputLocationMemorySize(location) catch |err| switch (err) {
+        SpvRuntimeError.NotFound => return,
+        else => return err,
+    };
 
     if (expanded_slice.len >= input_memory_size) {
         try rt.writeInputLocation(expanded_slice[0..input_memory_size], location);
