@@ -75,13 +75,21 @@ inline fn run(data: RunData) !void {
 
         if (data.pipeline.interface.mode.graphics.input_assembly.attribute_description) |attributes| {
             for (attributes) |attribute| {
-                const binding_info = (data.pipeline.interface.mode.graphics.input_assembly.binding_description orelse return)[attribute.binding];
+                const binding_info = findBindingDescription(
+                    data.pipeline.interface.mode.graphics.input_assembly.binding_description orelse return,
+                    attribute.binding,
+                ) orelse return VkError.ValidationFailed;
 
                 const vertex_buffer = data.draw_call.renderer.state.data.graphics.vertex_buffers[attribute.binding];
                 const buffer = vertex_buffer.buffer;
                 const buffer_memory_size = base.format.texelSize(attribute.format);
                 const buffer_memory = if (buffer.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
-                const offset = buffer.interface.offset + vertex_buffer.offset + (binding_info.stride * vertex_index) + attribute.offset;
+                const input_index = switch (binding_info.input_rate) {
+                    .vertex => vertex_index,
+                    .instance => data.instance_index,
+                    else => return VkError.ValidationFailed,
+                };
+                const offset = buffer.interface.offset + vertex_buffer.offset + (binding_info.stride * input_index) + attribute.offset;
 
                 const buffer_memory_map: []u8 = try buffer_memory.map(offset, buffer_memory_size);
 
@@ -91,7 +99,6 @@ inline fn run(data: RunData) !void {
 
         rt.callEntryPoint(data.allocator, entry) catch |err| switch (err) {
             // Some errors can be safely ignored
-            SpvRuntimeError.OutOfBounds => {},
             SpvRuntimeError.Killed => {
                 try rt.flushDescriptorSets(data.allocator);
                 return;
@@ -99,7 +106,7 @@ inline fn run(data: RunData) !void {
             else => return err,
         };
 
-        try rt.readBuiltIn(std.mem.asBytes(&output.position), .Position);
+        try readPosition(rt, std.mem.asBytes(&output.position));
 
         for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
             for (0..4) |component| {
@@ -126,6 +133,72 @@ inline fn run(data: RunData) !void {
         }
 
         try rt.flushDescriptorSets(data.allocator);
+    }
+}
+
+fn findBindingDescription(binding_descriptions: []const vk.VertexInputBindingDescription, binding: u32) ?vk.VertexInputBindingDescription {
+    for (binding_descriptions) |description| {
+        if (description.binding == binding)
+            return description;
+    }
+    return null;
+}
+
+fn readPosition(rt: *spv.Runtime, output: []u8) !void {
+    if (rt.readBuiltIn(output, .Position)) {
+        return;
+    } else |err| switch (err) {
+        SpvRuntimeError.InvalidSpirV => {},
+        else => return err,
+    }
+
+    for (rt.results) |*result| {
+        const variant = result.variant orelse continue;
+        switch (variant) {
+            .AccessChain => |*access_chain| {
+                if (access_chain.indexes.len == 0)
+                    continue;
+
+                const base_variant = rt.results[access_chain.base].variant orelse continue;
+                switch (base_variant) {
+                    .Variable => |variable| {
+                        if (variable.storage_class != .Output)
+                            continue;
+                    },
+                    else => continue,
+                }
+
+                if (!isConstantZero(rt, access_chain.indexes[0]))
+                    continue;
+
+                switch (access_chain.value) {
+                    .Pointer => |ptr| switch (ptr.ptr) {
+                        .common => |value| _ = try value.read(output),
+                        else => continue,
+                    },
+                    else => _ = try access_chain.value.read(output),
+                }
+                return;
+            },
+            else => {},
+        }
+    }
+
+    return SpvRuntimeError.InvalidSpirV;
+}
+
+fn isConstantZero(rt: *spv.Runtime, result_word: spv.SpvWord) bool {
+    if (result_word >= rt.results.len)
+        return false;
+
+    const variant = rt.results[result_word].variant orelse return false;
+    switch (variant) {
+        .Constant => |constant| {
+            var value: u32 = undefined;
+            _ = constant.value.read(std.mem.asBytes(&value)) catch return false;
+            return value == 0;
+        },
+        else => return false,
     }
 }
 

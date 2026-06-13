@@ -22,6 +22,7 @@ const SoftImageView = @import("SoftImageView.zig");
 const SoftInstance = @import("SoftInstance.zig");
 const SoftSampler = @import("SoftSampler.zig");
 const SoftShaderModule = @import("SoftShaderModule.zig");
+const SoftPipelineCache = @import("SoftPipelineCache.zig");
 
 const Self = @This();
 pub const Interface = base.Pipeline;
@@ -66,6 +67,10 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
     const soft_module: *SoftShaderModule = @alignCast(@fieldParentPtr("interface", module));
 
     const device_allocator = soft_device.device_allocator.allocator();
+    const soft_cache: ?*SoftPipelineCache = if (cache) |pipeline_cache|
+        @alignCast(@fieldParentPtr("interface", pipeline_cache))
+    else
+        null;
 
     self.* = .{
         .interface = interface,
@@ -85,56 +90,8 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
         },
     };
 
-    self.stages.put(.compute, blk: {
-        var shader: Shader = undefined;
-        soft_module.ref();
-        shader.module = soft_module;
-
-        const runtimes = runtimes_allocator.alloc(Runtime, runtimes_count) catch return VkError.OutOfDeviceMemory;
-
-        for (runtimes) |*runtime| {
-            runtime.mutex = .init;
-            runtime.rt = spv.Runtime.init(
-                runtimes_allocator,
-                &soft_module.module,
-                .{
-                    .readImageFloat4 = readImageFloat4,
-                    .readImageInt4 = readImageInt4,
-                    .writeImageFloat4 = writeImageFloat4,
-                    .writeImageInt4 = writeImageInt4,
-                    .sampleImageFloat4 = sampleImageFloat4,
-                    .sampleImageInt4 = sampleImageInt4,
-                    .sampleImageDref = sampleImageDref,
-                    .queryImageSize = queryImageSize,
-                },
-            ) catch |err| {
-                std.log.scoped(.SpvRuntimeInit).err("SPIR-V Runtime failed to initialize, {s}", .{@errorName(err)});
-                return VkError.Unknown;
-            };
-            if (info.stage.p_specialization_info) |specialization| {
-                if (specialization.p_map_entries) |map| {
-                    const data: []const u8 = @as([*]const u8, @ptrCast(@alignCast(specialization.p_data)))[0..specialization.data_size];
-                    for (map[0..], 0..specialization.map_entry_count) |entry, _| {
-                        runtime.rt.addSpecializationInfo(
-                            runtimes_allocator,
-                            .{
-                                .id = @intCast(entry.constant_id),
-                                .offset = @intCast(entry.offset),
-                                .size = @intCast(entry.size),
-                            },
-                            data,
-                        ) catch return VkError.OutOfDeviceMemory;
-                    }
-                }
-            }
-        }
-
-        shader.runtimes = runtimes;
-        shader.entry = runtimes_allocator.dupe(u8, std.mem.span(info.stage.p_name)) catch return VkError.OutOfDeviceMemory;
-
-        std.log.scoped(.ComputePipeline).debug("Created {d} runtimes for compute stage", .{runtimes_count});
-        break :blk shader;
-    });
+    self.stages.put(.compute, try createShader(allocator, device_allocator, runtimes_allocator, soft_cache, soft_module, &info.stage, runtimes_count));
+    std.log.scoped(.ComputePipeline).debug("Created {d} runtimes for compute stage", .{runtimes_count});
     return self;
 }
 
@@ -151,6 +108,10 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
 
     const soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", device));
     const device_allocator = soft_device.device_allocator.allocator();
+    const soft_cache: ?*SoftPipelineCache = if (cache) |pipeline_cache|
+        @alignCast(@fieldParentPtr("interface", pipeline_cache))
+    else
+        null;
 
     self.* = .{
         .interface = interface,
@@ -172,50 +133,9 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
 
     if (info.p_stages) |stages| {
         for (stages[0..], 0..info.stage_count) |stage, _| {
-            var shader: Shader = undefined;
-
             const module = try NonDispatchable(ShaderModule).fromHandleObject(stage.module);
             const soft_module: *SoftShaderModule = @alignCast(@fieldParentPtr("interface", module));
-            soft_module.ref();
-            shader.module = soft_module;
-
-            const runtimes = runtimes_allocator.alloc(Runtime, runtimes_count) catch return VkError.OutOfHostMemory;
-
-            for (runtimes) |*runtime| {
-                runtime.mutex = .init;
-                runtime.rt = spv.Runtime.init(
-                    runtimes_allocator,
-                    &soft_module.module,
-                    .{
-                        .readImageFloat4 = readImageFloat4,
-                        .readImageInt4 = readImageInt4,
-                        .writeImageFloat4 = writeImageFloat4,
-                        .writeImageInt4 = writeImageInt4,
-                        .sampleImageFloat4 = sampleImageFloat4,
-                        .sampleImageInt4 = sampleImageInt4,
-                        .sampleImageDref = sampleImageDref,
-                        .queryImageSize = queryImageSize,
-                    },
-                ) catch |err| {
-                    std.log.scoped(.SpvRuntimeInit).err("SPIR-V Runtime failed to initialize, {s}", .{@errorName(err)});
-                    return VkError.Unknown;
-                };
-                if (stage.p_specialization_info) |specialization| {
-                    if (specialization.p_map_entries) |map| {
-                        const data: []const u8 = @as([*]const u8, @ptrCast(@alignCast(specialization.p_data)))[0..specialization.data_size];
-                        for (map[0..], 0..specialization.map_entry_count) |entry, _| {
-                            runtime.rt.addSpecializationInfo(runtimes_allocator, .{
-                                .id = @intCast(entry.constant_id),
-                                .offset = @intCast(entry.offset),
-                                .size = @intCast(entry.size),
-                            }, data) catch return VkError.OutOfHostMemory;
-                        }
-                    }
-                }
-            }
-
-            shader.runtimes = runtimes;
-            shader.entry = runtimes_allocator.dupe(u8, std.mem.span(stage.p_name)) catch return VkError.OutOfHostMemory;
+            const shader = try createShader(allocator, device_allocator, runtimes_allocator, soft_cache, soft_module, &stage, runtimes_count);
 
             std.log.scoped(.GraphicsPipeline).debug("Created {d} runtimes for:", .{runtimes_count});
 
@@ -260,6 +180,115 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     }
     self.runtimes_allocator.deinit();
     allocator.destroy(self);
+}
+
+fn createShader(
+    object_allocator: std.mem.Allocator,
+    cache_allocator: std.mem.Allocator,
+    runtimes_allocator: std.mem.Allocator,
+    cache: ?*SoftPipelineCache,
+    module: *SoftShaderModule,
+    stage: *const vk.PipelineShaderStageCreateInfo,
+    runtimes_count: usize,
+) VkError!Shader {
+    const entry = std.mem.span(stage.p_name);
+    const runtimes = runtimes_allocator.alloc(Runtime, runtimes_count) catch return VkError.OutOfDeviceMemory;
+    var initialized: usize = 0;
+    var module_ref = false;
+    errdefer {
+        for (runtimes[0..initialized]) |*runtime| {
+            runtime.rt.deinit(runtimes_allocator);
+        }
+        if (module_ref) {
+            module.unref(object_allocator);
+        }
+    }
+
+    module.ref();
+    module_ref = true;
+
+    const image_api = imageApi();
+    var cache_hit = false;
+    if (cache) |pipeline_cache| {
+        if (try pipeline_cache.cloneRuntime(runtimes_allocator, module, entry, stage.p_specialization_info, image_api)) |runtime| {
+            runtimes[0] = .{
+                .mutex = .init,
+                .rt = runtime,
+            };
+            initialized = 1;
+            cache_hit = true;
+        }
+    }
+
+    if (cache_hit) {
+        for (runtimes[initialized..]) |*runtime| {
+            runtime.* = .{
+                .mutex = .init,
+                .rt = (try cache.?.cloneRuntime(runtimes_allocator, module, entry, stage.p_specialization_info, image_api)).?,
+            };
+            initialized += 1;
+        }
+    } else {
+        for (runtimes) |*runtime| {
+            runtime.* = .{
+                .mutex = .init,
+                .rt = try initRuntime(runtimes_allocator, module, stage, image_api),
+            };
+            initialized += 1;
+        }
+
+        if (cache) |pipeline_cache| {
+            try pipeline_cache.storeRuntimeTemplate(object_allocator, cache_allocator, module, entry, stage.p_specialization_info, image_api);
+        }
+    }
+
+    return .{
+        .module = module,
+        .runtimes = runtimes,
+        .entry = runtimes_allocator.dupe(u8, entry) catch return VkError.OutOfDeviceMemory,
+    };
+}
+
+fn initRuntime(
+    allocator: std.mem.Allocator,
+    module: *SoftShaderModule,
+    stage: *const vk.PipelineShaderStageCreateInfo,
+    image_api: spv.Runtime.ImageAPI,
+) VkError!spv.Runtime {
+    var runtime = spv.Runtime.init(allocator, &module.module, image_api) catch |err| {
+        std.log.scoped(.SpvRuntimeInit).err("SPIR-V Runtime failed to initialize, {s}", .{@errorName(err)});
+        return VkError.Unknown;
+    };
+    errdefer runtime.deinit(allocator);
+
+    try applySpecialization(&runtime, allocator, stage.p_specialization_info);
+    return runtime;
+}
+
+fn applySpecialization(runtime: *spv.Runtime, allocator: std.mem.Allocator, specialization: ?*const vk.SpecializationInfo) VkError!void {
+    const info = specialization orelse return;
+    const map = info.p_map_entries orelse return;
+    const data: []const u8 = @as([*]const u8, @ptrCast(@alignCast(info.p_data)))[0..info.data_size];
+    for (map[0..info.map_entry_count]) |entry| {
+        runtime.addSpecializationInfo(allocator, .{
+            .id = @intCast(entry.constant_id),
+            .offset = @intCast(entry.offset),
+            .size = @intCast(entry.size),
+        }, data) catch return VkError.OutOfDeviceMemory;
+    }
+}
+
+fn imageApi() spv.Runtime.ImageAPI {
+    return .{
+        .readImageFloat4 = readImageFloat4,
+        .readImageInt4 = readImageInt4,
+        .writeImageFloat4 = writeImageFloat4,
+        .writeImageInt4 = writeImageInt4,
+        .sampleImageFloat4 = sampleImageFloat4,
+        .sampleImageInt4 = sampleImageInt4,
+        .sampleImageDref = sampleImageDref,
+        .queryImageSize = queryImageSize,
+    };
 }
 
 fn readImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32) SpvRuntimeError!spv.Runtime.Vec4(f32) {

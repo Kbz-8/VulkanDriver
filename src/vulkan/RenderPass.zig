@@ -98,3 +98,25 @@ pub fn destroy(self: *Self, allocator: std.mem.Allocator) void {
 pub inline fn getRenderAreaGranularity(self: *Self) vk.Extent2D {
     return self.vtable.getRenderAreaGranularity(self);
 }
+
+pub fn subpassHasColorAttachments(self: *const Self, subpass_index: u32) VkError!bool {
+    if (subpass_index >= self.subpasses.len) {
+        return VkError.ValidationFailed;
+    }
+
+    const color_attachments = self.subpasses[subpass_index].color_attachments orelse return false;
+    for (color_attachments) |attachment| {
+        if (attachment.attachment != vk.ATTACHMENT_UNUSED) {
+            return true;
+        }
+    }
+    return false;
+}
+
+pub fn subpassHasDepthStencilAttachment(self: *const Self, subpass_index: u32) VkError!bool {
+    if (subpass_index >= self.subpasses.len) {
+        return VkError.ValidationFailed;
+    }
+
+    return self.subpasses[subpass_index].depth_stencil_attachments != null;
+}

@@ -1480,12 +1480,10 @@ pub export fn apeGetImageSparseMemoryRequirements(p_device: vk.Device, p_image: 
     defer entryPointEndLogTrace();
 
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
+    NonDispatchable(Image).checkHandleValidity(p_image) catch |err| return errorLogger(err);
 
-    const image = NonDispatchable(Image).fromHandleObject(p_image) catch |err| return errorLogger(err);
+    lib.unsupported("sparse images are not supported", .{});
 
-    notImplementedWarning();
-
-    _ = image;
     _ = requirements;
 }
 
@@ -1511,7 +1509,7 @@ pub export fn apeGetPipelineCacheData(p_device: vk.Device, p_cache: vk.PipelineC
         const bytes = @as([*]u8, @ptrCast(ptr))[0..size.*];
         break :blk cache.getData(bytes);
     } else cache.getData(null);
-    size.* = if (result == .incomplete) 0 else available;
+    size.* = if (result == .incomplete) @min(size.*, available) else available;
     return result;
 }
 
@@ -1578,10 +1576,10 @@ pub export fn apeMergePipelineCaches(p_device: vk.Device, p_dst: vk.PipelineCach
     const dst = NonDispatchable(PipelineCache).fromHandleObject(p_dst) catch |err| return toVkResult(err);
 
     for (0..count) |i| {
-        _ = NonDispatchable(PipelineCache).fromHandleObject(p_srcs[i]) catch |err| return toVkResult(err);
+        const src = NonDispatchable(PipelineCache).fromHandleObject(p_srcs[i]) catch |err| return toVkResult(err);
+        dst.merge(src) catch |err| return toVkResult(err);
     }
 
-    dst.merge() catch |err| return toVkResult(err);
     return .success;
 }
 

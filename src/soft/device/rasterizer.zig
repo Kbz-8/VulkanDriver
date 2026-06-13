@@ -121,41 +121,50 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
     };
 
     switch (topology) {
-        .point_list => for (draw_call.vertices) |*vertex| {
-            if (vertex.primitive_restart)
-                continue;
+        .point_list => for (0..draw_call.instance_count) |instance_index| {
+            const range = instanceVertexRange(draw_call, instance_index);
+            for (draw_call.vertices[range.start..range.end]) |*vertex| {
+                if (vertex.primitive_restart)
+                    continue;
 
-            try clipTransformAndRasterizePoint(
-                allocator,
-                draw_call,
-                vertex,
-                color_attachment_access,
-                if (depth_attachment_access) |*access| access else null,
-                if (stencil_attachment_access) |*access| access else null,
-            );
+                try clipTransformAndRasterizePoint(
+                    allocator,
+                    draw_call,
+                    vertex,
+                    color_attachment_access,
+                    if (depth_attachment_access) |*access| access else null,
+                    if (stencil_attachment_access) |*access| access else null,
+                );
+            }
         },
-        .triangle_list => for (0..@divTrunc(draw_call.vertices.len, 3)) |triangle_index| {
-            const first_vertex = triangle_index * 3;
-            const v0 = &draw_call.vertices[first_vertex + 0];
-            const v1 = &draw_call.vertices[first_vertex + 1];
-            const v2 = &draw_call.vertices[first_vertex + 2];
+        .triangle_list => for (0..draw_call.instance_count) |instance_index| {
+            const range = instanceVertexRange(draw_call, instance_index);
+            const vertex_count = range.end - range.start;
+            for (0..@divTrunc(vertex_count, 3)) |triangle_index| {
+                const first_vertex = range.start + triangle_index * 3;
+                const v0 = &draw_call.vertices[first_vertex + 0];
+                const v1 = &draw_call.vertices[first_vertex + 1];
+                const v2 = &draw_call.vertices[first_vertex + 2];
 
-            try clipTransformAndRasterizeTriangle(
-                renderer,
-                allocator,
-                draw_call,
-                v0,
-                v1,
-                v2,
-                color_attachment_access,
-                if (depth_attachment_access) |*access| access else null,
-                if (stencil_attachment_access) |*access| access else null,
-            );
+                try clipTransformAndRasterizeTriangle(
+                    renderer,
+                    allocator,
+                    draw_call,
+                    v0,
+                    v1,
+                    v2,
+                    color_attachment_access,
+                    if (depth_attachment_access) |*access| access else null,
+                    if (stencil_attachment_access) |*access| access else null,
+                );
+            }
         },
         .triangle_fan => {
-            var segment_start = firstNonRestart(draw_call, 0);
-            while (segment_start < draw_call.vertices.len) {
-                const segment_end = nextRestart(draw_call, segment_start);
+            for (0..draw_call.instance_count) |instance_index| {
+                const range = instanceVertexRange(draw_call, instance_index);
+                var segment_start = firstNonRestart(draw_call, range.start, range.end);
+                while (segment_start < range.end) {
+                    const segment_end = nextRestart(draw_call, segment_start, range.end);
                 if (segment_end - segment_start >= 3) {
                     const v0 = &draw_call.vertices[segment_start];
                     for ((segment_start + 1)..(segment_end - 1)) |vertex_index| {
@@ -175,13 +184,16 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                         );
                     }
                 }
-                segment_start = firstNonRestart(draw_call, segment_end + 1);
+                    segment_start = firstNonRestart(draw_call, segment_end + 1, range.end);
+                }
             }
         },
         .triangle_strip => {
-            var segment_start = firstNonRestart(draw_call, 0);
-            while (segment_start < draw_call.vertices.len) {
-                const segment_end = nextRestart(draw_call, segment_start);
+            for (0..draw_call.instance_count) |instance_index| {
+                const range = instanceVertexRange(draw_call, instance_index);
+                var segment_start = firstNonRestart(draw_call, range.start, range.end);
+                while (segment_start < range.end) {
+                    const segment_end = nextRestart(draw_call, segment_start, range.end);
                 if (segment_end - segment_start >= 3) {
                     for (segment_start..(segment_end - 2)) |vertex_index| {
                         const local_index = vertex_index - segment_start;
@@ -216,28 +228,35 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                         }
                     }
                 }
-                segment_start = firstNonRestart(draw_call, segment_end + 1);
+                    segment_start = firstNonRestart(draw_call, segment_end + 1, range.end);
+                }
             }
         },
-        .line_list => for (0..@divTrunc(draw_call.vertices.len, 2)) |line_index| {
-            const first_vertex = line_index * 2;
-            const v0 = &draw_call.vertices[first_vertex + 0];
-            const v1 = &draw_call.vertices[first_vertex + 1];
+        .line_list => for (0..draw_call.instance_count) |instance_index| {
+            const range = instanceVertexRange(draw_call, instance_index);
+            const vertex_count = range.end - range.start;
+            for (0..@divTrunc(vertex_count, 2)) |line_index| {
+                const first_vertex = range.start + line_index * 2;
+                const v0 = &draw_call.vertices[first_vertex + 0];
+                const v1 = &draw_call.vertices[first_vertex + 1];
 
-            try clipTransformAndRasterizeLine(
-                allocator,
-                draw_call,
-                v0,
-                v1,
-                color_attachment_access,
-                if (depth_attachment_access) |*access| access else null,
-                if (stencil_attachment_access) |*access| access else null,
-            );
+                try clipTransformAndRasterizeLine(
+                    allocator,
+                    draw_call,
+                    v0,
+                    v1,
+                    color_attachment_access,
+                    if (depth_attachment_access) |*access| access else null,
+                    if (stencil_attachment_access) |*access| access else null,
+                );
+            }
         },
         .line_strip => {
-            var segment_start = firstNonRestart(draw_call, 0);
-            while (segment_start < draw_call.vertices.len) {
-                const segment_end = nextRestart(draw_call, segment_start);
+            for (0..draw_call.instance_count) |instance_index| {
+                const range = instanceVertexRange(draw_call, instance_index);
+                var segment_start = firstNonRestart(draw_call, range.start, range.end);
+                while (segment_start < range.end) {
+                    const segment_end = nextRestart(draw_call, segment_start, range.end);
                 if (segment_end - segment_start >= 2) {
                     for (segment_start..(segment_end - 1)) |vertex_index| {
                         const v0 = &draw_call.vertices[vertex_index + 0];
@@ -254,7 +273,8 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                         );
                     }
                 }
-                segment_start = firstNonRestart(draw_call, segment_end + 1);
+                    segment_start = firstNonRestart(draw_call, segment_end + 1, range.end);
+                }
             }
         },
         else => base.unsupported("primitive topology {any}", .{topology}),
@@ -263,15 +283,28 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
     draw_call.rasterizer_wait_group.await(io) catch return VkError.DeviceLost;
 }
 
-fn firstNonRestart(draw_call: *const DrawCall, start: usize) usize {
+const VertexRange = struct {
+    start: usize,
+    end: usize,
+};
+
+fn instanceVertexRange(draw_call: *const DrawCall, instance_index: usize) VertexRange {
+    const start = instance_index * draw_call.vertex_count;
+    return .{
+        .start = start,
+        .end = @min(start + draw_call.vertex_count, draw_call.vertices.len),
+    };
+}
+
+fn firstNonRestart(draw_call: *const DrawCall, start: usize, end: usize) usize {
     var index = start;
-    while (index < draw_call.vertices.len and draw_call.vertices[index].primitive_restart) : (index += 1) {}
+    while (index < end and draw_call.vertices[index].primitive_restart) : (index += 1) {}
     return index;
 }
 
-fn nextRestart(draw_call: *const DrawCall, start: usize) usize {
+fn nextRestart(draw_call: *const DrawCall, start: usize, end: usize) usize {
     var index = start;
-    while (index < draw_call.vertices.len and !draw_call.vertices[index].primitive_restart) : (index += 1) {}
+    while (index < end and !draw_call.vertices[index].primitive_restart) : (index += 1) {}
     return index;
 }
 

@@ -113,7 +113,7 @@ vkCreateGraphicsPipelines                        | ✅ Implemented
 vkCreateImage                                    | ✅ Implemented
 vkCreateImageView                                | ✅ Implemented
 vkCreateInstance                                 | ✅ Implemented
-vkCreatePipelineCache                            | ⚙️ WIP
+vkCreatePipelineCache                            | ✅ Implemented
 vkCreatePipelineLayout                           | ✅ Implemented
 vkCreateQueryPool                                | ✅ Implemented
 vkCreateRenderPass                               | ✅ Implemented
@@ -184,13 +184,13 @@ vkGetPhysicalDeviceWaylandPresentationSupportKHR | ✅ Implemented
 vkGetPhysicalDeviceWin32PresentationSupportKHR   | ⚙️ WIP
 vkGetPhysicalDeviceXcbPresentationSupportKHR     | ⚙️ WIP
 vkGetPhysicalDeviceXlibPresentationSupportKHR    | ⚙️ WIP
-vkGetPipelineCacheData                           | ⚙️ WIP
+vkGetPipelineCacheData                           | ✅ Implemented
 vkGetQueryPoolResults                            | ✅ Implemented
 vkGetRenderAreaGranularity                       | ✅ Implemented
 vkGetSwapchainImagesKHR                          | ✅ Implemented
 vkInvalidateMappedMemoryRanges                   | ✅ Implemented
 vkMapMemory                                      | ✅ Implemented
-vkMergePipelineCaches                            | ⚙️ WIP
+vkMergePipelineCaches                            | ✅ Implemented
 vkQueueBindSparse                                | ❎ Unsupported
 vkQueuePresentKHR                                | ✅ Implemented
 vkQueueSubmit                                    | ✅ Implemented

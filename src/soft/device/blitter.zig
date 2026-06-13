@@ -560,18 +560,36 @@ inline fn normalizedI16(value: u16) f32 {
     return @max(@as(f32, @floatFromInt(signed)) / @as(f32, @floatFromInt(std.math.maxInt(i16))), -1.0);
 }
 
+inline fn signedBits(value: u32, comptime bits: u5) i32 {
+    const shift: u5 = @intCast(32 - @as(u32, bits));
+    return @as(i32, @bitCast(value << shift)) >> shift;
+}
+
+inline fn normalizedSignedBits(value: u32, comptime bits: u5) f32 {
+    const max = (1 << (bits - 1)) - 1;
+    return @max(@as(f32, @floatFromInt(signedBits(value, bits))) / @as(f32, @floatFromInt(max)), -1.0);
+}
+
 pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
     var c: F32x4 = .{ 0.0, 0.0, 0.0, 1.0 };
 
     switch (src_format) {
+        .r8_uscaled => c[0] = @floatFromInt(map[0]),
+
         .r8_uint,
         .r8_unorm,
         .r8_srgb,
         => c[0] = @as(f32, @floatFromInt(map[0])) / std.math.maxInt(u8),
 
+        .r8_sscaled => c[0] = @floatFromInt(@as(i8, @bitCast(map[0]))),
+
         .r8_sint,
         .r8_snorm,
         => c[0] = normalizedI8(map[0]),
+
+        .r16_uscaled => c[0] = @floatFromInt(std.mem.bytesToValue(u16, map)),
+
+        .r16_sscaled => c[0] = @floatFromInt(@as(i16, @bitCast(std.mem.bytesToValue(u16, map)))),
 
         .r16_snorm => c[0] = normalizedI16(std.mem.bytesToValue(u16, map)),
         .r16_unorm,
@@ -592,6 +610,11 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
             c[3] = @as(f32, @floatFromInt(map[3])) / std.math.maxInt(u8);
         },
 
+        .r8g8_uscaled => {
+            c[0] = @floatFromInt(map[0]);
+            c[1] = @floatFromInt(map[1]);
+        },
+
         .r8g8_uint,
         .r8g8_unorm,
         .r8g8_srgb,
@@ -600,11 +623,30 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
             c[1] = @as(f32, @floatFromInt(map[1])) / std.math.maxInt(u8);
         },
 
+        .r8g8_sscaled => {
+            c[0] = @floatFromInt(@as(i8, @bitCast(map[0])));
+            c[1] = @floatFromInt(@as(i8, @bitCast(map[1])));
+        },
+
         .r8g8_sint,
         .r8g8_snorm,
         => {
             c[0] = normalizedI8(map[0]);
             c[1] = normalizedI8(map[1]);
+        },
+
+        .r8g8b8a8_uscaled => {
+            c[0] = @floatFromInt(map[0]);
+            c[1] = @floatFromInt(map[1]);
+            c[2] = @floatFromInt(map[2]);
+            c[3] = @floatFromInt(map[3]);
+        },
+
+        .r8g8b8a8_sscaled => {
+            c[0] = @floatFromInt(@as(i8, @bitCast(map[0])));
+            c[1] = @floatFromInt(@as(i8, @bitCast(map[1])));
+            c[2] = @floatFromInt(@as(i8, @bitCast(map[2])));
+            c[3] = @floatFromInt(@as(i8, @bitCast(map[3])));
         },
 
         .r8g8b8a8_snorm => {
@@ -652,11 +694,21 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
 
         .r16_sfloat => c[0] = std.mem.bytesToValue(f16, map),
 
+        .r16g16_uscaled => {
+            c[0] = @floatFromInt(std.mem.bytesToValue(u16, map[0..]));
+            c[1] = @floatFromInt(std.mem.bytesToValue(u16, map[2..]));
+        },
+
         .r16g16_sint,
         .r16g16_uint,
         => {
             c[0] = @floatFromInt(std.mem.bytesToValue(u16, map[0..]));
             c[1] = @floatFromInt(std.mem.bytesToValue(u16, map[2..]));
+        },
+
+        .r16g16_sscaled => {
+            c[0] = @floatFromInt(@as(i16, @bitCast(std.mem.bytesToValue(u16, map[0..]))));
+            c[1] = @floatFromInt(@as(i16, @bitCast(std.mem.bytesToValue(u16, map[2..]))));
         },
 
         .r16g16_snorm => {
@@ -700,6 +752,20 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
             c[1] = @as(f32, @floatFromInt(std.mem.bytesToValue(u16, map[2..]))) / std.math.maxInt(u16);
             c[2] = @as(f32, @floatFromInt(std.mem.bytesToValue(u16, map[4..]))) / std.math.maxInt(u16);
             c[3] = @as(f32, @floatFromInt(std.mem.bytesToValue(u16, map[6..]))) / std.math.maxInt(u16);
+        },
+
+        .r16g16b16a16_uscaled => {
+            c[0] = @floatFromInt(std.mem.bytesToValue(u16, map[0..]));
+            c[1] = @floatFromInt(std.mem.bytesToValue(u16, map[2..]));
+            c[2] = @floatFromInt(std.mem.bytesToValue(u16, map[4..]));
+            c[3] = @floatFromInt(std.mem.bytesToValue(u16, map[6..]));
+        },
+
+        .r16g16b16a16_sscaled => {
+            c[0] = @floatFromInt(@as(i16, @bitCast(std.mem.bytesToValue(u16, map[0..]))));
+            c[1] = @floatFromInt(@as(i16, @bitCast(std.mem.bytesToValue(u16, map[2..]))));
+            c[2] = @floatFromInt(@as(i16, @bitCast(std.mem.bytesToValue(u16, map[4..]))));
+            c[3] = @floatFromInt(@as(i16, @bitCast(std.mem.bytesToValue(u16, map[6..]))));
         },
 
         .r16g16b16a16_sint,
@@ -749,6 +815,22 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
             c[3] = normalizedI8(pack[3]);
         },
 
+        .a8b8g8r8_uscaled_pack32 => {
+            const pack = std.mem.bytesToValue(@Vector(4, u8), map);
+            c[0] = @floatFromInt(pack[0]);
+            c[1] = @floatFromInt(pack[1]);
+            c[2] = @floatFromInt(pack[2]);
+            c[3] = @floatFromInt(pack[3]);
+        },
+
+        .a8b8g8r8_sscaled_pack32 => {
+            const pack = std.mem.bytesToValue(@Vector(4, u8), map);
+            c[0] = @floatFromInt(@as(i8, @bitCast(pack[0])));
+            c[1] = @floatFromInt(@as(i8, @bitCast(pack[1])));
+            c[2] = @floatFromInt(@as(i8, @bitCast(pack[2])));
+            c[3] = @floatFromInt(@as(i8, @bitCast(pack[3])));
+        },
+
         .a2b10g10r10_uint_pack32,
         .a2b10g10r10_unorm_pack32,
         => {
@@ -759,6 +841,30 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
             c[3] = @as(f32, @floatFromInt((pack & 0xC0000000) >> 30)) / std.math.maxInt(u2);
         },
 
+        .a2b10g10r10_uscaled_pack32 => {
+            const pack = std.mem.bytesToValue(u32, map);
+            c[0] = @floatFromInt(pack & 0x000003FF);
+            c[1] = @floatFromInt((pack & 0x000FFC00) >> 10);
+            c[2] = @floatFromInt((pack & 0x3FF00000) >> 20);
+            c[3] = @floatFromInt((pack & 0xC0000000) >> 30);
+        },
+
+        .a2b10g10r10_sscaled_pack32 => {
+            const pack = std.mem.bytesToValue(u32, map);
+            c[0] = @floatFromInt(signedBits(pack & 0x000003FF, 10));
+            c[1] = @floatFromInt(signedBits((pack & 0x000FFC00) >> 10, 10));
+            c[2] = @floatFromInt(signedBits((pack & 0x3FF00000) >> 20, 10));
+            c[3] = @floatFromInt(signedBits((pack & 0xC0000000) >> 30, 2));
+        },
+
+        .a2b10g10r10_snorm_pack32 => {
+            const pack = std.mem.bytesToValue(u32, map);
+            c[0] = normalizedSignedBits(pack & 0x000003FF, 10);
+            c[1] = normalizedSignedBits((pack & 0x000FFC00) >> 10, 10);
+            c[2] = normalizedSignedBits((pack & 0x3FF00000) >> 20, 10);
+            c[3] = normalizedSignedBits((pack & 0xC0000000) >> 30, 2);
+        },
+
         .a2r10g10b10_uint_pack32,
         .a2r10g10b10_unorm_pack32,
         => {
@@ -767,6 +873,30 @@ pub fn readFloat4(map: []const u8, src_format: vk.Format) F32x4 {
             c[1] = @as(f32, @floatFromInt((pack & 0x000FFC00) >> 10)) / std.math.maxInt(u10);
             c[0] = @as(f32, @floatFromInt((pack & 0x3FF00000) >> 20)) / std.math.maxInt(u10);
             c[3] = @as(f32, @floatFromInt((pack & 0xC0000000) >> 30)) / std.math.maxInt(u2);
+        },
+
+        .a2r10g10b10_uscaled_pack32 => {
+            const pack = std.mem.bytesToValue(u32, map);
+            c[2] = @floatFromInt(pack & 0x000003FF);
+            c[1] = @floatFromInt((pack & 0x000FFC00) >> 10);
+            c[0] = @floatFromInt((pack & 0x3FF00000) >> 20);
+            c[3] = @floatFromInt((pack & 0xC0000000) >> 30);
+        },
+
+        .a2r10g10b10_sscaled_pack32 => {
+            const pack = std.mem.bytesToValue(u32, map);
+            c[2] = @floatFromInt(signedBits(pack & 0x000003FF, 10));
+            c[1] = @floatFromInt(signedBits((pack & 0x000FFC00) >> 10, 10));
+            c[0] = @floatFromInt(signedBits((pack & 0x3FF00000) >> 20, 10));
+            c[3] = @floatFromInt(signedBits((pack & 0xC0000000) >> 30, 2));
+        },
+
+        .a2r10g10b10_snorm_pack32 => {
+            const pack = std.mem.bytesToValue(u32, map);
+            c[2] = normalizedSignedBits(pack & 0x000003FF, 10);
+            c[1] = normalizedSignedBits((pack & 0x000FFC00) >> 10, 10);
+            c[0] = normalizedSignedBits((pack & 0x3FF00000) >> 20, 10);
+            c[3] = normalizedSignedBits((pack & 0xC0000000) >> 30, 2);
         },
 
         .r5g6b5_unorm_pack16 => {
@@ -1267,6 +1397,14 @@ pub fn readInt4(map: []const u8, src_format: vk.Format) U32x4 {
             c[3] = (pack & 0xC0000000) >> 30;
         },
 
+        .a2b10g10r10_sint_pack32 => {
+            const pack = std.mem.bytesToValue(u32, map);
+            c[0] = @bitCast(signedBits(pack & 0x000003FF, 10));
+            c[1] = @bitCast(signedBits((pack & 0x000FFC00) >> 10, 10));
+            c[2] = @bitCast(signedBits((pack & 0x3FF00000) >> 20, 10));
+            c[3] = @bitCast(signedBits((pack & 0xC0000000) >> 30, 2));
+        },
+
         .a2r10g10b10_unorm_pack32,
         .a2r10g10b10_uint_pack32,
         => {
@@ -1275,6 +1413,14 @@ pub fn readInt4(map: []const u8, src_format: vk.Format) U32x4 {
             c[1] = (pack & 0x000FFC00) >> 10;
             c[0] = (pack & 0x3FF00000) >> 20;
             c[3] = (pack & 0xC0000000) >> 30;
+        },
+
+        .a2r10g10b10_sint_pack32 => {
+            const pack = std.mem.bytesToValue(u32, map);
+            c[2] = @bitCast(signedBits(pack & 0x000003FF, 10));
+            c[1] = @bitCast(signedBits((pack & 0x000FFC00) >> 10, 10));
+            c[0] = @bitCast(signedBits((pack & 0x3FF00000) >> 20, 10));
+            c[3] = @bitCast(signedBits((pack & 0xC0000000) >> 30, 2));
         },
 
         else => base.unsupported("Blitter: read int from source format {any}", .{src_format}),

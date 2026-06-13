@@ -65,6 +65,8 @@ pub const Vertex = struct {
 pub const DrawCall = struct {
     renderer: *Self,
     vertices: []Vertex,
+    vertex_count: usize,
+    instance_count: usize,
 
     viewport: vk.Viewport,
     scissor: vk.Rect2D,
@@ -87,6 +89,8 @@ pub const DrawCall = struct {
 
         const self: @This() = .{
             .vertices = allocator.alloc(Vertex, vertex_count * instance_count) catch return VkError.OutOfDeviceMemory,
+            .vertex_count = vertex_count,
+            .instance_count = instance_count,
             .renderer = renderer,
             .viewport = undefined,
             .scissor = undefined,
