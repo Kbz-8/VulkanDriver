@@ -137,6 +137,7 @@ fn sampleAddressOrBorder(coord: i32, extent: u32, mode: vk.SamplerAddressMode) ?
             const mirrored = @mod(coord, period);
             break :blk if (mirrored < extent_i) mirrored else period - mirrored - 1;
         },
+        .mirror_clamp_to_edge => std.math.clamp(if (coord < 0) -coord - 1 else coord, 0, extent_i - 1),
         .clamp_to_border => if (coord < 0 or coord >= extent_i) null else coord,
         else => std.math.clamp(coord, 0, extent_i - 1),
     };
@@ -221,6 +222,44 @@ fn sampleMipLevel(image: *SoftImage, image_view: *SoftImageView, sampler: *Self,
     };
     const level: u32 = @intFromFloat(std.math.clamp(level_float, 0.0, @as(f32, @floatFromInt(mip_count - 1))));
     return range.base_mip_level + level;
+}
+
+fn mipmapModeLevel(sampler: *Self, clamped_lod: f32) f32 {
+    return switch (sampler.interface.mipmap_mode) {
+        .nearest => @round(clamped_lod),
+        .linear => clamped_lod,
+        else => @floor(clamped_lod),
+    };
+}
+
+pub fn queryImageLod(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, derivatives: spv.Runtime.ImageDerivatives) F32x4 {
+    const range = image_view.interface.subresource_range;
+    const extent = image.getMipLevelExtent(range.base_mip_level);
+    const width: f32 = @floatFromInt(extent.width);
+    const height: f32 = @floatFromInt(extent.height);
+    const depth: f32 = @floatFromInt(extent.depth);
+
+    const dx = switch (dim) {
+        .@"1D" => @abs(derivatives.dx.x) * width,
+        .@"2D", .Cube, .Rect => @sqrt(std.math.pow(f32, derivatives.dx.x * width, 2.0) + std.math.pow(f32, derivatives.dx.y * height, 2.0)),
+        .@"3D" => @sqrt(std.math.pow(f32, derivatives.dx.x * width, 2.0) + std.math.pow(f32, derivatives.dx.y * height, 2.0) + std.math.pow(f32, derivatives.dx.z * depth, 2.0)),
+        else => @abs(derivatives.dx.x) * width,
+    };
+    const dy = switch (dim) {
+        .@"1D" => @abs(derivatives.dy.x) * width,
+        .@"2D", .Cube, .Rect => @sqrt(std.math.pow(f32, derivatives.dy.x * width, 2.0) + std.math.pow(f32, derivatives.dy.y * height, 2.0)),
+        .@"3D" => @sqrt(std.math.pow(f32, derivatives.dy.x * width, 2.0) + std.math.pow(f32, derivatives.dy.y * height, 2.0) + std.math.pow(f32, derivatives.dy.z * depth, 2.0)),
+        else => @abs(derivatives.dy.x) * width,
+    };
+
+    const rho = @max(dx, dy);
+    const lod = if (rho > 0.0) @log2(rho) else -std.math.inf(f32);
+    const biased_lod = lod + sampler.interface.mip_lod_bias;
+    const clamped_lod = std.math.clamp(biased_lod, sampler.interface.min_lod, sampler.interface.max_lod);
+    const max_level: f32 = @floatFromInt(viewMipCount(image, range) - 1);
+    const level = std.math.clamp(mipmapModeLevel(sampler, clamped_lod), 0.0, max_level);
+
+    return .{ level, lod, 0.0, 0.0 };
 }
 
 fn sampleArrayLayer(coord: f32, layer_count: u32) u32 {
