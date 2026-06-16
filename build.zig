@@ -38,6 +38,13 @@ const implementations = [_]ImplementationDesc{
         .custom = customSoft,
         .options = optionsSoft,
     },
+    .{
+        .name = "intel",
+        .root_source_file = "src/intel/lib.zig",
+        .vulkan_version = .{ .major = 1, .minor = 0, .patch = 0 },
+        .custom = customIntel,
+        .options = optionsIntel,
+    },
 };
 
 const RunningMode = enum {
@@ -268,6 +275,25 @@ fn optionsSoft(b: *std.Build, options: *Step.Options) !void {
     options.addOption(?u32, "soft_compute_dump_early_results_table", compute_dump_early_results_table_option);
     options.addOption(?u32, "soft_compute_dump_final_results_table", compute_dump_final_results_table_option);
     options.addOption(bool, "soft_approximates_rgb", approxiamte_rgb_option);
+}
+
+fn customIntel(
+    _: *std.Build,
+    _: *Step.Compile,
+    lib_mod: *std.Build.Module,
+    _: *std.Build.Module,
+    _: *std.Build.Module,
+    base_c_mod: *std.Build.Module,
+    _: std.Build.ResolvedTarget,
+    _: std.builtin.OptimizeMode,
+    _: bool,
+) !void {
+    lib_mod.addImport("intel_c", base_c_mod);
+}
+
+fn optionsIntel(b: *std.Build, options: *Step.Options) !void {
+    _ = b;
+    _ = options;
 }
 
 fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *Step.Compile, comptime mode: RunningMode) !*Step {
