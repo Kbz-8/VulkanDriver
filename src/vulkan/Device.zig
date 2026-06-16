@@ -72,6 +72,9 @@ pub const DispatchTable = struct {
     createSemaphore: *const fn (*Self, std.mem.Allocator, *const vk.SemaphoreCreateInfo) VkError!*BinarySemaphore,
     createShaderModule: *const fn (*Self, std.mem.Allocator, *const vk.ShaderModuleCreateInfo) VkError!*ShaderModule,
     destroy: *const fn (*Self, std.mem.Allocator) VkError!void,
+    getDeviceGroupPeerMemoryFeatures: *const fn (*Self, u32, u32, u32) VkError!vk.PeerMemoryFeatureFlags,
+    getDeviceGroupPresentCapabilitiesKHR: *const fn (*Self, *vk.DeviceGroupPresentCapabilitiesKHR) VkError!void,
+    getDeviceGroupSurfacePresentModesKHR: *const fn (*Self, *SurfaceKHR) VkError!vk.DeviceGroupPresentModeFlagsKHR,
 };
 
 pub fn init(allocator: std.mem.Allocator, instance: *Instance, physical_device: *const PhysicalDevice, _: *const vk.DeviceCreateInfo) VkError!Self {
@@ -214,4 +217,16 @@ pub fn waitIdle(self: *Self) VkError!void {
             try queue.object.waitIdle();
         }
     }
+}
+
+pub inline fn getDeviceGroupPeerMemoryFeatures(self: *Self, heap_index: u32, local_device_index: u32, remote_device_index: u32) VkError!vk.PeerMemoryFeatureFlags {
+    return self.dispatch_table.getDeviceGroupPeerMemoryFeatures(self, heap_index, local_device_index, remote_device_index);
+}
+
+pub inline fn getDeviceGroupPresentCapabilitiesKHR(self: *Self, capabilities: *vk.DeviceGroupPresentCapabilitiesKHR) VkError!void {
+    try self.dispatch_table.getDeviceGroupPresentCapabilitiesKHR(self, capabilities);
+}
+
+pub inline fn getDeviceGroupSurfacePresentModesKHR(self: *Self, surface: *SurfaceKHR) VkError!vk.DeviceGroupPresentModeFlagsKHR {
+    return self.dispatch_table.getDeviceGroupSurfacePresentModesKHR(self, surface);
 }

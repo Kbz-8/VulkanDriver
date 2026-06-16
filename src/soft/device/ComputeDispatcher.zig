@@ -19,6 +19,9 @@ const RunData = struct {
     self: *Self,
     batch_id: usize,
     group_count: usize,
+    base_group_x: usize,
+    base_group_y: usize,
+    base_group_z: usize,
     group_count_x: usize,
     group_count_y: usize,
     group_count_z: usize,
@@ -41,12 +44,16 @@ pub fn init(device: *SoftDevice, state: *PipelineState) Self {
         .state = state,
         .batch_size = 0,
         .invocation_index = .init(0),
-        .early_dump = base.config.compute_dump_early_results_table,
-        .final_dump = base.config.compute_dump_final_results_table,
+        .early_dump = base.config.soft_compute_dump_early_results_table,
+        .final_dump = base.config.soft_compute_dump_final_results_table,
     };
 }
 
 pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count_z: u32) VkError!void {
+    try self.dispatchBase(0, 0, 0, group_count_x, group_count_y, group_count_z);
+}
+
+pub fn dispatchBase(self: *Self, base_group_x: u32, base_group_y: u32, base_group_z: u32, group_count_x: u32, group_count_y: u32, group_count_z: u32) VkError!void {
     const group_count_xy = std.math.mul(usize, group_count_x, group_count_y) catch return VkError.ValidationFailed;
     const group_count = std.math.mul(usize, group_count_xy, group_count_z) catch return VkError.ValidationFailed;
 
@@ -73,6 +80,9 @@ pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count
             .self = self,
             .batch_id = batch_id,
             .group_count = group_count,
+            .base_group_x = @as(usize, @intCast(base_group_x)),
+            .base_group_y = @as(usize, @intCast(base_group_y)),
+            .base_group_z = @as(usize, @intCast(base_group_z)),
             .group_count_x = @as(usize, @intCast(group_count_x)),
             .group_count_y = @as(usize, @intCast(group_count_y)),
             .group_count_z = @as(usize, @intCast(group_count_z)),
@@ -80,10 +90,7 @@ pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count
             .pipeline = pipeline,
         };
 
-        if (comptime base.config.single_threaded_compute)
-            runWrapper(run_data)
-        else
-            wg.async(self.device.interface.io(), runWrapper, .{run_data});
+        wg.async(self.device.interface.io(), runWrapper, .{run_data});
     }
     wg.await(self.device.interface.io()) catch return VkError.DeviceLost;
 }
@@ -151,9 +158,9 @@ inline fn run(data: RunData) !void {
             @as(u32, @intCast(data.group_count_z)),
         };
         const group_id_vec = @Vector(3, u32){
-            @as(u32, @intCast(group_x)),
-            @as(u32, @intCast(group_y)),
-            @as(u32, @intCast(group_z)),
+            @as(u32, @intCast(data.base_group_x + group_x)),
+            @as(u32, @intCast(data.base_group_y + group_y)),
+            @as(u32, @intCast(data.base_group_z + group_z)),
         };
 
         if (uses_control_barrier) {
@@ -168,9 +175,9 @@ inline fn run(data: RunData) !void {
             const invocation_index = data.self.invocation_index.fetchAdd(1, .monotonic);
 
             try setupSubgroupBuiltins(data.self, rt, .{
-                @as(u32, @intCast(group_x)),
-                @as(u32, @intCast(group_y)),
-                @as(u32, @intCast(group_z)),
+                @as(u32, @intCast(data.base_group_x + group_x)),
+                @as(u32, @intCast(data.base_group_y + group_y)),
+                @as(u32, @intCast(data.base_group_z + group_z)),
             }, i);
 
             if (data.self.early_dump != null and data.self.early_dump.? == invocation_index) {

@@ -33,6 +33,7 @@ pool: *CommandPool,
 state: State,
 begin_info: ?vk.CommandBufferBeginInfo,
 usage_flags: vk.CommandBufferUsageFlags,
+device_mask: u32,
 host_allocator: VulkanAllocator,
 state_mutex: std.Io.Mutex,
 
@@ -57,6 +58,7 @@ pub const DispatchTable = struct {
     copyImageToBuffer: *const fn (*Self, *Image, vk.ImageLayout, *Buffer, []const vk.BufferImageCopy) VkError!void,
     copyQueryPoolResults: *const fn (*Self, *QueryPool, u32, u32, *Buffer, vk.DeviceSize, vk.DeviceSize, vk.QueryResultFlags) VkError!void,
     dispatch: *const fn (*Self, u32, u32, u32) VkError!void,
+    dispatchBase: *const fn (*Self, u32, u32, u32, u32, u32, u32) VkError!void,
     dispatchIndirect: *const fn (*Self, *Buffer, vk.DeviceSize) VkError!void,
     draw: *const fn (*Self, usize, usize, usize, usize) VkError!void,
     drawIndexed: *const fn (*Self, usize, usize, usize, i32, usize) VkError!void,
@@ -76,6 +78,7 @@ pub const DispatchTable = struct {
     resolveImage: *const fn (*Self, *Image, vk.ImageLayout, *Image, vk.ImageLayout, vk.ImageResolve) VkError!void,
     setEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
     setBlendConstants: *const fn (*Self, [4]f32) VkError!void,
+    setDeviceMask: *const fn (*Self, u32) VkError!void,
     setScissor: *const fn (*Self, u32, []const vk.Rect2D) VkError!void,
     setStencilCompareMask: *const fn (*Self, vk.StencilFaceFlags, u32) VkError!void,
     setStencilReference: *const fn (*Self, vk.StencilFaceFlags, u32) VkError!void,
@@ -96,6 +99,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Comma
         .state = .Initial,
         .begin_info = null,
         .usage_flags = .{},
+        .device_mask = 1,
         .host_allocator = VulkanAllocator.from(allocator).cloneWithScope(.object),
         .state_mutex = .init,
         .vtable = undefined,
@@ -152,6 +156,7 @@ pub fn resetFromPool(self: *Self, flags: vk.CommandBufferResetFlags) VkError!voi
     try self.dispatch_table.reset(self, flags);
     self.begin_info = null;
     self.usage_flags = .{};
+    self.device_mask = 1;
 }
 
 pub fn submit(self: *Self) VkError!void {
@@ -247,6 +252,10 @@ pub inline fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, grou
     try self.dispatch_table.dispatch(self, group_count_x, group_count_y, group_count_z);
 }
 
+pub inline fn dispatchBase(self: *Self, base_group_x: u32, base_group_y: u32, base_group_z: u32, group_count_x: u32, group_count_y: u32, group_count_z: u32) VkError!void {
+    try self.dispatch_table.dispatchBase(self, base_group_x, base_group_y, base_group_z, group_count_x, group_count_y, group_count_z);
+}
+
 pub inline fn dispatchIndirect(self: *Self, buffer: *Buffer, offset: vk.DeviceSize) VkError!void {
     try self.dispatch_table.dispatchIndirect(self, buffer, offset);
 }
@@ -327,6 +336,13 @@ pub inline fn setEvent(self: *Self, event: *Event, stage: vk.PipelineStageFlags)
 
 pub inline fn setBlendConstants(self: *Self, constants: [4]f32) VkError!void {
     try self.dispatch_table.setBlendConstants(self, constants);
+}
+
+pub inline fn setDeviceMask(self: *Self, device_mask: u32) VkError!void {
+    if (device_mask != 1)
+        return VkError.ValidationFailed;
+    self.device_mask = device_mask;
+    try self.dispatch_table.setDeviceMask(self, device_mask);
 }
 
 pub inline fn setScissor(self: *Self, first: u32, scissor: []const vk.Rect2D) VkError!void {

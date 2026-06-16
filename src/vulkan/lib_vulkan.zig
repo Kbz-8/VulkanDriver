@@ -137,6 +137,7 @@ const device_pfn_map = block: {
     @setEvalBranchQuota(65535);
     break :block std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
         functionMapEntryPoint("vkAcquireNextImageKHR"),
+        functionMapEntryPoint("vkAcquireNextImage2KHR"),
         functionMapEntryPoint("vkAllocateCommandBuffers"),
         functionMapEntryPoint("vkAllocateDescriptorSets"),
         functionMapEntryPoint("vkAllocateDescriptorSets"),
@@ -160,6 +161,8 @@ const device_pfn_map = block: {
         functionMapEntryPoint("vkCmdCopyImageToBuffer"),
         functionMapEntryPoint("vkCmdCopyQueryPoolResults"),
         functionMapEntryPoint("vkCmdDispatch"),
+        functionMapEntryPoint("vkCmdDispatchBase"),
+        functionMapEntryPoint("vkCmdDispatchBaseKHR"),
         functionMapEntryPoint("vkCmdDispatchIndirect"),
         functionMapEntryPoint("vkCmdDraw"),
         functionMapEntryPoint("vkCmdDrawIndexed"),
@@ -178,6 +181,8 @@ const device_pfn_map = block: {
         functionMapEntryPoint("vkCmdSetBlendConstants"),
         functionMapEntryPoint("vkCmdSetDepthBias"),
         functionMapEntryPoint("vkCmdSetDepthBounds"),
+        functionMapEntryPoint("vkCmdSetDeviceMask"),
+        functionMapEntryPoint("vkCmdSetDeviceMaskKHR"),
         functionMapEntryPoint("vkCmdSetEvent"),
         functionMapEntryPoint("vkCmdSetLineWidth"),
         functionMapEntryPoint("vkCmdSetScissor"),
@@ -236,6 +241,10 @@ const device_pfn_map = block: {
         functionMapEntryPoint("vkFreeMemory"),
         functionMapEntryPoint("vkGetBufferMemoryRequirements"),
         functionMapEntryPoint("vkGetDeviceMemoryCommitment"),
+        functionMapEntryPoint("vkGetDeviceGroupPeerMemoryFeatures"),
+        functionMapEntryPoint("vkGetDeviceGroupPeerMemoryFeaturesKHR"),
+        functionMapEntryPoint("vkGetDeviceGroupPresentCapabilitiesKHR"),
+        functionMapEntryPoint("vkGetDeviceGroupSurfacePresentModesKHR"),
         functionMapEntryPoint("vkGetDeviceProcAddr"),
         functionMapEntryPoint("vkGetDeviceQueue"),
         functionMapEntryPoint("vkGetEventStatus"),
@@ -402,16 +411,12 @@ pub export fn apeEnumeratePhysicalDevices(p_instance: vk.Instance, count: *u32, 
     return .success;
 }
 
-pub export fn apeEnumeratePhysicalDeviceGroups(
-    p_instance: vk.Instance,
-    count: *u32,
-    p_groups: ?[*]vk.PhysicalDeviceGroupProperties,
-) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn apeEnumeratePhysicalDeviceGroups(p_instance: vk.Instance, count: *u32, p_groups: ?[*]vk.PhysicalDeviceGroupProperties) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkEnumeratePhysicalDeviceGroups);
     defer entryPointEndLogTrace();
 
     const instance = Dispatchable(Instance).fromHandleObject(p_instance) catch |err| return toVkResult(err);
-    const available: u32 = 1;
+    const available: u32 = @intCast(instance.physical_devices.items.len);
 
     if (p_groups) |groups| {
         const write_count = @min(count.*, available);
@@ -420,16 +425,15 @@ pub export fn apeEnumeratePhysicalDeviceGroups(
             return .incomplete;
         }
 
-        var group = groups[0];
-        group.physical_device_count = @intCast(instance.physical_devices.items.len);
-        group.physical_devices = @splat(.null_handle);
-        for (instance.physical_devices.items, 0..) |physical_device, i| {
-            group.physical_devices[i] = physical_device.toVkHandle(vk.PhysicalDevice);
+        for (groups[0..write_count], instance.physical_devices.items[0..write_count]) |*group, physical_device| {
+            group.physical_device_count = 1;
+            group.physical_devices = @splat(.null_handle);
+            group.physical_devices[0] = physical_device.toVkHandle(vk.PhysicalDevice);
+            group.subset_allocation = .false;
         }
-        group.subset_allocation = .false;
-        groups[0] = group;
 
         count.* = write_count;
+        if (write_count < available) return .incomplete;
         return .success;
     }
 
@@ -437,12 +441,8 @@ pub export fn apeEnumeratePhysicalDeviceGroups(
     return .success;
 }
 
-pub export fn apeEnumeratePhysicalDeviceGroupsKHR(
-    p_instance: vk.Instance,
-    count: *u32,
-    p_groups: ?[*]vk.PhysicalDeviceGroupProperties,
-) callconv(vk.vulkan_call_conv) vk.Result {
-    return apeEnumeratePhysicalDeviceGroups(p_instance, count, p_groups);
+pub export fn apeEnumeratePhysicalDeviceGroupsKHR(p_instance: vk.Instance, count: *u32, p_groups: ?[*]vk.PhysicalDeviceGroupProperties) callconv(vk.vulkan_call_conv) vk.Result {
+    return @call(.always_inline, apeEnumeratePhysicalDeviceGroups, .{ p_instance, count, p_groups });
 }
 
 // Physical Device functions =================================================================================================================================
@@ -1412,6 +1412,60 @@ pub export fn apeGetDeviceMemoryCommitment(p_device: vk.Device, p_memory: vk.Dev
     _ = committed_memory;
 }
 
+pub export fn apeGetDeviceGroupPeerMemoryFeatures(
+    p_device: vk.Device,
+    heap_index: u32,
+    local_device_index: u32,
+    remote_device_index: u32,
+    p_peer_memory_features: *vk.PeerMemoryFeatureFlags,
+) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetDeviceGroupPeerMemoryFeatures);
+    defer entryPointEndLogTrace();
+
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return errorLogger(err);
+    p_peer_memory_features.* = device.getDeviceGroupPeerMemoryFeatures(heap_index, local_device_index, remote_device_index) catch |err| return errorLogger(err);
+}
+
+pub export fn apeGetDeviceGroupPeerMemoryFeaturesKHR(
+    p_device: vk.Device,
+    heap_index: u32,
+    local_device_index: u32,
+    remote_device_index: u32,
+    p_peer_memory_features: *vk.PeerMemoryFeatureFlags,
+) callconv(vk.vulkan_call_conv) void {
+    apeGetDeviceGroupPeerMemoryFeatures(p_device, heap_index, local_device_index, remote_device_index, p_peer_memory_features);
+}
+
+pub export fn apeGetDeviceGroupPresentCapabilitiesKHR(
+    p_device: vk.Device,
+    p_device_group_present_capabilities: *vk.DeviceGroupPresentCapabilitiesKHR,
+) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkGetDeviceGroupPresentCapabilitiesKHR);
+    defer entryPointEndLogTrace();
+
+    if (p_device_group_present_capabilities.s_type != .device_group_present_capabilities_khr) {
+        return .error_validation_failed;
+    }
+
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    device.getDeviceGroupPresentCapabilitiesKHR(p_device_group_present_capabilities) catch |err| return toVkResult(err);
+    return .success;
+}
+
+pub export fn apeGetDeviceGroupSurfacePresentModesKHR(
+    p_device: vk.Device,
+    p_surface: vk.SurfaceKHR,
+    p_modes: *vk.DeviceGroupPresentModeFlagsKHR,
+) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkGetDeviceGroupSurfacePresentModesKHR);
+    defer entryPointEndLogTrace();
+
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const surface = NonDispatchable(SurfaceKHR).fromHandleObject(p_surface) catch |err| return toVkResult(err);
+    p_modes.* = device.getDeviceGroupSurfacePresentModesKHR(surface) catch |err| return toVkResult(err);
+    return .success;
+}
+
 pub export fn apeGetDeviceProcAddr(p_device: vk.Device, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
     defer entryPointEndLogTrace();
 
@@ -1876,6 +1930,18 @@ pub export fn apeCmdDispatch(p_cmd: vk.CommandBuffer, group_count_x: u32, group_
     cmd.dispatch(group_count_x, group_count_y, group_count_z) catch |err| return errorLogger(err);
 }
 
+pub export fn apeCmdDispatchBase(p_cmd: vk.CommandBuffer, base_group_x: u32, base_group_y: u32, base_group_z: u32, group_count_x: u32, group_count_y: u32, group_count_z: u32) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdDispatchBase);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+    cmd.dispatchBase(base_group_x, base_group_y, base_group_z, group_count_x, group_count_y, group_count_z) catch |err| return errorLogger(err);
+}
+
+pub export fn apeCmdDispatchBaseKHR(p_cmd: vk.CommandBuffer, base_group_x: u32, base_group_y: u32, base_group_z: u32, group_count_x: u32, group_count_y: u32, group_count_z: u32) callconv(vk.vulkan_call_conv) void {
+    @call(.always_inline, apeCmdDispatchBase, .{ p_cmd, base_group_x, base_group_y, base_group_z, group_count_x, group_count_y, group_count_z });
+}
+
 pub export fn apeCmdDispatchIndirect(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer, offset: vk.DeviceSize) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkCmdDispatchIndirect);
     defer entryPointEndLogTrace();
@@ -2073,6 +2139,18 @@ pub export fn apeCmdSetDepthBounds(p_cmd: vk.CommandBuffer, min: f32, max: f32) 
     _ = max;
 }
 
+pub export fn apeCmdSetDeviceMask(p_cmd: vk.CommandBuffer, device_mask: u32) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkCmdSetDeviceMask);
+    defer entryPointEndLogTrace();
+
+    const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
+    cmd.setDeviceMask(device_mask) catch |err| return errorLogger(err);
+}
+
+pub export fn apeCmdSetDeviceMaskKHR(p_cmd: vk.CommandBuffer, device_mask: u32) callconv(vk.vulkan_call_conv) void {
+    @call(.always_inline, apeCmdSetDeviceMask, .{ p_cmd, device_mask });
+}
+
 pub export fn apeCmdSetEvent(p_cmd: vk.CommandBuffer, p_event: vk.Event, stage_mask: vk.PipelineStageFlags) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkCmdSetEvent);
     defer entryPointEndLogTrace();
@@ -2218,6 +2296,27 @@ pub export fn apeAcquireNextImageKHR(p_device: vk.Device, p_swapchain: vk.Swapch
     const semaphore = if (p_semaphore != .null_handle) NonDispatchable(BinarySemaphore).fromHandleObject(p_semaphore) catch |err| return toVkResult(err) else null;
     const fence = if (p_fence != .null_handle) NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err) else null;
     swapchain.getNextImage(timeout, semaphore, fence, image_index) catch |err| return toVkResult(err);
+    return .success;
+}
+
+pub export fn apeAcquireNextImage2KHR(p_device: vk.Device, p_acquire_info: *const vk.AcquireNextImageInfoKHR, image_index: *u32) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkAcquireNextImage2KHR);
+    defer entryPointEndLogTrace();
+
+    if (p_acquire_info.s_type != .acquire_next_image_info_khr) {
+        return .error_validation_failed;
+    }
+
+    if (p_acquire_info.device_mask != 1) {
+        return .error_validation_failed;
+    }
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
+
+    const swapchain = NonDispatchable(SwapchainKHR).fromHandleObject(p_acquire_info.swapchain) catch |err| return toVkResult(err);
+    const semaphore = if (p_acquire_info.semaphore != .null_handle) NonDispatchable(BinarySemaphore).fromHandleObject(p_acquire_info.semaphore) catch |err| return toVkResult(err) else null;
+    const fence = if (p_acquire_info.fence != .null_handle) NonDispatchable(Fence).fromHandleObject(p_acquire_info.fence) catch |err| return toVkResult(err) else null;
+    swapchain.getNextImage(p_acquire_info.timeout, semaphore, fence, image_index) catch |err| return toVkResult(err);
     return .success;
 }
 

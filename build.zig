@@ -4,24 +4,37 @@ const builtin = @import("builtin");
 
 const ImplementationDesc = struct {
     name: []const u8,
+    icd_name: ?[]const u8 = null,
     root_source_file: []const u8,
     vulkan_version: std.SemanticVersion,
     custom: ?*const fn (
         *std.Build,
         *Step.Compile,
+        *std.Build.Module,
+        *std.Build.Module,
+        *std.Build.Module,
+        *std.Build.Module,
         std.Build.ResolvedTarget,
         std.builtin.OptimizeMode,
-        *Step.Options,
         bool,
     ) anyerror!void = null,
+    options: ?*const fn (*std.Build, *Step.Options) anyerror!void = null,
 };
 
 const implementations = [_]ImplementationDesc{
+    .{
+        .name = "ape",
+        .icd_name = "ape",
+        .root_source_file = "src/ape/lib.zig",
+        .vulkan_version = .{ .major = 1, .minor = 0, .patch = 0 },
+        .custom = customApe,
+    },
     .{
         .name = "soft",
         .root_source_file = "src/soft/lib.zig",
         .vulkan_version = .{ .major = 1, .minor = 0, .patch = 0 },
         .custom = customSoft,
+        .options = optionsSoft,
     },
 };
 
@@ -79,7 +92,8 @@ pub fn build(b: *std.Build) !void {
         base_c_includes.link_libc = true;
     }
 
-    base_mod.addImport("base_c", base_c_includes.createModule());
+    const base_c_mod = base_c_includes.createModule();
+    base_mod.addImport("base_c", base_c_mod);
 
     const use_llvm = b.option(bool, "use-llvm", "LLVM build") orelse (b.release_mode != .off);
 
@@ -104,12 +118,22 @@ pub fn build(b: *std.Build) !void {
             .use_llvm = use_llvm,
         });
 
-        if (impl.custom) |custom| {
-            custom(b, lib, target, optimize, options, use_llvm) catch continue;
+        if (impl.custom) |func| {
+            func(b, lib, lib_mod, base_mod, vulkan, base_c_mod, target, optimize, use_llvm) catch continue;
+        }
+
+        if (impl.options) |func| {
+            func(b, options) catch continue;
         }
 
         const icd_file = b.addWriteFile(
-            b.getInstallPath(.lib, b.fmt("vk_ape_{s}.json", .{impl.name})),
+            b.getInstallPath(
+                .lib,
+                if (impl.icd_name) |icd_name|
+                    b.fmt("vk_{s}.json", .{icd_name})
+                else
+                    b.fmt("vk_ape_{s}.json", .{impl.name}),
+            ),
             b.fmt(
                 \\{{
                 \\    "file_format_version": "1.0.1",
@@ -171,12 +195,48 @@ pub fn build(b: *std.Build) !void {
     docs_step.dependOn(&install_docs.step);
 }
 
-fn customSoft(
+fn customApe(
     b: *std.Build,
     lib: *Step.Compile,
+    lib_mod: *std.Build.Module,
+    base_mod: *std.Build.Module,
+    vulkan: *std.Build.Module,
+    base_c_mod: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    use_llvm: bool,
+) !void {
+    for (implementations) |impl| {
+        if (std.mem.eql(u8, impl.name, "ape"))
+            continue;
+
+        const mod = b.createModule(.{
+            .root_source_file = b.path(impl.root_source_file),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "base", .module = base_mod },
+                .{ .name = "vulkan", .module = vulkan },
+            },
+        });
+
+        if (impl.custom) |func| {
+            func(b, lib, mod, base_mod, vulkan, base_c_mod, target, optimize, use_llvm) catch continue;
+        }
+
+        lib_mod.addImport(impl.name, mod);
+    }
+}
+
+fn customSoft(
+    b: *std.Build,
+    _: *Step.Compile,
+    lib_mod: *std.Build.Module,
+    _: *std.Build.Module,
+    _: *std.Build.Module,
+    base_c_mod: *std.Build.Module,
     _: std.Build.ResolvedTarget,
     _: std.builtin.OptimizeMode,
-    options: *Step.Options,
     use_llvm: bool,
 ) !void {
     const spv = b.lazyDependency("SPIRV_Interpreter", .{
@@ -184,23 +244,25 @@ fn customSoft(
         .@"no-test" = true,
         .@"use-llvm" = use_llvm,
     }) orelse return error.UnresolvedDependency;
-    lib.root_module.addImport("spv", spv.module("spv"));
 
-    const single_threaded_option = b.option(bool, "single-threaded", "Single threaded runtime mode") orelse false;
-    const debug_allocator_option = b.option(bool, "debug-allocator", "Debug device allocator") orelse false;
-    const shaders_simd_option = b.option(bool, "shader-simd", "Shaders SIMD acceleration") orelse true;
-    const single_threaded_compute_option = b.option(bool, "single-threaded-compute", "Single threaded compute shaders execution") orelse true;
-    const compute_dump_early_results_table_option = b.option(u32, "compute-dump-early-results-table", "Dump compute shaders results table before invocation");
-    const compute_dump_final_results_table_option = b.option(u32, "compute-dump-final-results-table", "Dump compute shaders results table after invocation");
-    const approxiamte_rgb_option = b.option(bool, "approximates-rgb", "Approximate sRGB <-> RGB conversions") orelse true;
+    lib_mod.addImport("soft_c", base_c_mod);
+    lib_mod.addImport("spv", spv.module("spv"));
+}
 
-    options.addOption(bool, "single_threaded", single_threaded_option);
-    options.addOption(bool, "debug_allocator", debug_allocator_option);
-    options.addOption(bool, "shaders_simd", shaders_simd_option);
-    options.addOption(bool, "single_threaded_compute", single_threaded_compute_option);
-    options.addOption(?u32, "compute_dump_early_results_table", compute_dump_early_results_table_option);
-    options.addOption(?u32, "compute_dump_final_results_table", compute_dump_final_results_table_option);
-    options.addOption(bool, "approximates_rgb", approxiamte_rgb_option);
+fn optionsSoft(b: *std.Build, options: *Step.Options) !void {
+    const single_threaded_option = b.option(bool, "soft-single-threaded", "Single threaded runtime mode") orelse false;
+    const debug_allocator_option = b.option(bool, "soft-debug-allocator", "Debug device allocator") orelse false;
+    const shaders_simd_option = b.option(bool, "soft-shader-simd", "Shaders SIMD acceleration") orelse true;
+    const compute_dump_early_results_table_option = b.option(u32, "soft-compute-dump-early-results-table", "Dump compute shaders results table before invocation");
+    const compute_dump_final_results_table_option = b.option(u32, "soft-compute-dump-final-results-table", "Dump compute shaders results table after invocation");
+    const approxiamte_rgb_option = b.option(bool, "soft-approximates-rgb", "Approximate sRGB <-> RGB conversions") orelse true;
+
+    options.addOption(bool, "soft_single_threaded", single_threaded_option);
+    options.addOption(bool, "soft_debug_allocator", debug_allocator_option);
+    options.addOption(bool, "soft_shaders_simd", shaders_simd_option);
+    options.addOption(?u32, "soft_compute_dump_early_results_table", compute_dump_early_results_table_option);
+    options.addOption(?u32, "soft_compute_dump_final_results_table", compute_dump_final_results_table_option);
+    options.addOption(bool, "soft_approximates_rgb", approxiamte_rgb_option);
 }
 
 fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *Step.Compile, comptime mode: RunningMode) !*Step {

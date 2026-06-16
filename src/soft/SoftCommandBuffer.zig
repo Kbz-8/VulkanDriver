@@ -61,6 +61,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .copyImageToBuffer = copyImageToBuffer,
         .copyQueryPoolResults = copyQueryPoolResults,
         .dispatch = dispatch,
+        .dispatchBase = dispatchBase,
         .dispatchIndirect = dispatchIndirect,
         .draw = draw,
         .drawIndexed = drawIndexed,
@@ -80,6 +81,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .resolveImage = resolveImage,
         .setEvent = setEvent,
         .setBlendConstants = setBlendConstants,
+        .setDeviceMask = setDeviceMask,
         .setScissor = setScissor,
         .setStencilCompareMask = setStencilCompareMask,
         .setStencilReference = setStencilReference,
@@ -782,30 +784,44 @@ pub fn copyQueryPoolResults(interface: *Interface, pool: *base.QueryPool, first:
 }
 
 pub fn dispatch(interface: *Interface, group_count_x: u32, group_count_y: u32, group_count_z: u32) VkError!void {
+    try dispatchBase(interface, 0, 0, 0, group_count_x, group_count_y, group_count_z);
+}
+
+pub fn dispatchBase(interface: *Interface, base_group_x: u32, base_group_y: u32, base_group_z: u32, group_count_x: u32, group_count_y: u32, group_count_z: u32) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     const allocator = self.command_allocator.allocator();
 
     const CommandImpl = struct {
         const Impl = @This();
 
+        base_group_x: u32,
+        base_group_y: u32,
+        base_group_z: u32,
         group_count_x: u32,
         group_count_y: u32,
         group_count_z: u32,
 
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
-            try device.compute.dispatch(impl.group_count_x, impl.group_count_y, impl.group_count_z);
+            try device.compute.dispatchBase(impl.base_group_x, impl.base_group_y, impl.base_group_z, impl.group_count_x, impl.group_count_y, impl.group_count_z);
         }
     };
 
     const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(cmd);
     cmd.* = .{
+        .base_group_x = base_group_x,
+        .base_group_y = base_group_y,
+        .base_group_z = base_group_z,
         .group_count_x = group_count_x,
         .group_count_y = group_count_y,
         .group_count_z = group_count_z,
     };
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn setDeviceMask(_: *Interface, device_mask: u32) VkError!void {
+    if (device_mask != 1) return VkError.ValidationFailed;
 }
 
 pub fn dispatchIndirect(interface: *Interface, buffer: *base.Buffer, offset: vk.DeviceSize) VkError!void {

@@ -23,6 +23,7 @@ fn castExtension(comptime ext: vk.ApiInfo) vk.ExtensionProperties {
 }
 
 pub const EXTENSIONS = [_]vk.ExtensionProperties{
+    castExtension(vk.extensions.khr_device_group),
     castExtension(vk.extensions.khr_swapchain),
 };
 

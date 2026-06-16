@@ -42,7 +42,7 @@ const DeviceAllocator = struct {
 };
 
 interface: Interface,
-device_allocator: if (config.debug_allocator) std.heap.DebugAllocator(.{}) else DeviceAllocator,
+device_allocator: if (config.soft_debug_allocator) std.heap.DebugAllocator(.{}) else DeviceAllocator,
 
 pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
@@ -84,11 +84,14 @@ pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, a
         .createSemaphore = createSemaphore,
         .createShaderModule = createShaderModule,
         .destroy = destroy,
+        .getDeviceGroupPeerMemoryFeatures = getDeviceGroupPeerMemoryFeatures,
+        .getDeviceGroupPresentCapabilitiesKHR = getDeviceGroupPresentCapabilitiesKHR,
+        .getDeviceGroupSurfacePresentModesKHR = getDeviceGroupSurfacePresentModesKHR,
     };
 
     self.* = .{
         .interface = interface,
-        .device_allocator = if (config.debug_allocator) .init else .{},
+        .device_allocator = if (config.soft_debug_allocator) .init else .{},
     };
     initialized = true;
 
@@ -99,7 +102,7 @@ pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, a
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
 
-    if (config.debug_allocator) {
+    if (config.soft_debug_allocator) {
         // All device memory allocations should've been freed by now
         const leaks = self.device_allocator.detectLeaks();
         if (leaks != 0)
@@ -211,4 +214,26 @@ pub fn createSemaphore(interface: *Interface, allocator: std.mem.Allocator, info
 pub fn createShaderModule(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.ShaderModuleCreateInfo) VkError!*base.ShaderModule {
     const module = try SoftShaderModule.create(interface, allocator, info);
     return &module.interface;
+}
+
+pub fn getDeviceGroupPeerMemoryFeatures(interface: *Interface, heap_index: u32, local_device_index: u32, remote_device_index: u32) VkError!vk.PeerMemoryFeatureFlags {
+    if (heap_index >= interface.physical_device.mem_props.memory_heap_count) return VkError.ValidationFailed;
+    if (local_device_index != 0 or remote_device_index != 0) return VkError.ValidationFailed;
+
+    return .{
+        .copy_src_bit = true,
+        .copy_dst_bit = true,
+        .generic_src_bit = true,
+        .generic_dst_bit = true,
+    };
+}
+
+pub fn getDeviceGroupPresentCapabilitiesKHR(_: *Interface, capabilities: *vk.DeviceGroupPresentCapabilitiesKHR) VkError!void {
+    capabilities.present_mask = @splat(0);
+    capabilities.present_mask[0] = 1;
+    capabilities.modes = .{ .local_bit_khr = true };
+}
+
+pub fn getDeviceGroupSurfacePresentModesKHR(_: *Interface, _: *base.SurfaceKHR) VkError!vk.DeviceGroupPresentModeFlagsKHR {
+    return .{ .local_bit_khr = true };
 }

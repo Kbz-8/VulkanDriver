@@ -48,6 +48,7 @@ Assume thou that functions lacking in this array are, for now, not intended to b
 
 Name                                             | Status
 -------------------------------------------------|--------
+vkAcquireNextImage2KHR                           | ✅ Implemented
 vkAcquireNextImageKHR                            | ✅ Implemented
 vkAllocateCommandBuffers                         | ✅ Implemented
 vkAllocateDescriptorSets                         | ✅ Implemented
@@ -71,6 +72,7 @@ vkCmdCopyImage                                   | ✅ Implemented
 vkCmdCopyImageToBuffer                           | ✅ Implemented
 vkCmdCopyQueryPoolResults                        | ✅ Implemented
 vkCmdDispatch                                    | ✅ Implemented
+vkCmdDispatchBaseKHR                             | ✅ Implemented
 vkCmdDispatchIndirect                            | ✅ Implemented
 vkCmdDraw                                        | ✅ Implemented
 vkCmdDrawIndexed                                 | ✅ Implemented
@@ -89,6 +91,7 @@ vkCmdResolveImage                                | ✅ Implemented
 vkCmdSetBlendConstants                           | ✅ Implemented
 vkCmdSetDepthBias                                | ⚙️ WIP
 vkCmdSetDepthBounds                              | ⚙️ WIP
+vkCmdSetDeviceMaskKHR                            | ✅ Implemented
 vkCmdSetEvent                                    | ✅ Implemented
 vkCmdSetLineWidth                                | ⚙️ WIP
 vkCmdSetScissor                                  | ✅ Implemented
@@ -153,13 +156,16 @@ vkEnumerateDeviceExtensionProperties             | ✅ Implemented
 vkEnumerateDeviceLayerProperties                 | ✅ Implemented
 vkEnumerateInstanceExtensionProperties           | ✅ Implemented
 vkEnumerateInstanceLayerProperties               | ✅ Implemented
-vkEnumeratePhysicalDevices                       | ✅ Implemented
 vkEnumeratePhysicalDeviceGroupsKHR               | ✅ Implemented
+vkEnumeratePhysicalDevices                       | ✅ Implemented
 vkFlushMappedMemoryRanges                        | ✅ Implemented
 vkFreeCommandBuffers                             | ✅ Implemented
 vkFreeDescriptorSets                             | ✅ Implemented
 vkFreeMemory                                     | ✅ Implemented
 vkGetBufferMemoryRequirements                    | ✅ Implemented
+vkGetDeviceGroupPeerMemoryFeaturesKHR            | ✅ Implemented
+vkGetDeviceGroupPresentCapabilitiesKHR           | ✅ Implemented
+vkGetDeviceGroupSurfacePresentModesKHR           | ✅ Implemented
 vkGetDeviceMemoryCommitment                      | ⚙️ WIP
 vkGetDeviceProcAddr                              | ✅ Implemented
 vkGetDeviceQueue                                 | ✅ Implemented
