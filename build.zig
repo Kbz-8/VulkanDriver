@@ -33,7 +33,7 @@ const implementations = [_]ImplementationDesc{
     },
     .{
         .name = "soft",
-        .root_source_file = "src/soft/lib.zig",
+        .root_source_file = "src/software/lib.zig",
         .vulkan_version = .{ .major = 1, .minor = 0, .patch = 0 },
         .custom = customSoft,
         .options = optionsSoft,
