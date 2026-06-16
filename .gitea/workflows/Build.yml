@@ -18,8 +18,14 @@ jobs:
 
       - uses: https://codeberg.org/mlugg/setup-zig@v2
 
-      - name: Building
+      - name: Building Ape
+        run: zig build ape
+
+      - name: Building Soft
         run: zig build soft
+
+      - name: Building Flint
+        run: zig build flint
 
       - name: Generating docs
         run: zig build docs

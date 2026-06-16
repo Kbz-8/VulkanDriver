@@ -3,7 +3,6 @@ const vk = @import("vulkan");
 const base = @import("base");
 
 const VkError = base.VkError;
-const IntelRenderPass = @import("IntelRenderPass.zig");
 
 const Self = @This();
 pub const Interface = base.Framebuffer;

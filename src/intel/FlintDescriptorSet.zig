@@ -29,7 +29,6 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, layout: *base.
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    allocator.free(self.heap);
     allocator.destroy(self);
 }
 

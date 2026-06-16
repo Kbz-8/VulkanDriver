@@ -4,7 +4,6 @@ const base = @import("base");
 const lib = @import("lib.zig");
 
 const VkError = base.VkError;
-const IntelBuffer = @import("IntelBuffer.zig");
 
 const Self = @This();
 pub const Interface = base.Image;
@@ -41,7 +40,7 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 }
 
 pub fn getMemoryRequirements(_: *Interface, requirements: *vk.MemoryRequirements) VkError!void {
-    requirements.alignment = lib.MEMORY_REQUIREMENTS_IMAGE_ALIGNMENT;
+    _ = requirements;
 }
 
 pub fn copyToMemory(interface: *const Interface, memory: []u8, subresource: vk.ImageSubresourceLayers) VkError!void {

@@ -4,7 +4,7 @@ const vk = @import("vulkan");
 const base = @import("base");
 const lib = @import("lib.zig");
 
-const IntelDevice = @import("IntelDevice.zig");
+const FlintDevice = @import("FlintDevice.zig");
 
 const VkError = base.VkError;
 const VulkanAllocator = base.VulkanAllocator;
@@ -211,7 +211,7 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void
 }
 
 pub fn createDevice(interface: *Interface, allocator: std.mem.Allocator, infos: *const vk.DeviceCreateInfo) VkError!*base.Device {
-    const device = try IntelDevice.create(interface.instance, interface, allocator, infos);
+    const device = try FlintDevice.create(interface.instance, interface, allocator, infos);
     return &device.interface;
 }
 
@@ -664,63 +664,24 @@ pub fn getImageFormatProperties(
     image_type: vk.ImageType,
     tiling: vk.ImageTiling,
     usage: vk.ImageUsageFlags,
-    flags: vk.ImageCreateFlags,
+    _: vk.ImageCreateFlags,
 ) VkError!vk.ImageFormatProperties {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     if (!try self.isFormatSupported(format, image_type, tiling, usage))
         return VkError.FormatNotSupported;
 
-    var properties: vk.ImageFormatProperties = .{
+    const properties: vk.ImageFormatProperties = .{
         .max_extent = .{ .width = 0, .height = 0, .depth = 1 },
         .max_mip_levels = 1,
-        .max_array_layers = lib.MAX_IMAGE_ARRAY_LAYERS,
+        .max_array_layers = 1,
         .sample_counts = .{ .@"1_bit" = true },
         .max_resource_size = std.math.maxInt(u32),
     };
 
-    switch (image_type) {
-        .@"1d" => {
-            properties.max_mip_levels = lib.MAX_IMAGE_LEVELS_1D;
-            properties.max_extent.width = 1 << (lib.MAX_IMAGE_LEVELS_1D - 1);
-            properties.max_extent.height = 1;
-        },
-        .@"2d" => {
-            if (flags.cube_compatible_bit) {
-                properties.max_mip_levels = lib.MAX_IMAGE_LEVELS_CUBE;
-                properties.max_extent.width = 1 << (lib.MAX_IMAGE_LEVELS_CUBE - 1);
-                properties.max_extent.height = 1 << (lib.MAX_IMAGE_LEVELS_CUBE - 1);
-            } else {
-                properties.max_mip_levels = lib.MAX_IMAGE_LEVELS_2D;
-                properties.max_extent.width = 1 << (lib.MAX_IMAGE_LEVELS_2D - 1);
-                properties.max_extent.height = 1 << (lib.MAX_IMAGE_LEVELS_2D - 1);
-
-                const format_properties = try interface.getFormatProperties(format);
-                const format_features = if (tiling == .linear) format_properties.linear_tiling_features else format_properties.optimal_tiling_features;
-                if (format_features.color_attachment_bit or format_features.depth_stencil_attachment_bit) {
-                    properties.sample_counts = .{ .@"1_bit" = true, .@"4_bit" = true };
-                }
-            }
-        },
-        .@"3d" => {
-            properties.max_mip_levels = lib.MAX_IMAGE_LEVELS_3D;
-            properties.max_extent.width = 1 << (lib.MAX_IMAGE_LEVELS_3D - 1);
-            properties.max_extent.height = 1 << (lib.MAX_IMAGE_LEVELS_3D - 1);
-            properties.max_extent.depth = 1 << (lib.MAX_IMAGE_LEVELS_3D - 1);
-            properties.max_array_layers = 1;
-        },
-        else => return VkError.FormatNotSupported,
-    }
-
-    if (tiling == .linear) {
-        properties.max_mip_levels = 1;
-        properties.max_array_layers = 1;
-        properties.sample_counts = .{ .@"1_bit" = true };
-    }
-
     return properties;
 }
 
-/// Intel does not support sparse images.
+/// Flint does not support sparse images.
 pub fn getSparseImageFormatProperties(
     interface: *Interface,
     format: vk.Format,
@@ -740,7 +701,7 @@ pub fn getSparseImageFormatProperties(
     return 0;
 }
 
-/// Intel does not support sparse images.
+/// Flint does not support sparse images.
 pub fn getSparseImageFormatProperties2(
     interface: *Interface,
     format: vk.Format,

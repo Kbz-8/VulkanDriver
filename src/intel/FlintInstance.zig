@@ -1,7 +1,7 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
-const IntelPhysicalDevice = @import("IntelPhysicalDevice.zig");
+const FlintPhysicalDevice = @import("FlintPhysicalDevice.zig");
 
 const Dispatchable = base.Dispatchable;
 
@@ -36,7 +36,7 @@ pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo)
     errdefer allocator.destroy(self);
 
     self.allocator = std.heap.smp_allocator;
-    self.threaded = if (comptime base.config.intel_single_threaded) .init_single_threaded else std.Io.Threaded.init(self.allocator, .{});
+    self.threaded = std.Io.Threaded.init(self.allocator, .{});
     self.io_impl = self.threaded.io();
 
     self.interface = try base.Instance.init(allocator, infos);

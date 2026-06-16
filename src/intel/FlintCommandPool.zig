@@ -6,7 +6,7 @@ const NonDispatchable = base.NonDispatchable;
 const VkError = base.VkError;
 const Device = base.Device;
 
-const IntelCommandBuffer = @import("IntelCommandBuffer.zig");
+const FlintCommandBuffer = @import("FlintCommandBuffer.zig");
 
 const Self = @This();
 pub const Interface = base.CommandPool;
@@ -32,7 +32,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 }
 
 pub fn createCommandBuffer(interface: *Interface, allocator: std.mem.Allocator, info: *const vk.CommandBufferAllocateInfo) VkError!*base.CommandBuffer {
-    const cmd = try IntelCommandBuffer.create(interface.owner, allocator, info);
+    const cmd = try FlintCommandBuffer.create(interface.owner, allocator, info);
     return &cmd.interface;
 }
 

@@ -36,7 +36,6 @@ pub const SoftShaderModule = @import("SoftShaderModule.zig");
 
 pub const Instance = SoftInstance;
 
-pub const DRIVER_LOGS_ENV_NAME = base.DRIVER_LOGS_ENV_NAME;
 pub const DRIVER_NAME = "Soft";
 
 pub const VULKAN_VERSION = vk.makeApiVersion(

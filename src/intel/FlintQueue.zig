@@ -2,7 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 
-const IntelCommandBuffer = @import("IntelCommandBuffer.zig");
+const FlintCommandBuffer = @import("FlintCommandBuffer.zig");
 
 const VkError = base.VkError;
 
@@ -46,7 +46,7 @@ pub fn submit(interface: *Interface, infos: []Interface.SubmitInfo, fence: ?*bas
         }
 
         for (info.command_buffers.items) |command_buffer| {
-            const intel_command_buffer: *IntelCommandBuffer = @alignCast(@fieldParentPtr("interface", command_buffer));
+            const intel_command_buffer: *FlintCommandBuffer = @alignCast(@fieldParentPtr("interface", command_buffer));
             _ = intel_command_buffer;
         }
 

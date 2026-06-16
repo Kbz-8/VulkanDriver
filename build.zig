@@ -39,11 +39,11 @@ const implementations = [_]ImplementationDesc{
         .options = optionsSoft,
     },
     .{
-        .name = "intel",
+        .name = "flint",
         .root_source_file = "src/intel/lib.zig",
         .vulkan_version = .{ .major = 1, .minor = 0, .patch = 0 },
-        .custom = customIntel,
-        .options = optionsIntel,
+        .custom = customFlint,
+        .options = optionsFlint,
     },
 };
 
@@ -277,7 +277,7 @@ fn optionsSoft(b: *std.Build, options: *Step.Options) !void {
     options.addOption(bool, "soft_approximates_rgb", approxiamte_rgb_option);
 }
 
-fn customIntel(
+fn customFlint(
     _: *std.Build,
     _: *Step.Compile,
     lib_mod: *std.Build.Module,
@@ -291,7 +291,7 @@ fn customIntel(
     lib_mod.addImport("intel_c", base_c_mod);
 }
 
-fn optionsIntel(b: *std.Build, options: *Step.Options) !void {
+fn optionsFlint(b: *std.Build, options: *Step.Options) !void {
     _ = b;
     _ = options;
 }

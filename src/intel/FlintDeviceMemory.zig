@@ -1,8 +1,9 @@
 const std = @import("std");
 const vk = @import("vulkan");
-const IntelDevice = @import("IntelDevice.zig");
 const base = @import("base");
 const lib = @import("lib.zig");
+
+const FlintDevice = @import("FlintDevice.zig");
 
 const VkError = base.VkError;
 
@@ -11,7 +12,7 @@ pub const Interface = base.DeviceMemory;
 
 interface: Interface,
 
-pub fn create(device: *IntelDevice, allocator: std.mem.Allocator, size: vk.DeviceSize, memory_type_index: u32) VkError!*Self {
+pub fn create(device: *FlintDevice, allocator: std.mem.Allocator, size: vk.DeviceSize, memory_type_index: u32) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
 

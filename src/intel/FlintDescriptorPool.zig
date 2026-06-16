@@ -7,8 +7,6 @@ const VulkanAllocator = base.VulkanAllocator;
 
 const Device = base.Device;
 
-const IntelDescriptorSet = @import("IntelDescriptorSet.zig");
-
 const Self = @This();
 pub const Interface = base.DescriptorPool;
 
