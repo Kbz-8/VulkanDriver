@@ -3,6 +3,7 @@ const vk = @import("vulkan");
 pub const base = @import("base");
 
 pub const c = @import("soft_c");
+pub const config = base.config;
 
 pub const Device = @import("device/Device.zig");
 
@@ -38,8 +39,12 @@ pub const Instance = SoftInstance;
 pub const DRIVER_LOGS_ENV_NAME = base.DRIVER_LOGS_ENV_NAME;
 pub const DRIVER_NAME = "Soft";
 
-pub const VULKAN_VERSION = vk.makeApiVersion(0, 1, 0, 0);
-pub const DRIVER_VERSION = vk.makeApiVersion(0, 0, 0, 1);
+pub const VULKAN_VERSION = vk.makeApiVersion(
+    0,
+    config.soft_vulkan_version.major,
+    config.soft_vulkan_version.minor,
+    config.soft_vulkan_version.patch,
+);
 pub const DEVICE_ID = 0x600DCAFE;
 pub const PIPELINE_CACHE_UUID: [vk.UUID_SIZE]u8 = "ApeSoftCacheUUID".*;
 

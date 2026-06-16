@@ -57,7 +57,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
     };
 
     interface.props.api_version = @bitCast(lib.VULKAN_VERSION);
-    interface.props.driver_version = @bitCast(lib.DRIVER_VERSION);
+    interface.props.driver_version = @bitCast(base.DRIVER_VERSION);
     interface.props.device_id = lib.DEVICE_ID;
     interface.props.device_type = .cpu;
     interface.props.pipeline_cache_uuid = lib.PIPELINE_CACHE_UUID;

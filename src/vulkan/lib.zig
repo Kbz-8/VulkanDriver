@@ -56,8 +56,12 @@ pub const VULKAN_VENDOR_ID: i32 = @intFromEnum(vk.VendorId.ape);
 
 /// Default driver name
 pub const DRIVER_NAME = "Unnamed Ape Driver";
-/// Default Vulkan version
-pub const VULKAN_VERSION = vk.makeApiVersion(0, 1, 0, 0);
+pub const DRIVER_VERSION = vk.makeApiVersion(
+    0,
+    config.driver_version.major,
+    config.driver_version.minor,
+    config.driver_version.patch,
+);
 
 /// Maximum number of descriptor sets per pipeline
 pub const VULKAN_MAX_DESCRIPTOR_SETS = 8;

@@ -2,6 +2,8 @@ const std = @import("std");
 const Step = std.Build.Step;
 const builtin = @import("builtin");
 
+const driver_version: std.SemanticVersion = .{ .major = 1, .minor = 0, .patch = 0 };
+
 const ImplementationDesc = struct {
     name: []const u8,
     icd_name: ?[]const u8 = null,
@@ -73,6 +75,7 @@ pub fn build(b: *std.Build) !void {
     const logs_option: LogType = b.option(LogType, "logs", "Driver logs") orelse .none;
 
     const options = b.addOptions();
+    options.addOption(std.SemanticVersion, "driver_version", driver_version);
     options.addOption(LogType, "logs", logs_option);
 
     base_mod.addImport("zmath", zmath);
@@ -117,6 +120,8 @@ pub fn build(b: *std.Build) !void {
             .linkage = .dynamic,
             .use_llvm = use_llvm,
         });
+
+        options.addOption(std.SemanticVersion, b.fmt("{s}_vulkan_version", .{impl.name}), impl.vulkan_version);
 
         if (impl.custom) |func| {
             func(b, lib, lib_mod, base_mod, vulkan, base_c_mod, target, optimize, use_llvm) catch continue;
