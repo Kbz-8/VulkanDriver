@@ -63,6 +63,9 @@ pub const DRIVER_VERSION = vk.makeApiVersion(
     config.driver_version.patch,
 );
 
+/// Dummy fallback
+pub const VULKAN_VERSION = vk.makeApiVersion(0, 1, 0, 0);
+
 /// Maximum number of descriptor sets per pipeline
 pub const VULKAN_MAX_DESCRIPTOR_SETS = 8;
 
