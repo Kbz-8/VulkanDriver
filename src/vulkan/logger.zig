@@ -90,7 +90,7 @@ pub fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), compti
         writer.writeAll("[ApeDriver") catch continue;
         if (!builtin.is_test) {
             term.setColor(.cyan) catch {};
-            writer.writeAll(" " ++ root.DRIVER_NAME ++ " ") catch continue;
+            writer.print(" {s} ", .{root.DRIVER_NAME}) catch continue;
         }
         term.setColor(.yellow) catch {};
         writer.print("{d}:{d}:{d}.{d:0>3}.{d:0>3}", .{ now_hour, now_min, now_sec, now_ms, now_us }) catch continue;

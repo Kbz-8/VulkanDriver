@@ -1,6 +1,7 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
+const lib = @import("lib.zig");
 const SoftPhysicalDevice = @import("SoftPhysicalDevice.zig");
 
 const Dispatchable = base.Dispatchable;
