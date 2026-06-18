@@ -23,6 +23,7 @@ pub fn shaderInvocation(
     draw_call: *Renderer.DrawCall,
     batch_id: usize,
     position: zm.F32x4,
+    point_coord: ?@Vector(2, f32),
     front_face: bool,
     inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation,
     derivative_inputs: ?DerivativeInputs,
@@ -54,6 +55,12 @@ pub fn shaderInvocation(
         SpvRuntimeError.NotFound => {},
         else => return err,
     };
+    if (point_coord) |coord| {
+        rt.writeBuiltIn(std.mem.asBytes(&coord), .PointCoord) catch |err| switch (err) {
+            SpvRuntimeError.NotFound => {},
+            else => return err,
+        };
+    }
     rt.writeBuiltIn(std.mem.asBytes(&front_face), .FrontFacing) catch |err| switch (err) {
         SpvRuntimeError.NotFound => {},
         else => return err,

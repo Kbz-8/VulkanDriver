@@ -45,9 +45,9 @@ pub fn drawLine(
     const io = draw_call.renderer.device.interface.io();
 
     var x0: i32 = @intFromFloat(v0.position[0]);
-    var y0: i32 = @intFromFloat(v0.position[1]);
+    var y0: i32 = @intFromFloat(@floor(v0.position[1] - 0.5));
     var x1: i32 = @intFromFloat(v1.position[0]);
-    var y1: i32 = @intFromFloat(v1.position[1]);
+    var y1: i32 = @intFromFloat(@floor(v1.position[1] - 0.5));
 
     const steep = blk: {
         if (@abs(y1 - y0) > @abs(x1 - x0)) {
@@ -76,7 +76,7 @@ pub fn drawLine(
     if (runtimes_count == 0)
         return;
 
-    const step_count: usize = @as(usize, @intCast(d_x)) + 1;
+    const step_count: usize = if (d_x == 0) 1 else @intCast(d_x);
     const runs_count = @min(runtimes_count, step_count);
     const steps_per_run = @divTrunc(step_count + runs_count - 1, runs_count);
 
@@ -151,6 +151,7 @@ inline fn run(data: RunData) !void {
 
         const t = @as(f32, @floatFromInt(step)) / @as(f32, @floatFromInt(@max(data.d_x, 1)));
         const z = ((1.0 - t) * data.start_vertex.position[2]) + (t * data.end_vertex.position[2]);
+        const frag_w = ((1.0 - t) / data.start_vertex.position[3]) + (t / data.end_vertex.position[3]);
 
         var outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8);
         if (data.has_fragment_shader) {
@@ -158,7 +159,8 @@ inline fn run(data: RunData) !void {
                 data.allocator,
                 data.draw_call,
                 data.batch_id,
-                zm.f32x4(@floatFromInt(pixel_x), @floatFromInt(pixel_y), z, 1.0),
+                zm.f32x4(@as(f32, @floatFromInt(pixel_x)) + 0.5, @as(f32, @floatFromInt(pixel_y)) + 0.5, z, frag_w),
+                null,
                 true,
                 try common.interpolateLineOutputs(data.allocator, data.start_vertex, data.end_vertex, t),
                 null,

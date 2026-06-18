@@ -171,6 +171,7 @@ fn interpolateVertexForClipping(allocator: std.mem.Allocator, a: *const Vertex, 
     var result: Vertex = .{
         .primitive_restart = false,
         .position = a.position + ((b.position - a.position) * zm.f32x4s(t)),
+        .point_size = a.point_size + ((b.point_size - a.point_size) * t),
         .outputs = undefined,
     };
 

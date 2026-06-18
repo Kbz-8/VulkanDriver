@@ -107,6 +107,7 @@ inline fn run(data: RunData) !void {
         };
 
         try readPosition(rt, std.mem.asBytes(&output.position));
+        try readPointSize(rt, &output.point_size);
 
         for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
             for (0..4) |component| {
@@ -185,6 +186,15 @@ fn readPosition(rt: *spv.Runtime, output: []u8) !void {
     }
 
     return SpvRuntimeError.InvalidSpirV;
+}
+
+fn readPointSize(rt: *spv.Runtime, output: *f32) !void {
+    if (rt.readBuiltIn(std.mem.asBytes(output), .PointSize)) {
+        return;
+    } else |err| switch (err) {
+        SpvRuntimeError.InvalidSpirV, SpvRuntimeError.NotFound => {},
+        else => return err,
+    }
 }
 
 fn isConstantZero(rt: *spv.Runtime, result_word: spv.SpvWord) bool {

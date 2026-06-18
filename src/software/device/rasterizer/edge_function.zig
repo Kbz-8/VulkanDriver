@@ -177,6 +177,7 @@ inline fn run(data: RunData) !void {
             const b1 = w1 / data.area;
             const b2 = w2 / data.area;
             const z = (b0 * data.v0.position[2]) + (b1 * data.v1.position[2]) + (b2 * data.v2.position[2]);
+            const frag_w = (b0 / data.v0.position[3]) + (b1 / data.v1.position[3]) + (b2 / data.v2.position[3]);
 
             var outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8);
             if (data.has_fragment_shader) {
@@ -218,7 +219,8 @@ inline fn run(data: RunData) !void {
                     data.allocator,
                     data.draw_call,
                     data.batch_id,
-                    zm.f32x4(@floatFromInt(x), @floatFromInt(y), z, 1.0),
+                    zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, z, frag_w),
+                    null,
                     data.front_face,
                     inputs,
                     derivative_inputs,

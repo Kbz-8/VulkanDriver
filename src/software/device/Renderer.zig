@@ -55,6 +55,7 @@ pub const DynamicState = struct {
 pub const Vertex = struct {
     primitive_restart: bool,
     position: F32x4,
+    point_size: f32,
     outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][4]?struct {
         interpolation_type: enum { smooth, flat, noperspective },
         blob: []u8,
@@ -106,6 +107,7 @@ pub const DrawCall = struct {
 
         for (self.vertices) |*vertex| {
             vertex.primitive_restart = false;
+            vertex.point_size = 1.0;
             for (&vertex.outputs) |*location| {
                 @memset(location, null);
             }

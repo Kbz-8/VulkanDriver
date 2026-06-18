@@ -165,25 +165,25 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                 var segment_start = firstNonRestart(draw_call, range.start, range.end);
                 while (segment_start < range.end) {
                     const segment_end = nextRestart(draw_call, segment_start, range.end);
-                if (segment_end - segment_start >= 3) {
-                    const v0 = &draw_call.vertices[segment_start];
-                    for ((segment_start + 1)..(segment_end - 1)) |vertex_index| {
-                        const v1 = &draw_call.vertices[vertex_index];
-                        const v2 = &draw_call.vertices[vertex_index + 1];
+                    if (segment_end - segment_start >= 3) {
+                        const v0 = &draw_call.vertices[segment_start];
+                        for ((segment_start + 1)..(segment_end - 1)) |vertex_index| {
+                            const v1 = &draw_call.vertices[vertex_index];
+                            const v2 = &draw_call.vertices[vertex_index + 1];
 
-                        try clipTransformAndRasterizeTriangle(
-                            renderer,
-                            allocator,
-                            draw_call,
-                            v0,
-                            v1,
-                            v2,
-                            color_attachment_access,
-                            if (depth_attachment_access) |*access| access else null,
-                            if (stencil_attachment_access) |*access| access else null,
-                        );
+                            try clipTransformAndRasterizeTriangle(
+                                renderer,
+                                allocator,
+                                draw_call,
+                                v0,
+                                v1,
+                                v2,
+                                color_attachment_access,
+                                if (depth_attachment_access) |*access| access else null,
+                                if (stencil_attachment_access) |*access| access else null,
+                            );
+                        }
                     }
-                }
                     segment_start = firstNonRestart(draw_call, segment_end + 1, range.end);
                 }
             }
@@ -194,40 +194,40 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                 var segment_start = firstNonRestart(draw_call, range.start, range.end);
                 while (segment_start < range.end) {
                     const segment_end = nextRestart(draw_call, segment_start, range.end);
-                if (segment_end - segment_start >= 3) {
-                    for (segment_start..(segment_end - 2)) |vertex_index| {
-                        const local_index = vertex_index - segment_start;
-                        const v0 = &draw_call.vertices[vertex_index + 0];
-                        const v1 = &draw_call.vertices[vertex_index + 1];
-                        const v2 = &draw_call.vertices[vertex_index + 2];
+                    if (segment_end - segment_start >= 3) {
+                        for (segment_start..(segment_end - 2)) |vertex_index| {
+                            const local_index = vertex_index - segment_start;
+                            const v0 = &draw_call.vertices[vertex_index + 0];
+                            const v1 = &draw_call.vertices[vertex_index + 1];
+                            const v2 = &draw_call.vertices[vertex_index + 2];
 
-                        if ((local_index & 1) == 0) {
-                            try clipTransformAndRasterizeTriangle(
-                                renderer,
-                                allocator,
-                                draw_call,
-                                v0,
-                                v1,
-                                v2,
-                                color_attachment_access,
-                                if (depth_attachment_access) |*access| access else null,
-                                if (stencil_attachment_access) |*access| access else null,
-                            );
-                        } else {
-                            try clipTransformAndRasterizeTriangle(
-                                renderer,
-                                allocator,
-                                draw_call,
-                                v1,
-                                v0,
-                                v2,
-                                color_attachment_access,
-                                if (depth_attachment_access) |*access| access else null,
-                                if (stencil_attachment_access) |*access| access else null,
-                            );
+                            if ((local_index & 1) == 0) {
+                                try clipTransformAndRasterizeTriangle(
+                                    renderer,
+                                    allocator,
+                                    draw_call,
+                                    v0,
+                                    v1,
+                                    v2,
+                                    color_attachment_access,
+                                    if (depth_attachment_access) |*access| access else null,
+                                    if (stencil_attachment_access) |*access| access else null,
+                                );
+                            } else {
+                                try clipTransformAndRasterizeTriangle(
+                                    renderer,
+                                    allocator,
+                                    draw_call,
+                                    v1,
+                                    v0,
+                                    v2,
+                                    color_attachment_access,
+                                    if (depth_attachment_access) |*access| access else null,
+                                    if (stencil_attachment_access) |*access| access else null,
+                                );
+                            }
                         }
                     }
-                }
                     segment_start = firstNonRestart(draw_call, segment_end + 1, range.end);
                 }
             }
@@ -257,22 +257,22 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                 var segment_start = firstNonRestart(draw_call, range.start, range.end);
                 while (segment_start < range.end) {
                     const segment_end = nextRestart(draw_call, segment_start, range.end);
-                if (segment_end - segment_start >= 2) {
-                    for (segment_start..(segment_end - 1)) |vertex_index| {
-                        const v0 = &draw_call.vertices[vertex_index + 0];
-                        const v1 = &draw_call.vertices[vertex_index + 1];
+                    if (segment_end - segment_start >= 2) {
+                        for (segment_start..(segment_end - 1)) |vertex_index| {
+                            const v0 = &draw_call.vertices[vertex_index + 0];
+                            const v1 = &draw_call.vertices[vertex_index + 1];
 
-                        try clipTransformAndRasterizeLine(
-                            allocator,
-                            draw_call,
-                            v0,
-                            v1,
-                            color_attachment_access,
-                            if (depth_attachment_access) |*access| access else null,
-                            if (stencil_attachment_access) |*access| access else null,
-                        );
+                            try clipTransformAndRasterizeLine(
+                                allocator,
+                                draw_call,
+                                v0,
+                                v1,
+                                color_attachment_access,
+                                if (depth_attachment_access) |*access| access else null,
+                                if (stencil_attachment_access) |*access| access else null,
+                            );
+                        }
                     }
-                }
                     segment_start = firstNonRestart(draw_call, segment_end + 1, range.end);
                 }
             }
@@ -323,11 +323,13 @@ fn clipTransformAndRasterizePoint(
     var transformed = vertex.*;
     clip.viewportTransformVertex(draw_call.viewport, &transformed);
 
-    const point_size = 1.0;
+    const point_size = transformed.point_size;
     const min_x: i32 = @intFromFloat(@ceil(transformed.position[0] - (point_size / 2.0) - 0.5));
     const max_x: i32 = @intFromFloat(@ceil(transformed.position[0] + (point_size / 2.0) - 0.5) - 1.0);
     const min_y: i32 = @intFromFloat(@ceil(transformed.position[1] - (point_size / 2.0) - 0.5));
     const max_y: i32 = @intFromFloat(@ceil(transformed.position[1] + (point_size / 2.0) - 0.5) - 1.0);
+    const point_min_x = transformed.position[0] - (point_size / 2.0);
+    const point_min_y = transformed.position[1] - (point_size / 2.0);
     const pipeline = draw_call.renderer.state.pipeline orelse return;
     const has_fragment_shader = pipeline.stages.getPtr(.fragment) != null;
 
@@ -340,11 +342,19 @@ fn clipTransformAndRasterizePoint(
 
             var outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8);
             if (has_fragment_shader) {
+                const frag_x = @as(f32, @floatFromInt(px)) + 0.5;
+                const frag_y = @as(f32, @floatFromInt(py)) + 0.5;
+                const point_coord = @Vector(2, f32){
+                    (frag_x - point_min_x) / point_size,
+                    (frag_y - point_min_y) / point_size,
+                };
+
                 outputs = fragment.shaderInvocation(
                     allocator,
                     draw_call,
                     0,
-                    zm.f32x4(@floatFromInt(px), @floatFromInt(py), transformed.position[2], 1.0),
+                    zm.f32x4(frag_x, frag_y, transformed.position[2], 1.0 / transformed.position[3]),
+                    point_coord,
                     true,
                     try common.interpolateVertexOutputs(allocator, &transformed, &transformed, &transformed, 1.0, 0.0, 0.0),
                     null,
