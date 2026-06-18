@@ -1,7 +1,9 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
+
 const soft = @import("soft");
+const flint = @import("flint");
 
 const Dispatchable = base.Dispatchable;
 const VkError = base.VkError;
@@ -37,6 +39,10 @@ pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo)
     errdefer soft_instance.deinit(allocator) catch {};
     self.backend_instances.append(allocator, soft_instance) catch return VkError.OutOfHostMemory;
 
+    const flint_instance = try flint.Instance.create(allocator, infos);
+    errdefer flint_instance.deinit(allocator) catch {};
+    self.backend_instances.append(allocator, flint_instance) catch return VkError.OutOfHostMemory;
+
     return &self.interface;
 }
 
@@ -47,7 +53,7 @@ fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
     allocator.destroy(self);
 }
 
-fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
+fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator, _: []base.drm.Card) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
 
     for (self.backend_instances.items) |backend| {
@@ -66,7 +72,7 @@ fn appendBackendPhysicalDevices(self: *Self, allocator: std.mem.Allocator, backe
 
 fn releasePhysicalDevices(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
     for (interface.physical_devices.items) |physical_device| {
-        try physical_device.object.releasePhysicalDevice(allocator);
+        try physical_device.object.release(allocator);
         physical_device.destroy(allocator);
     }
 

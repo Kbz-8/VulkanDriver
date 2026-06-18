@@ -78,6 +78,7 @@ pub fn build(b: *std.Build) !void {
     }).module("vulkan-zig");
 
     const zmath = b.dependency("zmath", .{}).module("root");
+    const drm = b.dependency("drm", .{}).module("drm");
 
     const logs_option: LogType = b.option(LogType, "logs", "Driver logs") orelse .none;
 
@@ -85,8 +86,9 @@ pub fn build(b: *std.Build) !void {
     options.addOption(std.SemanticVersion, "driver_version", driver_version);
     options.addOption(LogType, "logs", logs_option);
 
-    base_mod.addImport("zmath", zmath);
     base_mod.addImport("vulkan", vulkan);
+    base_mod.addImport("zmath", zmath);
+    base_mod.addImport("drm", drm);
 
     const base_c_includes = b.addTranslateC(.{
         .root_source_file = b.path("src/vulkan/c_includes.h"),
@@ -289,6 +291,8 @@ fn customFlint(
     _: bool,
 ) !void {
     lib_mod.addImport("intel_c", base_c_mod);
+
+    lib_mod.addImport("soft_c", base_c_mod);
 }
 
 fn optionsFlint(b: *std.Build, options: *Step.Options) !void {

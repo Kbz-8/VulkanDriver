@@ -57,10 +57,10 @@ fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
     allocator.destroy(self);
 }
 
-fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
+fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator, _: []base.drm.Card) VkError!void {
     // Software driver has only one physical device (the CPU)
     const physical_device = try SoftPhysicalDevice.create(allocator, interface);
-    errdefer physical_device.interface.releasePhysicalDevice(allocator) catch {};
+    errdefer physical_device.interface.release(allocator) catch {};
     const dispatchable = try Dispatchable(base.PhysicalDevice).wrap(allocator, &physical_device.interface);
     errdefer dispatchable.destroy(allocator);
     interface.physical_devices.append(allocator, dispatchable) catch return VkError.OutOfHostMemory;
@@ -68,7 +68,7 @@ fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator) V
 
 fn releasePhysicalDevices(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
     for (interface.physical_devices.items) |physical_device| {
-        try physical_device.object.releasePhysicalDevice(allocator);
+        try physical_device.object.release(allocator);
         physical_device.destroy(allocator);
     }
 

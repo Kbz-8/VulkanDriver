@@ -36,6 +36,10 @@ pub const Instance = FlintInstance;
 
 pub const DRIVER_NAME = "Flint";
 
+pub const PHYSICAL_DEVICE_DEFAULT_NAME = "Unkown Intel device";
+
+pub const INTEL_PCI_VENDOR_ID = 0x8086;
+
 pub const VULKAN_VERSION = vk.makeApiVersion(
     0,
     config.flint_vulkan_version.major,
@@ -43,10 +47,11 @@ pub const VULKAN_VERSION = vk.makeApiVersion(
     config.flint_vulkan_version.patch,
 );
 
-pub const DEVICE_ID = 0x00000000;
-pub const PIPELINE_CACHE_UUID: [vk.UUID_SIZE]u8 = "ApeFlintCacheUUI".*;
-
-pub const PHYSICAL_DEVICE_DEFAULT_NAME = "Ape Flint device";
+pub const KmdType = enum {
+    Invalid,
+    I915,
+    Xe,
+};
 
 pub const std_options = base.std_options;
 

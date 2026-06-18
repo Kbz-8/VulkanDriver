@@ -4,6 +4,8 @@ const vk = @import("vulkan");
 const base = @import("base");
 const lib = @import("lib.zig");
 
+const pci_ids = @import("pci_ids.zig").map;
+
 const FlintDevice = @import("FlintDevice.zig");
 
 const VkError = base.VkError;
@@ -29,7 +31,7 @@ pub const EXTENSIONS = [_]vk.ExtensionProperties{
 
 interface: Interface,
 
-pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*Self {
+pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, drm_device: *const base.drm.Device) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
 
@@ -52,10 +54,31 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
     };
 
     interface.props.api_version = @bitCast(lib.VULKAN_VERSION);
+    interface.props.vendor_id = lib.INTEL_PCI_VENDOR_ID;
     interface.props.driver_version = @bitCast(base.DRIVER_VERSION);
-    interface.props.device_id = lib.DEVICE_ID;
-    interface.props.device_type = .cpu;
-    interface.props.pipeline_cache_uuid = lib.PIPELINE_CACHE_UUID;
+    interface.props.device_id = drm_device.device_info.pci.device_id;
+    interface.props.device_type = .integrated_gpu;
+
+    @memset(interface.props.device_name[0..], 0);
+
+    for (pci_ids[0..]) |pci| {
+        if (pci.id != drm_device.device_info.pci.device_id)
+            continue;
+
+        if (pci.is_discrete)
+            interface.props.device_type = .discrete_gpu;
+
+        const len = @min(vk.MAX_PHYSICAL_DEVICE_NAME_SIZE, pci.name.len);
+        @memcpy(interface.props.device_name[0..len], pci.name[0..len]);
+
+        const driver_mark = " [Flint ApeDriver]";
+
+        @memcpy(interface.props.device_name[len .. len + driver_mark.len], driver_mark);
+
+        break;
+    }
+
+    interface.props.pipeline_cache_uuid = undefined;
     interface.props.limits = .{
         .max_image_dimension_1d = 4096,
         .max_image_dimension_2d = 4096,

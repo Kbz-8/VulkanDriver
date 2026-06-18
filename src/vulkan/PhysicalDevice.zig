@@ -137,7 +137,7 @@ pub inline fn getSparseImageFormatProperties(
     return self.dispatch_table.getSparseImageFormatProperties(self, format, image_type, samples, tiling, usage, properties);
 }
 
-pub fn releasePhysicalDevice(self: *Self, allocator: std.mem.Allocator) VkError!void {
+pub fn release(self: *Self, allocator: std.mem.Allocator) VkError!void {
     self.queue_family_props.deinit(allocator);
     self.queue_family_props = .empty;
     try self.dispatch_table.release(self, allocator);

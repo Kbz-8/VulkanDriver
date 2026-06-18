@@ -3,6 +3,8 @@ const builtin = @import("builtin");
 const vk = @import("vulkan");
 const config = @import("lib.zig").config;
 const utils = @import("utils.zig");
+const drm = @import("drm.zig");
+const lib = @import("lib.zig");
 
 const VkError = @import("error_set.zig").VkError;
 const Dispatchable = @import("Dispatchable.zig").Dispatchable;
@@ -31,12 +33,13 @@ const DeviceAllocator = struct {
 pub const EXTENSIONS = [_]vk.ExtensionProperties{};
 
 physical_devices: std.ArrayList(*Dispatchable(PhysicalDevice)),
+
 dispatch_table: *const DispatchTable,
 vtable: *const VTable,
 
 pub const VTable = struct {
     releasePhysicalDevices: *const fn (*Self, std.mem.Allocator) VkError!void,
-    requestPhysicalDevices: *const fn (*Self, std.mem.Allocator) VkError!void,
+    requestPhysicalDevices: *const fn (*Self, std.mem.Allocator, []lib.drm.Card) VkError!void,
     io: *const fn (*Self) std.Io,
 };
 
@@ -144,10 +147,10 @@ pub fn enumerateExtensionProperties(layer_name: ?[]const u8, count: *u32, p_prop
 }
 
 pub fn enumerateVersion(version: *u32) VkError!void {
-    if (!builtin.is_test) {
-        version.* = @bitCast(root.VULKAN_VERSION);
-    } else {
+    if (comptime builtin.is_test) {
         version.* = @bitCast(vk.makeApiVersion(0, 1, 0, 0));
+    } else {
+        version.* = @bitCast(root.VULKAN_VERSION);
     }
 }
 
@@ -156,11 +159,16 @@ pub fn releasePhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError
 }
 
 pub fn requestPhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError!void {
-    try self.vtable.requestPhysicalDevices(self, allocator);
+    const devices = try drm.enumerateDrmPhysicalDevices(allocator, self);
+    defer allocator.free(devices);
+
+    try self.vtable.requestPhysicalDevices(self, allocator, devices);
+
     if (self.physical_devices.items.len == 0) {
         std.log.scoped(.vkCreateInstance).err("No VkPhysicalDevice found", .{});
         return;
     }
+
     for (self.physical_devices.items) |physical_device| {
         std.log.scoped(.vkCreateInstance).debug("Found VkPhysicalDevice named {s}", .{physical_device.object.props.device_name});
     }

@@ -335,9 +335,10 @@ pub export fn apeCreateInstance(info: *const vk.InstanceCreateInfo, callbacks: ?
 
     var instance: *lib.Instance = undefined;
     if (!builtin.is_test) {
-        // Will call impl instead of interface as root refs the impl module
+        // Will call impl instead of interface as `root` refs the impl module
         instance = root.Instance.create(allocator, info) catch |err| return toVkResult(err);
     }
+
     instance.requestPhysicalDevices(allocator) catch |err| {
         if (!builtin.is_test) instance.deinit(allocator) catch {};
         return toVkResult(err);
@@ -392,25 +393,6 @@ pub export fn apeDestroyInstance(p_instance: vk.Instance, callbacks: ?*const vk.
     dispatchable.destroy(allocator);
 }
 
-pub export fn apeEnumeratePhysicalDevices(p_instance: vk.Instance, count: *u32, p_devices: ?[*]vk.PhysicalDevice) callconv(vk.vulkan_call_conv) vk.Result {
-    entryPointBeginLogTrace(.vkEnumeratePhysicalDevices);
-    defer entryPointEndLogTrace();
-
-    const instance = Dispatchable(Instance).fromHandleObject(p_instance) catch |err| return toVkResult(err);
-    const available = instance.physical_devices.items.len;
-    if (p_devices) |devices| {
-        const write_count = @min(count.*, available);
-        for (0..write_count) |i| {
-            devices[i] = instance.physical_devices.items[i].toVkHandle(vk.PhysicalDevice);
-        }
-        count.* = @intCast(write_count);
-        if (write_count < available) return .incomplete;
-    } else {
-        count.* = @intCast(available);
-    }
-    return .success;
-}
-
 pub export fn apeEnumeratePhysicalDeviceGroups(p_instance: vk.Instance, count: *u32, p_groups: ?[*]vk.PhysicalDeviceGroupProperties) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkEnumeratePhysicalDeviceGroups);
     defer entryPointEndLogTrace();
@@ -443,6 +425,25 @@ pub export fn apeEnumeratePhysicalDeviceGroups(p_instance: vk.Instance, count: *
 
 pub export fn apeEnumeratePhysicalDeviceGroupsKHR(p_instance: vk.Instance, count: *u32, p_groups: ?[*]vk.PhysicalDeviceGroupProperties) callconv(vk.vulkan_call_conv) vk.Result {
     return @call(.always_inline, apeEnumeratePhysicalDeviceGroups, .{ p_instance, count, p_groups });
+}
+
+pub export fn apeEnumeratePhysicalDevices(p_instance: vk.Instance, count: *u32, p_devices: ?[*]vk.PhysicalDevice) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkEnumeratePhysicalDevices);
+    defer entryPointEndLogTrace();
+
+    const instance = Dispatchable(Instance).fromHandleObject(p_instance) catch |err| return toVkResult(err);
+    const available = instance.physical_devices.items.len;
+    if (p_devices) |devices| {
+        const write_count = @min(count.*, available);
+        for (0..write_count) |i| {
+            devices[i] = instance.physical_devices.items[i].toVkHandle(vk.PhysicalDevice);
+        }
+        count.* = @intCast(write_count);
+        if (write_count < available) return .incomplete;
+    } else {
+        count.* = @intCast(available);
+    }
+    return .success;
 }
 
 // Physical Device functions =================================================================================================================================
