@@ -293,7 +293,7 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
                             image,
                             attachment.format,
                             attachment.subresource_range,
-                            null,
+                            impl.render_area,
                         );
                     } else {
                         var subresource_range = attachment.subresource_range;
@@ -306,7 +306,7 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
                                 image,
                                 attachment.format,
                                 subresource_range,
-                                null,
+                                impl.render_area,
                             );
                         }
 
@@ -318,7 +318,7 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
                                 image,
                                 attachment.format,
                                 subresource_range,
-                                null,
+                                impl.render_area,
                             );
                         }
                     }

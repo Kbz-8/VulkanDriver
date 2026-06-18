@@ -327,7 +327,7 @@ fn readImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32,
             .cube => cube_face,
             else => 0,
         };
-        pixel = image.readFloat4(
+        pixel = SoftSampler.swizzleFloat4(image.readFloat4(
             image_coord,
             .{
                 .aspect_mask = image_view.interface.subresource_range.aspect_mask,
@@ -335,7 +335,7 @@ fn readImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32,
                 .array_layer = array_layer,
             },
             image_view.interface.format,
-        ) catch return SpvRuntimeError.Unknown;
+        ) catch return SpvRuntimeError.Unknown, image_view.interface.components);
     }
     return .{
         .x = pixel[0],
@@ -368,7 +368,7 @@ fn readImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, l
             .cube => cube_face,
             else => 0,
         };
-        pixel = image.readInt4(
+        pixel = SoftSampler.swizzleInt4(image.readInt4(
             image_coord,
             .{
                 .aspect_mask = image_view.interface.subresource_range.aspect_mask,
@@ -376,7 +376,7 @@ fn readImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, l
                 .array_layer = array_layer,
             },
             image_view.interface.format,
-        ) catch return SpvRuntimeError.Unknown;
+        ) catch return SpvRuntimeError.Unknown, image_view.interface.components);
     }
     return .{
         .x = pixel[0],

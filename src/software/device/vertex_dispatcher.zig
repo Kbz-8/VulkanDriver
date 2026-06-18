@@ -86,7 +86,7 @@ inline fn run(data: RunData) !void {
                 const buffer_memory = if (buffer.interface.memory) |memory| memory else return VkError.InvalidDeviceMemoryDrv;
                 const input_index = switch (binding_info.input_rate) {
                     .vertex => vertex_index,
-                    .instance => data.instance_index,
+                    .instance => data.first_instance + data.instance_index,
                     else => return VkError.ValidationFailed,
                 };
                 const offset = buffer.interface.offset + vertex_buffer.offset + (binding_info.stride * input_index) + attribute.offset;

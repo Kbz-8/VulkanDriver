@@ -285,7 +285,7 @@ fn swizzleFloatComponent(color: F32x4, swizzle: vk.ComponentSwizzle, comptime id
     };
 }
 
-fn swizzleFloat4(color: F32x4, components: vk.ComponentMapping) F32x4 {
+pub fn swizzleFloat4(color: F32x4, components: vk.ComponentMapping) F32x4 {
     return .{
         swizzleFloatComponent(color, components.r, 0),
         swizzleFloatComponent(color, components.g, 1),
@@ -307,7 +307,7 @@ fn swizzleIntComponent(color: U32x4, swizzle: vk.ComponentSwizzle, comptime iden
     };
 }
 
-fn swizzleInt4(color: U32x4, components: vk.ComponentMapping) U32x4 {
+pub fn swizzleInt4(color: U32x4, components: vk.ComponentMapping) U32x4 {
     return .{
         swizzleIntComponent(color, components.r, 0),
         swizzleIntComponent(color, components.g, 1),
