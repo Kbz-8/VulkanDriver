@@ -11,6 +11,8 @@ const Device = base.Device;
 const VkError = base.VkError;
 const SpvRuntimeError = spv.Runtime.RuntimeError;
 
+pub threadlocal var current_fragment_coord: ?vk.Offset3D = null; // Ugly hack
+
 const NonDispatchable = base.NonDispatchable;
 const ShaderModule = base.ShaderModule;
 
@@ -294,14 +296,16 @@ fn imageApi() spv.Runtime.ImageAPI {
     };
 }
 
-fn imageMipLevel(image: *SoftImage, image_view: *SoftImageView, lod: ?i32) u32 {
-    const range = image_view.interface.subresource_range;
+fn imageMipLevel(image_view: *SoftImageView, lod: ?i32) u32 {
     const mip_lod: u32 = if (lod) |level| @intCast(@max(level, 0)) else 0;
-    const max_lod = if (range.level_count == vk.REMAINING_MIP_LEVELS)
-        image.interface.mip_levels - range.base_mip_level - 1
-    else
-        range.level_count - 1;
+    const range = image_view.interface.subresource_range;
+    const max_lod = image_view.interface.levelCount() - 1;
     return range.base_mip_level + @min(mip_lod, max_lod);
+}
+
+fn subpassDataCoord(x: i32, y: i32, z: i32) SpvRuntimeError!vk.Offset3D {
+    const coord = current_fragment_coord orelse return SpvRuntimeError.Unknown;
+    return .{ .x = coord.x + x, .y = coord.y + y, .z = coord.z + z };
 }
 
 fn readImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, lod: ?i32) SpvRuntimeError!spv.Runtime.Vec4(f32) {
@@ -315,8 +319,8 @@ fn readImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32,
         const image_view: *SoftImageView = @ptrCast(@alignCast(context));
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
         const cube_face: u32 = if (dim == .Cube) @intCast(z) else 0;
-        const mip_level = imageMipLevel(image, image_view, lod);
-        const image_coord: vk.Offset3D = switch (image_view.interface.view_type) {
+        const mip_level = imageMipLevel(image_view, lod);
+        const image_coord: vk.Offset3D = if (dim == .SubpassData) try subpassDataCoord(x, y, z) else switch (image_view.interface.view_type) {
             .@"1d", .@"1d_array" => .{ .x = x, .y = 0, .z = 0 },
             .@"2d", .@"2d_array", .cube, .cube_array => .{ .x = x, .y = y, .z = 0 },
             else => .{ .x = x, .y = y, .z = z },
@@ -356,8 +360,8 @@ fn readImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, l
         const image_view: *SoftImageView = @ptrCast(@alignCast(context));
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
         const cube_face: u32 = if (dim == .Cube) @intCast(z) else 0;
-        const mip_level = imageMipLevel(image, image_view, lod);
-        const image_coord: vk.Offset3D = switch (image_view.interface.view_type) {
+        const mip_level = imageMipLevel(image_view, lod);
+        const image_coord: vk.Offset3D = if (dim == .SubpassData) try subpassDataCoord(x, y, z) else switch (image_view.interface.view_type) {
             .@"1d", .@"1d_array" => .{ .x = x, .y = 0, .z = 0 },
             .@"2d", .@"2d_array", .cube, .cube_array => .{ .x = x, .y = y, .z = 0 },
             else => .{ .x = x, .y = y, .z = z },
@@ -516,19 +520,13 @@ fn queryImageSize(context: *anyopaque, dim: spv.SpvDim, arrayed: bool, lod: ?i32
     }
 
     const image_view: *SoftImageView = @ptrCast(@alignCast(context));
-    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
     const range = image_view.interface.subresource_range;
     const mip_lod: u32 = if (lod) |level| @intCast(@max(level, 0)) else 0;
-    const max_lod = if (range.level_count == vk.REMAINING_MIP_LEVELS)
-        image.interface.mip_levels - range.base_mip_level - 1
-    else
-        range.level_count - 1;
+    const max_lod = image_view.interface.levelCount() - 1;
     const mip_level = range.base_mip_level + @min(mip_lod, max_lod);
+    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
     const extent = image.getMipLevelExtent(mip_level);
-    const layers = if (range.layer_count == vk.REMAINING_ARRAY_LAYERS)
-        image.interface.array_layers - range.base_array_layer
-    else
-        range.layer_count;
+    const layers = image_view.interface.layerCount();
     return switch (dim) {
         .@"1D" => if (arrayed)
             .{ .x = extent.width, .y = layers, .z = 0, .w = 0 }
@@ -551,12 +549,7 @@ fn queryImageSamples(context: *anyopaque) SpvRuntimeError!u32 {
 
 fn queryImageLevels(context: *anyopaque) SpvRuntimeError!u32 {
     const image_view: *SoftImageView = @ptrCast(@alignCast(context));
-    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
-    const range = image_view.interface.subresource_range;
-    return if (range.level_count == vk.REMAINING_MIP_LEVELS)
-        image.interface.mip_levels - range.base_mip_level
-    else
-        range.level_count;
+    return image_view.interface.levelCount();
 }
 
 fn queryImageLod(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim, derivatives: spv.Runtime.ImageDerivatives) SpvRuntimeError!spv.Runtime.Vec4(f32) {

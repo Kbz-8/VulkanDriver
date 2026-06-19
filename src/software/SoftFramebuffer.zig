@@ -56,14 +56,14 @@ pub fn resolveAttachments(self: *Self, render_pass: *SoftRenderPass, subpass_ind
                             .src_subresource = .{
                                 .aspect_mask = src_image_view.subresource_range.aspect_mask,
                                 .base_array_layer = src_image_view.subresource_range.base_array_layer,
-                                .layer_count = src_image_view.subresource_range.layer_count,
+                                .layer_count = src_image_view.layerCount(),
                                 .mip_level = src_image_view.subresource_range.base_mip_level,
                             },
                             .src_offset = .{ .x = 0, .y = 0, .z = 0 },
                             .dst_subresource = .{
                                 .aspect_mask = dst_image_view.subresource_range.aspect_mask,
                                 .base_array_layer = dst_image_view.subresource_range.base_array_layer,
-                                .layer_count = dst_image_view.subresource_range.layer_count,
+                                .layer_count = dst_image_view.layerCount(),
                                 .mip_level = dst_image_view.subresource_range.base_mip_level,
                             },
                             .dst_offset = .{ .x = 0, .y = 0, .z = 0 },

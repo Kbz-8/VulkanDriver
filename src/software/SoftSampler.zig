@@ -191,23 +191,17 @@ fn samplerBorderColorInt(sampler: *Self, format: vk.Format) U32x4 {
     return color;
 }
 
-fn viewLayerCount(image: *SoftImage, range: vk.ImageSubresourceRange) u32 {
-    return if (range.layer_count == vk.REMAINING_ARRAY_LAYERS)
-        image.interface.array_layers - range.base_array_layer
-    else
-        range.layer_count;
+fn viewLayerCount(image_view: *SoftImageView) u32 {
+    return image_view.interface.layerCount();
 }
 
-fn viewMipCount(image: *SoftImage, range: vk.ImageSubresourceRange) u32 {
-    return if (range.level_count == vk.REMAINING_MIP_LEVELS)
-        image.interface.mip_levels - range.base_mip_level
-    else
-        range.level_count;
+fn viewMipCount(image_view: *SoftImageView) u32 {
+    return image_view.interface.levelCount();
 }
 
-fn sampleMipLevel(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, lod: ?f32) u32 {
+fn sampleMipLevel(image_view: *SoftImageView, sampler: *Self, lod: ?f32) u32 {
     const range = image_view.interface.subresource_range;
-    const mip_count = viewMipCount(image, range);
+    const mip_count = viewMipCount(image_view);
     if (mip_count <= 1)
         return range.base_mip_level;
 
@@ -256,7 +250,7 @@ pub fn queryImageLod(image: *SoftImage, image_view: *SoftImageView, sampler: *Se
     const lod = if (rho > 0.0) @log2(rho) else -std.math.inf(f32);
     const biased_lod = lod + sampler.interface.mip_lod_bias;
     const clamped_lod = std.math.clamp(biased_lod, sampler.interface.min_lod, sampler.interface.max_lod);
-    const max_level: f32 = @floatFromInt(viewMipCount(image, range) - 1);
+    const max_level: f32 = @floatFromInt(viewMipCount(image_view) - 1);
     const level = std.math.clamp(mipmapModeLevel(sampler, clamped_lod), 0.0, max_level);
 
     return .{ level, lod, 0.0, 0.0 };
@@ -357,9 +351,9 @@ fn readSampledFloat4(
     } else coord;
 
     const z: i32, const layer: u32 = switch (image_view.interface.view_type) {
-        .@"1d_array" => .{ 0, range.base_array_layer + sampleArrayLayer(coord.v, viewLayerCount(image, range)) },
-        .@"2d_array" => .{ 0, range.base_array_layer + sampleArrayLayer(coord.w, viewLayerCount(image, range)) },
-        .cube_array => .{ 0, range.base_array_layer + sampleArrayLayer(coord.w, @divTrunc(viewLayerCount(image, range), 6)) * 6 + texel.face },
+        .@"1d_array" => .{ 0, range.base_array_layer + sampleArrayLayer(coord.v, viewLayerCount(image_view)) },
+        .@"2d_array" => .{ 0, range.base_array_layer + sampleArrayLayer(coord.w, viewLayerCount(image_view)) },
+        .cube_array => .{ 0, range.base_array_layer + sampleArrayLayer(coord.w, @divTrunc(viewLayerCount(image_view), 6)) * 6 + texel.face },
         .@"3d" => .{ sampleAddressOrBorder(iz, extent.depth, sampler.interface.address_mode_w) orelse return samplerBorderColor(sampler, format), range.base_array_layer },
         .cube => .{ 0, range.base_array_layer + texel.face },
         else => .{ 0, range.base_array_layer },
@@ -432,9 +426,9 @@ fn readSampledInt4(
     } else coord;
 
     const z: i32, const layer: u32 = switch (image_view.interface.view_type) {
-        .@"1d_array" => .{ 0, range.base_array_layer + sampleArrayLayer(coord.v, viewLayerCount(image, range)) },
-        .@"2d_array" => .{ 0, range.base_array_layer + sampleArrayLayer(coord.w, viewLayerCount(image, range)) },
-        .cube_array => .{ 0, range.base_array_layer + sampleArrayLayer(coord.w, @divTrunc(viewLayerCount(image, range), 6)) * 6 + texel.face },
+        .@"1d_array" => .{ 0, range.base_array_layer + sampleArrayLayer(coord.v, viewLayerCount(image_view)) },
+        .@"2d_array" => .{ 0, range.base_array_layer + sampleArrayLayer(coord.w, viewLayerCount(image_view)) },
+        .cube_array => .{ 0, range.base_array_layer + sampleArrayLayer(coord.w, @divTrunc(viewLayerCount(image_view), 6)) * 6 + texel.face },
         .@"3d" => .{ sampleAddressOrBorder(iz, extent.depth, sampler.interface.address_mode_w) orelse return samplerBorderColorInt(sampler, format), range.base_array_layer },
         .cube => .{ 0, range.base_array_layer + texel.face },
         else => .{ 0, range.base_array_layer },
@@ -465,7 +459,7 @@ fn readSampledInt4(
 }
 
 pub fn sampleImageFloat4(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, lod: ?f32, offset: ImageOffset) VkError!F32x4 {
-    const mip_level = sampleMipLevel(image, image_view, sampler, lod);
+    const mip_level = sampleMipLevel(image_view, sampler, lod);
     const extent = image.getMipLevelExtent(mip_level);
     const coord: CubeCoordinate = switch (image_view.interface.view_type) {
         .@"1d_array" => .{
@@ -523,7 +517,7 @@ pub fn sampleImageFloat4(image: *SoftImage, image_view: *SoftImageView, sampler:
 }
 
 pub fn sampleImageInt4(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, lod: ?f32, offset: ImageOffset) VkError!U32x4 {
-    const mip_level = sampleMipLevel(image, image_view, sampler, lod);
+    const mip_level = sampleMipLevel(image_view, sampler, lod);
     const extent = image.getMipLevelExtent(mip_level);
     const coord: CubeCoordinate = switch (image_view.interface.view_type) {
         .@"1d_array" => .{

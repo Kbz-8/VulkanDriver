@@ -13,6 +13,11 @@ const VkError = base.VkError;
 const SpvRuntimeError = spv.Runtime.RuntimeError;
 const INTERFACE_BLOB_PADDING = @sizeOf(zm.F32x4);
 
+pub const InvocationResult = struct {
+    outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8,
+    depth: ?f32,
+};
+
 pub const DerivativeInputs = struct {
     dx: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation,
     dy: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation,
@@ -27,7 +32,7 @@ pub fn shaderInvocation(
     front_face: bool,
     inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation,
     derivative_inputs: ?DerivativeInputs,
-) SpvRuntimeError![spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8 {
+) SpvRuntimeError!InvocationResult {
     var fragment_inputs = inputs;
     errdefer freeOwnedInputs(allocator, fragment_inputs);
 
@@ -65,6 +70,15 @@ pub fn shaderInvocation(
         SpvRuntimeError.NotFound => {},
         else => return err,
     };
+
+    const SoftPipeline = @import("../SoftPipeline.zig");
+    const previous_fragment_coord = SoftPipeline.current_fragment_coord;
+    SoftPipeline.current_fragment_coord = .{
+        .x = @intFromFloat(position[0]),
+        .y = @intFromFloat(position[1]),
+        .z = @intFromFloat(position[2]),
+    };
+    defer SoftPipeline.current_fragment_coord = previous_fragment_coord;
 
     const entry = try rt.getEntryPointByName(shader.entry);
 
@@ -142,6 +156,15 @@ pub fn shaderInvocation(
         try readFragmentOutput(allocator, rt, &outputs, location, 0, result_word);
     }
 
+    var depth: ?f32 = null;
+    var frag_depth: f32 = undefined;
+    if (rt.readBuiltIn(std.mem.asBytes(&frag_depth), .FragDepth)) {
+        depth = frag_depth;
+    } else |err| switch (err) {
+        SpvRuntimeError.InvalidSpirV, SpvRuntimeError.NotFound => {},
+        else => return err,
+    }
+
     try rt.flushDescriptorSets(allocator);
     freeOwnedInputs(allocator, fragment_inputs);
     if (derivatives) |owned_derivatives| {
@@ -149,7 +172,10 @@ pub fn shaderInvocation(
         freeOwnedInputs(allocator, owned_derivatives.dy);
     }
 
-    return outputs;
+    return .{
+        .outputs = outputs,
+        .depth = depth,
+    };
 }
 
 fn readFragmentOutput(

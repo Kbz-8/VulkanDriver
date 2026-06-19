@@ -179,7 +179,10 @@ inline fn run(data: RunData) !void {
             const z = (b0 * data.v0.position[2]) + (b1 * data.v1.position[2]) + (b2 * data.v2.position[2]);
             const frag_w = (b0 / data.v0.position[3]) + (b1 / data.v1.position[3]) + (b2 / data.v2.position[3]);
 
-            var outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8);
+            var fragment_result: fragment.InvocationResult = .{
+                .outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8),
+                .depth = null,
+            };
             if (data.has_fragment_shader) {
                 const inputs = try common.interpolateVertexOutputs(data.allocator, &data.v0, &data.v1, &data.v2, b0, b1, b2);
                 const derivative_inputs: ?fragment.DerivativeInputs = if (data.fragment_uses_derivatives) blk: {
@@ -215,7 +218,7 @@ inline fn run(data: RunData) !void {
                     break :blk derivatives;
                 } else null;
 
-                outputs = fragment.shaderInvocation(
+                fragment_result = fragment.shaderInvocation(
                     data.allocator,
                     data.draw_call,
                     data.batch_id,
@@ -239,7 +242,7 @@ inline fn run(data: RunData) !void {
             }
 
             try common.writeToTargets(
-                outputs,
+                fragment_result.outputs,
                 data.draw_call,
                 data.color_attachment_access,
                 data.depth_attachment_access,
@@ -247,7 +250,7 @@ inline fn run(data: RunData) !void {
                 data.front_face,
                 @intCast(x),
                 @intCast(y),
-                z,
+                fragment_result.depth orelse z,
             );
         }
     }

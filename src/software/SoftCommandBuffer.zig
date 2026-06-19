@@ -529,7 +529,7 @@ pub fn clearAttachment(interface: *Interface, attachment: vk.ClearAttachment, re
                     const fb_attachment_index = (subpass.color_attachments orelse return)[impl.attachment.color_attachment].attachment;
 
                     if (fb_attachment_index != vk.ATTACHMENT_UNUSED)
-                        break :blk framebuffer.interface.attachments[impl.attachment.color_attachment];
+                        break :blk framebuffer.interface.attachments[fb_attachment_index];
                 } else if (impl.attachment.aspect_mask.depth_bit or impl.attachment.aspect_mask.stencil_bit) {
                     if (render_pass.interface.subpasses[device.renderer.subpass_index].depth_stencil_attachments) |desc| {
                         if (desc.attachment != vk.ATTACHMENT_UNUSED)

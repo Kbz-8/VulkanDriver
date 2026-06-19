@@ -19,6 +19,18 @@ const SoftImage = @import("../SoftImage.zig");
 const VkError = base.VkError;
 const SpvRuntimeError = spv.Runtime.RuntimeError;
 
+fn renderTargetSubresourceSize(image: *const SoftImage, image_view: *const base.ImageView, aspect_mask: vk.ImageAspectFlags, mip_level: u32) usize {
+    if (image.interface.image_type == .@"3d" and image.interface.flags.@"2d_array_compatible_bit" and
+        (image_view.view_type == .@"2d" or image_view.view_type == .@"2d_array"))
+    {
+        return image.interface.getSliceMemSizeForMipLevel(aspect_mask, mip_level) *
+            image.interface.samples.toInt() *
+            image_view.layerCount();
+    }
+
+    return image.getMultiSampledLevelSize(aspect_mask, mip_level);
+}
+
 pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocator, draw_call: *DrawCall) VkError!void {
     const io = draw_call.renderer.device.interface.io();
 
@@ -45,7 +57,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
             color_range.base_mip_level,
             color_range.base_array_layer,
         );
-        const color_attachment_subresource_size = render_target.getLayerSize(color_range.aspect_mask);
+        const color_attachment_subresource_size = renderTargetSubresourceSize(render_target, render_target_view, color_range.aspect_mask, color_range.base_mip_level);
         access.* = .{
             .mutex = undefined,
             .base = try render_target.mapAsSliceWithAddedOffset(u8, color_attachment_subresource_offset, color_attachment_subresource_size),
@@ -78,7 +90,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
             depth_range.base_mip_level,
             depth_range.base_array_layer,
         );
-        const attachment_subresource_size = depth_attachment.?.getLayerSize(depth_aspect);
+        const attachment_subresource_size = renderTargetSubresourceSize(depth_attachment.?, depth_attachment_view.?, depth_aspect, depth_range.base_mip_level);
         break :blk .{
             .mutex = .init,
             .base = try depth_attachment.?.mapAsSliceWithAddedOffset(u8, attachment_subresource_offset, attachment_subresource_size),
@@ -108,7 +120,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
             stencil_range.base_mip_level,
             stencil_range.base_array_layer,
         );
-        const attachment_subresource_size = depth_attachment.?.getLayerSize(stencil_aspect);
+        const attachment_subresource_size = renderTargetSubresourceSize(depth_attachment.?, depth_attachment_view.?, stencil_aspect, stencil_range.base_mip_level);
         break :blk .{
             .mutex = .init,
             .base = try depth_attachment.?.mapAsSliceWithAddedOffset(u8, attachment_subresource_offset, attachment_subresource_size),
@@ -340,7 +352,10 @@ fn clipTransformAndRasterizePoint(
             if (!common.scissorContainsPixel(draw_call.scissor, px, py))
                 continue;
 
-            var outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8);
+            var fragment_result: fragment.InvocationResult = .{
+                .outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8),
+                .depth = null,
+            };
             if (has_fragment_shader) {
                 const frag_x = @as(f32, @floatFromInt(px)) + 0.5;
                 const frag_y = @as(f32, @floatFromInt(py)) + 0.5;
@@ -349,7 +364,7 @@ fn clipTransformAndRasterizePoint(
                     (frag_y - point_min_y) / point_size,
                 };
 
-                outputs = fragment.shaderInvocation(
+                fragment_result = fragment.shaderInvocation(
                     allocator,
                     draw_call,
                     0,
@@ -372,7 +387,7 @@ fn clipTransformAndRasterizePoint(
                 };
             }
 
-            try common.writeToTargets(outputs, draw_call, color_attachment_access, depth_attachment_access, stencil_attachment_access, true, @intCast(px), @intCast(py), transformed.position[2]);
+            try common.writeToTargets(fragment_result.outputs, draw_call, color_attachment_access, depth_attachment_access, stencil_attachment_access, true, @intCast(px), @intCast(py), fragment_result.depth orelse transformed.position[2]);
         }
     }
 }
