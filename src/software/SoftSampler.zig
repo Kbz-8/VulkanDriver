@@ -199,23 +199,41 @@ fn viewMipCount(image_view: *SoftImageView) u32 {
     return image_view.interface.levelCount();
 }
 
-fn sampleMipLevel(image_view: *SoftImageView, sampler: *Self, lod: ?f32) u32 {
-    const range = image_view.interface.subresource_range;
+fn sampleLod(image_view: *SoftImageView, sampler: *Self, lod: ?f32) f32 {
     const mip_count = viewMipCount(image_view);
     if (mip_count <= 1)
-        return range.base_mip_level;
+        return 0.0;
 
     const requested_lod = if (lod) |explicit_lod|
         explicit_lod + sampler.interface.mip_lod_bias
     else
         sampler.interface.min_lod;
     const clamped_lod = std.math.clamp(requested_lod, sampler.interface.min_lod, sampler.interface.max_lod);
+    const max_level: f32 = @floatFromInt(mip_count - 1);
+    return std.math.clamp(clamped_lod, 0.0, max_level);
+}
+
+fn sampleMipLevel(image_view: *SoftImageView, sampler: *Self, lod: ?f32) u32 {
+    const range = image_view.interface.subresource_range;
+    const mip_count = viewMipCount(image_view);
+    if (mip_count <= 1)
+        return range.base_mip_level;
+
+    const clamped_lod = sampleLod(image_view, sampler, lod);
     const level_float = switch (sampler.interface.mipmap_mode) {
         .nearest => @round(clamped_lod),
         else => @floor(clamped_lod),
     };
-    const level: u32 = @intFromFloat(std.math.clamp(level_float, 0.0, @as(f32, @floatFromInt(mip_count - 1))));
+    const level: u32 = @intFromFloat(level_float);
     return range.base_mip_level + level;
+}
+
+fn sampleFilter(sampler: *Self, lod: f32) vk.Filter {
+    const filter = if (lod <= 0.0) sampler.interface.mag_filter else sampler.interface.min_filter;
+    return switch (filter) {
+        .linear => .linear,
+        else => .nearest,
+    };
 }
 
 fn mipmapModeLevel(sampler: *Self, clamped_lod: f32) f32 {
@@ -235,13 +253,15 @@ pub fn queryImageLod(image: *SoftImage, image_view: *SoftImageView, sampler: *Se
 
     const dx = switch (dim) {
         .@"1D" => @abs(derivatives.dx.x) * width,
-        .@"2D", .Cube, .Rect => @sqrt(std.math.pow(f32, derivatives.dx.x * width, 2.0) + std.math.pow(f32, derivatives.dx.y * height, 2.0)),
+        .@"2D", .Rect => @sqrt(std.math.pow(f32, derivatives.dx.x * width, 2.0) + std.math.pow(f32, derivatives.dx.y * height, 2.0)),
+        .Cube => @sqrt(std.math.pow(f32, derivatives.dx.x * width, 2.0) + std.math.pow(f32, derivatives.dx.y * height, 2.0) + std.math.pow(f32, derivatives.dx.z * width, 2.0)),
         .@"3D" => @sqrt(std.math.pow(f32, derivatives.dx.x * width, 2.0) + std.math.pow(f32, derivatives.dx.y * height, 2.0) + std.math.pow(f32, derivatives.dx.z * depth, 2.0)),
         else => @abs(derivatives.dx.x) * width,
     };
     const dy = switch (dim) {
         .@"1D" => @abs(derivatives.dy.x) * width,
-        .@"2D", .Cube, .Rect => @sqrt(std.math.pow(f32, derivatives.dy.x * width, 2.0) + std.math.pow(f32, derivatives.dy.y * height, 2.0)),
+        .@"2D", .Rect => @sqrt(std.math.pow(f32, derivatives.dy.x * width, 2.0) + std.math.pow(f32, derivatives.dy.y * height, 2.0)),
+        .Cube => @sqrt(std.math.pow(f32, derivatives.dy.x * width, 2.0) + std.math.pow(f32, derivatives.dy.y * height, 2.0) + std.math.pow(f32, derivatives.dy.z * width, 2.0)),
         .@"3D" => @sqrt(std.math.pow(f32, derivatives.dy.x * width, 2.0) + std.math.pow(f32, derivatives.dy.y * height, 2.0) + std.math.pow(f32, derivatives.dy.z * depth, 2.0)),
         else => @abs(derivatives.dy.x) * width,
     };
@@ -458,8 +478,7 @@ fn readSampledInt4(
     );
 }
 
-pub fn sampleImageFloat4(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, lod: ?f32, offset: ImageOffset) VkError!F32x4 {
-    const mip_level = sampleMipLevel(image_view, sampler, lod);
+fn sampleImageFloat4Level(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, mip_level: u32, filter: vk.Filter, offset: ImageOffset) VkError!F32x4 {
     const extent = image.getMipLevelExtent(mip_level);
     const coord: CubeCoordinate = switch (image_view.interface.view_type) {
         .@"1d_array" => .{
@@ -507,13 +526,34 @@ pub fn sampleImageFloat4(image: *SoftImage, image_view: *SoftImageView, sampler:
             coord.w * scale_w + @as(f32, @floatFromInt(offset.z)),
             0.0,
         ),
-        switch (sampler.interface.mag_filter) {
-            .linear => .linear,
-            else => .nearest,
-        },
+        filter,
         image_view.interface.view_type == .@"3d",
         readSampledFloat4At,
     );
+}
+
+pub fn sampleImageFloat4(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, lod: ?f32, offset: ImageOffset) VkError!F32x4 {
+    const range = image_view.interface.subresource_range;
+    const mip_count = viewMipCount(image_view);
+    const clamped_lod = sampleLod(image_view, sampler, lod);
+    const filter = sampleFilter(sampler, clamped_lod);
+
+    if (mip_count > 1 and sampler.interface.mipmap_mode == .linear) {
+        const lower_lod = @floor(clamped_lod);
+        const upper_lod = @min(lower_lod + 1.0, @as(f32, @floatFromInt(mip_count - 1)));
+        const lower_level = range.base_mip_level + @as(u32, @intFromFloat(lower_lod));
+        const upper_level = range.base_mip_level + @as(u32, @intFromFloat(upper_lod));
+        const lower = try sampleImageFloat4Level(image, image_view, sampler, dim, x, y, z, lower_level, filter, offset);
+
+        if (upper_level == lower_level)
+            return lower;
+
+        const upper = try sampleImageFloat4Level(image, image_view, sampler, dim, x, y, z, upper_level, filter, offset);
+        const weight = clamped_lod - lower_lod;
+        return lower * zm.f32x4s(1.0 - weight) + upper * zm.f32x4s(weight);
+    }
+
+    return sampleImageFloat4Level(image, image_view, sampler, dim, x, y, z, sampleMipLevel(image_view, sampler, lod), filter, offset);
 }
 
 pub fn sampleImageInt4(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, lod: ?f32, offset: ImageOffset) VkError!U32x4 {
