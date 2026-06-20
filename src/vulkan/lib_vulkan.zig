@@ -140,7 +140,6 @@ const device_pfn_map = block: {
         functionMapEntryPoint("vkAcquireNextImage2KHR"),
         functionMapEntryPoint("vkAllocateCommandBuffers"),
         functionMapEntryPoint("vkAllocateDescriptorSets"),
-        functionMapEntryPoint("vkAllocateDescriptorSets"),
         functionMapEntryPoint("vkAllocateMemory"),
         functionMapEntryPoint("vkBeginCommandBuffer"),
         functionMapEntryPoint("vkBindBufferMemory"),

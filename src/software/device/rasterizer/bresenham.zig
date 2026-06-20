@@ -156,6 +156,7 @@ inline fn run(data: RunData) !void {
         var fragment_result: fragment.InvocationResult = .{
             .outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8),
             .depth = null,
+            .sample_mask = null,
         };
         if (data.has_fragment_shader) {
             fragment_result = fragment.shaderInvocation(
@@ -192,6 +193,7 @@ inline fn run(data: RunData) !void {
             @intCast(pixel_x),
             @intCast(pixel_y),
             fragment_result.depth orelse z,
+            fragment_result.sample_mask,
         );
     }
 }

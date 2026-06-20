@@ -16,6 +16,8 @@ pub const RenderTargetAccess = struct {
     base: []u8,
     row_pitch: usize,
     texel_size: usize,
+    sample_count: usize,
+    sample_stride: usize,
     width: u32,
     height: u32,
     format: vk.Format,
@@ -45,6 +47,22 @@ pub fn scissorContainsPixel(scissor: vk.Rect2D, x: i32, y: i32) bool {
         pixel_y < max_y;
 }
 
+pub fn rectContainsPixel(rect: vk.Rect2D, x: usize, y: usize) bool {
+    const min_x: i64 = @as(i64, rect.offset.x);
+    const min_y: i64 = @as(i64, rect.offset.y);
+
+    const max_x: i64 = min_x + @as(i64, @intCast(rect.extent.width));
+    const max_y: i64 = min_y + @as(i64, @intCast(rect.extent.height));
+
+    const pixel_x: i64 = @intCast(x);
+    const pixel_y: i64 = @intCast(y);
+
+    return pixel_x >= min_x and
+        pixel_x < max_x and
+        pixel_y >= min_y and
+        pixel_y < max_y;
+}
+
 pub fn targetContainsPixel(target: RenderTargetAccess, x: i32, y: i32) bool {
     if (x < 0 or y < 0)
         return false;
@@ -57,6 +75,14 @@ pub fn targetOffset(target: RenderTargetAccess, x: usize, y: usize) ?usize {
     if (x >= target.width or y >= target.height)
         return null;
     const offset = x * target.texel_size + y * target.row_pitch;
+    if (offset > target.base.len or target.texel_size > target.base.len - offset)
+        return null;
+    return offset;
+}
+
+pub fn targetSampleOffset(target: RenderTargetAccess, x: usize, y: usize, sample_index: usize) ?usize {
+    const base_offset = targetOffset(target, x, y) orelse return null;
+    const offset = base_offset + sample_index * target.sample_stride;
     if (offset > target.base.len or target.texel_size > target.base.len - offset)
         return null;
     return offset;
@@ -100,6 +126,10 @@ fn updateStencilValue(stencil: *RenderTargetAccess, offset: usize, state: vk.Ste
 
 pub fn stencilTestAndUpdate(stencil: *RenderTargetAccess, x: usize, y: usize, state: vk.StencilOpState, depth_passed: ?bool) bool {
     const offset = targetOffset(stencil.*, x, y) orelse return false;
+    return stencilTestAndUpdateAtOffset(stencil, offset, state, depth_passed);
+}
+
+fn stencilTestAndUpdateAtOffset(stencil: *RenderTargetAccess, offset: usize, state: vk.StencilOpState, depth_passed: ?bool) bool {
     const current = blitter.readInt4(stencil.base[offset..], stencil.format)[0] & std.math.maxInt(u8);
     const reference = state.reference & std.math.maxInt(u8);
     const compare_mask = state.compare_mask & std.math.maxInt(u8);
@@ -138,10 +168,14 @@ fn quantizeDepthForFormat(format: vk.Format, z: f32) f32 {
 }
 
 pub fn depthTestAndUpdate(depth: *RenderTargetAccess, x: usize, y: usize, z: f32, state: vk.PipelineDepthStencilStateCreateInfo) bool {
+    const offset = targetOffset(depth.*, x, y) orelse return false;
+    return depthTestAndUpdateAtOffset(depth, offset, z, state);
+}
+
+fn depthTestAndUpdateAtOffset(depth: *RenderTargetAccess, offset: usize, z: f32, state: vk.PipelineDepthStencilStateCreateInfo) bool {
     if (state.depth_test_enable == .false)
         return true;
 
-    const offset = targetOffset(depth.*, x, y) orelse return false;
     const reference = quantizeDepthForFormat(depth.format, z);
     const depth_value = blitter.readFloat4(depth.base[offset..], depth.format);
     const passed = compare(f32, state.depth_compare_op, reference, depth_value[0]);
@@ -373,86 +407,148 @@ pub fn writeToTargets(
     x: usize,
     y: usize,
     z: f32,
+    fragment_sample_mask: ?vk.SampleMask,
 ) VkError!void {
     const io = draw_call.renderer.device.interface.io();
-    const depth_stencil_state = draw_call.renderer.state.pipeline.?.interface.mode.graphics.depth_stencil;
+    const pipeline_data = draw_call.renderer.state.pipeline.?.interface.mode.graphics;
+    const depth_stencil_state = pipeline_data.depth_stencil;
+
+    if (!sampleMaskEnablesAnySample(pipeline_data.multisample, fragment_sample_mask))
+        return;
 
     if (x >= draw_call.framebuffer.interface.width or y >= draw_call.framebuffer.interface.height)
         return;
 
-    var stencil_state: ?vk.StencilOpState = null;
-    var stencil_offset: ?usize = null;
-    if (stencil_attachment_access) |stencil| {
-        if (depth_stencil_state) |state| {
-            if (state.stencil_test_enable == .true) {
-                stencil_state = if (front_face)
-                    resolveStencilState(draw_call, state.front, true)
-                else
-                    resolveStencilState(draw_call, state.back, false);
-                stencil_offset = targetOffset(stencil.*, x, y) orelse return;
-                if (!stencilTest(stencil, stencil_offset.?, stencil_state.?)) {
-                    updateStencilValue(stencil, stencil_offset.?, stencil_state.?, stencil_state.?.fail_op);
-                    return;
+    if (draw_call.renderer.render_area) |render_area| {
+        if (!rectContainsPixel(render_area, x, y))
+            return;
+    }
+
+    const sample_count = pipeline_data.multisample.rasterization_samples.toInt();
+    for (0..sample_count) |sample_index| {
+        if (!sampleMaskEnablesSample(pipeline_data.multisample, fragment_sample_mask, sample_index))
+            continue;
+
+        var stencil_state: ?vk.StencilOpState = null;
+        var stencil_offset: ?usize = null;
+        if (stencil_attachment_access) |stencil| {
+            if (depth_stencil_state) |state| {
+                if (state.stencil_test_enable == .true) {
+                    stencil_state = if (front_face)
+                        resolveStencilState(draw_call, state.front, true)
+                    else
+                        resolveStencilState(draw_call, state.back, false);
+                    stencil_offset = targetSampleOffset(stencil.*, x, y, sample_index) orelse continue;
+                    if (!stencilTest(stencil, stencil_offset.?, stencil_state.?)) {
+                        updateStencilValue(stencil, stencil_offset.?, stencil_state.?, stencil_state.?.fail_op);
+                        continue;
+                    }
                 }
             }
         }
-    }
 
-    // After work depth test to avoid overwritten depth pixels during fragment invocations.
-    var depth_passed: ?bool = null;
-    if (depth_attachment_access) |depth| {
-        const depth_offset = targetOffset(depth.*, x, y) orelse return;
+        // After work depth test to avoid overwritten depth pixels during fragment invocations.
+        var depth_passed: ?bool = null;
+        if (depth_attachment_access) |depth| {
+            const depth_offset = targetSampleOffset(depth.*, x, y, sample_index) orelse continue;
 
-        depth.mutex.lock(io) catch return VkError.DeviceLost;
-        defer depth.mutex.unlock(io);
+            depth.mutex.lock(io) catch return VkError.DeviceLost;
+            defer depth.mutex.unlock(io);
 
-        if (depth_stencil_state) |state| {
-            depth_passed = depthTestAndUpdate(depth, x, y, z, state);
-            if (!depth_passed.? and stencil_state == null)
-                return;
-        } else {
-            const depth_value = blitter.readFloat4(depth.base[depth_offset..], depth.format);
-            if (z >= depth_value[0])
-                return;
-            blitter.writeFloat4(zm.f32x4s(z), depth.base[depth_offset..], depth.format);
-            depth_passed = true;
-        }
-    }
-
-    if (stencil_attachment_access) |stencil| {
-        if (stencil_state) |state| {
-            if (depth_passed != null and !depth_passed.?) {
-                updateStencilValue(stencil, stencil_offset.?, state, state.depth_fail_op);
-                return;
+            if (depth_stencil_state) |state| {
+                depth_passed = depthTestAndUpdateAtOffset(depth, depth_offset, z, state);
+                if (!depth_passed.? and stencil_state == null)
+                    continue;
+            } else {
+                const depth_value = blitter.readFloat4(depth.base[depth_offset..], depth.format);
+                if (z >= depth_value[0])
+                    continue;
+                blitter.writeFloat4(zm.f32x4s(z), depth.base[depth_offset..], depth.format);
+                depth_passed = true;
             }
-            updateStencilValue(stencil, stencil_offset.?, state, state.pass_op);
+        }
+
+        if (stencil_attachment_access) |stencil| {
+            if (stencil_state) |state| {
+                if (depth_passed != null and !depth_passed.?) {
+                    updateStencilValue(stencil, stencil_offset.?, state, state.depth_fail_op);
+                    continue;
+                }
+                updateStencilValue(stencil, stencil_offset.?, state, state.pass_op);
+            }
+        }
+
+        for (draw_call.renderer.active_occlusion_queries.items) |active| {
+            try active.pool.addSamples(active.query, 1);
+        }
+
+        for (color_attachment_access, 0..) |maybe_color, location| {
+            const color = maybe_color orelse continue;
+            const color_offset = targetSampleOffset(color, x, y, sample_index) orelse continue;
+            if (base.format.isUnnormalizedInteger(color.format)) {
+                blitter.writeInt4(std.mem.bytesToValue(U32x4, &outputs[location]), color.base[color_offset..], color.format);
+            } else {
+                const src = fragmentOutputFloat4(outputs[location], color.format);
+                const encoded_dst = blitter.readFloat4(color.base[color_offset..], color.format);
+                const dst = if (base.format.isSrgb(color.format)) zm.srgbToRgb(encoded_dst) else encoded_dst;
+                const final_color = if (pipeline_data.color_blend.attachments) |attachments| blk: {
+                    if (location >= attachments.len)
+                        break :blk src;
+                    const constants = draw_call.renderer.dynamic_state.blend_constants orelse pipeline_data.color_blend.constants;
+                    const blended = blendColor(src, dst, attachments[location], constants, color.format);
+                    break :blk applyColorWriteMask(blended, dst, attachments[location].color_write_mask);
+                } else src;
+                const encoded_color = if (base.format.isSrgb(color.format)) zm.rgbToSrgb(final_color) else final_color;
+                blitter.writeFloat4(encoded_color, color.base[color_offset..], color.format);
+            }
         }
     }
+}
 
-    for (draw_call.renderer.active_occlusion_queries.items) |active| {
-        try active.pool.addSamples(active.query, 1);
-    }
+fn sampleMaskEnablesAnySample(multisample: anytype, fragment_sample_mask: ?vk.SampleMask) bool {
+    const sample_count = multisample.rasterization_samples.toInt();
+    if (multisample.sample_mask == null and fragment_sample_mask == null)
+        return true;
 
-    for (color_attachment_access, 0..) |maybe_color, location| {
-        const color = maybe_color orelse continue;
-        const color_offset = targetOffset(color, x, y) orelse continue;
-
-        if (base.format.isUnnormalizedInteger(color.format)) {
-            blitter.writeInt4(std.mem.bytesToValue(U32x4, &outputs[location]), color.base[color_offset..], color.format);
-        } else {
-            const pipeline_data = draw_call.renderer.state.pipeline.?.interface.mode.graphics;
-            const src = fragmentOutputFloat4(outputs[location], color.format);
-            const encoded_dst = blitter.readFloat4(color.base[color_offset..], color.format);
-            const dst = if (base.format.isSrgb(color.format)) zm.srgbToRgb(encoded_dst) else encoded_dst;
-            const final_color = if (pipeline_data.color_blend.attachments) |attachments| blk: {
-                if (location >= attachments.len)
-                    break :blk src;
-                const constants = draw_call.renderer.dynamic_state.blend_constants orelse pipeline_data.color_blend.constants;
-                const blended = blendColor(src, dst, attachments[location], constants, color.format);
-                break :blk applyColorWriteMask(blended, dst, attachments[location].color_write_mask);
-            } else src;
-            const encoded_color = if (base.format.isSrgb(color.format)) zm.rgbToSrgb(final_color) else final_color;
-            blitter.writeFloat4(encoded_color, color.base[color_offset..], color.format);
+    if (multisample.sample_mask) |pipeline_sample_mask| {
+        for (pipeline_sample_mask, 0..) |word, word_index| {
+            if (sampleMaskWordEnablesAnySample(sample_count, word_index, word, fragment_sample_mask))
+                return true;
         }
+        return false;
     }
+
+    return sampleMaskWordEnablesAnySample(sample_count, 0, std.math.maxInt(vk.SampleMask), fragment_sample_mask);
+}
+
+fn sampleMaskWordEnablesAnySample(sample_count: usize, word_index: usize, pipeline_word: vk.SampleMask, fragment_sample_mask: ?vk.SampleMask) bool {
+    const remaining_samples = sample_count -| (word_index * 32);
+    const active_bits = @min(remaining_samples, 32);
+    if (active_bits == 0)
+        return false;
+
+    const active_mask: vk.SampleMask = if (active_bits == 32)
+        std.math.maxInt(vk.SampleMask)
+    else
+        (@as(vk.SampleMask, 1) << @intCast(active_bits)) - 1;
+
+    const fragment_word = if (word_index == 0) fragment_sample_mask orelse std.math.maxInt(vk.SampleMask) else std.math.maxInt(vk.SampleMask);
+    return ((pipeline_word & fragment_word) & active_mask) != 0;
+}
+
+fn sampleMaskEnablesSample(multisample: anytype, fragment_sample_mask: ?vk.SampleMask, sample_index: usize) bool {
+    if (sample_index >= multisample.rasterization_samples.toInt())
+        return false;
+
+    const word_index = sample_index / 32;
+    const bit_index: u5 = @intCast(sample_index % 32);
+    const bit = @as(vk.SampleMask, 1) << bit_index;
+
+    const pipeline_word = if (multisample.sample_mask) |pipeline_sample_mask|
+        if (word_index < pipeline_sample_mask.len) pipeline_sample_mask[word_index] else @as(vk.SampleMask, 0)
+    else
+        std.math.maxInt(vk.SampleMask);
+
+    const fragment_word = if (word_index == 0) fragment_sample_mask orelse std.math.maxInt(vk.SampleMask) else std.math.maxInt(vk.SampleMask);
+    return (pipeline_word & fragment_word & bit) != 0;
 }

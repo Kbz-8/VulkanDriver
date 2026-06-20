@@ -50,6 +50,10 @@ mode: union(enum) {
             front_face: vk.FrontFace,
             line_width: f32,
         },
+        multisample: struct {
+            rasterization_samples: vk.SampleCountFlags,
+            sample_mask: ?[]vk.SampleMask,
+        },
         color_blend: struct {
             attachments: ?[]vk.PipelineColorBlendAttachmentState,
             constants: [4]f32,
@@ -105,6 +109,9 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
 
     var scissors: ?[]vk.Rect2D = null;
     errdefer if (scissors) |value| allocator.free(value);
+
+    var sample_mask: ?[]vk.SampleMask = null;
+    errdefer if (sample_mask) |value| allocator.free(value);
 
     var color_attachments: ?[]vk.PipelineColorBlendAttachmentState = null;
     errdefer if (color_attachments) |value| allocator.free(value);
@@ -185,6 +192,24 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
                     .cull_mode = if (info.p_rasterization_state) |state| state.cull_mode else return VkError.ValidationFailed,
                     .front_face = if (info.p_rasterization_state) |state| state.front_face else return VkError.ValidationFailed,
                     .line_width = if (info.p_rasterization_state) |state| state.line_width else return VkError.ValidationFailed,
+                },
+                .multisample = blk: {
+                    if (rasterizer_discard_enable) {
+                        break :blk .{
+                            .rasterization_samples = .{ .@"1_bit" = true },
+                            .sample_mask = null,
+                        };
+                    }
+
+                    const state = info.p_multisample_state orelse return VkError.ValidationFailed;
+                    const mask_word_count: usize = @divTrunc(state.rasterization_samples.toInt() + 31, 32);
+                    break :blk .{
+                        .rasterization_samples = state.rasterization_samples,
+                        .sample_mask = if (state.p_sample_mask) |mask| blk_mask: {
+                            sample_mask = allocator.dupe(vk.SampleMask, mask[0..mask_word_count]) catch return VkError.OutOfHostMemory;
+                            break :blk_mask sample_mask;
+                        } else null,
+                    };
                 },
                 .color_blend = blk: {
                     if (rasterizer_discard_enable or !has_color_attachments) {
@@ -275,6 +300,9 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
             }
             if (graphics.viewport_state.scissor) |scissor| {
                 allocator.free(scissor);
+            }
+            if (graphics.multisample.sample_mask) |sample_mask| {
+                allocator.free(sample_mask);
             }
             if (graphics.color_blend.attachments) |attachments| {
                 allocator.free(attachments);

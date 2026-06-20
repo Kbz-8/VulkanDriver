@@ -63,6 +63,8 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
             .base = try render_target.mapAsSliceWithAddedOffset(u8, color_attachment_subresource_offset, color_attachment_subresource_size),
             .row_pitch = render_target.getRowPitchMemSizeForMipLevelWithFormat(color_range.aspect_mask, color_range.base_mip_level, color_format),
             .texel_size = base.format.texelSize(color_format),
+            .sample_count = render_target.interface.samples.toInt(),
+            .sample_stride = render_target.getMipLevelSize(color_range.aspect_mask, color_range.base_mip_level),
             .width = color_extent.width,
             .height = color_extent.height,
             .format = color_format,
@@ -96,6 +98,8 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
             .base = try depth_attachment.?.mapAsSliceWithAddedOffset(u8, attachment_subresource_offset, attachment_subresource_size),
             .row_pitch = depth_attachment.?.getRowPitchMemSizeForMipLevelWithFormat(depth_aspect, depth_range.base_mip_level, depth_format),
             .texel_size = base.format.texelSize(depth_aspect_format),
+            .sample_count = depth_attachment.?.interface.samples.toInt(),
+            .sample_stride = depth_attachment.?.getMipLevelSize(depth_aspect, depth_range.base_mip_level),
             .width = depth_extent.width,
             .height = depth_extent.height,
             .format = depth_aspect_format,
@@ -126,6 +130,8 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
             .base = try depth_attachment.?.mapAsSliceWithAddedOffset(u8, attachment_subresource_offset, attachment_subresource_size),
             .row_pitch = depth_attachment.?.getRowPitchMemSizeForMipLevelWithFormat(stencil_aspect, stencil_range.base_mip_level, stencil_format),
             .texel_size = base.format.texelSize(stencil_aspect_format),
+            .sample_count = depth_attachment.?.interface.samples.toInt(),
+            .sample_stride = depth_attachment.?.getMipLevelSize(stencil_aspect, stencil_range.base_mip_level),
             .width = stencil_extent.width,
             .height = stencil_extent.height,
             .format = stencil_aspect_format,
@@ -355,6 +361,7 @@ fn clipTransformAndRasterizePoint(
             var fragment_result: fragment.InvocationResult = .{
                 .outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8),
                 .depth = null,
+                .sample_mask = null,
             };
             if (has_fragment_shader) {
                 const frag_x = @as(f32, @floatFromInt(px)) + 0.5;
@@ -387,7 +394,7 @@ fn clipTransformAndRasterizePoint(
                 };
             }
 
-            try common.writeToTargets(fragment_result.outputs, draw_call, color_attachment_access, depth_attachment_access, stencil_attachment_access, true, @intCast(px), @intCast(py), fragment_result.depth orelse transformed.position[2]);
+            try common.writeToTargets(fragment_result.outputs, draw_call, color_attachment_access, depth_attachment_access, stencil_attachment_access, true, @intCast(px), @intCast(py), fragment_result.depth orelse transformed.position[2], fragment_result.sample_mask);
         }
     }
 }

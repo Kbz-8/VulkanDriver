@@ -33,6 +33,38 @@ interface: Interface,
 command_allocator: std.heap.ArenaAllocator,
 commands: std.ArrayList(Command),
 
+fn attachmentIsReferencedBySubpass(render_pass: *SoftRenderPass, attachment_index: u32) bool {
+    for (render_pass.interface.subpasses) |subpass| {
+        if (subpass.input_attachments) |attachments| {
+            for (attachments) |attachment| {
+                if (attachment.attachment == attachment_index)
+                    return true;
+            }
+        }
+
+        if (subpass.color_attachments) |attachments| {
+            for (attachments) |attachment| {
+                if (attachment.attachment == attachment_index)
+                    return true;
+            }
+        }
+
+        if (subpass.resolve_attachments) |attachments| {
+            for (attachments) |attachment| {
+                if (attachment.attachment == attachment_index)
+                    return true;
+            }
+        }
+
+        if (subpass.depth_stencil_attachments) |attachment| {
+            if (attachment.attachment == attachment_index)
+                return true;
+        }
+    }
+
+    return false;
+}
+
 pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const vk.CommandBufferAllocateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
@@ -267,9 +299,13 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
             const impl: *Impl = @ptrCast(@alignCast(context));
             device.renderer.render_pass = impl.render_pass;
             device.renderer.framebuffer = impl.framebuffer;
+            device.renderer.render_area = impl.render_area;
             device.renderer.subpass_index = 0;
 
             for (impl.render_pass.interface.attachments, impl.framebuffer.interface.attachments, 0..) |desc, attachment, index| {
+                if (!attachmentIsReferencedBySubpass(impl.render_pass, @intCast(index)))
+                    continue;
+
                 const image: *SoftImage = @alignCast(@fieldParentPtr("interface", attachment.image));
                 var clear_mask: vk.ImageAspectFlags = .{};
 
@@ -987,6 +1023,7 @@ pub fn endRenderPass(interface: *Interface) VkError!void {
 
             device.renderer.render_pass = null;
             device.renderer.framebuffer = null;
+            device.renderer.render_area = null;
         }
     };
 

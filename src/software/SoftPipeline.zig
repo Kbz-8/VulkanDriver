@@ -303,6 +303,14 @@ fn imageMipLevel(image_view: *SoftImageView, lod: ?i32) u32 {
     return range.base_mip_level + @min(mip_lod, max_lod);
 }
 
+fn imageReadAspect(image_view: *SoftImageView, comptime int_read: bool) vk.ImageAspectFlags {
+    const aspect = image_view.interface.subresource_range.aspect_mask;
+    if (aspect.depth_bit and aspect.stencil_bit) {
+        return if (int_read) .{ .stencil_bit = true } else .{ .depth_bit = true };
+    }
+    return aspect;
+}
+
 fn subpassDataCoord(x: i32, y: i32, z: i32) SpvRuntimeError!vk.Offset3D {
     const coord = current_fragment_coord orelse return SpvRuntimeError.Unknown;
     return .{ .x = coord.x + x, .y = coord.y + y, .z = coord.z + z };
@@ -331,14 +339,15 @@ fn readImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32,
             .cube => cube_face,
             else => 0,
         };
+        const aspect_mask = imageReadAspect(image_view, false);
         pixel = SoftSampler.swizzleFloat4(image.readFloat4(
             image_coord,
             .{
-                .aspect_mask = image_view.interface.subresource_range.aspect_mask,
+                .aspect_mask = aspect_mask,
                 .mip_level = mip_level,
                 .array_layer = array_layer,
             },
-            image_view.interface.format,
+            base.format.fromAspect(image_view.interface.format, aspect_mask),
         ) catch return SpvRuntimeError.Unknown, image_view.interface.components);
     }
     return .{
@@ -372,14 +381,15 @@ fn readImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, l
             .cube => cube_face,
             else => 0,
         };
+        const aspect_mask = imageReadAspect(image_view, true);
         pixel = SoftSampler.swizzleInt4(image.readInt4(
             image_coord,
             .{
-                .aspect_mask = image_view.interface.subresource_range.aspect_mask,
+                .aspect_mask = aspect_mask,
                 .mip_level = mip_level,
                 .array_layer = array_layer,
             },
-            image_view.interface.format,
+            base.format.fromAspect(image_view.interface.format, aspect_mask),
         ) catch return SpvRuntimeError.Unknown, image_view.interface.components);
     }
     return .{

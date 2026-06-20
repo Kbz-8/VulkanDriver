@@ -182,6 +182,7 @@ inline fn run(data: RunData) !void {
             var fragment_result: fragment.InvocationResult = .{
                 .outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8),
                 .depth = null,
+                .sample_mask = null,
             };
             if (data.has_fragment_shader) {
                 const inputs = try common.interpolateVertexOutputs(data.allocator, &data.v0, &data.v1, &data.v2, b0, b1, b2);
@@ -251,6 +252,7 @@ inline fn run(data: RunData) !void {
                 @intCast(x),
                 @intCast(y),
                 fragment_result.depth orelse z,
+                fragment_result.sample_mask,
             );
         }
     }

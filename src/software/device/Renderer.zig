@@ -135,6 +135,7 @@ state: *PipelineState,
 
 render_pass: ?*SoftRenderPass,
 framebuffer: ?*SoftFramebuffer,
+render_area: ?vk.Rect2D,
 dynamic_state: DynamicState,
 
 subpass_index: usize,
@@ -146,6 +147,7 @@ pub fn init(device: *SoftDevice, state: *PipelineState, active_occlusion_queries
         .state = state,
         .render_pass = null,
         .framebuffer = null,
+        .render_area = null,
         .dynamic_state = .{
             .viewports = null,
             .scissor = null,

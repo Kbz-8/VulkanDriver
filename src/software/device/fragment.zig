@@ -16,6 +16,7 @@ const INTERFACE_BLOB_PADDING = @sizeOf(zm.F32x4);
 pub const InvocationResult = struct {
     outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8,
     depth: ?f32,
+    sample_mask: ?vk.SampleMask,
 };
 
 pub const DerivativeInputs = struct {
@@ -76,7 +77,7 @@ pub fn shaderInvocation(
     SoftPipeline.current_fragment_coord = .{
         .x = @intFromFloat(position[0]),
         .y = @intFromFloat(position[1]),
-        .z = @intFromFloat(position[2]),
+        .z = 0,
     };
     defer SoftPipeline.current_fragment_coord = previous_fragment_coord;
 
@@ -165,6 +166,15 @@ pub fn shaderInvocation(
         else => return err,
     }
 
+    var sample_mask: ?vk.SampleMask = null;
+    var frag_sample_mask: [1]vk.SampleMask = undefined;
+    if (rt.readBuiltIn(std.mem.asBytes(&frag_sample_mask), .SampleMask)) {
+        sample_mask = frag_sample_mask[0];
+    } else |err| switch (err) {
+        SpvRuntimeError.InvalidSpirV, SpvRuntimeError.NotFound => {},
+        else => return err,
+    }
+
     try rt.flushDescriptorSets(allocator);
     freeOwnedInputs(allocator, fragment_inputs);
     if (derivatives) |owned_derivatives| {
@@ -175,6 +185,7 @@ pub fn shaderInvocation(
     return .{
         .outputs = outputs,
         .depth = depth,
+        .sample_mask = sample_mask,
     };
 }
 
