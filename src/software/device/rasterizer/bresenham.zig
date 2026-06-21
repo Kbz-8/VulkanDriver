@@ -76,7 +76,7 @@ pub fn drawLine(
     if (runtimes_count == 0)
         return;
 
-    const step_count: usize = if (d_x == 0) 1 else @intCast(d_x);
+    const step_count: usize = @intCast(@max(d_x, 0) + 1);
     const runs_count = @min(runtimes_count, step_count);
     const steps_per_run = @divTrunc(step_count + runs_count - 1, runs_count);
 
@@ -193,6 +193,7 @@ inline fn run(data: RunData) !void {
             @intCast(pixel_x),
             @intCast(pixel_y),
             fragment_result.depth orelse z,
+            null,
             fragment_result.sample_mask,
         );
     }

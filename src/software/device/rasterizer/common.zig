@@ -223,6 +223,11 @@ pub fn interpolateVertexOutputs(
             }
 
             const len = @min(out0.size, out1.size, out2.size);
+            if (std.mem.eql(u8, out0.blob[0..len], out1.blob[0..len]) and std.mem.eql(u8, out0.blob[0..len], out2.blob[0..len])) {
+                inputs[location][component] = .{ .blob = out0.blob, .size = len, .free_responsability = false };
+                continue;
+            }
+
             const input = allocator.alloc(u8, len + @sizeOf(F32x4)) catch return VkError.OutOfDeviceMemory;
             @memset(input, 0);
 
@@ -407,13 +412,14 @@ pub fn writeToTargets(
     x: usize,
     y: usize,
     z: f32,
+    coverage_sample_mask: ?vk.SampleMask,
     fragment_sample_mask: ?vk.SampleMask,
 ) VkError!void {
     const io = draw_call.renderer.device.interface.io();
     const pipeline_data = draw_call.renderer.state.pipeline.?.interface.mode.graphics;
     const depth_stencil_state = pipeline_data.depth_stencil;
 
-    if (!sampleMaskEnablesAnySample(pipeline_data.multisample, fragment_sample_mask))
+    if (!sampleMaskEnablesAnySample(pipeline_data.multisample, coverage_sample_mask, fragment_sample_mask))
         return;
 
     if (x >= draw_call.framebuffer.interface.width or y >= draw_call.framebuffer.interface.height)
@@ -426,7 +432,7 @@ pub fn writeToTargets(
 
     const sample_count = pipeline_data.multisample.rasterization_samples.toInt();
     for (0..sample_count) |sample_index| {
-        if (!sampleMaskEnablesSample(pipeline_data.multisample, fragment_sample_mask, sample_index))
+        if (!sampleMaskEnablesSample(pipeline_data.multisample, coverage_sample_mask, fragment_sample_mask, sample_index))
             continue;
 
         var stencil_state: ?vk.StencilOpState = null;
@@ -505,23 +511,23 @@ pub fn writeToTargets(
     }
 }
 
-fn sampleMaskEnablesAnySample(multisample: anytype, fragment_sample_mask: ?vk.SampleMask) bool {
+fn sampleMaskEnablesAnySample(multisample: anytype, coverage_sample_mask: ?vk.SampleMask, fragment_sample_mask: ?vk.SampleMask) bool {
     const sample_count = multisample.rasterization_samples.toInt();
-    if (multisample.sample_mask == null and fragment_sample_mask == null)
+    if (multisample.sample_mask == null and coverage_sample_mask == null and fragment_sample_mask == null)
         return true;
 
     if (multisample.sample_mask) |pipeline_sample_mask| {
         for (pipeline_sample_mask, 0..) |word, word_index| {
-            if (sampleMaskWordEnablesAnySample(sample_count, word_index, word, fragment_sample_mask))
+            if (sampleMaskWordEnablesAnySample(sample_count, word_index, word, coverage_sample_mask, fragment_sample_mask))
                 return true;
         }
         return false;
     }
 
-    return sampleMaskWordEnablesAnySample(sample_count, 0, std.math.maxInt(vk.SampleMask), fragment_sample_mask);
+    return sampleMaskWordEnablesAnySample(sample_count, 0, std.math.maxInt(vk.SampleMask), coverage_sample_mask, fragment_sample_mask);
 }
 
-fn sampleMaskWordEnablesAnySample(sample_count: usize, word_index: usize, pipeline_word: vk.SampleMask, fragment_sample_mask: ?vk.SampleMask) bool {
+fn sampleMaskWordEnablesAnySample(sample_count: usize, word_index: usize, pipeline_word: vk.SampleMask, coverage_sample_mask: ?vk.SampleMask, fragment_sample_mask: ?vk.SampleMask) bool {
     const remaining_samples = sample_count -| (word_index * 32);
     const active_bits = @min(remaining_samples, 32);
     if (active_bits == 0)
@@ -532,11 +538,12 @@ fn sampleMaskWordEnablesAnySample(sample_count: usize, word_index: usize, pipeli
     else
         (@as(vk.SampleMask, 1) << @intCast(active_bits)) - 1;
 
+    const coverage_word = if (word_index == 0) coverage_sample_mask orelse std.math.maxInt(vk.SampleMask) else std.math.maxInt(vk.SampleMask);
     const fragment_word = if (word_index == 0) fragment_sample_mask orelse std.math.maxInt(vk.SampleMask) else std.math.maxInt(vk.SampleMask);
-    return ((pipeline_word & fragment_word) & active_mask) != 0;
+    return ((pipeline_word & coverage_word & fragment_word) & active_mask) != 0;
 }
 
-fn sampleMaskEnablesSample(multisample: anytype, fragment_sample_mask: ?vk.SampleMask, sample_index: usize) bool {
+fn sampleMaskEnablesSample(multisample: anytype, coverage_sample_mask: ?vk.SampleMask, fragment_sample_mask: ?vk.SampleMask, sample_index: usize) bool {
     if (sample_index >= multisample.rasterization_samples.toInt())
         return false;
 
@@ -549,6 +556,7 @@ fn sampleMaskEnablesSample(multisample: anytype, fragment_sample_mask: ?vk.Sampl
     else
         std.math.maxInt(vk.SampleMask);
 
+    const coverage_word = if (word_index == 0) coverage_sample_mask orelse std.math.maxInt(vk.SampleMask) else std.math.maxInt(vk.SampleMask);
     const fragment_word = if (word_index == 0) fragment_sample_mask orelse std.math.maxInt(vk.SampleMask) else std.math.maxInt(vk.SampleMask);
-    return (pipeline_word & fragment_word & bit) != 0;
+    return (pipeline_word & coverage_word & fragment_word & bit) != 0;
 }

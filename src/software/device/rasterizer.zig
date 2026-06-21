@@ -394,7 +394,19 @@ fn clipTransformAndRasterizePoint(
                 };
             }
 
-            try common.writeToTargets(fragment_result.outputs, draw_call, color_attachment_access, depth_attachment_access, stencil_attachment_access, true, @intCast(px), @intCast(py), fragment_result.depth orelse transformed.position[2], fragment_result.sample_mask);
+            try common.writeToTargets(
+                fragment_result.outputs,
+                draw_call,
+                color_attachment_access,
+                depth_attachment_access,
+                stencil_attachment_access,
+                true,
+                @intCast(px),
+                @intCast(py),
+                fragment_result.depth orelse transformed.position[2],
+                null,
+                fragment_result.sample_mask,
+            );
         }
     }
 }

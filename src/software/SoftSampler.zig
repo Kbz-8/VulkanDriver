@@ -383,10 +383,13 @@ fn readSampledFloat4(
         std.math.clamp(@as(i32, @intFromFloat(texel.u * width_f)), 0, @as(i32, @intCast(extent.width)) - 1)
     else
         sampleAddressOrBorder(ix, extent.width, sampler.interface.address_mode_u) orelse return samplerBorderColor(sampler, format);
-    const sy = if (dim == .Cube)
-        std.math.clamp(@as(i32, @intFromFloat(texel.v * height_f)), 0, @as(i32, @intCast(extent.height)) - 1)
-    else
-        sampleAddressOrBorder(iy, extent.height, sampler.interface.address_mode_v) orelse return samplerBorderColor(sampler, format);
+    const sy = switch (image_view.interface.view_type) {
+        .@"1d", .@"1d_array" => 0,
+        else => if (dim == .Cube)
+            std.math.clamp(@as(i32, @intFromFloat(texel.v * height_f)), 0, @as(i32, @intCast(extent.height)) - 1)
+        else
+            sampleAddressOrBorder(iy, extent.height, sampler.interface.address_mode_v) orelse return samplerBorderColor(sampler, format),
+    };
 
     const color = try image.readFloat4(
         .{
@@ -458,10 +461,13 @@ fn readSampledInt4(
         std.math.clamp(@as(i32, @intFromFloat(texel.u * width_f)), 0, @as(i32, @intCast(extent.width)) - 1)
     else
         sampleAddressOrBorder(ix, extent.width, sampler.interface.address_mode_u) orelse return samplerBorderColorInt(sampler, format);
-    const sy = if (dim == .Cube)
-        std.math.clamp(@as(i32, @intFromFloat(texel.v * height_f)), 0, @as(i32, @intCast(extent.height)) - 1)
-    else
-        sampleAddressOrBorder(iy, extent.height, sampler.interface.address_mode_v) orelse return samplerBorderColorInt(sampler, format);
+    const sy = switch (image_view.interface.view_type) {
+        .@"1d", .@"1d_array" => 0,
+        else => if (dim == .Cube)
+            std.math.clamp(@as(i32, @intFromFloat(texel.v * height_f)), 0, @as(i32, @intCast(extent.height)) - 1)
+        else
+            sampleAddressOrBorder(iy, extent.height, sampler.interface.address_mode_v) orelse return samplerBorderColorInt(sampler, format),
+    };
 
     return image.readInt4(
         .{

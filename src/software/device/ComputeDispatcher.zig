@@ -286,6 +286,9 @@ fn setupSubgroupBuiltins(self: *Self, rt: *spv.Runtime, group_id: @Vector(3, u32
     local_invocation[0] = idx;
 
     const global_invocation_index = local_base + local_invocation;
+    const local_invocation_index_u32: u32 = @intCast(local_invocation_index);
 
+    rt.writeBuiltIn(std.mem.asBytes(&local_invocation), .LocalInvocationId) catch {};
+    rt.writeBuiltIn(std.mem.asBytes(&local_invocation_index_u32), .LocalInvocationIndex) catch {};
     rt.writeBuiltIn(std.mem.asBytes(&global_invocation_index), .GlobalInvocationId) catch {};
 }

@@ -251,12 +251,7 @@ fn createShader(
     };
 }
 
-fn initRuntime(
-    allocator: std.mem.Allocator,
-    module: *SoftShaderModule,
-    stage: *const vk.PipelineShaderStageCreateInfo,
-    image_api: spv.Runtime.ImageAPI,
-) VkError!spv.Runtime {
+fn initRuntime(allocator: std.mem.Allocator, module: *SoftShaderModule, stage: *const vk.PipelineShaderStageCreateInfo, image_api: spv.Runtime.ImageAPI) VkError!spv.Runtime {
     var runtime = spv.Runtime.init(allocator, &module.module, image_api) catch |err| {
         std.log.scoped(.SpvRuntimeInit).err("SPIR-V Runtime failed to initialize, {s}", .{@errorName(err)});
         return VkError.Unknown;
@@ -311,6 +306,33 @@ fn imageReadAspect(image_view: *SoftImageView, comptime int_read: bool) vk.Image
     return aspect;
 }
 
+fn sampledTexelOffset(image: *SoftImage, offset: vk.Offset3D, subresource: vk.ImageSubresource, sample_index: u32) VkError!usize {
+    const sample_count = image.interface.samples.toInt();
+    if (sample_index >= sample_count)
+        return VkError.ValidationFailed;
+
+    return try image.getTexelMemoryOffset(offset, subresource) +
+        @as(usize, sample_index) * image.getMipLevelSize(subresource.aspect_mask, subresource.mip_level);
+}
+
+fn readImageFloat4Sample(image: *SoftImage, offset: vk.Offset3D, subresource: vk.ImageSubresource, format: vk.Format, sample_index: u32) VkError!zm.F32x4 {
+    if (image.interface.samples.toInt() == 1)
+        return image.readFloat4(offset, subresource, format);
+
+    const texel_size = base.format.texelSize(format);
+    const texel_offset = try sampledTexelOffset(image, offset, subresource, sample_index);
+    return blitter.readFloat4(try image.mapAsSliceWithAddedOffset(u8, texel_offset, texel_size), format);
+}
+
+fn readImageInt4Sample(image: *SoftImage, offset: vk.Offset3D, subresource: vk.ImageSubresource, format: vk.Format, sample_index: u32) VkError!@Vector(4, u32) {
+    if (image.interface.samples.toInt() == 1)
+        return image.readInt4(offset, subresource, format);
+
+    const texel_size = base.format.texelSize(format);
+    const texel_offset = try sampledTexelOffset(image, offset, subresource, sample_index);
+    return blitter.readInt4(try image.mapAsSliceWithAddedOffset(u8, texel_offset, texel_size), format);
+}
+
 fn subpassDataCoord(x: i32, y: i32, z: i32) SpvRuntimeError!vk.Offset3D {
     const coord = current_fragment_coord orelse return SpvRuntimeError.Unknown;
     return .{ .x = coord.x + x, .y = coord.y + y, .z = coord.z + z };
@@ -340,14 +362,18 @@ fn readImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32,
             else => 0,
         };
         const aspect_mask = imageReadAspect(image_view, false);
-        pixel = SoftSampler.swizzleFloat4(image.readFloat4(
+        const subresource = vk.ImageSubresource{
+            .aspect_mask = aspect_mask,
+            .mip_level = mip_level,
+            .array_layer = array_layer,
+        };
+        const sample_index: u32 = if (image.interface.samples.toInt() > 1) @intCast(z) else 0;
+        pixel = SoftSampler.swizzleFloat4(readImageFloat4Sample(
+            image,
             image_coord,
-            .{
-                .aspect_mask = aspect_mask,
-                .mip_level = mip_level,
-                .array_layer = array_layer,
-            },
+            subresource,
             base.format.fromAspect(image_view.interface.format, aspect_mask),
+            sample_index,
         ) catch return SpvRuntimeError.Unknown, image_view.interface.components);
     }
     return .{
@@ -382,14 +408,18 @@ fn readImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, l
             else => 0,
         };
         const aspect_mask = imageReadAspect(image_view, true);
-        pixel = SoftSampler.swizzleInt4(image.readInt4(
+        const subresource = vk.ImageSubresource{
+            .aspect_mask = aspect_mask,
+            .mip_level = mip_level,
+            .array_layer = array_layer,
+        };
+        const sample_index: u32 = if (image.interface.samples.toInt() > 1) @intCast(z) else 0;
+        pixel = SoftSampler.swizzleInt4(readImageInt4Sample(
+            image,
             image_coord,
-            .{
-                .aspect_mask = aspect_mask,
-                .mip_level = mip_level,
-                .array_layer = array_layer,
-            },
+            subresource,
             base.format.fromAspect(image_view.interface.format, aspect_mask),
+            sample_index,
         ) catch return SpvRuntimeError.Unknown, image_view.interface.components);
     }
     return .{

@@ -129,7 +129,7 @@ inline fn edgeFunction(a: F32x4, b: F32x4, p: F32x4) f32 {
 inline fn isInclusiveEdge(a: F32x4, b: F32x4) bool {
     const dx = b[0] - a[0];
     const dy = b[1] - a[1];
-    return dy < 0.0 or (dy == 0.0 and dx > 0.0);
+    return dy > 0.0 or (dy == 0.0 and dx < 0.0);
 }
 
 inline fn edgeContainsPixel(a: F32x4, b: F32x4, edge_value: f32, area: f32) bool {
@@ -137,6 +137,56 @@ inline fn edgeContainsPixel(a: F32x4, b: F32x4, edge_value: f32, area: f32) bool
         edge_value > 0.0 or (edge_value == 0.0 and isInclusiveEdge(a, b))
     else
         edge_value < 0.0 or (edge_value == 0.0 and isInclusiveEdge(b, a));
+}
+
+inline fn standardSamplePosition(sample_count: usize, sample_index: usize) struct { x: f32, y: f32 } {
+    return switch (sample_count) {
+        1 => .{ .x = 0.5, .y = 0.5 },
+        2 => switch (sample_index) {
+            0 => .{ .x = 0.75, .y = 0.75 },
+            1 => .{ .x = 0.25, .y = 0.25 },
+            else => .{ .x = 0.5, .y = 0.5 },
+        },
+        4 => switch (sample_index) {
+            0 => .{ .x = 0.375, .y = 0.125 },
+            1 => .{ .x = 0.875, .y = 0.375 },
+            2 => .{ .x = 0.125, .y = 0.625 },
+            3 => .{ .x = 0.625, .y = 0.875 },
+            else => .{ .x = 0.5, .y = 0.5 },
+        },
+        else => .{ .x = 0.5, .y = 0.5 },
+    };
+}
+
+fn triangleCoverageMask(data: RunData, x: i32, y: i32, sample_count: usize) vk.SampleMask {
+    var mask: vk.SampleMask = 0;
+    for (0..sample_count) |sample_index| {
+        if (sample_index >= @bitSizeOf(vk.SampleMask))
+            break;
+
+        const sample_pos = standardSamplePosition(sample_count, sample_index);
+        const p = zm.f32x4(
+            @as(f32, @floatFromInt(x)) + sample_pos.x,
+            @as(f32, @floatFromInt(y)) + sample_pos.y,
+            0.0,
+            1.0,
+        );
+
+        const w0 = edgeFunction(data.v1.position, data.v2.position, p);
+        const w1 = edgeFunction(data.v2.position, data.v0.position, p);
+        const w2 = edgeFunction(data.v0.position, data.v1.position, p);
+
+        const inside =
+            edgeContainsPixel(data.v1.position, data.v2.position, w0, data.area) and
+            edgeContainsPixel(data.v2.position, data.v0.position, w1, data.area) and
+            edgeContainsPixel(data.v0.position, data.v1.position, w2, data.area);
+
+        if (inside) {
+            const bit_index: u5 = @intCast(sample_index);
+            mask |= @as(vk.SampleMask, 1) << bit_index;
+        }
+    }
+    return mask;
 }
 
 fn runWrapper(data: RunData) void {
@@ -159,19 +209,17 @@ inline fn run(data: RunData) !void {
                 continue;
             }
 
+            const pipeline_data = data.draw_call.renderer.state.pipeline.?.interface.mode.graphics;
+            const sample_count = pipeline_data.multisample.rasterization_samples.toInt();
+            const coverage_sample_mask = triangleCoverageMask(data, x, y, sample_count);
+            if (coverage_sample_mask == 0)
+                continue;
+
             const p = zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, 0.0, 1.0);
 
             const w0 = edgeFunction(data.v1.position, data.v2.position, p);
             const w1 = edgeFunction(data.v2.position, data.v0.position, p);
             const w2 = edgeFunction(data.v0.position, data.v1.position, p);
-
-            const inside =
-                edgeContainsPixel(data.v1.position, data.v2.position, w0, data.area) and
-                edgeContainsPixel(data.v2.position, data.v0.position, w1, data.area) and
-                edgeContainsPixel(data.v0.position, data.v1.position, w2, data.area);
-
-            if (!inside)
-                continue;
 
             const b0 = w0 / data.area;
             const b1 = w1 / data.area;
@@ -252,6 +300,7 @@ inline fn run(data: RunData) !void {
                 @intCast(x),
                 @intCast(y),
                 fragment_result.depth orelse z,
+                coverage_sample_mask,
                 fragment_result.sample_mask,
             );
         }
