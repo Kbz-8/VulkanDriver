@@ -52,3 +52,9 @@ pub inline fn getMemoryRequirements(self: *Self, requirements: *vk.MemoryRequire
     requirements.memory_type_bits = self.allowed_memory_types.mask;
     self.vtable.getMemoryRequirements(self, requirements);
 }
+
+pub inline fn getDeviceAddress(self: *Self) VkError!vk.DeviceAddress {
+    const memory = self.memory orelse return 0;
+    const map = try memory.map(self.offset, self.size);
+    return @intCast(@intFromPtr(map.ptr));
+}

@@ -26,14 +26,14 @@
             .hash = "N-V-__8AAF9uOh0I4P_99za7N822J3JwsDaqONrFVrcEQo59",
         },
         .drm = .{
-            .url = "git+https://git.kbz8.me/kbz_8/zig-drm.git#409f58daa8f5174b2fcb8897f1c30f0b0729b611",
+            .url = "git+https://github.com/Kbz-8/zig-drm#409f58daa8f5174b2fcb8897f1c30f0b0729b611",
             .hash = "drm-0.0.1-uWWar5YwAQCiTNOcqtYqt_yL19B0_Q-YLjPNkRysFSnR",
         },
 
         // Soft dependencies
         .SPIRV_Interpreter = .{
-            .url = "git+https://github.com/Kbz-8/SPIRV-Interpreter#ae0914647bbc48683dd10108b5cae9acc54fe759",
-            .hash = "SPIRV_Interpreter-0.0.1-ajmpn9_vBwCUxGCNVFXUgZXaDv0OyNz8sqhzuyFD7hTU",
+            .url = "git+https://github.com/Kbz-8/SPIRV-Interpreter#cba8a4723d9b21c9c58494be8ce477124946f52a",
+            .hash = "SPIRV_Interpreter-0.0.1-ajmpnyQ4CABQ7B36QdzikdLDH1E5LMk-ib8O2gAHgwbE",
             .lazy = true,
         },
         //.SPIRV_Interpreter = .{

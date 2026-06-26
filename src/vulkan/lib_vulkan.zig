@@ -239,6 +239,9 @@ const device_pfn_map = block: {
         functionMapEntryPoint("vkFreeDescriptorSets"),
         functionMapEntryPoint("vkFreeMemory"),
         functionMapEntryPoint("vkGetBufferMemoryRequirements"),
+        functionMapEntryPoint("vkGetBufferDeviceAddress"),
+        functionMapEntryPoint("vkGetBufferDeviceAddressEXT"),
+        functionMapEntryPoint("vkGetBufferDeviceAddressKHR"),
         functionMapEntryPoint("vkGetDeviceMemoryCommitment"),
         functionMapEntryPoint("vkGetDeviceGroupPeerMemoryFeatures"),
         functionMapEntryPoint("vkGetDeviceGroupPeerMemoryFeaturesKHR"),
@@ -1396,6 +1399,34 @@ pub export fn apeGetBufferMemoryRequirements(p_device: vk.Device, p_buffer: vk.B
 
     const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
     buffer.getMemoryRequirements(requirements);
+}
+
+pub export fn apeGetBufferDeviceAddress(p_device: vk.Device, info: *const vk.BufferDeviceAddressInfo) callconv(vk.vulkan_call_conv) vk.DeviceAddress {
+    entryPointBeginLogTrace(.vkGetBufferDeviceAddress);
+    defer entryPointEndLogTrace();
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| {
+        errorLogger(err);
+        return 0;
+    };
+
+    const buffer = NonDispatchable(Buffer).fromHandleObject(info.buffer) catch |err| {
+        errorLogger(err);
+        return 0;
+    };
+
+    return buffer.getDeviceAddress() catch |err| {
+        errorLogger(err);
+        return 0;
+    };
+}
+
+pub export fn apeGetBufferDeviceAddressEXT(p_device: vk.Device, info: *const vk.BufferDeviceAddressInfo) callconv(vk.vulkan_call_conv) vk.DeviceAddress {
+    return @call(.always_inline, apeGetBufferDeviceAddress, .{ p_device, info });
+}
+
+pub export fn apeGetBufferDeviceAddressKHR(p_device: vk.Device, info: *const vk.BufferDeviceAddressInfo) callconv(vk.vulkan_call_conv) vk.DeviceAddress {
+    return @call(.always_inline, apeGetBufferDeviceAddress, .{ p_device, info });
 }
 
 pub export fn apeGetDeviceMemoryCommitment(p_device: vk.Device, p_memory: vk.DeviceMemory, committed_memory: *vk.DeviceSize) callconv(vk.vulkan_call_conv) void {

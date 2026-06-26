@@ -57,17 +57,17 @@ pub fn shaderInvocation(
 
     rt.resetInvocation(allocator);
     try rt.populatePushConstants(draw_call.renderer.state.push_constant_blob[0..]);
-    rt.writeBuiltIn(std.mem.asBytes(&position), .FragCoord) catch |err| switch (err) {
+    rt.writeBuiltIn(allocator, std.mem.asBytes(&position), .FragCoord) catch |err| switch (err) {
         SpvRuntimeError.NotFound => {},
         else => return err,
     };
     if (point_coord) |coord| {
-        rt.writeBuiltIn(std.mem.asBytes(&coord), .PointCoord) catch |err| switch (err) {
+        rt.writeBuiltIn(allocator, std.mem.asBytes(&coord), .PointCoord) catch |err| switch (err) {
             SpvRuntimeError.NotFound => {},
             else => return err,
         };
     }
-    rt.writeBuiltIn(std.mem.asBytes(&front_face), .FrontFacing) catch |err| switch (err) {
+    rt.writeBuiltIn(allocator, std.mem.asBytes(&front_face), .FrontFacing) catch |err| switch (err) {
         SpvRuntimeError.NotFound => {},
         else => return err,
     };
@@ -104,7 +104,7 @@ pub fn shaderInvocation(
             }
 
             if (input.blob.len != 0) {
-                try rt.writeInput(input.blob, result_word);
+                try rt.writeInput(allocator, input.blob, result_word);
                 if (derivatives) |derivative| {
                     const dx = derivative.dx[location][component];
                     const dy = derivative.dy[location][component];

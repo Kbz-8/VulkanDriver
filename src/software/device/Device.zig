@@ -76,6 +76,65 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     self.active_occlusion_queries.deinit(allocator);
 }
 
+const SampledImageDescriptor = struct {
+    image: usize,
+    sampler: usize,
+};
+
+const DescriptorPayload = union(enum) {
+    raw: []const u8,
+    sampled_image: SampledImageDescriptor,
+};
+
+fn writeDescriptorValue(value: anytype, payload: DescriptorPayload, descriptor_index: u32) spv.Runtime.RuntimeError!void {
+    const dst = switch (value.*) {
+        .Array => |arr| blk: {
+            if (descriptor_index >= arr.values.len)
+                return spv.Runtime.RuntimeError.NotFound;
+            break :blk &arr.values[descriptor_index];
+        },
+        else => blk: {
+            if (descriptor_index != 0)
+                return spv.Runtime.RuntimeError.NotFound;
+            break :blk value;
+        },
+    };
+
+    switch (payload) {
+        .raw => |data| _ = try dst.write(data),
+        .sampled_image => |data| switch (dst.*) {
+            .Image => _ = try dst.write(std.mem.asBytes(&data.image)),
+            .Sampler => _ = try dst.write(std.mem.asBytes(&data.sampler)),
+            .SampledImage => _ = try dst.write(std.mem.asBytes(&data)),
+            else => return spv.Runtime.RuntimeError.InvalidValueType,
+        },
+    }
+}
+
+fn writeDescriptorSet(rt: *spv.Runtime, payload: DescriptorPayload, set: u32, binding: u32, descriptor_index: u32) spv.Runtime.RuntimeError!void {
+    var found = false;
+    for (rt.mod.bindings.items) |entry| {
+        if (entry.set != set or entry.binding != binding)
+            continue;
+
+        const variable = switch (rt.results[entry.result].variant orelse continue) {
+            .Variable => |*variable| variable,
+            else => continue,
+        };
+
+        writeDescriptorValue(&variable.value, payload, descriptor_index) catch |err| switch (err) {
+            spv.Runtime.RuntimeError.InvalidValueType,
+            spv.Runtime.RuntimeError.OutOfBounds,
+            => continue,
+            else => return err,
+        };
+        found = true;
+    }
+
+    if (!found)
+        return spv.Runtime.RuntimeError.NotFound;
+}
+
 pub fn writeDescriptorSets(state: *PipelineState, rt: *spv.Runtime) !void {
     sets: for (state.sets[0..], 0..) |set, set_index| {
         if (set == null)
@@ -95,8 +154,9 @@ pub fn writeDescriptorSets(state: *PipelineState, rt: *spv.Runtime) !void {
                         };
 
                         const map = buffer.mapAsSliceWithAddedOffset(u8, buffer_data.offset + dynamic_offset, buffer_data.size) catch continue :bindings;
-                        rt.writeDescriptorSet(
-                            map,
+                        writeDescriptorSet(
+                            rt,
+                            .{ .raw = map },
                             @as(u32, @intCast(set_index)),
                             @as(u32, @intCast(binding_index)),
                             @as(u32, @intCast(descriptor_index)),
@@ -110,8 +170,9 @@ pub fn writeDescriptorSets(state: *PipelineState, rt: *spv.Runtime) !void {
                 .image => |image_data_array| for (image_data_array, 0..) |image_data, descriptor_index| {
                     if (image_data.object) |image_view| {
                         const addr: usize = @intFromPtr(image_view);
-                        rt.writeDescriptorSet(
-                            std.mem.asBytes(&addr),
+                        writeDescriptorSet(
+                            rt,
+                            .{ .raw = std.mem.asBytes(&addr) },
                             @as(u32, @intCast(set_index)),
                             @as(u32, @intCast(binding_index)),
                             @as(u32, @intCast(descriptor_index)),
@@ -125,8 +186,9 @@ pub fn writeDescriptorSets(state: *PipelineState, rt: *spv.Runtime) !void {
                 .sampler => |sampler_data_array| for (sampler_data_array, 0..) |sampler_data, descriptor_index| {
                     if (sampler_data.object) |sampler| {
                         const addr: usize = @intFromPtr(sampler);
-                        rt.writeDescriptorSet(
-                            std.mem.asBytes(&addr),
+                        writeDescriptorSet(
+                            rt,
+                            .{ .raw = std.mem.asBytes(&addr) },
                             @as(u32, @intCast(set_index)),
                             @as(u32, @intCast(binding_index)),
                             @as(u32, @intCast(descriptor_index)),
@@ -140,8 +202,9 @@ pub fn writeDescriptorSets(state: *PipelineState, rt: *spv.Runtime) !void {
                 .texel_buffer => |texel_data_array| for (texel_data_array, 0..) |texel_data, descriptor_index| {
                     if (texel_data.object) |buffer_view| {
                         const addr: usize = @intFromPtr(buffer_view);
-                        rt.writeDescriptorSet(
-                            std.mem.asBytes(&addr),
+                        writeDescriptorSet(
+                            rt,
+                            .{ .raw = std.mem.asBytes(&addr) },
                             @as(u32, @intCast(set_index)),
                             @as(u32, @intCast(binding_index)),
                             @as(u32, @intCast(descriptor_index)),
@@ -153,12 +216,7 @@ pub fn writeDescriptorSets(state: *PipelineState, rt: *spv.Runtime) !void {
                 },
 
                 .texture => |texture_data_array| for (texture_data_array, 0..) |texture_data, descriptor_index| {
-                    const SampledImage = packed struct {
-                        image: usize,
-                        sampler: usize,
-                    };
-
-                    var data: SampledImage = .{
+                    var data: SampledImageDescriptor = .{
                         .image = 0,
                         .sampler = 0,
                     };
@@ -173,8 +231,9 @@ pub fn writeDescriptorSets(state: *PipelineState, rt: *spv.Runtime) !void {
                         data.sampler = addr;
                     }
 
-                    rt.writeDescriptorSet(
-                        std.mem.asBytes(&data),
+                    writeDescriptorSet(
+                        rt,
+                        .{ .sampled_image = data },
                         @as(u32, @intCast(set_index)),
                         @as(u32, @intCast(binding_index)),
                         @as(u32, @intCast(descriptor_index)),

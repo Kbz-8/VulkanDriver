@@ -162,6 +162,9 @@ vkFlushMappedMemoryRanges                        | ✅ Implemented
 vkFreeCommandBuffers                             | ✅ Implemented
 vkFreeDescriptorSets                             | ✅ Implemented
 vkFreeMemory                                     | ✅ Implemented
+vkGetBufferDeviceAddress                         | ✅ Implemented
+vkGetBufferDeviceAddressEXT                      | ✅ Implemented
+vkGetBufferDeviceAddressKHR                      | ✅ Implemented
 vkGetBufferMemoryRequirements                    | ✅ Implemented
 vkGetDeviceGroupPeerMemoryFeaturesKHR            | ✅ Implemented
 vkGetDeviceGroupPresentCapabilitiesKHR           | ✅ Implemented

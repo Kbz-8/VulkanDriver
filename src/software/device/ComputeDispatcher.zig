@@ -26,6 +26,7 @@ const RunData = struct {
     group_count_y: usize,
     group_count_z: usize,
     invocations_per_workgroup: usize,
+    local_size: @Vector(3, u32),
     pipeline: *SoftPipeline,
 };
 
@@ -53,6 +54,18 @@ pub fn dispatch(self: *Self, group_count_x: u32, group_count_y: u32, group_count
     try self.dispatchBase(0, 0, 0, group_count_x, group_count_y, group_count_z);
 }
 
+fn getLocalSize(rt: *spv.Runtime, allocator: std.mem.Allocator, spv_module: *const spv.Module) VkError!@Vector(3, u32) {
+    if (rt.getWorkgroupSize(allocator) catch return VkError.ValidationFailed) |workgroup_size| {
+        return workgroup_size;
+    }
+
+    return .{
+        spv_module.reflection_infos.local_size_x,
+        spv_module.reflection_infos.local_size_y,
+        spv_module.reflection_infos.local_size_z,
+    };
+}
+
 pub fn dispatchBase(self: *Self, base_group_x: u32, base_group_y: u32, base_group_z: u32, group_count_x: u32, group_count_y: u32, group_count_z: u32) VkError!void {
     const group_count_xy = std.math.mul(usize, group_count_x, group_count_y) catch return VkError.ValidationFailed;
     const group_count = std.math.mul(usize, group_count_xy, group_count_z) catch return VkError.ValidationFailed;
@@ -62,7 +75,10 @@ pub fn dispatchBase(self: *Self, base_group_x: u32, base_group_y: u32, base_grou
     const spv_module = &shader.module.module;
     self.batch_size = shader.runtimes.len;
 
-    const invocations_per_workgroup = spv_module.reflection_infos.local_size_x * spv_module.reflection_infos.local_size_y * spv_module.reflection_infos.local_size_z;
+    const allocator = self.device.device_allocator.allocator();
+    const local_size = try getLocalSize(&shader.runtimes[0].rt, allocator, spv_module);
+    const local_size_xy = std.math.mul(usize, local_size[0], local_size[1]) catch return VkError.ValidationFailed;
+    const invocations_per_workgroup = std.math.mul(usize, local_size_xy, local_size[2]) catch return VkError.ValidationFailed;
 
     self.invocation_index.store(0, .monotonic);
 
@@ -87,6 +103,7 @@ pub fn dispatchBase(self: *Self, base_group_x: u32, base_group_y: u32, base_grou
             .group_count_y = @as(usize, @intCast(group_count_y)),
             .group_count_z = @as(usize, @intCast(group_count_z)),
             .invocations_per_workgroup = invocations_per_workgroup,
+            .local_size = local_size,
             .pipeline = pipeline,
         };
 
@@ -170,11 +187,11 @@ inline fn run(data: RunData) !void {
 
         for (0..data.invocations_per_workgroup) |i| {
             rt.resetInvocation(allocator);
-            try setupWorkgroupBuiltins(data.self, rt, group_count_vec, group_id_vec);
+            try setupWorkgroupBuiltins(data.self, rt, data.local_size, group_count_vec, group_id_vec);
 
             const invocation_index = data.self.invocation_index.fetchAdd(1, .monotonic);
 
-            try setupSubgroupBuiltins(data.self, rt, .{
+            try setupSubgroupBuiltins(data.self, rt, data.local_size, .{
                 @as(u32, @intCast(data.base_group_x + group_x)),
                 @as(u32, @intCast(data.base_group_y + group_y)),
                 @as(u32, @intCast(data.base_group_z + group_z)),
@@ -216,8 +233,8 @@ fn runBarrierWorkgroup(
         rt.resetInvocation(allocator);
         try ExecutionDevice.writeDescriptorSets(data.self.state, rt);
         try rt.populatePushConstants(data.self.state.push_constant_blob[0..]);
-        try setupWorkgroupBuiltins(data.self, rt, group_count, group_id);
-        try setupSubgroupBuiltins(data.self, rt, group_id, i);
+        try setupWorkgroupBuiltins(data.self, rt, data.local_size, group_count, group_id);
+        try setupSubgroupBuiltins(data.self, rt, data.local_size, group_id, i);
         statuses[i] = try rt.beginEntryPoint(allocator, entry);
         try rt.flushDescriptorSets(allocator);
     }
@@ -255,40 +272,45 @@ fn dumpResultsTable(allocator: std.mem.Allocator, io: std.Io, rt: *spv.Runtime, 
     try rt.dumpResultsTable(allocator, &writer.interface);
 }
 
-fn setupWorkgroupBuiltins(self: *Self, rt: *spv.Runtime, group_count: @Vector(3, u32), group_id: @Vector(3, u32)) spv.Runtime.RuntimeError!void {
-    const spv_module = &self.state.pipeline.?.stages.getPtrAssertContains(.compute).module.module;
-    const workgroup_size = @Vector(3, u32){
-        spv_module.reflection_infos.local_size_x,
-        spv_module.reflection_infos.local_size_y,
-        spv_module.reflection_infos.local_size_z,
+fn setupWorkgroupBuiltins(self: *Self, rt: *spv.Runtime, local_size: @Vector(3, u32), group_count: @Vector(3, u32), group_id: @Vector(3, u32)) spv.Runtime.RuntimeError!void {
+    rt.writeBuiltIn(self.device.device_allocator.allocator(), std.mem.asBytes(&local_size), .WorkgroupSize) catch |err| switch (err) {
+        SpvRuntimeError.NotFound => {},
+        else => return err,
     };
-
-    rt.writeBuiltIn(std.mem.asBytes(&workgroup_size), .WorkgroupSize) catch {};
-    rt.writeBuiltIn(std.mem.asBytes(&group_count), .NumWorkgroups) catch {};
-    rt.writeBuiltIn(std.mem.asBytes(&group_id), .WorkgroupId) catch {};
+    rt.writeBuiltIn(self.device.device_allocator.allocator(), std.mem.asBytes(&group_count), .NumWorkgroups) catch |err| switch (err) {
+        SpvRuntimeError.NotFound => {},
+        else => return err,
+    };
+    rt.writeBuiltIn(self.device.device_allocator.allocator(), std.mem.asBytes(&group_id), .WorkgroupId) catch |err| switch (err) {
+        SpvRuntimeError.NotFound => {},
+        else => return err,
+    };
 }
 
-fn setupSubgroupBuiltins(self: *Self, rt: *spv.Runtime, group_id: @Vector(3, u32), local_invocation_index: usize) spv.Runtime.RuntimeError!void {
-    const spv_module = &self.state.pipeline.?.stages.getPtrAssertContains(.compute).module.module;
-    const workgroup_size = @Vector(3, u32){
-        spv_module.reflection_infos.local_size_x,
-        spv_module.reflection_infos.local_size_y,
-        spv_module.reflection_infos.local_size_z,
-    };
-    const local_base = workgroup_size * group_id;
+fn setupSubgroupBuiltins(self: *Self, rt: *spv.Runtime, local_size: @Vector(3, u32), group_id: @Vector(3, u32), local_invocation_index: usize) spv.Runtime.RuntimeError!void {
+    const local_base = local_size * group_id;
     var local_invocation = @Vector(3, u32){ 0, 0, 0 };
 
     var idx: u32 = @intCast(local_invocation_index);
-    local_invocation[2] = @divTrunc(idx, workgroup_size[0] * workgroup_size[1]);
-    idx -= local_invocation[2] * workgroup_size[0] * workgroup_size[1];
-    local_invocation[1] = @divTrunc(idx, workgroup_size[0]);
-    idx -= local_invocation[1] * workgroup_size[0];
+    local_invocation[2] = @divTrunc(idx, local_size[0] * local_size[1]);
+    idx -= local_invocation[2] * local_size[0] * local_size[1];
+    local_invocation[1] = @divTrunc(idx, local_size[0]);
+    idx -= local_invocation[1] * local_size[0];
     local_invocation[0] = idx;
 
     const global_invocation_index = local_base + local_invocation;
     const local_invocation_index_u32: u32 = @intCast(local_invocation_index);
 
-    rt.writeBuiltIn(std.mem.asBytes(&local_invocation), .LocalInvocationId) catch {};
-    rt.writeBuiltIn(std.mem.asBytes(&local_invocation_index_u32), .LocalInvocationIndex) catch {};
-    rt.writeBuiltIn(std.mem.asBytes(&global_invocation_index), .GlobalInvocationId) catch {};
+    rt.writeBuiltIn(self.device.device_allocator.allocator(), std.mem.asBytes(&local_invocation), .LocalInvocationId) catch |err| switch (err) {
+        SpvRuntimeError.NotFound => {},
+        else => return err,
+    };
+    rt.writeBuiltIn(self.device.device_allocator.allocator(), std.mem.asBytes(&local_invocation_index_u32), .LocalInvocationIndex) catch |err| switch (err) {
+        SpvRuntimeError.NotFound => {},
+        else => return err,
+    };
+    rt.writeBuiltIn(self.device.device_allocator.allocator(), std.mem.asBytes(&global_invocation_index), .GlobalInvocationId) catch |err| switch (err) {
+        SpvRuntimeError.NotFound => {},
+        else => return err,
+    };
 }

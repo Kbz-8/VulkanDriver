@@ -68,7 +68,7 @@ inline fn run(data: RunData) !void {
         const vertex_index: usize = vertex_index_u32;
         const instance_index = data.first_instance + data.instance_index;
 
-        setupBuiltins(rt, vertex_index_u32, instance_index) catch |err| switch (err) {
+        setupBuiltins(rt, data.allocator, vertex_index_u32, instance_index) catch |err| switch (err) {
             SpvRuntimeError.NotFound => {},
             else => return err,
         };
@@ -212,11 +212,11 @@ fn isConstantZero(rt: *spv.Runtime, result_word: spv.SpvWord) bool {
     }
 }
 
-fn setupBuiltins(rt: *spv.Runtime, vertex_index_u32: u32, instance_index: usize) !void {
+fn setupBuiltins(rt: *spv.Runtime, allocator: std.mem.Allocator, vertex_index_u32: u32, instance_index: usize) !void {
     const instance_index_u32: u32 = @intCast(instance_index);
 
-    try rt.writeBuiltIn(std.mem.asBytes(&vertex_index_u32), .VertexIndex);
-    try rt.writeBuiltIn(std.mem.asBytes(&instance_index_u32), .InstanceIndex);
+    try rt.writeBuiltIn(allocator, std.mem.asBytes(&vertex_index_u32), .VertexIndex);
+    try rt.writeBuiltIn(allocator, std.mem.asBytes(&instance_index_u32), .InstanceIndex);
 }
 
 fn writeVertexInput(rt: *spv.Runtime, allocator: std.mem.Allocator, raw_input: []const u8, format: vk.Format, location: u32) !void {
@@ -243,7 +243,7 @@ fn writeVertexInput(rt: *spv.Runtime, allocator: std.mem.Allocator, raw_input: [
             const raw_offset = component * @sizeOf(f32);
 
             if (raw_offset + input_memory_size <= expanded_slice.len) {
-                try rt.writeInput(expanded_slice[raw_offset .. raw_offset + input_memory_size], result_word);
+                try rt.writeInput(allocator, expanded_slice[raw_offset .. raw_offset + input_memory_size], result_word);
                 continue;
             }
 
@@ -266,7 +266,7 @@ fn writeVertexInput(rt: *spv.Runtime, allocator: std.mem.Allocator, raw_input: [
                 }
             }
 
-            try rt.writeInput(input, result_word);
+            try rt.writeInput(allocator, input, result_word);
         }
         return;
     }
