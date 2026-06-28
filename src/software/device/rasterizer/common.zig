@@ -201,6 +201,7 @@ pub fn interpolateVertexOutputs(
     v0: *const Renderer.Vertex,
     v1: *const Renderer.Vertex,
     v2: *const Renderer.Vertex,
+    provoking_vertex: *const Renderer.Vertex,
     b0: f32,
     b1: f32,
     b2: f32,
@@ -218,7 +219,8 @@ pub fn interpolateVertexOutputs(
             const out2 = v2.outputs[location][component] orelse continue;
 
             if (out0.interpolation_type == .flat or out0.size == 0) {
-                inputs[location][component] = .{ .blob = out0.blob, .size = out0.size, .free_responsability = false };
+                const flat_out = provoking_vertex.outputs[location][component] orelse out0;
+                inputs[location][component] = .{ .blob = flat_out.blob, .size = flat_out.size, .free_responsability = false };
                 continue;
             }
 
@@ -236,14 +238,14 @@ pub fn interpolateVertexOutputs(
                 const value0 = std.mem.bytesToValue(F32x4, out0.blob[byte_index..]);
                 const value1 = std.mem.bytesToValue(F32x4, out1.blob[byte_index..]);
                 const value2 = std.mem.bytesToValue(F32x4, out2.blob[byte_index..]);
-                base.utils.writePacked(F32x4, input[byte_index..], interpolateF32x4(value0, value1, value2, b0, b1, b2));
+                base.utils.writePacked(F32x4, input[byte_index..], interpolateF32x4(out0.interpolation_type, value0, value1, value2, v0, v1, v2, b0, b1, b2));
             }
 
             while (byte_index + @sizeOf(f32) <= len) : (byte_index += @sizeOf(f32)) {
                 const value0 = std.mem.bytesToValue(f32, out0.blob[byte_index..]);
                 const value1 = std.mem.bytesToValue(f32, out1.blob[byte_index..]);
                 const value2 = std.mem.bytesToValue(f32, out2.blob[byte_index..]);
-                base.utils.writePacked(f32, input[byte_index..], (value0 * b0) + (value1 * b1) + (value2 * b2));
+                base.utils.writePacked(f32, input[byte_index..], interpolateF32(out0.interpolation_type, value0, value1, value2, v0, v1, v2, b0, b1, b2));
             }
 
             if (byte_index < len)
@@ -262,7 +264,7 @@ pub fn interpolateLineOutputs(
     v1: *const Renderer.Vertex,
     t: f32,
 ) VkError![spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation {
-    return interpolateVertexOutputs(allocator, v0, v1, v0, 1.0 - t, t, 0.0);
+    return interpolateVertexOutputs(allocator, v0, v1, v0, v0, 1.0 - t, t, 0.0);
 }
 
 pub fn interpolateVertexOutputDerivatives(
@@ -270,6 +272,9 @@ pub fn interpolateVertexOutputDerivatives(
     v0: *const Renderer.Vertex,
     v1: *const Renderer.Vertex,
     v2: *const Renderer.Vertex,
+    b0: f32,
+    b1: f32,
+    b2: f32,
     db0: f32,
     db1: f32,
     db2: f32,
@@ -299,14 +304,14 @@ pub fn interpolateVertexOutputDerivatives(
                     const value0 = std.mem.bytesToValue(F32x4, out0.blob[byte_index..]);
                     const value1 = std.mem.bytesToValue(F32x4, out1.blob[byte_index..]);
                     const value2 = std.mem.bytesToValue(F32x4, out2.blob[byte_index..]);
-                    base.utils.writePacked(F32x4, input[byte_index..], interpolateF32x4(value0, value1, value2, db0, db1, db2));
+                    base.utils.writePacked(F32x4, input[byte_index..], interpolateDerivativeF32x4(out0.interpolation_type, value0, value1, value2, v0, v1, v2, b0, b1, b2, db0, db1, db2));
                 }
 
                 while (byte_index + @sizeOf(f32) <= len) : (byte_index += @sizeOf(f32)) {
                     const value0 = std.mem.bytesToValue(f32, out0.blob[byte_index..]);
                     const value1 = std.mem.bytesToValue(f32, out1.blob[byte_index..]);
                     const value2 = std.mem.bytesToValue(f32, out2.blob[byte_index..]);
-                    base.utils.writePacked(f32, input[byte_index..], (value0 * db0) + (value1 * db1) + (value2 * db2));
+                    base.utils.writePacked(f32, input[byte_index..], interpolateDerivativeF32(out0.interpolation_type, value0, value1, value2, v0, v1, v2, b0, b1, b2, db0, db1, db2));
                 }
             }
 
@@ -317,8 +322,66 @@ pub fn interpolateVertexOutputDerivatives(
     return inputs;
 }
 
-inline fn interpolateF32x4(value0: F32x4, value1: F32x4, value2: F32x4, b0: f32, b1: f32, b2: f32) F32x4 {
+fn perspectiveWeights(v0: *const Renderer.Vertex, v1: *const Renderer.Vertex, v2: *const Renderer.Vertex, b0: f32, b1: f32, b2: f32) struct { w0: f32, w1: f32, w2: f32 } {
+    const iw0 = 1.0 / v0.position[3];
+    const iw1 = 1.0 / v1.position[3];
+    const iw2 = 1.0 / v2.position[3];
+    const denominator = (b0 * iw0) + (b1 * iw1) + (b2 * iw2);
+    if (denominator == 0.0)
+        return .{ .w0 = b0, .w1 = b1, .w2 = b2 };
+    return .{
+        .w0 = (b0 * iw0) / denominator,
+        .w1 = (b1 * iw1) / denominator,
+        .w2 = (b2 * iw2) / denominator,
+    };
+}
+
+inline fn interpolateF32(interpolation_type: anytype, value0: f32, value1: f32, value2: f32, v0: *const Renderer.Vertex, v1: *const Renderer.Vertex, v2: *const Renderer.Vertex, b0: f32, b1: f32, b2: f32) f32 {
+    if (interpolation_type == .smooth) {
+        const weights = perspectiveWeights(v0, v1, v2, b0, b1, b2);
+        return (value0 * weights.w0) + (value1 * weights.w1) + (value2 * weights.w2);
+    }
+    return (value0 * b0) + (value1 * b1) + (value2 * b2);
+}
+
+inline fn interpolateF32x4(interpolation_type: anytype, value0: F32x4, value1: F32x4, value2: F32x4, v0: *const Renderer.Vertex, v1: *const Renderer.Vertex, v2: *const Renderer.Vertex, b0: f32, b1: f32, b2: f32) F32x4 {
+    if (interpolation_type == .smooth) {
+        const weights = perspectiveWeights(v0, v1, v2, b0, b1, b2);
+        return (value0 * zm.f32x4s(weights.w0)) + (value1 * zm.f32x4s(weights.w1)) + (value2 * zm.f32x4s(weights.w2));
+    }
     return (value0 * zm.f32x4s(b0)) + (value1 * zm.f32x4s(b1)) + (value2 * zm.f32x4s(b2));
+}
+
+inline fn interpolateDerivativeF32(interpolation_type: anytype, value0: f32, value1: f32, value2: f32, v0: *const Renderer.Vertex, v1: *const Renderer.Vertex, v2: *const Renderer.Vertex, b0: f32, b1: f32, b2: f32, db0: f32, db1: f32, db2: f32) f32 {
+    if (interpolation_type != .smooth)
+        return (value0 * db0) + (value1 * db1) + (value2 * db2);
+
+    const iw0 = 1.0 / v0.position[3];
+    const iw1 = 1.0 / v1.position[3];
+    const iw2 = 1.0 / v2.position[3];
+    const n = (value0 * b0 * iw0) + (value1 * b1 * iw1) + (value2 * b2 * iw2);
+    const d = (b0 * iw0) + (b1 * iw1) + (b2 * iw2);
+    const dn = (value0 * db0 * iw0) + (value1 * db1 * iw1) + (value2 * db2 * iw2);
+    const dd = (db0 * iw0) + (db1 * iw1) + (db2 * iw2);
+    if (d == 0.0)
+        return 0.0;
+    return ((dn * d) - (n * dd)) / (d * d);
+}
+
+inline fn interpolateDerivativeF32x4(interpolation_type: anytype, value0: F32x4, value1: F32x4, value2: F32x4, v0: *const Renderer.Vertex, v1: *const Renderer.Vertex, v2: *const Renderer.Vertex, b0: f32, b1: f32, b2: f32, db0: f32, db1: f32, db2: f32) F32x4 {
+    if (interpolation_type != .smooth)
+        return (value0 * zm.f32x4s(db0)) + (value1 * zm.f32x4s(db1)) + (value2 * zm.f32x4s(db2));
+
+    const iw0 = 1.0 / v0.position[3];
+    const iw1 = 1.0 / v1.position[3];
+    const iw2 = 1.0 / v2.position[3];
+    const n = (value0 * zm.f32x4s(b0 * iw0)) + (value1 * zm.f32x4s(b1 * iw1)) + (value2 * zm.f32x4s(b2 * iw2));
+    const d = (b0 * iw0) + (b1 * iw1) + (b2 * iw2);
+    const dn = (value0 * zm.f32x4s(db0 * iw0)) + (value1 * zm.f32x4s(db1 * iw1)) + (value2 * zm.f32x4s(db2 * iw2));
+    const dd = (db0 * iw0) + (db1 * iw1) + (db2 * iw2);
+    if (d == 0.0)
+        return zm.f32x4s(0.0);
+    return ((dn * zm.f32x4s(d)) - (n * zm.f32x4s(dd))) / zm.f32x4s(d * d);
 }
 
 inline fn fragmentOutputFloat4(output: [@sizeOf(F32x4)]u8, format: vk.Format) F32x4 {
@@ -418,8 +481,13 @@ pub fn writeToTargets(
     const io = draw_call.renderer.device.interface.io();
     const pipeline_data = draw_call.renderer.state.pipeline.?.interface.mode.graphics;
     const depth_stencil_state = pipeline_data.depth_stencil;
+    const effective_fragment_sample_mask = alphaToCoverageMask(
+        pipeline_data.multisample,
+        outputs,
+        fragment_sample_mask,
+    );
 
-    if (!sampleMaskEnablesAnySample(pipeline_data.multisample, coverage_sample_mask, fragment_sample_mask))
+    if (!sampleMaskEnablesAnySample(pipeline_data.multisample, coverage_sample_mask, effective_fragment_sample_mask))
         return;
 
     if (x >= draw_call.framebuffer.interface.width or y >= draw_call.framebuffer.interface.height)
@@ -432,7 +500,7 @@ pub fn writeToTargets(
 
     const sample_count = pipeline_data.multisample.rasterization_samples.toInt();
     for (0..sample_count) |sample_index| {
-        if (!sampleMaskEnablesSample(pipeline_data.multisample, coverage_sample_mask, fragment_sample_mask, sample_index))
+        if (!sampleMaskEnablesSample(pipeline_data.multisample, coverage_sample_mask, effective_fragment_sample_mask, sample_index))
             continue;
 
         var stencil_state: ?vk.StencilOpState = null;
@@ -509,6 +577,34 @@ pub fn writeToTargets(
             }
         }
     }
+}
+
+fn alphaToCoverageMask(
+    multisample: anytype,
+    outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8,
+    fragment_sample_mask: ?vk.SampleMask,
+) ?vk.SampleMask {
+    if (multisample.alpha_to_coverage_enable == .false)
+        return fragment_sample_mask;
+
+    const sample_count = multisample.rasterization_samples.toInt();
+    if (sample_count <= 1)
+        return fragment_sample_mask;
+
+    const color = std.mem.bytesToValue(F32x4, &outputs[0]);
+    const alpha = std.math.clamp(color[3], 0.0, 1.0);
+    const covered_samples: usize = @intFromFloat(@round(alpha * @as(f32, @floatFromInt(sample_count))));
+
+    var alpha_mask: vk.SampleMask = 0;
+    for (0..covered_samples) |sample_index| {
+        if (sample_index >= @bitSizeOf(vk.SampleMask))
+            break;
+
+        const bit_index: u5 = @intCast(sample_index);
+        alpha_mask |= @as(vk.SampleMask, 1) << bit_index;
+    }
+
+    return if (fragment_sample_mask) |mask| mask & alpha_mask else alpha_mask;
 }
 
 fn sampleMaskEnablesAnySample(multisample: anytype, coverage_sample_mask: ?vk.SampleMask, fragment_sample_mask: ?vk.SampleMask) bool {

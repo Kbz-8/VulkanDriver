@@ -163,6 +163,7 @@ fn applySpecialization(runtime: *spv.Runtime, allocator: std.mem.Allocator, spec
             data,
         ) catch return VkError.OutOfDeviceMemory;
     }
+    runtime.applySpecializationLayout(allocator) catch return VkError.OutOfDeviceMemory;
 }
 
 fn cloneSpecs(allocator: std.mem.Allocator, specialization: ?*const vk.SpecializationInfo) VkError![]SpecConstant {

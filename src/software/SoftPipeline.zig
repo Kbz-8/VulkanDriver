@@ -273,6 +273,7 @@ fn applySpecialization(runtime: *spv.Runtime, allocator: std.mem.Allocator, spec
             .size = @intCast(entry.size),
         }, data) catch return VkError.OutOfDeviceMemory;
     }
+    runtime.applySpecializationLayout(allocator) catch return VkError.OutOfDeviceMemory;
 }
 
 fn imageApi() spv.Runtime.ImageAPI {
@@ -338,13 +339,48 @@ fn subpassDataCoord(x: i32, y: i32, z: i32) SpvRuntimeError!vk.Offset3D {
     return .{ .x = coord.x + x, .y = coord.y + y, .z = coord.z + z };
 }
 
+fn bufferViewRange(buffer_view: *const SoftBufferView) SpvRuntimeError!usize {
+    const offset: usize = @intCast(buffer_view.interface.offset);
+    if (offset > buffer_view.interface.buffer.size)
+        return SpvRuntimeError.Unknown;
+
+    if (buffer_view.interface.range == vk.WHOLE_SIZE)
+        return @intCast(buffer_view.interface.buffer.size - offset);
+
+    return @intCast(buffer_view.interface.range);
+}
+
+fn mapBufferViewTexel(buffer_view: *const SoftBufferView, x: i32) SpvRuntimeError![]u8 {
+    if (x < 0)
+        return SpvRuntimeError.Unknown;
+
+    const texel_size = base.format.texelSize(buffer_view.interface.format);
+    const texel_index: usize = @intCast(x);
+    const range = try bufferViewRange(buffer_view);
+    const texel_offset = std.math.mul(usize, texel_index, texel_size) catch return SpvRuntimeError.Unknown;
+    if (texel_offset > range or texel_size > range - texel_offset)
+        return SpvRuntimeError.Unknown;
+
+    const buffer: *SoftBuffer = @alignCast(@fieldParentPtr("interface", buffer_view.interface.buffer));
+    return buffer.mapAsSliceWithOffset(
+        u8,
+        @as(usize, @intCast(buffer_view.interface.offset)) + texel_offset,
+        texel_size,
+    ) catch return SpvRuntimeError.Unknown;
+}
+
+fn bufferViewFromContext(context: *anyopaque) SpvRuntimeError!*SoftBufferView {
+    const addr = @intFromPtr(context);
+    if (!std.mem.isAligned(addr, @alignOf(SoftBufferView)))
+        return SpvRuntimeError.Unknown;
+    return @ptrCast(@alignCast(context));
+}
+
 fn readImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, lod: ?i32) SpvRuntimeError!spv.Runtime.Vec4(f32) {
     var pixel = zm.f32x4s(0.0);
     if (dim == .Buffer) {
-        const buffer_view: *SoftBufferView = @ptrCast(@alignCast(context));
-        const buffer: *SoftBuffer = @alignCast(@fieldParentPtr("interface", buffer_view.interface.buffer));
-        const map = buffer.mapAsSliceWithOffset(u8, buffer_view.interface.offset, buffer_view.interface.range) catch return SpvRuntimeError.Unknown;
-        pixel = blitter.readFloat4(map[(@as(usize, @intCast(x)) * base.format.texelSize(buffer_view.interface.format))..], buffer_view.interface.format);
+        const buffer_view = try bufferViewFromContext(context);
+        pixel = blitter.readFloat4(try mapBufferViewTexel(buffer_view, x), buffer_view.interface.format);
     } else {
         const image_view: *SoftImageView = @ptrCast(@alignCast(context));
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
@@ -387,10 +423,8 @@ fn readImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32,
 fn readImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, lod: ?i32) SpvRuntimeError!spv.Runtime.Vec4(u32) {
     var pixel = @Vector(4, u32){ 0, 0, 0, 0 };
     if (dim == .Buffer) {
-        const buffer_view: *SoftBufferView = @ptrCast(@alignCast(context));
-        const buffer: *SoftBuffer = @alignCast(@fieldParentPtr("interface", buffer_view.interface.buffer));
-        const map = buffer.mapAsSliceWithOffset(u8, buffer_view.interface.offset, buffer_view.interface.range) catch return SpvRuntimeError.Unknown;
-        pixel = blitter.readInt4(map[(@as(usize, @intCast(x)) * base.format.texelSize(buffer_view.interface.format))..], buffer_view.interface.format);
+        const buffer_view = try bufferViewFromContext(context);
+        pixel = blitter.readInt4(try mapBufferViewTexel(buffer_view, x), buffer_view.interface.format);
     } else {
         const image_view: *SoftImageView = @ptrCast(@alignCast(context));
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
@@ -433,10 +467,8 @@ fn readImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, l
 fn writeImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, pixel: spv.Runtime.Vec4(f32)) SpvRuntimeError!void {
     const vec_pixel = zm.f32x4(pixel.x, pixel.y, pixel.z, pixel.w);
     if (dim == .Buffer) {
-        const buffer_view: *SoftBufferView = @ptrCast(@alignCast(context));
-        const buffer: *SoftBuffer = @alignCast(@fieldParentPtr("interface", buffer_view.interface.buffer));
-        const map = buffer.mapAsSliceWithOffset(u8, buffer_view.interface.offset, buffer_view.interface.range) catch return SpvRuntimeError.Unknown;
-        blitter.writeFloat4(vec_pixel, map[(@as(usize, @intCast(x)) * base.format.texelSize(buffer_view.interface.format))..], buffer_view.interface.format);
+        const buffer_view = try bufferViewFromContext(context);
+        blitter.writeFloat4(vec_pixel, try mapBufferViewTexel(buffer_view, x), buffer_view.interface.format);
     } else {
         const image_view: *SoftImageView = @ptrCast(@alignCast(context));
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
@@ -461,10 +493,8 @@ fn writeImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32
 fn writeImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, pixel: spv.Runtime.Vec4(u32)) SpvRuntimeError!void {
     const vec_pixel = @Vector(4, u32){ pixel.x, pixel.y, pixel.z, pixel.w };
     if (dim == .Buffer) {
-        const buffer_view: *SoftBufferView = @ptrCast(@alignCast(context));
-        const buffer: *SoftBuffer = @alignCast(@fieldParentPtr("interface", buffer_view.interface.buffer));
-        const map = buffer.mapAsSliceWithOffset(u8, buffer_view.interface.offset, buffer_view.interface.range) catch return SpvRuntimeError.Unknown;
-        blitter.writeInt4(vec_pixel, map[(@as(usize, @intCast(x)) * base.format.texelSize(buffer_view.interface.format))..], buffer_view.interface.format);
+        const buffer_view = try bufferViewFromContext(context);
+        blitter.writeInt4(vec_pixel, try mapBufferViewTexel(buffer_view, x), buffer_view.interface.format);
     } else {
         const image_view: *SoftImageView = @ptrCast(@alignCast(context));
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
@@ -490,10 +520,8 @@ fn sampleImageFloat4(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim,
     var pixel = zm.f32x4s(0.0);
 
     if (dim == .Buffer) {
-        const buffer_view: *SoftBufferView = @ptrCast(@alignCast(context));
-        const buffer: *SoftBuffer = @alignCast(@fieldParentPtr("interface", buffer_view.interface.buffer));
-        const map = buffer.mapAsSliceWithOffset(u8, buffer_view.interface.offset, buffer_view.interface.range) catch return SpvRuntimeError.Unknown;
-        _ = map;
+        const buffer_view = try bufferViewFromContext(context);
+        _ = try bufferViewRange(buffer_view);
     } else {
         const image_view: *SoftImageView = @ptrCast(@alignCast(context));
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
@@ -514,10 +542,8 @@ fn sampleImageInt4(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim, x
     var pixel = @Vector(4, u32){ 0, 0, 0, 0 };
 
     if (dim == .Buffer) {
-        const buffer_view: *SoftBufferView = @ptrCast(@alignCast(context));
-        const buffer: *SoftBuffer = @alignCast(@fieldParentPtr("interface", buffer_view.interface.buffer));
-        const map = buffer.mapAsSliceWithOffset(u8, buffer_view.interface.offset, buffer_view.interface.range) catch return SpvRuntimeError.Unknown;
-        _ = map;
+        const buffer_view = try bufferViewFromContext(context);
+        _ = try bufferViewRange(buffer_view);
     } else {
         const image_view: *SoftImageView = @ptrCast(@alignCast(context));
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
@@ -546,11 +572,8 @@ fn sampleImageDref(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim, x
 
 fn queryImageSize(context: *anyopaque, dim: spv.SpvDim, arrayed: bool, lod: ?i32) SpvRuntimeError!spv.Runtime.Vec4(u32) {
     if (dim == .Buffer) {
-        const buffer_view: *SoftBufferView = @ptrCast(@alignCast(context));
-        const range = if (buffer_view.interface.range == vk.WHOLE_SIZE)
-            buffer_view.interface.buffer.size - buffer_view.interface.offset
-        else
-            buffer_view.interface.range;
+        const buffer_view = try bufferViewFromContext(context);
+        const range = try bufferViewRange(buffer_view);
         return .{
             .x = @intCast(@divTrunc(range, base.format.texelSize(buffer_view.interface.format))),
             .y = 0,

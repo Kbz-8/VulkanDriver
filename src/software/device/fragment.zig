@@ -30,6 +30,7 @@ pub fn shaderInvocation(
     batch_id: usize,
     position: zm.F32x4,
     point_coord: ?@Vector(2, f32),
+    sample_id: ?u32,
     front_face: bool,
     inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation,
     derivative_inputs: ?DerivativeInputs,
@@ -67,6 +68,13 @@ pub fn shaderInvocation(
             else => return err,
         };
     }
+    if (sample_id) |id| {
+        const sample_id_i32: i32 = @intCast(id);
+        rt.writeBuiltIn(allocator, std.mem.asBytes(&sample_id_i32), .SampleId) catch |err| switch (err) {
+            SpvRuntimeError.NotFound => {},
+            else => return err,
+        };
+    }
     rt.writeBuiltIn(allocator, std.mem.asBytes(&front_face), .FrontFacing) catch |err| switch (err) {
         SpvRuntimeError.NotFound => {},
         else => return err,
@@ -85,14 +93,28 @@ pub fn shaderInvocation(
 
     for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
         for (0..4) |component| {
+            var input = fragment_inputs[location][component];
             const result_word = rt.getResultByLocationComponent(@intCast(location), @intCast(component), .input) catch |err| switch (err) {
-                SpvRuntimeError.NotFound => continue,
+                SpvRuntimeError.NotFound => {
+                    if (input.blob.len != 0) {
+                        rt.writeInputLocation(input.blob, @intCast(location)) catch |write_err| switch (write_err) {
+                            SpvRuntimeError.NotFound => {},
+                            else => return write_err,
+                        };
+                    }
+                    continue;
+                },
                 else => return err,
             };
 
-            var input = fragment_inputs[location][component];
+            const has_result_value = rt.results[result_word].variant != null;
+            const memory_size = if (has_result_value)
+                try rt.getResultMemorySize(result_word)
+            else if (input.blob.len == 0)
+                try rt.getInputLocationMemorySize(@intCast(location))
+            else
+                input.blob.len;
             if (input.blob.len == 0) {
-                const memory_size = try rt.getResultMemorySize(result_word);
                 const zeroes = allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return SpvRuntimeError.OutOfMemory;
                 @memset(zeroes, 0);
                 fragment_inputs[location][component] = .{
@@ -104,7 +126,10 @@ pub fn shaderInvocation(
             }
 
             if (input.blob.len != 0) {
-                try rt.writeInput(allocator, input.blob, result_word);
+                if (!has_result_value or input.blob.len < memory_size)
+                    try rt.writeInputLocation(input.blob, @intCast(location))
+                else
+                    try rt.writeInput(allocator, input.blob, result_word);
                 if (derivatives) |derivative| {
                     const dx = derivative.dx[location][component];
                     const dy = derivative.dy[location][component];

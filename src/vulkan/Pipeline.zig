@@ -53,6 +53,8 @@ mode: union(enum) {
         multisample: struct {
             rasterization_samples: vk.SampleCountFlags,
             sample_mask: ?[]vk.SampleMask,
+            alpha_to_coverage_enable: vk.Bool32,
+            alpha_to_one_enable: vk.Bool32,
         },
         color_blend: struct {
             attachments: ?[]vk.PipelineColorBlendAttachmentState,
@@ -198,6 +200,8 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
                         break :blk .{
                             .rasterization_samples = .{ .@"1_bit" = true },
                             .sample_mask = null,
+                            .alpha_to_coverage_enable = .false,
+                            .alpha_to_one_enable = .false,
                         };
                     }
 
@@ -209,6 +213,8 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
                             sample_mask = allocator.dupe(vk.SampleMask, mask[0..mask_word_count]) catch return VkError.OutOfHostMemory;
                             break :blk_mask sample_mask;
                         } else null,
+                        .alpha_to_coverage_enable = state.alpha_to_coverage_enable,
+                        .alpha_to_one_enable = state.alpha_to_one_enable,
                     };
                 },
                 .color_blend = blk: {

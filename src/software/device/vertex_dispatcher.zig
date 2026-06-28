@@ -68,10 +68,7 @@ inline fn run(data: RunData) !void {
         const vertex_index: usize = vertex_index_u32;
         const instance_index = data.first_instance + data.instance_index;
 
-        setupBuiltins(rt, data.allocator, vertex_index_u32, instance_index) catch |err| switch (err) {
-            SpvRuntimeError.NotFound => {},
-            else => return err,
-        };
+        try setupBuiltins(rt, data.allocator, vertex_index_u32, instance_index);
 
         if (data.pipeline.interface.mode.graphics.input_assembly.attribute_description) |attributes| {
             for (attributes) |attribute| {
@@ -118,10 +115,7 @@ inline fn run(data: RunData) !void {
 
                 const memory_size = try rt.getResultMemorySize(result_word);
 
-                const result_is_integer = blk: {
-                    const result_type = rt.getResultPrimitiveType(result_word) catch break :blk false;
-                    break :blk result_type == .SInt or result_type == .UInt;
-                };
+                const result_is_integer = resultIsInteger(rt, result_word);
 
                 output.outputs[location][component] = .{
                     .interpolation_type = if (rt.hasResultDecoration(result_word, .Flat) or result_is_integer) .flat else .smooth, // TODO : handle noperspective
@@ -149,7 +143,7 @@ fn readPosition(rt: *spv.Runtime, output: []u8) !void {
     if (rt.readBuiltIn(output, .Position)) {
         return;
     } else |err| switch (err) {
-        SpvRuntimeError.InvalidSpirV => {},
+        SpvRuntimeError.InvalidSpirV, SpvRuntimeError.NotFound => {},
         else => return err,
     }
 
@@ -212,11 +206,40 @@ fn isConstantZero(rt: *spv.Runtime, result_word: spv.SpvWord) bool {
     }
 }
 
+fn resultIsInteger(rt: *spv.Runtime, result_word: spv.SpvWord) bool {
+    const value = (rt.results[result_word].getConstValue() catch return false);
+    return valueIsInteger(value);
+}
+
+fn valueIsInteger(value: anytype) bool {
+    return switch (value.*) {
+        .Int,
+        .Vector2i32,
+        .Vector3i32,
+        .Vector4i32,
+        .Vector2u32,
+        .Vector3u32,
+        .Vector4u32,
+        => true,
+        .Vector,
+        .Matrix,
+        => |values| values.len != 0 and valueIsInteger(&values[0]),
+        .Array => |array| array.values.len != 0 and valueIsInteger(&array.values[0]),
+        else => false,
+    };
+}
+
 fn setupBuiltins(rt: *spv.Runtime, allocator: std.mem.Allocator, vertex_index_u32: u32, instance_index: usize) !void {
     const instance_index_u32: u32 = @intCast(instance_index);
 
-    try rt.writeBuiltIn(allocator, std.mem.asBytes(&vertex_index_u32), .VertexIndex);
-    try rt.writeBuiltIn(allocator, std.mem.asBytes(&instance_index_u32), .InstanceIndex);
+    rt.writeBuiltIn(allocator, std.mem.asBytes(&vertex_index_u32), .VertexIndex) catch |err| switch (err) {
+        SpvRuntimeError.NotFound => {},
+        else => return err,
+    };
+    rt.writeBuiltIn(allocator, std.mem.asBytes(&instance_index_u32), .InstanceIndex) catch |err| switch (err) {
+        SpvRuntimeError.NotFound => {},
+        else => return err,
+    };
 }
 
 fn writeVertexInput(rt: *spv.Runtime, allocator: std.mem.Allocator, raw_input: []const u8, format: vk.Format, location: u32) !void {

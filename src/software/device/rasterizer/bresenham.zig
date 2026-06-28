@@ -1,6 +1,7 @@
 const std = @import("std");
 const base = @import("base");
 const spv = @import("spv");
+const vk = @import("vulkan");
 const zm = base.zm;
 
 const common = @import("common.zig");
@@ -42,6 +43,31 @@ pub fn drawLine(
     depth_attachment_access: ?*common.RenderTargetAccess,
     stencil_attachment_access: ?*common.RenderTargetAccess,
 ) VkError!void {
+    try drawLineWithEndpointMode(allocator, draw_call, v0, v1, color_attachment_access, depth_attachment_access, stencil_attachment_access, false);
+}
+
+pub fn drawLineIncludingEndpoint(
+    allocator: std.mem.Allocator,
+    draw_call: *Renderer.DrawCall,
+    v0: *Renderer.Vertex,
+    v1: *Renderer.Vertex,
+    color_attachment_access: []const ?common.RenderTargetAccess,
+    depth_attachment_access: ?*common.RenderTargetAccess,
+    stencil_attachment_access: ?*common.RenderTargetAccess,
+) VkError!void {
+    try drawLineWithEndpointMode(allocator, draw_call, v0, v1, color_attachment_access, depth_attachment_access, stencil_attachment_access, true);
+}
+
+fn drawLineWithEndpointMode(
+    allocator: std.mem.Allocator,
+    draw_call: *Renderer.DrawCall,
+    v0: *Renderer.Vertex,
+    v1: *Renderer.Vertex,
+    color_attachment_access: []const ?common.RenderTargetAccess,
+    depth_attachment_access: ?*common.RenderTargetAccess,
+    stencil_attachment_access: ?*common.RenderTargetAccess,
+    include_last_endpoint: bool,
+) VkError!void {
     const io = draw_call.renderer.device.interface.io();
 
     var x0: i32 = @intFromFloat(v0.position[0]);
@@ -76,7 +102,7 @@ pub fn drawLine(
     if (runtimes_count == 0)
         return;
 
-    const step_count: usize = @intCast(@max(d_x, 0) + 1);
+    const step_count: usize = @intCast(if (include_last_endpoint) @max(d_x, 0) + 1 else @max(d_x, 1));
     const runs_count = @min(runtimes_count, step_count);
     const steps_per_run = @divTrunc(step_count + runs_count - 1, runs_count);
 
@@ -125,6 +151,62 @@ fn bresenhamYAtStep(y0: i32, d_x: i32, d_err: i32, y_step: i32, step: usize) i32
     return y0 + (y_step * y_offset);
 }
 
+fn standardSamplePosition(sample_count: usize, sample_index: usize) struct { x: f32, y: f32 } {
+    return switch (sample_count) {
+        1 => .{ .x = 0.5, .y = 0.5 },
+        2 => switch (sample_index) {
+            0 => .{ .x = 0.75, .y = 0.75 },
+            1 => .{ .x = 0.25, .y = 0.25 },
+            else => .{ .x = 0.5, .y = 0.5 },
+        },
+        4 => switch (sample_index) {
+            0 => .{ .x = 0.375, .y = 0.125 },
+            1 => .{ .x = 0.875, .y = 0.375 },
+            2 => .{ .x = 0.125, .y = 0.625 },
+            3 => .{ .x = 0.625, .y = 0.875 },
+            else => .{ .x = 0.5, .y = 0.5 },
+        },
+        else => .{ .x = 0.5, .y = 0.5 },
+    };
+}
+
+fn lineCoverageMask(data: RunData, pixel_x: i32, pixel_y: i32, sample_count: usize) vk.SampleMask {
+    if (sample_count <= 1)
+        return 1;
+
+    const a = data.start_vertex.position;
+    const b = data.end_vertex.position;
+    const ab_x = b[0] - a[0];
+    const ab_y = b[1] - a[1];
+    const ab_len2 = ab_x * ab_x + ab_y * ab_y;
+    if (ab_len2 == 0.0)
+        return 1;
+
+    var mask: vk.SampleMask = 0;
+    for (0..sample_count) |sample_index| {
+        if (sample_index >= @bitSizeOf(vk.SampleMask))
+            break;
+
+        const sample_pos = standardSamplePosition(sample_count, sample_index);
+        const sample_x = @as(f32, @floatFromInt(pixel_x)) + sample_pos.x;
+        const sample_y = @as(f32, @floatFromInt(pixel_y)) + sample_pos.y;
+        const ap_x = sample_x - a[0];
+        const ap_y = sample_y - a[1];
+        const t = std.math.clamp(((ap_x * ab_x) + (ap_y * ab_y)) / ab_len2, 0.0, 1.0);
+        const closest_x = a[0] + ab_x * t;
+        const closest_y = a[1] + ab_y * t;
+        const dx = sample_x - closest_x;
+        const dy = sample_y - closest_y;
+
+        if (dx * dx + dy * dy <= 0.25) {
+            const bit_index: u5 = @intCast(sample_index);
+            mask |= @as(vk.SampleMask, 1) << bit_index;
+        }
+    }
+
+    return if (mask == 0) 1 else mask;
+}
+
 fn runWrapper(data: RunData) void {
     @call(.always_inline, run, .{data}) catch |err| {
         std.log.scoped(.@"Rasterization stage").err("line fill mode catched a '{s}'", .{@errorName(err)});
@@ -165,6 +247,7 @@ inline fn run(data: RunData) !void {
                 data.batch_id,
                 zm.f32x4(@as(f32, @floatFromInt(pixel_x)) + 0.5, @as(f32, @floatFromInt(pixel_y)) + 0.5, z, frag_w),
                 null,
+                null,
                 true,
                 try common.interpolateLineOutputs(data.allocator, data.start_vertex, data.end_vertex, t),
                 null,
@@ -193,7 +276,12 @@ inline fn run(data: RunData) !void {
             @intCast(pixel_x),
             @intCast(pixel_y),
             fragment_result.depth orelse z,
-            null,
+            lineCoverageMask(
+                data,
+                pixel_x,
+                pixel_y,
+                data.draw_call.renderer.state.pipeline.?.interface.mode.graphics.multisample.rasterization_samples.toInt(),
+            ),
             fragment_result.sample_mask,
         );
     }

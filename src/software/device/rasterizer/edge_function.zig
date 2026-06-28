@@ -13,6 +13,11 @@ const VkError = base.VkError;
 const SpvRuntimeError = spv.Runtime.RuntimeError;
 const F32x4 = zm.F32x4;
 
+const SamplePosition = struct {
+    x: f32,
+    y: f32,
+};
+
 const RunData = struct {
     allocator: std.mem.Allocator,
     draw_call: *Renderer.DrawCall,
@@ -25,12 +30,15 @@ const RunData = struct {
     v0: Renderer.Vertex,
     v1: Renderer.Vertex,
     v2: Renderer.Vertex,
+    provoking_vertex: Renderer.Vertex,
     color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
     stencil_attachment_access: ?*common.RenderTargetAccess,
     front_face: bool,
     has_fragment_shader: bool,
     fragment_uses_derivatives: bool,
+    fragment_uses_sample_id: bool,
+    fragment_uses_centroid: bool,
 };
 
 pub fn drawTriangle(
@@ -39,6 +47,7 @@ pub fn drawTriangle(
     v0: *Renderer.Vertex,
     v1: *Renderer.Vertex,
     v2: *Renderer.Vertex,
+    provoking_vertex: *Renderer.Vertex,
     color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
     stencil_attachment_access: ?*common.RenderTargetAccess,
@@ -59,6 +68,14 @@ pub fn drawTriangle(
     const fragment_stage = pipeline.stages.getPtr(.fragment);
     const fragment_uses_derivatives = if (fragment_stage) |stage|
         stage.module.module.reflection_infos.needs_derivatives
+    else
+        false;
+    const fragment_uses_sample_id = if (fragment_stage) |stage|
+        stage.module.module.builtins.get(.SampleId) != null
+    else
+        false;
+    const fragment_uses_centroid = if (fragment_stage) |stage|
+        fragmentStageUsesInputDecoration(stage, .Centroid)
     else
         false;
 
@@ -102,6 +119,7 @@ pub fn drawTriangle(
                 .v0 = v0.*,
                 .v1 = v1.*,
                 .v2 = v2.*,
+                .provoking_vertex = provoking_vertex.*,
                 .area = area,
                 .min_x = run_min_x,
                 .max_x = run_max_x,
@@ -113,6 +131,8 @@ pub fn drawTriangle(
                 .front_face = front_face,
                 .has_fragment_shader = fragment_stage != null,
                 .fragment_uses_derivatives = fragment_uses_derivatives,
+                .fragment_uses_sample_id = fragment_uses_sample_id,
+                .fragment_uses_centroid = fragment_uses_centroid,
             };
 
             draw_call.rasterizer_wait_group.async(io, runWrapper, .{run_data});
@@ -139,7 +159,7 @@ inline fn edgeContainsPixel(a: F32x4, b: F32x4, edge_value: f32, area: f32) bool
         edge_value < 0.0 or (edge_value == 0.0 and isInclusiveEdge(b, a));
 }
 
-inline fn standardSamplePosition(sample_count: usize, sample_index: usize) struct { x: f32, y: f32 } {
+inline fn standardSamplePosition(sample_count: usize, sample_index: usize) SamplePosition {
     return switch (sample_count) {
         1 => .{ .x = 0.5, .y = 0.5 },
         2 => switch (sample_index) {
@@ -156,6 +176,32 @@ inline fn standardSamplePosition(sample_count: usize, sample_index: usize) struc
         },
         else => .{ .x = 0.5, .y = 0.5 },
     };
+}
+
+fn fragmentStageUsesInputDecoration(stage: anytype, decoration: anytype) bool {
+    const rt = &stage.runtimes[0].rt;
+    for (rt.mod.input_locations) |location| {
+        for (location) |result_word| {
+            if (result_word == 0)
+                continue;
+
+            if (rt.hasResultDecoration(result_word, decoration))
+                return true;
+        }
+    }
+    return false;
+}
+
+fn firstCoveredSamplePosition(sample_count: usize, coverage_sample_mask: vk.SampleMask) SamplePosition {
+    for (0..sample_count) |sample_index| {
+        if (sample_index >= @bitSizeOf(vk.SampleMask))
+            break;
+
+        const bit_index: u5 = @intCast(sample_index);
+        if ((coverage_sample_mask & (@as(vk.SampleMask, 1) << bit_index)) != 0)
+            return standardSamplePosition(sample_count, sample_index);
+    }
+    return .{ .x = 0.5, .y = 0.5 };
 }
 
 fn triangleCoverageMask(data: RunData, x: i32, y: i32, sample_count: usize) vk.SampleMask {
@@ -226,14 +272,84 @@ inline fn run(data: RunData) !void {
             const b2 = w2 / data.area;
             const z = (b0 * data.v0.position[2]) + (b1 * data.v1.position[2]) + (b2 * data.v2.position[2]);
             const frag_w = (b0 / data.v0.position[3]) + (b1 / data.v1.position[3]) + (b2 / data.v2.position[3]);
+            const interpolation_barycentrics = if (data.fragment_uses_centroid and sample_count > 1) blk: {
+                const sample_pos = firstCoveredSamplePosition(sample_count, coverage_sample_mask);
+                const centroid_p = zm.f32x4(
+                    @as(f32, @floatFromInt(x)) + sample_pos.x,
+                    @as(f32, @floatFromInt(y)) + sample_pos.y,
+                    0.0,
+                    1.0,
+                );
+                const centroid_w0 = edgeFunction(data.v1.position, data.v2.position, centroid_p);
+                const centroid_w1 = edgeFunction(data.v2.position, data.v0.position, centroid_p);
+                const centroid_w2 = edgeFunction(data.v0.position, data.v1.position, centroid_p);
+                break :blk .{
+                    centroid_w0 / data.area,
+                    centroid_w1 / data.area,
+                    centroid_w2 / data.area,
+                };
+            } else .{ b0, b1, b2 };
+            const input_b0 = interpolation_barycentrics[0];
+            const input_b1 = interpolation_barycentrics[1];
+            const input_b2 = interpolation_barycentrics[2];
 
             var fragment_result: fragment.InvocationResult = .{
                 .outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8),
                 .depth = null,
                 .sample_mask = null,
             };
+            if (data.has_fragment_shader and data.fragment_uses_sample_id and sample_count > 1) {
+                for (0..sample_count) |sample_index| {
+                    if (sample_index >= @bitSizeOf(vk.SampleMask))
+                        break;
+
+                    const bit_index: u5 = @intCast(sample_index);
+                    const sample_coverage_mask = @as(vk.SampleMask, 1) << bit_index;
+                    if ((coverage_sample_mask & sample_coverage_mask) == 0)
+                        continue;
+
+                    const inputs = try common.interpolateVertexOutputs(data.allocator, &data.v0, &data.v1, &data.v2, &data.provoking_vertex, input_b0, input_b1, input_b2);
+                    const sample_result = fragment.shaderInvocation(
+                        data.allocator,
+                        data.draw_call,
+                        data.batch_id,
+                        zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, z, frag_w),
+                        null,
+                        @intCast(sample_index),
+                        data.front_face,
+                        inputs,
+                        null,
+                    ) catch |err| {
+                        if (err == SpvRuntimeError.Killed)
+                            continue;
+
+                        std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
+                        if (comptime base.config.logs == .verbose) {
+                            if (@errorReturnTrace()) |trace| {
+                                std.debug.dumpErrorReturnTrace(trace);
+                            }
+                        }
+                        return;
+                    };
+
+                    try common.writeToTargets(
+                        sample_result.outputs,
+                        data.draw_call,
+                        data.color_attachment_access,
+                        data.depth_attachment_access,
+                        data.stencil_attachment_access,
+                        data.front_face,
+                        @intCast(x),
+                        @intCast(y),
+                        sample_result.depth orelse z,
+                        sample_coverage_mask,
+                        sample_result.sample_mask,
+                    );
+                }
+                continue;
+            }
             if (data.has_fragment_shader) {
-                const inputs = try common.interpolateVertexOutputs(data.allocator, &data.v0, &data.v1, &data.v2, b0, b1, b2);
+                const inputs = try common.interpolateVertexOutputs(data.allocator, &data.v0, &data.v1, &data.v2, &data.provoking_vertex, input_b0, input_b1, input_b2);
                 const derivative_inputs: ?fragment.DerivativeInputs = if (data.fragment_uses_derivatives) blk: {
                     var derivatives: fragment.DerivativeInputs = undefined;
 
@@ -246,6 +362,9 @@ inline fn run(data: RunData) !void {
                         &data.v0,
                         &data.v1,
                         &data.v2,
+                        b0,
+                        b1,
+                        b2,
                         (dx_w0 / data.area) - b0,
                         (dx_w1 / data.area) - b1,
                         (dx_w2 / data.area) - b2,
@@ -260,6 +379,9 @@ inline fn run(data: RunData) !void {
                         &data.v0,
                         &data.v1,
                         &data.v2,
+                        b0,
+                        b1,
+                        b2,
                         (dy_w0 / data.area) - b0,
                         (dy_w1 / data.area) - b1,
                         (dy_w2 / data.area) - b2,
@@ -272,6 +394,7 @@ inline fn run(data: RunData) !void {
                     data.draw_call,
                     data.batch_id,
                     zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, z, frag_w),
+                    null,
                     null,
                     data.front_face,
                     inputs,

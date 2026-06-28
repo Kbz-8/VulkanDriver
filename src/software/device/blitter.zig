@@ -186,9 +186,19 @@ fn sample(src: []const u8, pos: F32x4, dim: F32x4, slice_bytes: usize, pitch_byt
             z = std.math.clamp(z, 0, @as(usize, @intFromFloat(dim[2])) - 1);
         }
 
-        const src_map = src[computeOffset3D(x, y, z, slice_bytes, pitch_bytes, src_texel_size)..];
+        const offset = computeOffset3D(x, y, z, slice_bytes, pitch_bytes, src_texel_size);
+        const src_map = src[offset..];
 
-        color = readFloat4(src_map, state.src_format);
+        if (state.src_samples > 1 and state.dst_samples == 1 and !base.format.isUnnormalizedInteger(state.src_format)) {
+            const sample_stride = slice_bytes * @as(usize, @intFromFloat(dim[2]));
+            color = zm.f32x4s(0.0);
+            for (0..state.src_samples) |sample_index| {
+                color += readFloat4(src_map[sample_index * sample_stride ..], state.src_format);
+            }
+            color /= zm.f32x4s(@floatFromInt(state.src_samples));
+        } else {
+            color = readFloat4(src_map, state.src_format);
+        }
     } else {
         var x: f32 = pos[0];
         var y: f32 = pos[1];

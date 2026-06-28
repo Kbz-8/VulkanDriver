@@ -204,7 +204,7 @@ pub fn writeDescriptorSets(state: *PipelineState, rt: *spv.Runtime) !void {
                         const addr: usize = @intFromPtr(buffer_view);
                         writeDescriptorSet(
                             rt,
-                            .{ .raw = std.mem.asBytes(&addr) },
+                            .{ .sampled_image = .{ .image = addr, .sampler = addr } },
                             @as(u32, @intCast(set_index)),
                             @as(u32, @intCast(binding_index)),
                             @as(u32, @intCast(descriptor_index)),

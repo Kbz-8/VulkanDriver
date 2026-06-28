@@ -1591,6 +1591,10 @@ pub export fn apeGetPipelineCacheData(p_device: vk.Device, p_cache: vk.PipelineC
 
     const available = cache.availableDataSize();
     const result = if (data) |ptr| blk: {
+        if (size.* < @sizeOf(PipelineCache.Header)) {
+            size.* = 0;
+            return .incomplete;
+        }
         const bytes = @as([*]u8, @ptrCast(ptr))[0..size.*];
         break :blk cache.getData(bytes);
     } else cache.getData(null);
