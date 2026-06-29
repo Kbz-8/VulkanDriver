@@ -120,8 +120,9 @@ pub fn viewportTransformVertex(viewport: vk.Viewport, vertex: *Vertex) void {
     const o_y = viewport.y + viewport.height / 2.0;
     const o_z = viewport.min_depth;
 
-    const x_screen = ((p_x / 2.0) * x_ndc) + o_x;
-    const y_screen = ((p_y / 2.0) * y_ndc) + o_y;
+    const subpixel_scale = 16.0;
+    const x_screen = @round((((p_x / 2.0) * x_ndc) + o_x) * subpixel_scale) / subpixel_scale;
+    const y_screen = @round((((p_y / 2.0) * y_ndc) + o_y) * subpixel_scale) / subpixel_scale;
     const z_screen = (p_z * z_ndc) + o_z;
 
     vertex.position = zm.f32x4(x_screen, y_screen, z_screen, w);

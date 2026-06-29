@@ -301,6 +301,7 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
             device.renderer.framebuffer = impl.framebuffer;
             device.renderer.render_area = impl.render_area;
             device.renderer.subpass_index = 0;
+            device.renderer.resetInputAttachmentSnapshots();
 
             for (impl.render_pass.interface.attachments, impl.framebuffer.interface.attachments, 0..) |desc, attachment, index| {
                 if (!attachmentIsReferencedBySubpass(impl.render_pass, @intCast(index)))
@@ -1021,6 +1022,7 @@ pub fn endRenderPass(interface: *Interface) VkError!void {
 
             try framebuffer.resolveAttachments(render_pass, device.renderer.subpass_index);
 
+            device.renderer.resetInputAttachmentSnapshots();
             device.renderer.render_pass = null;
             device.renderer.framebuffer = null;
             device.renderer.render_area = null;
@@ -1125,6 +1127,7 @@ pub fn nextSubpass(interface: *Interface, _: vk.SubpassContents) VkError!void {
 
             try framebuffer.resolveAttachments(render_pass, device.renderer.subpass_index);
 
+            device.renderer.resetInputAttachmentSnapshots();
             device.renderer.subpass_index += 1;
         }
     };

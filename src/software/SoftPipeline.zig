@@ -11,7 +11,19 @@ const Device = base.Device;
 const VkError = base.VkError;
 const SpvRuntimeError = spv.Runtime.RuntimeError;
 
+pub const InputAttachmentSnapshot = struct {
+    image: *base.Image,
+    aspect_mask: vk.ImageAspectFlags,
+    mip_level: u32,
+    array_layer: u32,
+    data: []const u8,
+    row_pitch: usize,
+    slice_pitch: usize,
+    sample_stride: usize,
+};
+
 pub threadlocal var current_fragment_coord: ?vk.Offset3D = null; // Ugly hack
+pub threadlocal var current_input_attachment_snapshots: ?[]const InputAttachmentSnapshot = null;
 
 const NonDispatchable = base.NonDispatchable;
 const ShaderModule = base.ShaderModule;
@@ -336,6 +348,32 @@ fn sampledTexelOffset(image: *SoftImage, offset: vk.Offset3D, subresource: vk.Im
         @as(usize, sample_index) * image.getMipLevelSize(subresource.aspect_mask, subresource.mip_level);
 }
 
+fn sampledSnapshotTexel(snapshot: InputAttachmentSnapshot, offset: vk.Offset3D, format: vk.Format, sample_index: u32) SpvRuntimeError![]const u8 {
+    const texel_size = base.format.texelSize(format);
+    const texel_offset =
+        @as(usize, @intCast(offset.z)) * snapshot.slice_pitch +
+        @as(usize, @intCast(offset.y)) * snapshot.row_pitch +
+        @as(usize, @intCast(offset.x)) * texel_size +
+        @as(usize, sample_index) * snapshot.sample_stride;
+    if (texel_offset > snapshot.data.len or texel_size > snapshot.data.len - texel_offset)
+        return SpvRuntimeError.OutOfBounds;
+    return snapshot.data[texel_offset .. texel_offset + texel_size];
+}
+
+fn findInputAttachmentSnapshot(image_view: *SoftImageView, subresource: vk.ImageSubresource) ?InputAttachmentSnapshot {
+    const snapshots = current_input_attachment_snapshots orelse return null;
+    for (snapshots) |snapshot| {
+        if (snapshot.image == image_view.interface.image and
+            snapshot.aspect_mask.toInt() == subresource.aspect_mask.toInt() and
+            snapshot.mip_level == subresource.mip_level and
+            snapshot.array_layer == subresource.array_layer)
+        {
+            return snapshot;
+        }
+    }
+    return null;
+}
+
 fn readImageFloat4Sample(image: *SoftImage, offset: vk.Offset3D, subresource: vk.ImageSubresource, format: vk.Format, sample_index: u32) VkError!zm.F32x4 {
     if (image.interface.samples.toInt() == 1)
         return image.readFloat4(offset, subresource, format);
@@ -356,18 +394,27 @@ fn readImageInt4Sample(image: *SoftImage, offset: vk.Offset3D, subresource: vk.I
 
 fn subpassDataCoord(x: i32, y: i32, z: i32) SpvRuntimeError!vk.Offset3D {
     const coord = current_fragment_coord orelse return SpvRuntimeError.Unknown;
-    return .{ .x = coord.x + x, .y = coord.y + y, .z = coord.z + z };
+    _ = z;
+    return .{ .x = coord.x + x, .y = coord.y + y, .z = coord.z };
 }
 
 fn bufferViewRange(buffer_view: *const SoftBufferView) SpvRuntimeError!usize {
     const offset: usize = @intCast(buffer_view.interface.offset);
-    if (offset > buffer_view.interface.buffer.size)
+    const buffer = buffer_view.interface.buffer;
+    const bound_size: usize = if (buffer.memory) |memory| blk: {
+        const buffer_offset: usize = @intCast(buffer.offset);
+        if (buffer_offset >= memory.size)
+            break :blk 0;
+        break :blk @min(@as(usize, @intCast(buffer.size)), @as(usize, @intCast(memory.size - buffer.offset)));
+    } else @intCast(buffer.size);
+
+    if (offset > bound_size)
         return SpvRuntimeError.Unknown;
 
     if (buffer_view.interface.range == vk.WHOLE_SIZE)
-        return @intCast(buffer_view.interface.buffer.size - offset);
+        return bound_size - offset;
 
-    return @intCast(buffer_view.interface.range);
+    return @min(@as(usize, @intCast(buffer_view.interface.range)), bound_size - offset);
 }
 
 fn mapBufferViewTexel(buffer_view: *const SoftBufferView, x: i32) SpvRuntimeError![]u8 {
@@ -400,7 +447,10 @@ fn readImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32,
     var pixel = zm.f32x4s(0.0);
     if (dim == .Buffer) {
         const buffer_view = try bufferViewFromContext(context);
-        pixel = blitter.readFloat4(try mapBufferViewTexel(buffer_view, x), buffer_view.interface.format);
+        pixel = if (mapBufferViewTexel(buffer_view, x)) |texel|
+            blitter.readFloat4(texel, buffer_view.interface.format)
+        else |_|
+            zm.f32x4s(0.0);
     } else {
         const image_view: *SoftImageView = @ptrCast(@alignCast(context));
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
@@ -424,13 +474,14 @@ fn readImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32,
             .array_layer = array_layer,
         };
         const sample_index: u32 = if (image.interface.samples.toInt() > 1) @intCast(z) else 0;
-        pixel = SoftSampler.swizzleFloat4(readImageFloat4Sample(
-            image,
-            image_coord,
-            subresource,
-            base.format.fromAspect(image_view.interface.format, aspect_mask),
-            sample_index,
-        ) catch return SpvRuntimeError.Unknown, image_view.interface.components);
+        const format = base.format.fromAspect(image_view.interface.format, aspect_mask);
+        const raw_pixel = if (dim == .SubpassData) blk: {
+            if (findInputAttachmentSnapshot(image_view, subresource)) |snapshot| {
+                break :blk blitter.readFloat4(try sampledSnapshotTexel(snapshot, image_coord, format, sample_index), format);
+            }
+            break :blk readImageFloat4Sample(image, image_coord, subresource, format, sample_index) catch return SpvRuntimeError.Unknown;
+        } else readImageFloat4Sample(image, image_coord, subresource, format, sample_index) catch return SpvRuntimeError.Unknown;
+        pixel = SoftSampler.swizzleFloat4(raw_pixel, image_view.interface.components);
     }
     return .{
         .x = pixel[0],
@@ -444,7 +495,10 @@ fn readImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, l
     var pixel = @Vector(4, u32){ 0, 0, 0, 0 };
     if (dim == .Buffer) {
         const buffer_view = try bufferViewFromContext(context);
-        pixel = blitter.readInt4(try mapBufferViewTexel(buffer_view, x), buffer_view.interface.format);
+        pixel = if (mapBufferViewTexel(buffer_view, x)) |texel|
+            blitter.readInt4(texel, buffer_view.interface.format)
+        else |_|
+            @Vector(4, u32){ 0, 0, 0, 0 };
     } else {
         const image_view: *SoftImageView = @ptrCast(@alignCast(context));
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
@@ -468,13 +522,14 @@ fn readImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, l
             .array_layer = array_layer,
         };
         const sample_index: u32 = if (image.interface.samples.toInt() > 1) @intCast(z) else 0;
-        pixel = SoftSampler.swizzleInt4(readImageInt4Sample(
-            image,
-            image_coord,
-            subresource,
-            base.format.fromAspect(image_view.interface.format, aspect_mask),
-            sample_index,
-        ) catch return SpvRuntimeError.Unknown, image_view.interface.components);
+        const format = base.format.fromAspect(image_view.interface.format, aspect_mask);
+        const raw_pixel = if (dim == .SubpassData) blk: {
+            if (findInputAttachmentSnapshot(image_view, subresource)) |snapshot| {
+                break :blk blitter.readInt4(try sampledSnapshotTexel(snapshot, image_coord, format, sample_index), format);
+            }
+            break :blk readImageInt4Sample(image, image_coord, subresource, format, sample_index) catch return SpvRuntimeError.Unknown;
+        } else readImageInt4Sample(image, image_coord, subresource, format, sample_index) catch return SpvRuntimeError.Unknown;
+        pixel = SoftSampler.swizzleInt4(raw_pixel, image_view.interface.components);
     }
     return .{
         .x = pixel[0],
@@ -488,7 +543,9 @@ fn writeImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32
     const vec_pixel = zm.f32x4(pixel.x, pixel.y, pixel.z, pixel.w);
     if (dim == .Buffer) {
         const buffer_view = try bufferViewFromContext(context);
-        blitter.writeFloat4(vec_pixel, try mapBufferViewTexel(buffer_view, x), buffer_view.interface.format);
+        if (mapBufferViewTexel(buffer_view, x)) |texel| {
+            blitter.writeFloat4(vec_pixel, texel, buffer_view.interface.format);
+        } else |_| {}
     } else {
         const image_view: *SoftImageView = @ptrCast(@alignCast(context));
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
@@ -514,7 +571,9 @@ fn writeImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, 
     const vec_pixel = @Vector(4, u32){ pixel.x, pixel.y, pixel.z, pixel.w };
     if (dim == .Buffer) {
         const buffer_view = try bufferViewFromContext(context);
-        blitter.writeInt4(vec_pixel, try mapBufferViewTexel(buffer_view, x), buffer_view.interface.format);
+        if (mapBufferViewTexel(buffer_view, x)) |texel| {
+            blitter.writeInt4(vec_pixel, texel, buffer_view.interface.format);
+        } else |_| {}
     } else {
         const image_view: *SoftImageView = @ptrCast(@alignCast(context));
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
@@ -580,14 +639,14 @@ fn sampleImageInt4(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim, x
     };
 }
 
-fn sampleImageDref(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim, x: f32, y: f32, z: f32, dref: f32, lod: ?f32, offset: spv.Runtime.ImageOffset) SpvRuntimeError!f32 {
+fn sampleImageDref(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim, x: f32, y: f32, z: f32, w: f32, dref: f32, lod: ?f32, offset: spv.Runtime.ImageOffset) SpvRuntimeError!f32 {
     if (dim == .Buffer)
         return SpvRuntimeError.UnsupportedSpirV;
 
     const image_view: *SoftImageView = @ptrCast(@alignCast(context));
     const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
     const sampler: *SoftSampler = @ptrCast(@alignCast(context2));
-    return SoftSampler.sampleImageDref(image, image_view, sampler, dim, x, y, z, dref, lod, offset) catch return SpvRuntimeError.Unknown;
+    return SoftSampler.sampleImageDref(image, image_view, sampler, dim, x, y, z, w, dref, lod, offset) catch return SpvRuntimeError.Unknown;
 }
 
 fn queryImageSize(context: *anyopaque, dim: spv.SpvDim, arrayed: bool, lod: ?i32) SpvRuntimeError!spv.Runtime.Vec4(u32) {

@@ -422,6 +422,17 @@ fn readSampledFloat4At(context: *const ImageSamplingContext, ix: i32, iy: i32, i
     return swizzleFloat4(color, context.image_view.interface.components);
 }
 
+const DepthCompareSamplingContext = struct {
+    image_context: ImageSamplingContext,
+    dref: f32,
+};
+
+fn readDepthCompareAt(context: *const DepthCompareSamplingContext, ix: i32, iy: i32, iz: i32) VkError!F32x4 {
+    const color = try readSampledFloat4At(&context.image_context, ix, iy, iz);
+    const result: f32 = if (compareDepth(context.image_context.sampler.interface.compare_op, context.dref, color[0])) 1.0 else 0.0;
+    return zm.f32x4s(result);
+}
+
 fn readSampledInt4(
     image: *SoftImage,
     image_view: *SoftImageView,
@@ -562,6 +573,70 @@ pub fn sampleImageFloat4(image: *SoftImage, image_view: *SoftImageView, sampler:
     return sampleImageFloat4Level(image, image_view, sampler, dim, x, y, z, sampleMipLevel(image_view, sampler, lod), filter, offset);
 }
 
+fn sampleImageDrefLevel(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, w: f32, dref: f32, mip_level: u32, filter: vk.Filter, offset: ImageOffset) VkError!f32 {
+    const extent = image.getMipLevelExtent(mip_level);
+    const coord: CubeCoordinate = switch (image_view.interface.view_type) {
+        .@"1d_array" => .{
+            .u = x,
+            .v = y,
+            .face = 0,
+        },
+        .@"1d" => .{
+            .u = x,
+            .v = 0.0,
+            .face = 0,
+        },
+        .@"2d_array" => .{
+            .u = x,
+            .v = y,
+            .w = z,
+            .face = 0,
+        },
+        .cube => resolveCubeCoordinate(x, y, z),
+        .cube_array => blk: {
+            var coord = resolveCubeCoordinate(x, y, z);
+            coord.w = w;
+            break :blk coord;
+        },
+        else => .{
+            .u = x,
+            .v = y,
+            .w = z,
+            .face = 0,
+        },
+    };
+    const scale_u: f32 = if (sampler.interface.unnormalized_coordinates == .true) 1.0 else @floatFromInt(extent.width);
+    const scale_v: f32 = if (sampler.interface.unnormalized_coordinates == .true) 1.0 else @floatFromInt(extent.height);
+    const scale_w: f32 = if (sampler.interface.unnormalized_coordinates == .true) 1.0 else @floatFromInt(extent.depth);
+    const image_context: ImageSamplingContext = .{
+        .image = image,
+        .image_view = image_view,
+        .sampler = sampler,
+        .dim = dim,
+        .coord = coord,
+        .mip_level = mip_level,
+    };
+    const context: DepthCompareSamplingContext = .{
+        .image_context = image_context,
+        .dref = dref,
+    };
+
+    const result = try sampleFloat4(
+        *const DepthCompareSamplingContext,
+        &context,
+        zm.f32x4(
+            coord.u * scale_u + @as(f32, @floatFromInt(offset.x)),
+            coord.v * scale_v + @as(f32, @floatFromInt(offset.y)),
+            coord.w * scale_w + @as(f32, @floatFromInt(offset.z)),
+            0.0,
+        ),
+        filter,
+        image_view.interface.view_type == .@"3d",
+        readDepthCompareAt,
+    );
+    return result[0];
+}
+
 pub fn sampleImageInt4(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, lod: ?f32, offset: ImageOffset) VkError!U32x4 {
     const mip_level = sampleMipLevel(image_view, sampler, lod);
     const extent = image.getMipLevelExtent(mip_level);
@@ -611,11 +686,33 @@ pub fn sampleImageInt4(image: *SoftImage, image_view: *SoftImageView, sampler: *
     return swizzleInt4(color, image_view.interface.components);
 }
 
-pub fn sampleImageDref(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, dref: f32, lod: ?f32, offset: ImageOffset) VkError!f32 {
-    const color = try sampleImageFloat4(image, image_view, sampler, dim, x, y, z, lod, offset);
-    if (sampler.interface.compare_enable == .false)
+pub fn sampleImageDref(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, w: f32, dref: f32, lod: ?f32, offset: ImageOffset) VkError!f32 {
+    if (sampler.interface.compare_enable == .false) {
+        const color = try sampleImageFloat4(image, image_view, sampler, dim, x, y, z, lod, offset);
         return color[0];
-    return if (compareDepth(sampler.interface.compare_op, dref, color[0])) 1.0 else 0.0;
+    }
+
+    const range = image_view.interface.subresource_range;
+    const mip_count = viewMipCount(image_view);
+    const clamped_lod = sampleLod(image_view, sampler, lod);
+    const filter = sampleFilter(sampler, clamped_lod);
+
+    if (mip_count > 1 and sampler.interface.mipmap_mode == .linear) {
+        const lower_lod = @floor(clamped_lod);
+        const upper_lod = @min(lower_lod + 1.0, @as(f32, @floatFromInt(mip_count - 1)));
+        const lower_level = range.base_mip_level + @as(u32, @intFromFloat(lower_lod));
+        const upper_level = range.base_mip_level + @as(u32, @intFromFloat(upper_lod));
+        const lower = try sampleImageDrefLevel(image, image_view, sampler, dim, x, y, z, w, dref, lower_level, filter, offset);
+
+        if (upper_level == lower_level)
+            return lower;
+
+        const upper = try sampleImageDrefLevel(image, image_view, sampler, dim, x, y, z, w, dref, upper_level, filter, offset);
+        const weight = clamped_lod - lower_lod;
+        return lower * (1.0 - weight) + upper * weight;
+    }
+
+    return sampleImageDrefLevel(image, image_view, sampler, dim, x, y, z, w, dref, sampleMipLevel(image_view, sampler, lod), filter, offset);
 }
 
 pub fn sampleFloat4(

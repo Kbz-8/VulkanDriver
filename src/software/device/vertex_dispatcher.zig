@@ -90,9 +90,16 @@ inline fn run(data: RunData) !void {
                 };
                 const offset = buffer.interface.offset + vertex_buffer.offset + (binding_info.stride * input_index) + attribute.offset;
 
-                const buffer_memory_map: []u8 = try buffer_memory.map(offset, buffer_memory_size);
+                var robust_vertex_bytes: [64]u8 = @splat(0);
+                if (buffer_memory_size > robust_vertex_bytes.len)
+                    return VkError.Unknown;
+                if (offset < buffer_memory.size) {
+                    const available = @min(buffer_memory_size, @as(usize, @intCast(buffer_memory.size - offset)));
+                    const buffer_memory_map: []const u8 = buffer_memory.map(offset, available) catch &.{};
+                    @memcpy(robust_vertex_bytes[0..buffer_memory_map.len], buffer_memory_map);
+                }
 
-                try writeVertexInput(rt, data.allocator, buffer_memory_map, attribute.format, attribute.location);
+                try writeVertexInput(rt, data.allocator, robust_vertex_bytes[0..buffer_memory_size], attribute.format, attribute.location);
             }
         }
 

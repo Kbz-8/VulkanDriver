@@ -76,6 +76,7 @@ pub const DrawCall = struct {
 
     color_attachments: []*base.ImageView,
     depth_attachment: ?*base.ImageView,
+    input_attachment_snapshots: []const SoftPipeline.InputAttachmentSnapshot,
 
     render_pass: *SoftRenderPass,
     framebuffer: *SoftFramebuffer,
@@ -99,6 +100,7 @@ pub const DrawCall = struct {
             .scissor = undefined,
             .color_attachments = framebuffer.interface.attachments[0..],
             .depth_attachment = if (render_pass.interface.subpasses[renderer.subpass_index].depth_stencil_attachments) |desc| framebuffer.interface.attachments[desc.attachment] else null,
+            .input_attachment_snapshots = &.{},
             .render_pass = render_pass,
             .framebuffer = framebuffer,
             .rasterizer_wait_group = .init,
@@ -139,6 +141,7 @@ render_pass: ?*SoftRenderPass,
 framebuffer: ?*SoftFramebuffer,
 render_area: ?vk.Rect2D,
 dynamic_state: DynamicState,
+input_attachment_snapshots: []const SoftPipeline.InputAttachmentSnapshot,
 
 subpass_index: usize,
 active_occlusion_queries: *std.ArrayList(ExecutionDevice.ActiveOcclusionQuery),
@@ -150,6 +153,7 @@ pub fn init(device: *SoftDevice, state: *PipelineState, active_occlusion_queries
         .render_pass = null,
         .framebuffer = null,
         .render_area = null,
+        .input_attachment_snapshots = &.{},
         .dynamic_state = .{
             .viewports = null,
             .scissor = null,
@@ -165,6 +169,15 @@ pub fn init(device: *SoftDevice, state: *PipelineState, active_occlusion_queries
         .subpass_index = 0,
         .active_occlusion_queries = active_occlusion_queries,
     };
+}
+
+pub fn resetInputAttachmentSnapshots(self: *Self) void {
+    const allocator = self.device.device_allocator.allocator();
+    for (self.input_attachment_snapshots) |snapshot| {
+        allocator.free(snapshot.data);
+    }
+    allocator.free(self.input_attachment_snapshots);
+    self.input_attachment_snapshots = &.{};
 }
 
 pub fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize) VkError!void {

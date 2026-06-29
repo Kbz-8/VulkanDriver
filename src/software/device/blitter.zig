@@ -193,7 +193,12 @@ fn sample(src: []const u8, pos: F32x4, dim: F32x4, slice_bytes: usize, pitch_byt
             const sample_stride = slice_bytes * @as(usize, @intFromFloat(dim[2]));
             color = zm.f32x4s(0.0);
             for (0..state.src_samples) |sample_index| {
-                color += readFloat4(src_map[sample_index * sample_stride ..], state.src_format);
+                var sample_color = readFloat4(src_map[sample_index * sample_stride ..], state.src_format);
+                if (state.allow_srgb_conversion and base.format.isSrgb(state.src_format)) {
+                    sample_color = applyScaleAndClamp(sample_color, state, true);
+                    apply_srgb_convertion = false;
+                }
+                color += sample_color;
             }
             color /= zm.f32x4s(@floatFromInt(state.src_samples));
         } else {
@@ -350,7 +355,9 @@ pub fn blitRegionWithFormats(src: *const SoftImage, dst: *SoftImage, region: vk.
     const dst_row_pitch_bytes = dst.getRowPitchMemSizeForMipLevelWithFormat(region.dst_subresource.aspect_mask, region.dst_subresource.mip_level, dst_format);
 
     const apply_filter = (filter != .nearest);
-    const allow_srgb_conversion = apply_filter or base.format.isSrgb(src_format) != base.format.isSrgb(dst_format);
+    const resolve_srgb = src.interface.samples.toInt() > 1 and dst.interface.samples.toInt() == 1 and
+        base.format.isSrgb(src_format) and base.format.isSrgb(dst_format);
+    const allow_srgb_conversion = apply_filter or resolve_srgb or base.format.isSrgb(src_format) != base.format.isSrgb(dst_format);
 
     var src_subresource = vk.ImageSubresource{
         .aspect_mask = region.src_subresource.aspect_mask,

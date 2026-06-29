@@ -85,12 +85,15 @@ pub fn shaderInvocation(
 
     const SoftPipeline = @import("../SoftPipeline.zig");
     const previous_fragment_coord = SoftPipeline.current_fragment_coord;
+    const previous_input_attachment_snapshots = SoftPipeline.current_input_attachment_snapshots;
     SoftPipeline.current_fragment_coord = .{
         .x = @intFromFloat(position[0]),
         .y = @intFromFloat(position[1]),
         .z = 0,
     };
+    SoftPipeline.current_input_attachment_snapshots = draw_call.input_attachment_snapshots;
     defer SoftPipeline.current_fragment_coord = previous_fragment_coord;
+    defer SoftPipeline.current_input_attachment_snapshots = previous_input_attachment_snapshots;
 
     const entry = try rt.getEntryPointByName(shader.entry);
 

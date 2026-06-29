@@ -15,6 +15,7 @@ const Renderer = @import("Renderer.zig");
 const Vertex = Renderer.Vertex;
 const DrawCall = Renderer.DrawCall;
 const SoftImage = @import("../SoftImage.zig");
+const SoftPipeline = @import("../SoftPipeline.zig");
 
 const VkError = base.VkError;
 const SpvRuntimeError = spv.Runtime.RuntimeError;
@@ -31,11 +32,84 @@ fn renderTargetSubresourceSize(image: *const SoftImage, image_view: *const base.
     return image.getMultiSampledLevelSize(aspect_mask, mip_level);
 }
 
+fn snapshotInputAttachments(allocator: std.mem.Allocator, draw_call: *DrawCall) VkError![]SoftPipeline.InputAttachmentSnapshot {
+    const subpass = draw_call.render_pass.interface.subpasses[draw_call.renderer.subpass_index];
+    const input_attachments = subpass.input_attachments orelse return &.{};
+
+    var snapshot_count: usize = 0;
+    for (input_attachments) |attachment_ref| {
+        if (attachment_ref.attachment == vk.ATTACHMENT_UNUSED)
+            continue;
+
+        const image_view = draw_call.framebuffer.interface.attachments[attachment_ref.attachment];
+        if (image_view.image.samples.toInt() == 1)
+            continue;
+
+        const range = image_view.subresource_range;
+        if (range.aspect_mask.depth_bit and range.aspect_mask.stencil_bit)
+            snapshot_count += 2
+        else
+            snapshot_count += 1;
+    }
+    if (snapshot_count == 0)
+        return &.{};
+
+    const snapshots = allocator.alloc(SoftPipeline.InputAttachmentSnapshot, snapshot_count) catch return VkError.OutOfDeviceMemory;
+    var snapshot_index: usize = 0;
+    errdefer {
+        for (snapshots[0..snapshot_index]) |snapshot| {
+            allocator.free(snapshot.data);
+        }
+        allocator.free(snapshots);
+    }
+
+    for (input_attachments) |attachment_ref| {
+        if (attachment_ref.attachment == vk.ATTACHMENT_UNUSED)
+            continue;
+
+        const image_view: *base.ImageView = draw_call.framebuffer.interface.attachments[attachment_ref.attachment];
+        const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.image));
+        if (image.interface.samples.toInt() == 1)
+            continue;
+
+        const range = image_view.subresource_range;
+        const aspects: []const vk.ImageAspectFlags = if (range.aspect_mask.depth_bit and range.aspect_mask.stencil_bit)
+            &.{ .{ .depth_bit = true }, .{ .stencil_bit = true } }
+        else
+            &.{range.aspect_mask};
+
+        for (aspects) |aspect_mask| {
+            const offset = try image.getSubresourceOffset(aspect_mask, range.base_mip_level, range.base_array_layer);
+            const size = renderTargetSubresourceSize(image, image_view, aspect_mask, range.base_mip_level);
+            const live_data = try image.mapAsSliceWithAddedOffset(u8, offset, size);
+            const data = allocator.dupe(u8, live_data) catch return VkError.OutOfDeviceMemory;
+
+            snapshots[snapshot_index] = .{
+                .image = image_view.image,
+                .aspect_mask = aspect_mask,
+                .mip_level = range.base_mip_level,
+                .array_layer = range.base_array_layer,
+                .data = data,
+                .row_pitch = image.getRowPitchMemSizeForMipLevelWithFormat(aspect_mask, range.base_mip_level, image_view.format),
+                .slice_pitch = image.getSliceMemSizeForMipLevelWithFormat(aspect_mask, range.base_mip_level, image_view.format),
+                .sample_stride = image.getMipLevelSize(aspect_mask, range.base_mip_level),
+            };
+            snapshot_index += 1;
+        }
+    }
+
+    return snapshots;
+}
+
 pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocator, draw_call: *DrawCall) VkError!void {
     const io = draw_call.renderer.device.interface.io();
 
     const pipeline_data = (renderer.state.pipeline orelse return VkError.InvalidHandleDrv).interface.mode.graphics;
     const topology = pipeline_data.input_assembly.topology;
+    if (renderer.input_attachment_snapshots.len == 0) {
+        renderer.input_attachment_snapshots = try snapshotInputAttachments(renderer.device.device_allocator.allocator(), draw_call);
+    }
+    draw_call.input_attachment_snapshots = renderer.input_attachment_snapshots;
 
     const color_attachments = draw_call.render_pass.interface.subpasses[renderer.subpass_index].color_attachments orelse &.{};
     const color_attachment_access = allocator.alloc(?common.RenderTargetAccess, color_attachments.len) catch return VkError.OutOfDeviceMemory;
