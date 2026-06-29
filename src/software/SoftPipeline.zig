@@ -194,6 +194,7 @@ fn createShader(
     runtimes_count: usize,
 ) VkError!Shader {
     const entry = std.mem.span(stage.p_name);
+    const execution_model = executionModelForStage(stage.stage) orelse return VkError.Unknown;
     const runtimes = runtimes_allocator.alloc(Runtime, runtimes_count) catch return VkError.OutOfDeviceMemory;
     var initialized: usize = 0;
     var module_ref = false;
@@ -212,7 +213,7 @@ fn createShader(
     const image_api = imageApi();
     var cache_hit = false;
     if (cache) |pipeline_cache| {
-        if (try pipeline_cache.cloneRuntime(runtimes_allocator, module, entry, stage.p_specialization_info, image_api)) |runtime| {
+        if (try pipeline_cache.cloneRuntime(runtimes_allocator, module, entry, execution_model, stage.p_specialization_info, image_api)) |runtime| {
             runtimes[0] = .{
                 .mutex = .init,
                 .rt = runtime,
@@ -226,7 +227,7 @@ fn createShader(
         for (runtimes[initialized..]) |*runtime| {
             runtime.* = .{
                 .mutex = .init,
-                .rt = (try cache.?.cloneRuntime(runtimes_allocator, module, entry, stage.p_specialization_info, image_api)).?,
+                .rt = (try cache.?.cloneRuntime(runtimes_allocator, module, entry, execution_model, stage.p_specialization_info, image_api)).?,
             };
             initialized += 1;
         }
@@ -240,7 +241,7 @@ fn createShader(
         }
 
         if (cache) |pipeline_cache| {
-            try pipeline_cache.storeRuntimeTemplate(object_allocator, cache_allocator, module, entry, stage.p_specialization_info, image_api);
+            try pipeline_cache.storeRuntimeTemplate(object_allocator, cache_allocator, module, entry, execution_model, stage.p_specialization_info, image_api);
         }
     }
 
@@ -258,8 +259,27 @@ fn initRuntime(allocator: std.mem.Allocator, module: *SoftShaderModule, stage: *
     };
     errdefer runtime.deinit(allocator);
 
+    const entry = runtime.getEntryPointByNameAndExecutionModel(std.mem.span(stage.p_name), executionModelForStage(stage.stage) orelse return VkError.Unknown) catch |err| {
+        std.log.scoped(.SpvRuntimeInit).err("SPIR-V Runtime failed to select entry point, {s}", .{@errorName(err)});
+        return VkError.Unknown;
+    };
+    runtime.selectEntryPoint(entry) catch |err| {
+        std.log.scoped(.SpvRuntimeInit).err("SPIR-V Runtime failed to activate entry point, {s}", .{@errorName(err)});
+        return VkError.Unknown;
+    };
+
     try applySpecialization(&runtime, allocator, stage.p_specialization_info);
     return runtime;
+}
+
+fn executionModelForStage(stage: vk.ShaderStageFlags) ?spv.spv.SpvExecutionModel {
+    if (stage.vertex_bit) return .Vertex;
+    if (stage.tessellation_control_bit) return .TessellationControl;
+    if (stage.tessellation_evaluation_bit) return .TessellationEvaluation;
+    if (stage.geometry_bit) return .Geometry;
+    if (stage.fragment_bit) return .Fragment;
+    if (stage.compute_bit) return .GLCompute;
+    return null;
 }
 
 fn applySpecialization(runtime: *spv.Runtime, allocator: std.mem.Allocator, specialization: ?*const vk.SpecializationInfo) VkError!void {

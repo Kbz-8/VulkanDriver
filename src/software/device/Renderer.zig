@@ -39,6 +39,8 @@ pub const IndexBuffer = struct {
     index_type: vk.IndexType,
 };
 
+pub const InterpolationType = enum { smooth, flat, noperspective };
+
 pub const DynamicState = struct {
     viewports: ?[]const vk.Viewport,
     scissor: ?[]const vk.Rect2D,
@@ -57,7 +59,7 @@ pub const Vertex = struct {
     position: F32x4,
     point_size: f32,
     outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][4]?struct {
-        interpolation_type: enum { smooth, flat, noperspective },
+        interpolation_type: InterpolationType,
         blob: []u8,
         size: usize,
     },

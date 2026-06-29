@@ -431,6 +431,7 @@ fn rasterizeTransformedPoint(
                 fragment_result.depth orelse vertex.position[2],
                 null,
                 fragment_result.sample_mask,
+                false,
             );
         }
     }

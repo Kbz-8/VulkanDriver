@@ -73,7 +73,7 @@ pub fn dispatchBase(self: *Self, base_group_x: u32, base_group_y: u32, base_grou
     const pipeline = self.state.pipeline orelse return VkError.InvalidPipelineDrv;
     const shader = pipeline.stages.getPtr(.compute) orelse return VkError.InvalidPipelineDrv;
     const spv_module = &shader.module.module;
-    self.batch_size = shader.runtimes.len;
+    self.batch_size = if (spv_module.reflection_infos.has_atomics) 1 else shader.runtimes.len;
 
     const allocator = self.device.device_allocator.allocator();
     const local_size = try getLocalSize(&shader.runtimes[0].rt, allocator, spv_module);
@@ -131,7 +131,7 @@ inline fn run(data: RunData) !void {
     const rt = &shader.runtimes[data.batch_id].rt;
 
     const entry = try rt.getEntryPointByName(shader.entry);
-    const uses_control_barrier = rt.mod.reflection_infos.has_control_barriers;
+    const uses_control_barrier = rt.mod.reflection_infos.has_control_barriers or rt.mod.reflection_infos.has_atomics;
 
     var barrier_runtimes: []spv.Runtime = &.{};
     var barrier_statuses: []spv.Runtime.EntryPointStatus = &.{};
@@ -146,16 +146,12 @@ inline fn run(data: RunData) !void {
 
     defer {
         for (barrier_runtimes) |*barrier_rt| {
+            barrier_rt.resetInvocation(allocator);
             barrier_rt.deinit(allocator);
         }
         allocator.free(barrier_runtimes);
         allocator.free(barrier_statuses);
     }
-
-    if (!uses_control_barrier)
-        try ExecutionDevice.writeDescriptorSets(data.self.state, rt);
-
-    try rt.populatePushConstants(data.self.state.push_constant_blob[0..]);
 
     var group_index: usize = data.batch_id;
     while (group_index < data.group_count) : (group_index += data.self.batch_size) {
@@ -185,8 +181,16 @@ inline fn run(data: RunData) !void {
             continue;
         }
 
+        const workgroup_memory = try rt.createWorkgroupMemory(allocator);
+        defer rt.destroyWorkgroupMemory(allocator, workgroup_memory);
+
         for (0..data.invocations_per_workgroup) |i| {
             rt.resetInvocation(allocator);
+            if (rt.specialization_constants.count() != 0)
+                try rt.applySpecializationInvocationLayout(allocator);
+            try ExecutionDevice.writeDescriptorSets(data.self.state, rt);
+            try rt.populatePushConstants(data.self.state.push_constant_blob[0..]);
+            try rt.bindWorkgroupMemory(workgroup_memory);
             try setupWorkgroupBuiltins(data.self, rt, data.local_size, group_count_vec, group_id_vec);
 
             const invocation_index = data.self.invocation_index.fetchAdd(1, .monotonic);
@@ -208,13 +212,13 @@ inline fn run(data: RunData) !void {
                 SpvRuntimeError.Killed => continue,
                 else => return err,
             };
+            try flushWorkgroupMemory(rt, workgroup_memory);
+            try rt.flushDescriptorSets(allocator);
 
             if (data.self.final_dump != null and data.self.final_dump.? == invocation_index) {
                 @branchHint(.cold);
                 try dumpResultsTable(allocator, io, rt, false);
             }
-
-            try rt.flushDescriptorSets(allocator);
         }
     }
 }
@@ -228,14 +232,19 @@ fn runBarrierWorkgroup(
     group_id: @Vector(3, u32),
 ) !void {
     const allocator = data.self.device.device_allocator.allocator();
-
+    const workgroup_memory = try runtimes[0].createWorkgroupMemory(allocator);
+    defer runtimes[0].destroyWorkgroupMemory(allocator, workgroup_memory);
     for (runtimes, 0..) |*rt, i| {
         rt.resetInvocation(allocator);
+        if (rt.specialization_constants.count() != 0)
+            try rt.applySpecializationInvocationLayout(allocator);
         try ExecutionDevice.writeDescriptorSets(data.self.state, rt);
         try rt.populatePushConstants(data.self.state.push_constant_blob[0..]);
+        try rt.bindWorkgroupMemory(workgroup_memory);
         try setupWorkgroupBuiltins(data.self, rt, data.local_size, group_count, group_id);
         try setupSubgroupBuiltins(data.self, rt, data.local_size, group_id, i);
         statuses[i] = try rt.beginEntryPoint(allocator, entry);
+        try flushWorkgroupMemory(rt, workgroup_memory);
         try rt.flushDescriptorSets(allocator);
     }
 
@@ -253,9 +262,17 @@ fn runBarrierWorkgroup(
         for (runtimes, 0..) |*rt, i| {
             if (statuses[i] == .completed)
                 continue;
+            try rt.bindWorkgroupMemory(workgroup_memory);
             statuses[i] = try rt.continueEntryPoint(allocator);
+            try flushWorkgroupMemory(rt, workgroup_memory);
             try rt.flushDescriptorSets(allocator);
         }
+    }
+}
+
+fn flushWorkgroupMemory(rt: *spv.Runtime, workgroup_memory: []const spv.Runtime.WorkgroupMemory) spv.Runtime.RuntimeError!void {
+    for (workgroup_memory) |memory| {
+        _ = try (try rt.results[memory.result].getValue()).read(memory.bytes);
     }
 }
 

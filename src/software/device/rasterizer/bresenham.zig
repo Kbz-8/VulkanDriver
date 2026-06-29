@@ -283,6 +283,7 @@ inline fn run(data: RunData) !void {
                 data.draw_call.renderer.state.pipeline.?.interface.mode.graphics.multisample.rasterization_samples.toInt(),
             ),
             fragment_result.sample_mask,
+            false,
         );
     }
 }

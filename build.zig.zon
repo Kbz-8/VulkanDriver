@@ -32,8 +32,8 @@
 
         // Soft dependencies
         .SPIRV_Interpreter = .{
-            .url = "git+https://github.com/Kbz-8/SPIRV-Interpreter#b9b6087fef5a61a3d9e3187ff7c66dffc54603da",
-            .hash = "SPIRV_Interpreter-0.0.1-ajmpn9JxCADthSmyktTCV_jIA8iJU_aiM_kboXqfPDDD",
+            .url = "git+https://github.com/Kbz-8/SPIRV-Interpreter#fcf303a0c62a66ff32fc92fe9c92ca9294f72caf",
+            .hash = "SPIRV_Interpreter-0.0.1-ajmpnx3dCAAfuabTUWPWdTVqPGBPeSUCCTI-ncKowi5D",
             .lazy = true,
         },
         //.SPIRV_Interpreter = .{

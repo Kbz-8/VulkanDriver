@@ -57,6 +57,9 @@ pub fn shaderInvocation(
     defer mutex.unlock(io);
 
     rt.resetInvocation(allocator);
+    if (rt.specialization_constants.count() != 0)
+        try rt.applySpecializationInvocationLayout(allocator);
+    try @import("Device.zig").writeDescriptorSets(draw_call.renderer.state, rt);
     try rt.populatePushConstants(draw_call.renderer.state.push_constant_blob[0..]);
     rt.writeBuiltIn(allocator, std.mem.asBytes(&position), .FragCoord) catch |err| switch (err) {
         SpvRuntimeError.NotFound => {},
@@ -96,8 +99,8 @@ pub fn shaderInvocation(
             var input = fragment_inputs[location][component];
             const result_word = rt.getResultByLocationComponent(@intCast(location), @intCast(component), .input) catch |err| switch (err) {
                 SpvRuntimeError.NotFound => {
-                    if (input.blob.len != 0) {
-                        rt.writeInputLocation(input.blob, @intCast(location)) catch |write_err| switch (write_err) {
+                    if (input.size != 0) {
+                        rt.writeInputLocation(input.blob[0..input.size], @intCast(location)) catch |write_err| switch (write_err) {
                             SpvRuntimeError.NotFound => {},
                             else => return write_err,
                         };
@@ -110,11 +113,11 @@ pub fn shaderInvocation(
             const has_result_value = rt.results[result_word].variant != null;
             const memory_size = if (has_result_value)
                 try rt.getResultMemorySize(result_word)
-            else if (input.blob.len == 0)
+            else if (input.size == 0)
                 try rt.getInputLocationMemorySize(@intCast(location))
             else
-                input.blob.len;
-            if (input.blob.len == 0) {
+                input.size;
+            if (input.size == 0) {
                 const zeroes = allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return SpvRuntimeError.OutOfMemory;
                 @memset(zeroes, 0);
                 fragment_inputs[location][component] = .{
@@ -125,16 +128,17 @@ pub fn shaderInvocation(
                 input = fragment_inputs[location][component];
             }
 
-            if (input.blob.len != 0) {
-                if (!has_result_value or input.blob.len < memory_size)
-                    try rt.writeInputLocation(input.blob, @intCast(location))
+            if (input.size != 0) {
+                const input_bytes = input.blob[0..input.size];
+                if (!has_result_value or input.size < memory_size)
+                    try rt.writeInputLocation(input_bytes, @intCast(location))
                 else
-                    try rt.writeInput(allocator, input.blob, result_word);
+                    try rt.writeInput(allocator, input_bytes, result_word);
                 if (derivatives) |derivative| {
                     const dx = derivative.dx[location][component];
                     const dy = derivative.dy[location][component];
-                    if (dx.blob.len != 0 and dy.blob.len != 0) {
-                        try rt.setDerivativeFromMemory(allocator, result_word, dx.blob, dy.blob);
+                    if (dx.size != 0 and dy.size != 0) {
+                        try rt.setDerivativeFromMemory(allocator, result_word, dx.blob[0..dx.size], dy.blob[0..dy.size]);
                     }
                 }
             }

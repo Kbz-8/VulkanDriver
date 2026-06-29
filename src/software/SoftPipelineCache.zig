@@ -26,6 +26,7 @@ const CacheRecord = extern struct {
 const CachedShader = struct {
     module: *SoftShaderModule,
     entry: []u8,
+    execution_model: spv.spv.SpvExecutionModel,
     specs: []SpecConstant,
     runtime: spv.Runtime,
 
@@ -81,6 +82,7 @@ pub fn cloneRuntime(
     allocator: std.mem.Allocator,
     module: *SoftShaderModule,
     entry: []const u8,
+    execution_model: spv.spv.SpvExecutionModel,
     specialization: ?*const vk.SpecializationInfo,
     image_api: spv.Runtime.ImageAPI,
 ) VkError!?spv.Runtime {
@@ -89,8 +91,14 @@ pub fn cloneRuntime(
     defer self.mutex.unlock(io);
 
     for (self.shaders.items) |*shader| {
-        if (shader.module == module and std.mem.eql(u8, shader.entry, entry) and specsEqual(shader.specs, specialization)) {
-            return spv.Runtime.initFrom(allocator, &shader.runtime, image_api) catch return VkError.OutOfDeviceMemory;
+        if (shader.module == module and shader.execution_model == execution_model and std.mem.eql(u8, shader.entry, entry) and specsEqual(shader.specs, specialization)) {
+            var runtime = spv.Runtime.initFrom(allocator, &shader.runtime, image_api) catch return VkError.OutOfDeviceMemory;
+            errdefer runtime.deinit(allocator);
+
+            const entry_point = runtime.getEntryPointByNameAndExecutionModel(entry, execution_model) catch return VkError.Unknown;
+            runtime.selectEntryPoint(entry_point) catch return VkError.Unknown;
+
+            return runtime;
         }
     }
 
@@ -103,6 +111,7 @@ pub fn storeRuntimeTemplate(
     data_allocator: std.mem.Allocator,
     module: *SoftShaderModule,
     entry: []const u8,
+    execution_model: spv.spv.SpvExecutionModel,
     specialization: ?*const vk.SpecializationInfo,
     image_api: spv.Runtime.ImageAPI,
 ) VkError!void {
@@ -112,6 +121,7 @@ pub fn storeRuntimeTemplate(
 
     for (self.shaders.items) |*shader| {
         if (shader.module == module and
+            shader.execution_model == execution_model and
             std.mem.eql(u8, shader.entry, entry) and
             specsEqual(shader.specs, specialization))
         {
@@ -122,6 +132,7 @@ pub fn storeRuntimeTemplate(
     var cached: CachedShader = .{
         .module = module,
         .entry = data_allocator.dupe(u8, entry) catch return VkError.OutOfDeviceMemory,
+        .execution_model = execution_model,
         .specs = try cloneSpecs(data_allocator, specialization),
         .runtime = spv.Runtime.init(data_allocator, &module.module, image_api) catch return VkError.OutOfDeviceMemory,
     };
@@ -141,6 +152,8 @@ pub fn storeRuntimeTemplate(
 
     module.ref();
     module_ref = true;
+    const entry_point = cached.runtime.getEntryPointByNameAndExecutionModel(entry, execution_model) catch return VkError.Unknown;
+    cached.runtime.selectEntryPoint(entry_point) catch return VkError.Unknown;
     try applySpecialization(&cached.runtime, data_allocator, specialization);
     try appendCacheRecord(&self.interface, module, entry, cached.specs);
 

@@ -36,6 +36,7 @@ const RunData = struct {
     stencil_attachment_access: ?*common.RenderTargetAccess,
     front_face: bool,
     has_fragment_shader: bool,
+    early_fragment_tests: bool,
     fragment_uses_derivatives: bool,
     fragment_uses_sample_id: bool,
     fragment_uses_centroid: bool,
@@ -68,6 +69,10 @@ pub fn drawTriangle(
     const fragment_stage = pipeline.stages.getPtr(.fragment);
     const fragment_uses_derivatives = if (fragment_stage) |stage|
         stage.module.module.reflection_infos.needs_derivatives
+    else
+        false;
+    const early_fragment_tests = if (fragment_stage) |stage|
+        stage.module.module.reflection_infos.early_fragment_tests
     else
         false;
     const fragment_uses_sample_id = if (fragment_stage) |stage|
@@ -130,6 +135,7 @@ pub fn drawTriangle(
                 .stencil_attachment_access = stencil_attachment_access,
                 .front_face = front_face,
                 .has_fragment_shader = fragment_stage != null,
+                .early_fragment_tests = early_fragment_tests,
                 .fragment_uses_derivatives = fragment_uses_derivatives,
                 .fragment_uses_sample_id = fragment_uses_sample_id,
                 .fragment_uses_centroid = fragment_uses_centroid,
@@ -235,6 +241,33 @@ fn triangleCoverageMask(data: RunData, x: i32, y: i32, sample_count: usize) vk.S
     return mask;
 }
 
+fn applyEarlyDepth(data: RunData, coverage_sample_mask: vk.SampleMask, x: i32, y: i32, z: f32, sample_count: usize) VkError!struct {
+    mask: vk.SampleMask,
+    applied: bool,
+} {
+    if (!data.early_fragment_tests)
+        return .{ .mask = coverage_sample_mask, .applied = false };
+
+    const depth = data.depth_attachment_access orelse return .{ .mask = coverage_sample_mask, .applied = false };
+    const pipeline_data = data.draw_call.renderer.state.pipeline.?.interface.mode.graphics;
+    const io = data.draw_call.renderer.device.interface.io();
+
+    var passed_mask: vk.SampleMask = 0;
+    for (0..sample_count) |sample_index| {
+        if (sample_index >= @bitSizeOf(vk.SampleMask))
+            break;
+
+        const bit = @as(vk.SampleMask, 1) << @as(u5, @intCast(sample_index));
+        if ((coverage_sample_mask & bit) == 0)
+            continue;
+
+        if (try common.depthTestSampleAndUpdate(io, depth, @intCast(x), @intCast(y), sample_index, z, pipeline_data.depth_stencil))
+            passed_mask |= bit;
+    }
+
+    return .{ .mask = passed_mask, .applied = true };
+}
+
 fn runWrapper(data: RunData) void {
     @call(.always_inline, run, .{data}) catch |err| {
         std.log.scoped(.@"Rasterization stage").err("triangle fill mode catched a '{s}'", .{@errorName(err)});
@@ -272,8 +305,12 @@ inline fn run(data: RunData) !void {
             const b2 = w2 / data.area;
             const z = (b0 * data.v0.position[2]) + (b1 * data.v1.position[2]) + (b2 * data.v2.position[2]);
             const frag_w = (b0 / data.v0.position[3]) + (b1 / data.v1.position[3]) + (b2 / data.v2.position[3]);
+            const early_depth = try applyEarlyDepth(data, coverage_sample_mask, x, y, z, sample_count);
+            if (early_depth.mask == 0)
+                continue;
+
             const interpolation_barycentrics = if (data.fragment_uses_centroid and sample_count > 1) blk: {
-                const sample_pos = firstCoveredSamplePosition(sample_count, coverage_sample_mask);
+                const sample_pos = firstCoveredSamplePosition(sample_count, early_depth.mask);
                 const centroid_p = zm.f32x4(
                     @as(f32, @floatFromInt(x)) + sample_pos.x,
                     @as(f32, @floatFromInt(y)) + sample_pos.y,
@@ -305,7 +342,7 @@ inline fn run(data: RunData) !void {
 
                     const bit_index: u5 = @intCast(sample_index);
                     const sample_coverage_mask = @as(vk.SampleMask, 1) << bit_index;
-                    if ((coverage_sample_mask & sample_coverage_mask) == 0)
+                    if ((early_depth.mask & sample_coverage_mask) == 0)
                         continue;
 
                     const inputs = try common.interpolateVertexOutputs(data.allocator, &data.v0, &data.v1, &data.v2, &data.provoking_vertex, input_b0, input_b1, input_b2);
@@ -344,6 +381,7 @@ inline fn run(data: RunData) !void {
                         sample_result.depth orelse z,
                         sample_coverage_mask,
                         sample_result.sample_mask,
+                        early_depth.applied,
                     );
                 }
                 continue;
@@ -423,8 +461,9 @@ inline fn run(data: RunData) !void {
                 @intCast(x),
                 @intCast(y),
                 fragment_result.depth orelse z,
-                coverage_sample_mask,
+                early_depth.mask,
                 fragment_result.sample_mask,
+                early_depth.applied,
             );
         }
     }

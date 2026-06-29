@@ -60,8 +60,10 @@ inline fn run(data: RunData) !void {
                 continue;
             }
         }
-
         rt.resetInvocation(data.allocator);
+        if (rt.specialization_constants.count() != 0)
+            try rt.applySpecializationInvocationLayout(data.allocator);
+        try @import("Device.zig").writeDescriptorSets(data.draw_call.renderer.state, rt);
         try rt.populatePushConstants(data.draw_call.renderer.state.push_constant_blob[0..]);
 
         const vertex_index_u32: u32 = if (data.indices) |indices| indices[invocation_index] else @intCast(data.first_vertex + invocation_index);
@@ -107,28 +109,99 @@ inline fn run(data: RunData) !void {
         try readPointSize(rt, &output.point_size);
 
         for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
-            for (0..4) |component| {
-                const result_word = rt.getResultByLocationComponent(@intCast(location), @intCast(component), .output) catch |err| switch (err) {
+            const location_result = rt.getResultByLocation(@intCast(location), .output) catch |err| switch (err) {
+                SpvRuntimeError.NotFound => continue,
+                else => return err,
+            };
+
+            try readVertexOutput(data, output, rt, location, 0, location_result);
+
+            for (1..4) |component| {
+                const component_result = rt.getResultByLocationComponent(@intCast(location), @intCast(component), .output) catch |err| switch (err) {
                     SpvRuntimeError.NotFound => continue,
                     else => return err,
                 };
 
-                const memory_size = try rt.getResultMemorySize(result_word);
+                if (component_result == location_result)
+                    continue;
 
-                const result_is_integer = resultIsInteger(rt, result_word);
-
-                output.outputs[location][component] = .{
-                    .interpolation_type = if (rt.hasResultDecoration(result_word, .Flat) or result_is_integer) .flat else .smooth, // TODO : handle noperspective
-                    .blob = data.allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return VkError.OutOfDeviceMemory,
-                    .size = memory_size,
-                };
-                @memset(output.outputs[location][component].?.blob, 0);
-                try rt.readOutput(output.outputs[location][component].?.blob, result_word);
+                try readVertexOutput(data, output, rt, location, component, component_result);
             }
         }
 
+        try readActiveInterfaceOutputs(data, output, rt, entry);
+
         try rt.flushDescriptorSets(data.allocator);
     }
+}
+
+fn readActiveInterfaceOutputs(data: RunData, output: *Renderer.Vertex, rt: *spv.Runtime, entry: spv.SpvWord) !void {
+    if (entry >= rt.mod.entry_points.items.len)
+        return;
+
+    for (rt.mod.entry_points.items[entry].globals) |global| {
+        if (global >= rt.results.len)
+            continue;
+
+        const variable = switch (rt.results[global].variant orelse continue) {
+            .Variable => |v| v,
+            else => continue,
+        };
+        if (variable.storage_class != .Output)
+            continue;
+
+        var location: ?usize = null;
+        var component: usize = 0;
+        for (rt.results[global].decorations.items) |decoration| switch (decoration.rtype) {
+            .Location => location = decoration.literal_1,
+            .Component => component = decoration.literal_1,
+            else => {},
+        };
+
+        const target_location = location orelse continue;
+        if (target_location >= spv.SPIRV_MAX_OUTPUT_LOCATIONS or component >= 4)
+            continue;
+        if (output.outputs[target_location][component] != null)
+            continue;
+
+        try readVertexOutput(data, output, rt, target_location, component, global);
+    }
+}
+
+fn readVertexOutput(data: RunData, output: *Renderer.Vertex, rt: *spv.Runtime, location: usize, component: usize, result_word: spv.SpvWord) !void {
+    const memory_size = try rt.getResultMemorySize(result_word);
+    const interpolation_type = vertexOutputInterpolationType(data, rt, location, component, result_word);
+
+    output.outputs[location][component] = .{
+        .interpolation_type = interpolation_type,
+        .blob = data.allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return VkError.OutOfDeviceMemory,
+        .size = memory_size,
+    };
+    @memset(output.outputs[location][component].?.blob, 0);
+    try rt.readOutput(output.outputs[location][component].?.blob, result_word);
+}
+
+fn vertexOutputInterpolationType(data: RunData, rt: *spv.Runtime, location: usize, component: usize, result_word: spv.SpvWord) Renderer.InterpolationType {
+    const result_is_integer = resultIsInteger(rt, result_word);
+
+    const fragment_input_word = if (data.pipeline.stages.getPtr(.fragment)) |fragment_shader|
+        fragment_shader.runtimes[0].rt.getResultByLocationComponent(@intCast(location), @intCast(component), .input) catch null
+    else
+        null;
+    const fragment_input_is_flat = if (fragment_input_word) |input_word|
+        data.pipeline.stages.getPtrAssertContains(.fragment).runtimes[0].rt.hasResultOrMemberDecoration(input_word, .Flat)
+    else
+        false;
+    const fragment_input_is_noperspective = if (fragment_input_word) |input_word|
+        data.pipeline.stages.getPtrAssertContains(.fragment).runtimes[0].rt.hasResultOrMemberDecoration(input_word, .NoPerspective)
+    else
+        false;
+
+    if (fragment_input_is_flat or result_is_integer)
+        return .flat;
+    if (fragment_input_is_noperspective)
+        return .noperspective;
+    return .smooth;
 }
 
 fn findBindingDescription(binding_descriptions: []const vk.VertexInputBindingDescription, binding: u32) ?vk.VertexInputBindingDescription {

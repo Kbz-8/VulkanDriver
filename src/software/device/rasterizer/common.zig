@@ -172,6 +172,31 @@ pub fn depthTestAndUpdate(depth: *RenderTargetAccess, x: usize, y: usize, z: f32
     return depthTestAndUpdateAtOffset(depth, offset, z, state);
 }
 
+pub fn depthTestSampleAndUpdate(
+    io: std.Io,
+    depth: *RenderTargetAccess,
+    x: usize,
+    y: usize,
+    sample_index: usize,
+    z: f32,
+    state: ?vk.PipelineDepthStencilStateCreateInfo,
+) VkError!bool {
+    const depth_offset = targetSampleOffset(depth.*, x, y, sample_index) orelse return false;
+
+    depth.mutex.lock(io) catch return VkError.DeviceLost;
+    defer depth.mutex.unlock(io);
+
+    if (state) |depth_state| {
+        return depthTestAndUpdateAtOffset(depth, depth_offset, z, depth_state);
+    }
+
+    const depth_value = blitter.readFloat4(depth.base[depth_offset..], depth.format);
+    if (z >= depth_value[0])
+        return false;
+    blitter.writeFloat4(zm.f32x4s(z), depth.base[depth_offset..], depth.format);
+    return true;
+}
+
 fn depthTestAndUpdateAtOffset(depth: *RenderTargetAccess, offset: usize, z: f32, state: vk.PipelineDepthStencilStateCreateInfo) bool {
     if (state.depth_test_enable == .false)
         return true;
@@ -477,6 +502,7 @@ pub fn writeToTargets(
     z: f32,
     coverage_sample_mask: ?vk.SampleMask,
     fragment_sample_mask: ?vk.SampleMask,
+    depth_already_applied: bool,
 ) VkError!void {
     const io = draw_call.renderer.device.interface.io();
     const pipeline_data = draw_call.renderer.state.pipeline.?.interface.mode.graphics;
@@ -523,7 +549,8 @@ pub fn writeToTargets(
 
         // After work depth test to avoid overwritten depth pixels during fragment invocations.
         var depth_passed: ?bool = null;
-        if (depth_attachment_access) |depth| {
+        if (!depth_already_applied and depth_attachment_access != null) {
+            const depth = depth_attachment_access.?;
             const depth_offset = targetSampleOffset(depth.*, x, y, sample_index) orelse continue;
 
             depth.mutex.lock(io) catch return VkError.DeviceLost;

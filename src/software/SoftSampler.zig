@@ -594,6 +594,9 @@ pub fn sampleImageInt4(image: *SoftImage, image_view: *SoftImageView, sampler: *
     const scale_v: f32 = if (sampler.interface.unnormalized_coordinates == .true) 1.0 else @floatFromInt(extent.height);
     const scale_w: f32 = if (sampler.interface.unnormalized_coordinates == .true) 1.0 else @floatFromInt(extent.depth);
 
+    const ix = @as(i32, @intFromFloat(@floor(coord.u * scale_u))) + offset.x;
+    const iy = @as(i32, @intFromFloat(@floor(coord.v * scale_v))) + offset.y;
+    const iz = @as(i32, @intFromFloat(@floor(coord.w * scale_w))) + offset.z;
     const color = try readSampledInt4(
         image,
         image_view,
@@ -601,9 +604,9 @@ pub fn sampleImageInt4(image: *SoftImage, image_view: *SoftImageView, sampler: *
         dim,
         coord,
         mip_level,
-        @as(i32, @intFromFloat(@floor(coord.u * scale_u))) + offset.x,
-        @as(i32, @intFromFloat(@floor(coord.v * scale_v))) + offset.y,
-        @as(i32, @intFromFloat(@floor(coord.w * scale_w))) + offset.z,
+        ix,
+        iy,
+        iz,
     );
     return swizzleInt4(color, image_view.interface.components);
 }

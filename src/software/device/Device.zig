@@ -101,7 +101,9 @@ fn writeDescriptorValue(value: anytype, payload: DescriptorPayload, descriptor_i
     };
 
     switch (payload) {
-        .raw => |data| _ = try dst.write(data),
+        .raw => |data| {
+            _ = try dst.write(data);
+        },
         .sampled_image => |data| switch (dst.*) {
             .Image => _ = try dst.write(std.mem.asBytes(&data.image)),
             .Sampler => _ = try dst.write(std.mem.asBytes(&data.sampler)),
@@ -144,6 +146,10 @@ pub fn writeDescriptorSets(state: *PipelineState, rt: *spv.Runtime) !void {
             switch (binding) {
                 .buffer => |buffer_data_array| for (buffer_data_array, 0..) |buffer_data, descriptor_index| {
                     if (buffer_data.object) |buffer| {
+                        const memory = buffer.interface.memory orelse continue;
+                        if (@intFromPtr(memory.vtable) == 0)
+                            continue;
+
                         const binding_layout = set.?.interface.layout.bindings[binding_index];
                         const dynamic_offset: vk.DeviceSize = switch (binding_layout.descriptor_type) {
                             .uniform_buffer_dynamic,
