@@ -1434,13 +1434,11 @@ pub export fn apeGetDeviceMemoryCommitment(p_device: vk.Device, p_memory: vk.Dev
     defer entryPointEndLogTrace();
 
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return errorLogger(err);
-    const memory = Dispatchable(DeviceMemory).fromHandleObject(p_memory) catch |err| return errorLogger(err);
+    const memory = NonDispatchable(DeviceMemory).fromHandleObject(p_memory) catch |err| return errorLogger(err);
+    if (memory.owner != device)
+        return errorLogger(VkError.InvalidHandleDrv);
 
-    notImplementedWarning();
-
-    _ = device;
-    _ = memory;
-    _ = committed_memory;
+    committed_memory.* = memory.size;
 }
 
 pub export fn apeGetDeviceGroupPeerMemoryFeatures(
@@ -1759,13 +1757,17 @@ pub export fn apeWaitForFences(p_device: vk.Device, count: u32, p_fences: [*]con
     entryPointBeginLogTrace(.vkWaitForFences);
     defer entryPointEndLogTrace();
 
-    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
 
-    for (p_fences, 0..count) |p_fence, _| {
-        const fence = NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err);
-        fence.wait(timeout) catch |err| return toVkResult(err);
-        if (waitForAll == .false) break;
+    const allocator = VulkanAllocator.init(null, .command).allocator();
+    const fences = allocator.alloc(*Fence, count) catch return toVkResult(VkError.OutOfHostMemory);
+    defer allocator.free(fences);
+
+    for (p_fences[0..count], fences) |p_fence, *fence| {
+        fence.* = NonDispatchable(Fence).fromHandleObject(p_fence) catch |err| return toVkResult(err);
     }
+
+    Fence.waitMany(device, fences, waitForAll, timeout) catch |err| return toVkResult(err);
     return .success;
 }
 
@@ -2152,13 +2154,7 @@ pub export fn apeCmdSetDepthBias(p_cmd: vk.CommandBuffer, constant_factor: f32, 
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = constant_factor;
-    _ = clamp;
-    _ = slope_factor;
+    cmd.setDepthBias(constant_factor, clamp, slope_factor) catch |err| return errorLogger(err);
 }
 
 pub export fn apeCmdSetDepthBounds(p_cmd: vk.CommandBuffer, min: f32, max: f32) callconv(vk.vulkan_call_conv) void {
@@ -2166,12 +2162,7 @@ pub export fn apeCmdSetDepthBounds(p_cmd: vk.CommandBuffer, min: f32, max: f32) 
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = min;
-    _ = max;
+    cmd.setDepthBounds(min, max) catch |err| return errorLogger(err);
 }
 
 pub export fn apeCmdSetDeviceMask(p_cmd: vk.CommandBuffer, device_mask: u32) callconv(vk.vulkan_call_conv) void {
@@ -2200,11 +2191,7 @@ pub export fn apeCmdSetLineWidth(p_cmd: vk.CommandBuffer, width: f32) callconv(v
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = width;
+    cmd.setLineWidth(width) catch |err| return errorLogger(err);
 }
 
 pub export fn apeCmdSetScissor(p_cmd: vk.CommandBuffer, first: u32, count: u32, scissors: [*]const vk.Rect2D) callconv(vk.vulkan_call_conv) void {
@@ -2292,13 +2279,8 @@ pub export fn apeCmdWriteTimestamp(p_cmd: vk.CommandBuffer, stage: vk.PipelineSt
     defer entryPointEndLogTrace();
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
-
-    notImplementedWarning();
-
-    _ = cmd;
-    _ = stage;
-    _ = p_pool;
-    _ = query;
+    const pool = NonDispatchable(QueryPool).fromHandleObject(p_pool) catch |err| return errorLogger(err);
+    cmd.writeTimestamp(stage, pool, query) catch |err| return errorLogger(err);
 }
 
 pub export fn apeEndCommandBuffer(p_cmd: vk.CommandBuffer) callconv(vk.vulkan_call_conv) vk.Result {

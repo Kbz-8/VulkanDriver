@@ -69,6 +69,16 @@ pub fn end(self: *Self, query: u32) VkError!void {
     q.available = true;
 }
 
+pub fn writeTimestamp(self: *Self, query: u32, value: u64) VkError!void {
+    if (self.query_type != .timestamp)
+        return VkError.ValidationFailed;
+
+    const q = try self.queryAt(query);
+    q.value.store(value, .seq_cst);
+    q.available = true;
+    q.active = false;
+}
+
 pub fn addSamples(self: *Self, query: u32, samples: u64) VkError!void {
     const q = try self.queryAt(query);
     if (q.active)

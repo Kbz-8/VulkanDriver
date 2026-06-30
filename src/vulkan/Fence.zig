@@ -48,3 +48,41 @@ pub inline fn signal(self: *Self) VkError!void {
 pub inline fn wait(self: *Self, timeout: u64) VkError!void {
     try self.vtable.wait(self, timeout);
 }
+
+pub fn waitMany(device: *Device, fences: []const *Self, wait_for_all: vk.Bool32, timeout: u64) VkError!void {
+    const forever = timeout == std.math.maxInt(@TypeOf(timeout));
+    const io = device.io();
+    const deadline = if (forever) null else std.Io.Clock.Timestamp.fromNow(io, .{
+        .raw = .fromNanoseconds(@intCast(timeout)),
+        .clock = .awake,
+    });
+
+    while (true) {
+        var signaled_count: usize = 0;
+        for (fences) |fence| {
+            if (fence.owner != device) return VkError.InvalidHandleDrv;
+
+            fence.getStatus() catch |err| switch (err) {
+                VkError.NotReady => continue,
+                else => return err,
+            };
+
+            if (wait_for_all == .false) return;
+            signaled_count += 1;
+        }
+
+        if (signaled_count == fences.len) return;
+        if (timeout == 0) return VkError.Timeout;
+
+        const sleep_ns = if (deadline) |value| blk: {
+            const remaining = value.durationFromNow(io);
+            if (remaining.raw.nanoseconds <= 0) return VkError.Timeout;
+            break :blk @min(remaining.raw.nanoseconds, std.time.ns_per_ms);
+        } else std.time.ns_per_ms;
+
+        (std.Io.Clock.Duration{
+            .raw = .fromNanoseconds(sleep_ns),
+            .clock = .awake,
+        }).sleep(io) catch return VkError.DeviceLost;
+    }
+}

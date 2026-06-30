@@ -89,11 +89,11 @@ vkCmdResetEvent                                  | ✅ Implemented
 vkCmdResetQueryPool                              | ✅ Implemented
 vkCmdResolveImage                                | ✅ Implemented
 vkCmdSetBlendConstants                           | ✅ Implemented
-vkCmdSetDepthBias                                | ⚙️ WIP
-vkCmdSetDepthBounds                              | ⚙️ WIP
+vkCmdSetDepthBias                                | ✅ Implemented
+vkCmdSetDepthBounds                              | ✅ Implemented
 vkCmdSetDeviceMaskKHR                            | ✅ Implemented
 vkCmdSetEvent                                    | ✅ Implemented
-vkCmdSetLineWidth                                | ⚙️ WIP
+vkCmdSetLineWidth                                | ✅ Implemented
 vkCmdSetScissor                                  | ✅ Implemented
 vkCmdSetStencilCompareMask                       | ✅ Implemented
 vkCmdSetStencilReference                         | ✅ Implemented
@@ -101,7 +101,7 @@ vkCmdSetStencilWriteMask                         | ✅ Implemented
 vkCmdSetViewport                                 | ✅ Implemented
 vkCmdUpdateBuffer                                | ✅ Implemented
 vkCmdWaitEvents                                  | ✅ Implemented
-vkCmdWriteTimestamp                              | ⚙️ WIP
+vkCmdWriteTimestamp                              | ✅ Implemented
 vkCreateBuffer                                   | ✅ Implemented
 vkCreateBufferView                               | ✅ Implemented
 vkCreateCommandPool                              | ✅ Implemented
@@ -169,7 +169,7 @@ vkGetBufferMemoryRequirements                    | ✅ Implemented
 vkGetDeviceGroupPeerMemoryFeaturesKHR            | ✅ Implemented
 vkGetDeviceGroupPresentCapabilitiesKHR           | ✅ Implemented
 vkGetDeviceGroupSurfacePresentModesKHR           | ✅ Implemented
-vkGetDeviceMemoryCommitment                      | ⚙️ WIP
+vkGetDeviceMemoryCommitment                      | ✅ Implemented
 vkGetDeviceProcAddr                              | ✅ Implemented
 vkGetDeviceQueue                                 | ✅ Implemented
 vkGetEventStatus                                 | ✅ Implemented

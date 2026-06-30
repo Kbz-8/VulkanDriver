@@ -271,7 +271,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                                 v0,
                                 v1,
                                 v2,
-                                v0,
+                                v1,
                                 color_attachment_access,
                                 if (depth_attachment_access) |*access| access else null,
                                 if (stencil_attachment_access) |*access| access else null,

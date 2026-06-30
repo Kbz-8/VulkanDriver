@@ -53,7 +53,10 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .resolveImage = resolveImage,
         .setEvent = setEvent,
         .setBlendConstants = setBlendConstants,
+        .setDepthBias = setDepthBias,
+        .setDepthBounds = setDepthBounds,
         .setDeviceMask = setDeviceMask,
+        .setLineWidth = setLineWidth,
         .setScissor = setScissor,
         .setStencilCompareMask = setStencilCompareMask,
         .setStencilReference = setStencilReference,
@@ -61,6 +64,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .setViewport = setViewport,
         .updateBuffer = updateBuffer,
         .waitEvent = waitEvent,
+        .writeTimestamp = writeTimestamp,
     };
 
     self.* = .{ .interface = interface };
@@ -363,6 +367,24 @@ pub fn setBlendConstants(interface: *Interface, constants: [4]f32) VkError!void 
     _ = constants;
 }
 
+pub fn setDepthBias(interface: *Interface, constant_factor: f32, clamp: f32, slope_factor: f32) VkError!void {
+    _ = interface;
+    _ = constant_factor;
+    _ = clamp;
+    _ = slope_factor;
+}
+
+pub fn setDepthBounds(interface: *Interface, min: f32, max: f32) VkError!void {
+    _ = interface;
+    _ = min;
+    _ = max;
+}
+
+pub fn setLineWidth(interface: *Interface, width: f32) VkError!void {
+    _ = interface;
+    _ = width;
+}
+
 pub fn setStencilCompareMask(interface: *Interface, face_mask: vk.StencilFaceFlags, compare_mask: u32) VkError!void {
     _ = interface;
     _ = face_mask;
@@ -389,4 +411,10 @@ pub fn waitEvent(interface: *Interface, event: *base.Event, src_stage: vk.Pipeli
     _ = memory_barriers;
     _ = buffer_barriers;
     _ = image_barriers;
+}
+
+pub fn writeTimestamp(interface: *Interface, stage: vk.PipelineStageFlags, pool: *base.QueryPool, query: u32) VkError!void {
+    _ = interface;
+    _ = stage;
+    try pool.writeTimestamp(query, 0);
 }

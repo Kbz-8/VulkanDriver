@@ -45,6 +45,8 @@ pub const DynamicState = struct {
     viewports: ?[]const vk.Viewport,
     scissor: ?[]const vk.Rect2D,
     line_width: ?f32,
+    depth_bias: ?DepthBias,
+    depth_bounds: ?DepthBounds,
     blend_constants: ?[4]f32,
     stencil_front_compare_mask: ?u32,
     stencil_back_compare_mask: ?u32,
@@ -52,6 +54,17 @@ pub const DynamicState = struct {
     stencil_back_write_mask: ?u32,
     stencil_front_reference: ?u32,
     stencil_back_reference: ?u32,
+};
+
+pub const DepthBias = struct {
+    constant_factor: f32,
+    clamp: f32,
+    slope_factor: f32,
+};
+
+pub const DepthBounds = struct {
+    min: f32,
+    max: f32,
 };
 
 pub const Vertex = struct {
@@ -158,6 +171,8 @@ pub fn init(device: *SoftDevice, state: *PipelineState, active_occlusion_queries
             .viewports = null,
             .scissor = null,
             .line_width = null,
+            .depth_bias = null,
+            .depth_bounds = null,
             .blend_constants = null,
             .stencil_front_compare_mask = null,
             .stencil_back_compare_mask = null,

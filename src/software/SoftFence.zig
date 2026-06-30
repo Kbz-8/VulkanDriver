@@ -43,6 +43,11 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 
 pub fn getStatus(interface: *Interface) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const io = interface.owner.io();
+
+    self.mutex.lock(io) catch return VkError.DeviceLost;
+    defer self.mutex.unlock(io);
+
     if (!self.is_signaled) {
         return VkError.NotReady;
     }
@@ -50,6 +55,11 @@ pub fn getStatus(interface: *Interface) VkError!void {
 
 pub fn reset(interface: *Interface) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const io = interface.owner.io();
+
+    self.mutex.lock(io) catch return VkError.DeviceLost;
+    defer self.mutex.unlock(io);
+
     self.is_signaled = false;
 }
 
@@ -68,18 +78,34 @@ pub fn wait(interface: *Interface, timeout: u64) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     const io = interface.owner.io();
 
-    self.mutex.lock(io) catch return VkError.DeviceLost;
-    defer self.mutex.unlock(io);
+    if (timeout == std.math.maxInt(@TypeOf(timeout))) {
+        self.mutex.lock(io) catch return VkError.DeviceLost;
+        defer self.mutex.unlock(io);
 
-    if (self.is_signaled) return;
-    if (timeout == 0) return VkError.Timeout;
-
-    if (timeout != std.math.maxInt(@TypeOf(timeout))) {
-        const duration: std.Io.Clock.Duration = .{
-            .raw = .fromNanoseconds(@intCast(timeout)),
-            .clock = .cpu_process,
-        };
-        duration.sleep(io) catch return VkError.DeviceLost;
+        while (!self.is_signaled) {
+            self.condition.wait(io, &self.mutex) catch return VkError.DeviceLost;
+        }
+        return;
     }
-    self.condition.wait(io, &self.mutex) catch return VkError.DeviceLost;
+
+    const deadline = std.Io.Clock.Timestamp.fromNow(io, .{
+        .raw = .fromNanoseconds(@intCast(timeout)),
+        .clock = .awake,
+    });
+    while (true) {
+        {
+            self.mutex.lock(io) catch return VkError.DeviceLost;
+            defer self.mutex.unlock(io);
+
+            if (self.is_signaled) return;
+        }
+
+        const remaining = deadline.durationFromNow(io);
+        if (remaining.raw.nanoseconds <= 0) return VkError.Timeout;
+
+        (std.Io.Clock.Duration{
+            .raw = .fromNanoseconds(@min(remaining.raw.nanoseconds, std.time.ns_per_ms)),
+            .clock = .awake,
+        }).sleep(io) catch return VkError.DeviceLost;
+    }
 }

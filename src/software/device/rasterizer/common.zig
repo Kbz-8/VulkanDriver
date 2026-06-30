@@ -31,6 +31,27 @@ pub const VertexInterpolation = struct {
 
 pub const VertexInterpolationLocation = [4]VertexInterpolation;
 
+pub fn depthBiasConstantUnit(format: vk.Format, z: f32) f32 {
+    return switch (format) {
+        .d16_unorm => 1.0 / @as(f32, @floatFromInt(std.math.maxInt(u16))),
+        .x8_d24_unorm_pack32,
+        .d24_unorm_s8_uint,
+        => 1.0 / @as(f32, @floatFromInt(0x00ff_ffff)),
+        .d32_sfloat,
+        .d32_sfloat_s8_uint,
+        => if (z > 0.0) std.math.pow(f32, 2.0, @floor(@log2(z)) - 23.0) else 0.0,
+        else => 0.0,
+    };
+}
+
+pub fn clampDepthBias(bias: f32, clamp: f32) f32 {
+    if (clamp > 0.0)
+        return @min(bias, clamp);
+    if (clamp < 0.0)
+        return @max(bias, clamp);
+    return bias;
+}
+
 pub fn scissorContainsPixel(scissor: vk.Rect2D, x: i32, y: i32) bool {
     const min_x: i64 = @as(i64, scissor.offset.x);
     const min_y: i64 = @as(i64, scissor.offset.y);
@@ -172,6 +193,20 @@ pub fn depthTestAndUpdate(depth: *RenderTargetAccess, x: usize, y: usize, z: f32
     return depthTestAndUpdateAtOffset(depth, offset, z, state);
 }
 
+pub fn resolveDepthStencilState(draw_call: *Renderer.DrawCall, state: vk.PipelineDepthStencilStateCreateInfo) vk.PipelineDepthStencilStateCreateInfo {
+    var resolved = state;
+    const pipeline_data = draw_call.renderer.state.pipeline.?.interface.mode.graphics;
+    if (pipeline_data.dynamic_state.depth_bounds) {
+        const bounds = draw_call.renderer.dynamic_state.depth_bounds orelse Renderer.DepthBounds{
+            .min = 0.0,
+            .max = 1.0,
+        };
+        resolved.min_depth_bounds = bounds.min;
+        resolved.max_depth_bounds = bounds.max;
+    }
+    return resolved;
+}
+
 pub fn depthTestSampleAndUpdate(
     io: std.Io,
     depth: *RenderTargetAccess,
@@ -198,10 +233,14 @@ pub fn depthTestSampleAndUpdate(
 }
 
 fn depthTestAndUpdateAtOffset(depth: *RenderTargetAccess, offset: usize, z: f32, state: vk.PipelineDepthStencilStateCreateInfo) bool {
+    const reference = quantizeDepthForFormat(depth.format, z);
+    if (state.depth_bounds_test_enable == .true and
+        (reference < state.min_depth_bounds or reference > state.max_depth_bounds))
+        return false;
+
     if (state.depth_test_enable == .false)
         return true;
 
-    const reference = quantizeDepthForFormat(depth.format, z);
     const depth_value = blitter.readFloat4(depth.base[offset..], depth.format);
     const passed = compare(f32, state.depth_compare_op, reference, depth_value[0]);
     if (passed and state.depth_write_enable == .true)
@@ -287,9 +326,10 @@ pub fn interpolateLineOutputs(
     allocator: std.mem.Allocator,
     v0: *const Renderer.Vertex,
     v1: *const Renderer.Vertex,
+    provoking_vertex: *const Renderer.Vertex,
     t: f32,
 ) VkError![spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation {
-    return interpolateVertexOutputs(allocator, v0, v1, v0, v0, 1.0 - t, t, 0.0);
+    return interpolateVertexOutputs(allocator, v0, v1, v0, provoking_vertex, 1.0 - t, t, 0.0);
 }
 
 pub fn interpolateVertexOutputDerivatives(
@@ -506,7 +546,7 @@ pub fn writeToTargets(
 ) VkError!void {
     const io = draw_call.renderer.device.interface.io();
     const pipeline_data = draw_call.renderer.state.pipeline.?.interface.mode.graphics;
-    const depth_stencil_state = pipeline_data.depth_stencil;
+    const depth_stencil_state = if (pipeline_data.depth_stencil) |state| resolveDepthStencilState(draw_call, state) else null;
     const effective_fragment_sample_mask = alphaToCoverageMask(
         pipeline_data.multisample,
         outputs,

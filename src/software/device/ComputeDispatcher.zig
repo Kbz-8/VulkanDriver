@@ -184,14 +184,16 @@ inline fn run(data: RunData) !void {
         const workgroup_memory = try rt.createWorkgroupMemory(allocator);
         defer rt.destroyWorkgroupMemory(allocator, workgroup_memory);
 
+        rt.resetInvocation(allocator);
+        if (rt.specialization_constants.count() != 0)
+            try rt.applySpecializationInvocationLayout(allocator);
+        try ExecutionDevice.writeDescriptorSets(data.self.state, rt);
+        try rt.populatePushConstants(data.self.state.push_constant_blob[0..]);
+        try rt.bindWorkgroupMemory(workgroup_memory);
+        try setupWorkgroupBuiltins(data.self, rt, data.local_size, group_count_vec, group_id_vec);
+
         for (0..data.invocations_per_workgroup) |i| {
             rt.resetInvocation(allocator);
-            if (rt.specialization_constants.count() != 0)
-                try rt.applySpecializationInvocationLayout(allocator);
-            try ExecutionDevice.writeDescriptorSets(data.self.state, rt);
-            try rt.populatePushConstants(data.self.state.push_constant_blob[0..]);
-            try rt.bindWorkgroupMemory(workgroup_memory);
-            try setupWorkgroupBuiltins(data.self, rt, data.local_size, group_count_vec, group_id_vec);
 
             const invocation_index = data.self.invocation_index.fetchAdd(1, .monotonic);
 

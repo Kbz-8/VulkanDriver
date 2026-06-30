@@ -113,7 +113,10 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .resolveImage = resolveImage,
         .setEvent = setEvent,
         .setBlendConstants = setBlendConstants,
+        .setDepthBias = setDepthBias,
+        .setDepthBounds = setDepthBounds,
         .setDeviceMask = setDeviceMask,
+        .setLineWidth = setLineWidth,
         .setScissor = setScissor,
         .setStencilCompareMask = setStencilCompareMask,
         .setStencilReference = setStencilReference,
@@ -121,6 +124,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .setViewport = setViewport,
         .updateBuffer = updateBuffer,
         .waitEvent = waitEvent,
+        .writeTimestamp = writeTimestamp,
     };
 
     self.* = .{
@@ -279,6 +283,36 @@ pub fn resetQueryPool(interface: *Interface, pool: *base.QueryPool, first: u32, 
         .pool = pool,
         .first = first,
         .count = count,
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn writeTimestamp(interface: *Interface, stage: vk.PipelineStageFlags, pool: *base.QueryPool, query: u32) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        stage: vk.PipelineStageFlags,
+        pool: *base.QueryPool,
+        query: u32,
+
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            _ = impl.stage;
+            const io = device.renderer.device.interface.io();
+            const now = std.Io.Timestamp.now(io, .real).toNanoseconds();
+            try impl.pool.writeTimestamp(impl.query, if (now > 0) @intCast(now) else 0);
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .stage = stage,
+        .pool = pool,
+        .query = query,
     };
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
@@ -1327,6 +1361,75 @@ pub fn setBlendConstants(interface: *Interface, constants: [4]f32) VkError!void 
     const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(cmd);
     cmd.* = .{ .constants = constants };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn setDepthBias(interface: *Interface, constant_factor: f32, clamp: f32, slope_factor: f32) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        depth_bias: @import("device/Renderer.zig").DepthBias,
+
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            device.renderer.dynamic_state.depth_bias = impl.depth_bias;
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{
+        .depth_bias = .{
+            .constant_factor = constant_factor,
+            .clamp = clamp,
+            .slope_factor = slope_factor,
+        },
+    };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn setDepthBounds(interface: *Interface, min: f32, max: f32) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        depth_bounds: @import("device/Renderer.zig").DepthBounds,
+
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            device.renderer.dynamic_state.depth_bounds = impl.depth_bounds;
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{ .depth_bounds = .{ .min = min, .max = max } };
+    self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+}
+
+pub fn setLineWidth(interface: *Interface, width: f32) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    const allocator = self.command_allocator.allocator();
+
+    const CommandImpl = struct {
+        const Impl = @This();
+
+        width: f32,
+
+        pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
+            const impl: *Impl = @ptrCast(@alignCast(context));
+            device.renderer.dynamic_state.line_width = impl.width;
+        }
+    };
+
+    const cmd = allocator.create(CommandImpl) catch return VkError.OutOfHostMemory;
+    errdefer allocator.destroy(cmd);
+    cmd.* = .{ .width = width };
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 

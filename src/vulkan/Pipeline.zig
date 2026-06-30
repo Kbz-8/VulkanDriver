@@ -49,6 +49,10 @@ mode: union(enum) {
             cull_mode: vk.CullModeFlags,
             front_face: vk.FrontFace,
             line_width: f32,
+            depth_bias_enable: vk.Bool32,
+            depth_bias_constant_factor: f32,
+            depth_bias_clamp: f32,
+            depth_bias_slope_factor: f32,
         },
         multisample: struct {
             rasterization_samples: vk.SampleCountFlags,
@@ -194,6 +198,10 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
                     .cull_mode = if (info.p_rasterization_state) |state| state.cull_mode else return VkError.ValidationFailed,
                     .front_face = if (info.p_rasterization_state) |state| state.front_face else return VkError.ValidationFailed,
                     .line_width = if (info.p_rasterization_state) |state| state.line_width else return VkError.ValidationFailed,
+                    .depth_bias_enable = if (info.p_rasterization_state) |state| state.depth_bias_enable else return VkError.ValidationFailed,
+                    .depth_bias_constant_factor = if (info.p_rasterization_state) |state| state.depth_bias_constant_factor else return VkError.ValidationFailed,
+                    .depth_bias_clamp = if (info.p_rasterization_state) |state| state.depth_bias_clamp else return VkError.ValidationFailed,
+                    .depth_bias_slope_factor = if (info.p_rasterization_state) |state| state.depth_bias_slope_factor else return VkError.ValidationFailed,
                 },
                 .multisample = blk: {
                     if (rasterizer_discard_enable) {

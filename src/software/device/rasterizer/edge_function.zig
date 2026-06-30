@@ -40,6 +40,7 @@ const RunData = struct {
     fragment_uses_derivatives: bool,
     fragment_uses_sample_id: bool,
     fragment_uses_centroid: bool,
+    depth_bias_slope: f32,
 };
 
 pub fn drawTriangle(
@@ -64,6 +65,16 @@ pub fn drawTriangle(
     const area = edgeFunction(v0.position, v1.position, v2.position);
     if (area == 0.0)
         return;
+    const inv_area = 1.0 / area;
+    const dz_dx =
+        (v0.position[2] * ((v1.position[1] - v2.position[1]) * inv_area)) +
+        (v1.position[2] * ((v2.position[1] - v0.position[1]) * inv_area)) +
+        (v2.position[2] * ((v0.position[1] - v1.position[1]) * inv_area));
+    const dz_dy =
+        (v0.position[2] * ((v2.position[0] - v1.position[0]) * inv_area)) +
+        (v1.position[2] * ((v0.position[0] - v2.position[0]) * inv_area)) +
+        (v2.position[2] * ((v1.position[0] - v0.position[0]) * inv_area));
+    const depth_bias_slope = @max(@abs(dz_dx), @abs(dz_dy));
 
     const pipeline = draw_call.renderer.state.pipeline orelse return;
     const fragment_stage = pipeline.stages.getPtr(.fragment);
@@ -139,6 +150,7 @@ pub fn drawTriangle(
                 .fragment_uses_derivatives = fragment_uses_derivatives,
                 .fragment_uses_sample_id = fragment_uses_sample_id,
                 .fragment_uses_centroid = fragment_uses_centroid,
+                .depth_bias_slope = depth_bias_slope,
             };
 
             draw_call.rasterizer_wait_group.async(io, runWrapper, .{run_data});
@@ -250,6 +262,7 @@ fn applyEarlyDepth(data: RunData, coverage_sample_mask: vk.SampleMask, x: i32, y
 
     const depth = data.depth_attachment_access orelse return .{ .mask = coverage_sample_mask, .applied = false };
     const pipeline_data = data.draw_call.renderer.state.pipeline.?.interface.mode.graphics;
+    const depth_stencil_state = if (pipeline_data.depth_stencil) |state| common.resolveDepthStencilState(data.draw_call, state) else null;
     const io = data.draw_call.renderer.device.interface.io();
 
     var passed_mask: vk.SampleMask = 0;
@@ -261,11 +274,36 @@ fn applyEarlyDepth(data: RunData, coverage_sample_mask: vk.SampleMask, x: i32, y
         if ((coverage_sample_mask & bit) == 0)
             continue;
 
-        if (try common.depthTestSampleAndUpdate(io, depth, @intCast(x), @intCast(y), sample_index, z, pipeline_data.depth_stencil))
+        if (try common.depthTestSampleAndUpdate(io, depth, @intCast(x), @intCast(y), sample_index, z, depth_stencil_state))
             passed_mask |= bit;
     }
 
     return .{ .mask = passed_mask, .applied = true };
+}
+
+fn biasedDepth(data: RunData, z: f32) f32 {
+    const pipeline_data = data.draw_call.renderer.state.pipeline.?.interface.mode.graphics;
+    if (pipeline_data.rasterization.depth_bias_enable == .false)
+        return z;
+
+    const depth = data.depth_attachment_access orelse return z;
+    const bias_state: Renderer.DepthBias = if (pipeline_data.dynamic_state.depth_bias)
+        data.draw_call.renderer.dynamic_state.depth_bias orelse Renderer.DepthBias{
+            .constant_factor = 0.0,
+            .clamp = 0.0,
+            .slope_factor = 0.0,
+        }
+    else
+        Renderer.DepthBias{
+            .constant_factor = pipeline_data.rasterization.depth_bias_constant_factor,
+            .clamp = pipeline_data.rasterization.depth_bias_clamp,
+            .slope_factor = pipeline_data.rasterization.depth_bias_slope_factor,
+        };
+
+    const bias =
+        bias_state.constant_factor * common.depthBiasConstantUnit(depth.format, z) +
+        bias_state.slope_factor * data.depth_bias_slope;
+    return z + common.clampDepthBias(bias, bias_state.clamp);
 }
 
 fn runWrapper(data: RunData) void {
@@ -304,8 +342,9 @@ inline fn run(data: RunData) !void {
             const b1 = w1 / data.area;
             const b2 = w2 / data.area;
             const z = (b0 * data.v0.position[2]) + (b1 * data.v1.position[2]) + (b2 * data.v2.position[2]);
+            const depth_z = biasedDepth(data, z);
             const frag_w = (b0 / data.v0.position[3]) + (b1 / data.v1.position[3]) + (b2 / data.v2.position[3]);
-            const early_depth = try applyEarlyDepth(data, coverage_sample_mask, x, y, z, sample_count);
+            const early_depth = try applyEarlyDepth(data, coverage_sample_mask, x, y, depth_z, sample_count);
             if (early_depth.mask == 0)
                 continue;
 
@@ -378,7 +417,7 @@ inline fn run(data: RunData) !void {
                         data.front_face,
                         @intCast(x),
                         @intCast(y),
-                        sample_result.depth orelse z,
+                        sample_result.depth orelse depth_z,
                         sample_coverage_mask,
                         sample_result.sample_mask,
                         early_depth.applied,
@@ -460,7 +499,7 @@ inline fn run(data: RunData) !void {
                 data.front_face,
                 @intCast(x),
                 @intCast(y),
-                fragment_result.depth orelse z,
+                fragment_result.depth orelse depth_z,
                 early_depth.mask,
                 fragment_result.sample_mask,
                 early_depth.applied,

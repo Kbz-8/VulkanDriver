@@ -78,7 +78,10 @@ pub const DispatchTable = struct {
     resolveImage: *const fn (*Self, *Image, vk.ImageLayout, *Image, vk.ImageLayout, vk.ImageResolve) VkError!void,
     setEvent: *const fn (*Self, *Event, vk.PipelineStageFlags) VkError!void,
     setBlendConstants: *const fn (*Self, [4]f32) VkError!void,
+    setDepthBias: *const fn (*Self, f32, f32, f32) VkError!void,
+    setDepthBounds: *const fn (*Self, f32, f32) VkError!void,
     setDeviceMask: *const fn (*Self, u32) VkError!void,
+    setLineWidth: *const fn (*Self, f32) VkError!void,
     setScissor: *const fn (*Self, u32, []const vk.Rect2D) VkError!void,
     setStencilCompareMask: *const fn (*Self, vk.StencilFaceFlags, u32) VkError!void,
     setStencilReference: *const fn (*Self, vk.StencilFaceFlags, u32) VkError!void,
@@ -86,6 +89,7 @@ pub const DispatchTable = struct {
     setViewport: *const fn (*Self, u32, []const vk.Viewport) VkError!void,
     updateBuffer: *const fn (*Self, *Buffer, vk.DeviceSize, []const u8) VkError!void,
     waitEvent: *const fn (*Self, *Event, vk.PipelineStageFlags, vk.PipelineStageFlags, []const vk.MemoryBarrier, []const vk.BufferMemoryBarrier, []const vk.ImageMemoryBarrier) VkError!void,
+    writeTimestamp: *const fn (*Self, vk.PipelineStageFlags, *QueryPool, u32) VkError!void,
 };
 
 pub const VTable = struct {
@@ -338,11 +342,23 @@ pub inline fn setBlendConstants(self: *Self, constants: [4]f32) VkError!void {
     try self.dispatch_table.setBlendConstants(self, constants);
 }
 
+pub inline fn setDepthBias(self: *Self, constant_factor: f32, clamp: f32, slope_factor: f32) VkError!void {
+    try self.dispatch_table.setDepthBias(self, constant_factor, clamp, slope_factor);
+}
+
+pub inline fn setDepthBounds(self: *Self, min: f32, max: f32) VkError!void {
+    try self.dispatch_table.setDepthBounds(self, min, max);
+}
+
 pub inline fn setDeviceMask(self: *Self, device_mask: u32) VkError!void {
     if (device_mask != 1)
         return VkError.ValidationFailed;
     self.device_mask = device_mask;
     try self.dispatch_table.setDeviceMask(self, device_mask);
+}
+
+pub inline fn setLineWidth(self: *Self, width: f32) VkError!void {
+    try self.dispatch_table.setLineWidth(self, width);
 }
 
 pub inline fn setScissor(self: *Self, first: u32, scissor: []const vk.Rect2D) VkError!void {
@@ -375,4 +391,8 @@ pub inline fn waitEvent(
     image_barriers: []const vk.ImageMemoryBarrier,
 ) VkError!void {
     try self.dispatch_table.waitEvent(self, event, src_stage, dst_stage, memory_barriers, buffer_barriers, image_barriers);
+}
+
+pub inline fn writeTimestamp(self: *Self, stage: vk.PipelineStageFlags, pool: *QueryPool, query: u32) VkError!void {
+    try self.dispatch_table.writeTimestamp(self, stage, pool, query);
 }
