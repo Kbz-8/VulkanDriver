@@ -105,6 +105,7 @@ inline fn run(data: RunData) !void {
 
         rt.callEntryPoint(data.allocator, entry) catch |err| switch (err) {
             // Some errors can be safely ignored
+            SpvRuntimeError.OutOfBounds => {},
             SpvRuntimeError.Killed => {
                 try rt.flushDescriptorSets(data.allocator);
                 return;
