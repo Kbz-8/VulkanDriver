@@ -41,6 +41,13 @@
         //    .path = "../SPIRV-Interpreter",
         //    .lazy = true,
         //},
+
+        // Phi dependencies
+        .miclib = .{
+            .url = "git+https://git.kbz8.me/kbz_8/miclib-zig.git#9d99ef63bf279c3f464821f8a82b0435c55d56a7",
+            .hash = "miclib-1.0.0-AbDwS3-6AABd_H8542J7l6p1q6asRusmQ-xdpQZ8bQ71",
+            .lazy = true,
+        },
     },
 
     .paths = .{

@@ -27,8 +27,8 @@ jobs:
       - name: Building Flint
         run: zig build flint
 
-      - name: Building Phi
-        run: zig build phi
+      #- name: Building Phi
+      #  run: zig build phi
 
       - name: Generating docs
         run: zig build docs

@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const vk = @import("vulkan");
 const base = @import("base");
 const lib = @import("lib.zig");
+const mic = lib.mic;
 
 const pci_ids = @import("pci_ids.zig").map;
 
@@ -31,7 +32,7 @@ pub const EXTENSIONS = [_]vk.ExtensionProperties{
 
 interface: Interface,
 
-pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, drm_device: *const base.drm.Device) VkError!*Self {
+pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, mic_device: mic.Device) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
 
@@ -54,25 +55,34 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, drm_device
     };
 
     interface.props.api_version = @bitCast(lib.VULKAN_VERSION);
-    interface.props.vendor_id = lib.INTEL_PCI_VENDOR_ID;
     interface.props.driver_version = @bitCast(base.DRIVER_VERSION);
-    interface.props.device_id = drm_device.device_info.pci.device_id;
     interface.props.device_type = .discrete_gpu;
 
     @memset(interface.props.device_name[0..], 0);
 
-    for (pci_ids[0..]) |pci| {
-        if (pci.id != drm_device.device_info.pci.device_id)
-            continue;
+    if (mic_device.pciConfig()) |pci_value| {
+        var pci = pci_value;
+        defer pci.deinit();
 
-        const len = @min(vk.MAX_PHYSICAL_DEVICE_NAME_SIZE, pci.name.len);
-        @memcpy(interface.props.device_name[0..len], pci.name[0..len]);
+        interface.props.vendor_id = pci.vendorId();
+        interface.props.device_id = pci.deviceId();
 
-        const driver_mark = " [Phi ApeDriver]";
+        for (pci_ids[0..]) |pci_info| {
+            if (pci.id != pci.deviceId())
+                continue;
 
-        @memcpy(interface.props.device_name[len .. len + driver_mark.len], driver_mark);
+            const len = @min(vk.MAX_PHYSICAL_DEVICE_NAME_SIZE, pci_info.name.len);
+            @memcpy(interface.props.device_name[0..len], pci_info.name[0..len]);
 
-        break;
+            const driver_mark = " [Phi ApeDriver]";
+
+            @memcpy(interface.props.device_name[len .. len + driver_mark.len], driver_mark);
+
+            break;
+        }
+    } else |err| {
+        std.log.scoped(.MIC).err("Failed to fetch device PCI config: {s}", .{@errorName(err)});
+        return VkError.InitializationFailed;
     }
 
     interface.props.pipeline_cache_uuid = undefined;

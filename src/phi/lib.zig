@@ -2,8 +2,9 @@ const std = @import("std");
 const vk = @import("vulkan");
 pub const base = @import("base");
 
-pub const c = @import("intel_c");
+pub const c = @import("phi_c");
 pub const config = base.config;
+pub const mic = @import("miclib");
 
 pub const PhiInstance = @import("PhiInstance.zig");
 pub const PhiDevice = @import("PhiDevice.zig");
@@ -37,8 +38,6 @@ pub const Instance = PhiInstance;
 pub const DRIVER_NAME = "Phi";
 
 pub const PHYSICAL_DEVICE_DEFAULT_NAME = "Intel(R) Xeon Phi(TM) Coprocessor";
-
-pub const INTEL_PCI_VENDOR_ID = 0x8086;
 
 pub const VULKAN_VERSION = vk.makeApiVersion(
     0,

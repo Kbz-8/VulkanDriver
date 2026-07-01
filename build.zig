@@ -256,11 +256,13 @@ fn customSoft(
     _: *std.Build.Module,
     _: *std.Build.Module,
     base_c_mod: *std.Build.Module,
-    _: std.Build.ResolvedTarget,
-    _: std.builtin.OptimizeMode,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
     use_llvm: bool,
 ) !void {
     const spv = b.lazyDependency("SPIRV_Interpreter", .{
+        .target = target,
+        .optimize = optimize,
         .@"no-example" = true,
         .@"no-test" = true,
         .@"use-llvm" = use_llvm,
@@ -306,17 +308,27 @@ fn optionsFlint(b: *std.Build, options: *Step.Options) !void {
 }
 
 fn customPhi(
-    _: *std.Build,
+    b: *std.Build,
     _: *Step.Compile,
     lib_mod: *std.Build.Module,
     _: *std.Build.Module,
     _: *std.Build.Module,
     base_c_mod: *std.Build.Module,
-    _: std.Build.ResolvedTarget,
-    _: std.builtin.OptimizeMode,
-    _: bool,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    use_llvm: bool,
 ) !void {
     lib_mod.addImport("phi_c", base_c_mod);
+
+    const miclib = b.lazyDependency("miclib", .{
+        .target = target,
+        .optimize = optimize,
+        .miclib_include = "/usr/local/include",
+        .miclib_libdir = "/usr/local/lib",
+        .@"use-llvm" = use_llvm,
+    }) orelse return error.UnresolvedDependency;
+
+    lib_mod.addImport("miclib", miclib.module("miclib"));
 }
 
 fn optionsPhi(b: *std.Build, options: *Step.Options) !void {

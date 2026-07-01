@@ -2,6 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 const lib = @import("lib.zig");
+const mic = lib.mic;
 
 const PhiPhysicalDevice = @import("PhiPhysicalDevice.zig");
 
@@ -61,22 +62,35 @@ fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
     allocator.destroy(self);
 }
 
-fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator, devices: []base.drm.Card) VkError!void {
+fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator, _: []base.drm.Card) VkError!void {
     if (interface.physical_devices.items.len != 0) {
         return;
     }
 
-    const io_var = interface.io();
+    var devices = mic.DeviceList.init() catch |err| {
+        std.log.scoped(.MIC).err("Failed to create device list: {s}", .{@errorName(err)});
+        return VkError.InitializationFailed;
+    };
+    defer devices.deinit();
 
-    for (devices[0..]) |device| {
-        const drm_device = device.getDevice(io_var, allocator, .{}) catch continue;
+    const count = devices.count() catch |err| {
+        std.log.scoped(.MIC).err("Failed to fetch device list count: {s}", .{@errorName(err)});
+        return VkError.InitializationFailed;
+    };
 
-        if (drm_device.node_type != .render or
-            std.meta.activeTag(drm_device.device_info) != .pci or
-            drm_device.device_info.pci.vendor_id != lib.INTEL_PCI_VENDOR_ID)
+    for (0..count) |index| {
+        const device_num = devices.deviceAtIndex(index) catch |err| {
+            std.log.scoped(.MIC).err("Failed to fetch device: {s}", .{@errorName(err)});
             continue;
+        };
 
-        const physical_device = try PhiPhysicalDevice.create(allocator, interface, &drm_device);
+        var device = mic.Device.open(device_num) catch |err| {
+            std.log.scoped(.MIC).err("Failed to open device {d}: {s}", .{ device_num, @errorName(err) });
+            continue;
+        };
+        defer device.deinit();
+
+        const physical_device = try PhiPhysicalDevice.create(allocator, interface, device);
         errdefer physical_device.interface.release(allocator) catch {};
 
         const dispatchable = try Dispatchable(base.PhysicalDevice).wrap(allocator, &physical_device.interface);
