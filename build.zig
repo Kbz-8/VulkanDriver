@@ -45,6 +45,13 @@ const implementations = [_]ImplementationDesc{
         .custom = customFlint,
         .options = optionsFlint,
     },
+    .{
+        .name = "phi",
+        .root_source_file = "src/phi/lib.zig",
+        .vulkan_version = .{ .major = 1, .minor = 0, .patch = 0 },
+        .custom = customPhi,
+        .options = optionsPhi,
+    },
 };
 
 const RunningMode = enum {
@@ -291,11 +298,28 @@ fn customFlint(
     _: bool,
 ) !void {
     lib_mod.addImport("intel_c", base_c_mod);
-
-    lib_mod.addImport("soft_c", base_c_mod);
 }
 
 fn optionsFlint(b: *std.Build, options: *Step.Options) !void {
+    _ = b;
+    _ = options;
+}
+
+fn customPhi(
+    _: *std.Build,
+    _: *Step.Compile,
+    lib_mod: *std.Build.Module,
+    _: *std.Build.Module,
+    _: *std.Build.Module,
+    base_c_mod: *std.Build.Module,
+    _: std.Build.ResolvedTarget,
+    _: std.builtin.OptimizeMode,
+    _: bool,
+) !void {
+    lib_mod.addImport("phi_c", base_c_mod);
+}
+
+fn optionsPhi(b: *std.Build, options: *Step.Options) !void {
     _ = b;
     _ = options;
 }
