@@ -19,16 +19,16 @@ jobs:
       - uses: https://codeberg.org/mlugg/setup-zig@v2
 
       - name: Building Ape
-        run: zig build ape
+        run: zig build ape --release=safe
 
       - name: Building Soft
-        run: zig build soft
+        run: zig build soft --release=safe
 
       - name: Building Flint
-        run: zig build flint
+        run: zig build flint --release=safe
 
-      #- name: Building Phi
-      #  run: zig build phi
+      - name: Building Phi
+        run: zig build phi --release=safe
 
       - name: Generating docs
         run: zig build docs
