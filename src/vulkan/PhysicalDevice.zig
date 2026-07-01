@@ -164,21 +164,29 @@ pub fn getSurfaceCapabilitiesKHR(_: *Self, surface: *SurfaceKHR, capabilities: *
 
 pub fn getSurfaceFormatsKHR(_: *Self, _: *SurfaceKHR, count: *u32, p_formats: ?[*]vk.SurfaceFormatKHR) VkError!void {
     const surface_formats = SurfaceKHR.getFormats();
-    count.* = surface_formats.len;
     if (p_formats) |formats| {
-        for (formats[0..], surface_formats[0..]) |*format, surface_format| {
+        const write_count = @min(count.*, surface_formats.len);
+        for (formats[0..write_count], surface_formats[0..write_count]) |*format, surface_format| {
             format.* = surface_format;
         }
+        count.* = @intCast(write_count);
+        if (write_count < surface_formats.len) return VkError.Incomplete;
+    } else {
+        count.* = @intCast(surface_formats.len);
     }
 }
 
 pub fn getSurfacePresentModesKHR(_: *Self, _: *SurfaceKHR, count: *u32, p_modes: ?[*]vk.PresentModeKHR) VkError!void {
     const surface_modes = SurfaceKHR.getPresentModes();
-    count.* = surface_modes.len;
     if (p_modes) |modes| {
-        for (modes[0..], surface_modes[0..]) |*mode, surface_mode| {
+        const write_count = @min(count.*, surface_modes.len);
+        for (modes[0..write_count], surface_modes[0..write_count]) |*mode, surface_mode| {
             mode.* = surface_mode;
         }
+        count.* = @intCast(write_count);
+        if (write_count < surface_modes.len) return VkError.Incomplete;
+    } else {
+        count.* = @intCast(surface_modes.len);
     }
 }
 

@@ -149,7 +149,11 @@ pub fn presentKHR(_: *Self, info: *const vk.PresentInfoKHR) VkError!void {
                 }
             else
                 cmd_err = err;
+            continue;
         };
+        if (info.p_results) |results| {
+            results[i] = .success;
+        }
     }
 
     if (cmd_err) |err|

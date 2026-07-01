@@ -82,6 +82,11 @@ pub fn shaderInvocation(
         SpvRuntimeError.NotFound => {},
         else => return err,
     };
+    const helper_invocation = false;
+    rt.writeBuiltIn(allocator, std.mem.asBytes(&helper_invocation), .HelperInvocation) catch |err| switch (err) {
+        SpvRuntimeError.NotFound => {},
+        else => return err,
+    };
 
     const SoftPipeline = @import("../SoftPipeline.zig");
     const previous_fragment_coord = SoftPipeline.current_fragment_coord;
@@ -157,6 +162,10 @@ pub fn shaderInvocation(
         },
         else => return err,
     };
+    if (rt.helper_invocation) {
+        try rt.flushDescriptorSets(allocator);
+        return SpvRuntimeError.Killed;
+    }
 
     var outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8);
 

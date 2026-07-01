@@ -216,20 +216,13 @@ pub fn depthTestSampleAndUpdate(
     z: f32,
     state: ?vk.PipelineDepthStencilStateCreateInfo,
 ) VkError!bool {
+    const depth_state = state orelse return true;
     const depth_offset = targetSampleOffset(depth.*, x, y, sample_index) orelse return false;
 
     depth.mutex.lock(io) catch return VkError.DeviceLost;
     defer depth.mutex.unlock(io);
 
-    if (state) |depth_state| {
-        return depthTestAndUpdateAtOffset(depth, depth_offset, z, depth_state);
-    }
-
-    const depth_value = blitter.readFloat4(depth.base[depth_offset..], depth.format);
-    if (z >= depth_value[0])
-        return false;
-    blitter.writeFloat4(zm.f32x4s(z), depth.base[depth_offset..], depth.format);
-    return true;
+    return depthTestAndUpdateAtOffset(depth, depth_offset, z, depth_state);
 }
 
 fn depthTestAndUpdateAtOffset(depth: *RenderTargetAccess, offset: usize, z: f32, state: vk.PipelineDepthStencilStateCreateInfo) bool {
@@ -589,24 +582,16 @@ pub fn writeToTargets(
 
         // After work depth test to avoid overwritten depth pixels during fragment invocations.
         var depth_passed: ?bool = null;
-        if (!depth_already_applied and depth_attachment_access != null) {
+        if (!depth_already_applied and depth_attachment_access != null and depth_stencil_state != null) {
             const depth = depth_attachment_access.?;
             const depth_offset = targetSampleOffset(depth.*, x, y, sample_index) orelse continue;
 
             depth.mutex.lock(io) catch return VkError.DeviceLost;
             defer depth.mutex.unlock(io);
 
-            if (depth_stencil_state) |state| {
-                depth_passed = depthTestAndUpdateAtOffset(depth, depth_offset, z, state);
-                if (!depth_passed.? and stencil_state == null)
-                    continue;
-            } else {
-                const depth_value = blitter.readFloat4(depth.base[depth_offset..], depth.format);
-                if (z >= depth_value[0])
-                    continue;
-                blitter.writeFloat4(zm.f32x4s(z), depth.base[depth_offset..], depth.format);
-                depth_passed = true;
-            }
+            depth_passed = depthTestAndUpdateAtOffset(depth, depth_offset, z, depth_stencil_state.?);
+            if (!depth_passed.? and stencil_state == null)
+                continue;
         }
 
         if (stencil_attachment_access) |stencil| {

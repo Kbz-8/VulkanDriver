@@ -17,6 +17,7 @@ const formats = [_]vk.SurfaceFormatKHR{
 };
 
 const present_modes = [_]vk.PresentModeKHR{
+    .fifo_khr,
     .immediate_khr,
 };
 

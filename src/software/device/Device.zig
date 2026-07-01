@@ -118,11 +118,10 @@ fn writeDescriptorSet(rt: *spv.Runtime, payload: DescriptorPayload, set: u32, bi
     for (rt.mod.bindings.items) |entry| {
         if (entry.set != set or entry.binding != binding)
             continue;
-
-        const variable = switch (rt.results[entry.result].variant orelse continue) {
+        const variable = if (rt.results[entry.result].variant) |*variant| switch (variant.*) {
             .Variable => |*variable| variable,
             else => continue,
-        };
+        } else continue;
 
         writeDescriptorValue(&variable.value, payload, descriptor_index) catch |err| switch (err) {
             spv.Runtime.RuntimeError.InvalidValueType,

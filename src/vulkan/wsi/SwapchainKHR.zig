@@ -18,13 +18,33 @@ owner: *Device,
 surface: ?*SurfaceKHR,
 images: []PresentImage,
 
+fn validateImageAllocationSize(info: *const vk.SwapchainCreateInfoKHR) VkError!void {
+    if (info.image_extent.width == 0 or info.image_extent.height == 0 or info.image_array_layers == 0)
+        return VkError.OutOfDeviceMemory;
+
+    const texel_size = lib.format.texelSize(info.image_format);
+    var size = std.math.mul(usize, texel_size, info.image_extent.width) catch return VkError.OutOfDeviceMemory;
+    size = std.math.mul(usize, size, info.image_extent.height) catch return VkError.OutOfDeviceMemory;
+    _ = std.math.mul(usize, size, info.image_array_layers) catch return VkError.OutOfDeviceMemory;
+}
+
 pub fn create(device: *Device, allocator: std.mem.Allocator, surface: *SurfaceKHR, info: *const vk.SwapchainCreateInfoKHR) VkError!*Self {
+    try validateImageAllocationSize(info);
+
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
 
     const images = allocator.alloc(PresentImage, info.min_image_count) catch return VkError.OutOfHostMemory;
     errdefer {
         allocator.free(images);
+    }
+
+    var initialized_image_count: usize = 0;
+    errdefer {
+        for (images[0..initialized_image_count]) |*image| {
+            surface.detachImage(allocator, image) catch {};
+            image.deinit(allocator);
+        }
     }
 
     for (images) |*image| {
@@ -46,6 +66,7 @@ pub fn create(device: *Device, allocator: std.mem.Allocator, surface: *SurfaceKH
             .queue_family_index_count = info.queue_family_index_count,
             .initial_layout = .general,
         });
+        initialized_image_count += 1;
 
         try surface.attachImage(allocator, image);
     }

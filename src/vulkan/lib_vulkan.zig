@@ -2458,11 +2458,15 @@ pub export fn apeGetSwapchainImagesKHR(p_device: vk.Device, p_swapchain: vk.Swap
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
 
     const swapchain = NonDispatchable(SwapchainKHR).fromHandleObject(p_swapchain) catch |err| return toVkResult(err);
-    count.* = @intCast(swapchain.images.len);
     if (p_images) |images| {
-        for (images[0..], swapchain.images[0..]) |*image, *swapchain_image| {
+        const write_count = @min(count.*, swapchain.images.len);
+        for (images[0..write_count], swapchain.images[0..write_count]) |*image, *swapchain_image| {
             image.* = swapchain_image.non_dispatchable_image.toVkHandle(vk.Image);
         }
+        count.* = @intCast(write_count);
+        if (write_count < swapchain.images.len) return .incomplete;
+    } else {
+        count.* = @intCast(swapchain.images.len);
     }
 
     return .success;

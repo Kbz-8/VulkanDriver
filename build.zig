@@ -432,7 +432,8 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
     }
 
     run.addArg("run");
-    run.addArg("--verbose");
+    run.addArg("--timeout");
+    run.addArg("300");
     run.addArg("--deqp");
     run.addArg(cts_exe_path);
     run.addArg("--caselist");
