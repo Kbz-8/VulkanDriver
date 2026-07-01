@@ -64,11 +64,11 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, mic_device
         var pci = pci_value;
         defer pci.deinit();
 
-        interface.props.vendor_id = pci.vendorId();
-        interface.props.device_id = pci.deviceId();
+        interface.props.vendor_id = pci.vendorId() catch 0;
+        interface.props.device_id = pci.deviceId() catch 0;
 
         for (pci_ids[0..]) |pci_info| {
-            if (pci.id != pci.deviceId())
+            if (pci_info.id != pci.deviceId() catch 0)
                 continue;
 
             const len = @min(vk.MAX_PHYSICAL_DEVICE_NAME_SIZE, pci_info.name.len);
@@ -195,24 +195,54 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, mic_device
         .non_coherent_atom_size = 256,
     };
 
-    interface.mem_props.memory_type_count = 1;
-    interface.mem_props.memory_types[0] = .{
-        .heap_index = 0,
-        .property_flags = .{
-            .device_local_bit = true,
-            .host_visible_bit = true,
-            .host_coherent_bit = true,
-            .host_cached_bit = true,
-        },
-    };
-    interface.mem_props.memory_heap_count = 1;
-    interface.mem_props.memory_heaps[0] = .{
-        .size = std.process.totalSystemMemory() catch 0,
-        .flags = .{ .device_local_bit = true },
-    };
+    {
+        interface.mem_props.memory_type_count = 3;
+
+        interface.mem_props.memory_types[0] = .{
+            .heap_index = 0,
+            .property_flags = .{
+                .device_local_bit = true,
+            },
+        };
+
+        interface.mem_props.memory_types[1] = .{
+            .heap_index = 1,
+            .property_flags = .{
+                .host_visible_bit = true,
+                .host_coherent_bit = true,
+            },
+        };
+
+        interface.mem_props.memory_types[2] = .{
+            .heap_index = 1,
+            .property_flags = .{
+                .host_visible_bit = true,
+                .host_coherent_bit = true,
+                .host_cached_bit = true,
+            },
+        };
+    }
+
+    if (mic_device.memoryInfo()) |memory_value| {
+        var memory = memory_value;
+        defer memory.deinit();
+
+        interface.mem_props.memory_heap_count = 2;
+
+        interface.mem_props.memory_heaps[0] = .{
+            .size = memory.size() catch 0,
+            .flags = .{ .device_local_bit = true },
+        };
+        interface.mem_props.memory_heaps[0] = .{
+            .size = std.process.totalSystemMemory() catch 0,
+            .flags = .{},
+        };
+    } else |err| {
+        std.log.scoped(.MIC).err("Failed to fetch device PCI config: {s}", .{@errorName(err)});
+        return VkError.InitializationFailed;
+    }
 
     interface.features = .{
-        .robust_buffer_access = .true,
         .shader_float_64 = .true,
         .shader_int_64 = .true,
         .shader_int_16 = .true,

@@ -4,6 +4,7 @@ const base = @import("base");
 
 const soft = @import("soft");
 const flint = @import("flint");
+const phi = @import("phi");
 
 const Dispatchable = base.Dispatchable;
 const VkError = base.VkError;
@@ -42,6 +43,10 @@ pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo)
     const flint_instance = try flint.Instance.create(allocator, infos);
     errdefer flint_instance.deinit(allocator) catch {};
     self.backend_instances.append(allocator, flint_instance) catch return VkError.OutOfHostMemory;
+
+    const phi_instance = try phi.Instance.create(allocator, infos);
+    errdefer phi_instance.deinit(allocator) catch {};
+    self.backend_instances.append(allocator, phi_instance) catch return VkError.OutOfHostMemory;
 
     return &self.interface;
 }
