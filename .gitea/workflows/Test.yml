@@ -16,13 +16,13 @@ jobs:
     - uses: https://codeberg.org/mlugg/setup-zig@v2
 
     - name: Ape Tests
-      run: zig build test-ape
+      run: zig build test-ape --release=safe
 
     - name: Soft Tests
-      run: zig build test-soft
+      run: zig build test-soft --release=safe
 
     - name: Flint Tests
-      run: zig build test-flint
+      run: zig build test-flint --release=safe
 
     - name: Phi Tests
-      run: zig build test-phi
+      run: zig build test-phi --release=safe
