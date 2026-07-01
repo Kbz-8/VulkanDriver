@@ -277,6 +277,29 @@ const device_pfn_map = block: {
     });
 };
 
+const DeviceEntryPointRequirement = union(enum) {
+    device_extension: vk.ApiInfo,
+    unsupported_extension,
+};
+
+const device_entry_point_requirements = std.StaticStringMap(DeviceEntryPointRequirement).initComptime(.{
+    .{ "vkAcquireNextImageKHR", DeviceEntryPointRequirement{ .device_extension = vk.extensions.khr_swapchain } },
+    .{ "vkAcquireNextImage2KHR", DeviceEntryPointRequirement{ .device_extension = vk.extensions.khr_swapchain } },
+    .{ "vkCreateSwapchainKHR", DeviceEntryPointRequirement{ .device_extension = vk.extensions.khr_swapchain } },
+    .{ "vkDestroySwapchainKHR", DeviceEntryPointRequirement{ .device_extension = vk.extensions.khr_swapchain } },
+    .{ "vkGetDeviceGroupPresentCapabilitiesKHR", DeviceEntryPointRequirement{ .device_extension = vk.extensions.khr_swapchain } },
+    .{ "vkGetDeviceGroupSurfacePresentModesKHR", DeviceEntryPointRequirement{ .device_extension = vk.extensions.khr_swapchain } },
+    .{ "vkGetSwapchainImagesKHR", DeviceEntryPointRequirement{ .device_extension = vk.extensions.khr_swapchain } },
+    .{ "vkQueuePresentKHR", DeviceEntryPointRequirement{ .device_extension = vk.extensions.khr_swapchain } },
+
+    .{ "vkCmdDispatchBaseKHR", DeviceEntryPointRequirement{ .device_extension = vk.extensions.khr_device_group } },
+    .{ "vkCmdSetDeviceMaskKHR", DeviceEntryPointRequirement{ .device_extension = vk.extensions.khr_device_group } },
+    .{ "vkGetDeviceGroupPeerMemoryFeaturesKHR", DeviceEntryPointRequirement{ .device_extension = vk.extensions.khr_device_group } },
+
+    .{ "vkGetBufferDeviceAddressEXT", DeviceEntryPointRequirement.unsupported_extension },
+    .{ "vkGetBufferDeviceAddressKHR", DeviceEntryPointRequirement.unsupported_extension },
+});
+
 // ICD Interface =============================================================================================================================================
 
 pub export fn ape_icdNegotiateLoaderICDInterfaceVersion(p_version: *u32) callconv(vk.vulkan_call_conv) vk.Result {
@@ -1502,6 +1525,11 @@ pub export fn apeGetDeviceProcAddr(p_device: vk.Device, p_name: ?[*:0]const u8) 
     const name = std.mem.span(p_name.?);
 
     if (p_device == .null_handle) return null;
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch return null;
+    if (device_entry_point_requirements.get(name)) |requirement| switch (requirement) {
+        .device_extension => |extension| if (!device.isExtensionEnabled(extension)) return null,
+        .unsupported_extension => return null,
+    };
     if (device_pfn_map.get(name)) |pfn| return pfn;
 
     return null;

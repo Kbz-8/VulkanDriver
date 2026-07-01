@@ -204,13 +204,17 @@ fn sampleLod(image_view: *SoftImageView, sampler: *Self, lod: ?f32) f32 {
     if (mip_count <= 1)
         return 0.0;
 
+    const clamped_lod = filterLod(sampler, lod);
+    const max_level: f32 = @floatFromInt(mip_count - 1);
+    return std.math.clamp(clamped_lod, 0.0, max_level);
+}
+
+fn filterLod(sampler: *Self, lod: ?f32) f32 {
     const requested_lod = if (lod) |explicit_lod|
         explicit_lod + sampler.interface.mip_lod_bias
     else
         sampler.interface.min_lod;
-    const clamped_lod = std.math.clamp(requested_lod, sampler.interface.min_lod, sampler.interface.max_lod);
-    const max_level: f32 = @floatFromInt(mip_count - 1);
-    return std.math.clamp(clamped_lod, 0.0, max_level);
+    return std.math.clamp(requested_lod, sampler.interface.min_lod, sampler.interface.max_lod);
 }
 
 fn sampleMipLevel(image_view: *SoftImageView, sampler: *Self, lod: ?f32) u32 {
@@ -553,7 +557,7 @@ pub fn sampleImageFloat4(image: *SoftImage, image_view: *SoftImageView, sampler:
     const range = image_view.interface.subresource_range;
     const mip_count = viewMipCount(image_view);
     const clamped_lod = sampleLod(image_view, sampler, lod);
-    const filter = sampleFilter(sampler, clamped_lod);
+    const filter = sampleFilter(sampler, filterLod(sampler, lod));
 
     if (mip_count > 1 and sampler.interface.mipmap_mode == .linear) {
         const lower_lod = @floor(clamped_lod);
@@ -695,7 +699,7 @@ pub fn sampleImageDref(image: *SoftImage, image_view: *SoftImageView, sampler: *
     const range = image_view.interface.subresource_range;
     const mip_count = viewMipCount(image_view);
     const clamped_lod = sampleLod(image_view, sampler, lod);
-    const filter = sampleFilter(sampler, clamped_lod);
+    const filter = sampleFilter(sampler, filterLod(sampler, lod));
 
     if (mip_count > 1 and sampler.interface.mipmap_mode == .linear) {
         const lower_lod = @floor(clamped_lod);

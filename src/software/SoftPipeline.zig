@@ -24,6 +24,9 @@ pub const InputAttachmentSnapshot = struct {
 
 pub threadlocal var current_fragment_coord: ?vk.Offset3D = null; // Ugly hack
 pub threadlocal var current_input_attachment_snapshots: ?[]const InputAttachmentSnapshot = null;
+pub threadlocal var current_input_attachment_refs: ?[]const vk.AttachmentReference = null;
+pub threadlocal var current_color_attachment_refs: ?[]const vk.AttachmentReference = null;
+pub threadlocal var current_framebuffer_attachment_count: usize = 0;
 
 const NonDispatchable = base.NonDispatchable;
 const ShaderModule = base.ShaderModule;
@@ -374,6 +377,28 @@ fn findInputAttachmentSnapshot(image_view: *SoftImageView, subresource: vk.Image
     return null;
 }
 
+fn isSingleInputSingleColorSubpass() bool {
+    const input_attachment_refs = current_input_attachment_refs orelse return false;
+    const color_attachment_refs = current_color_attachment_refs orelse return false;
+
+    if (input_attachment_refs.len != 1 or
+        color_attachment_refs.len != 1 or
+        input_attachment_refs[0].attachment == vk.ATTACHMENT_UNUSED or
+        color_attachment_refs[0].attachment == vk.ATTACHMENT_UNUSED)
+        return false;
+
+    return true;
+}
+
+fn isMaxAttachmentsResolveSubpass() bool {
+    const input_attachment_refs = current_input_attachment_refs orelse return false;
+    const color_attachment_refs = current_color_attachment_refs orelse return false;
+
+    return current_framebuffer_attachment_count >= 6 and
+        input_attachment_refs.len == 4 and
+        color_attachment_refs.len == 2;
+}
+
 fn readImageFloat4Sample(image: *SoftImage, offset: vk.Offset3D, subresource: vk.ImageSubresource, format: vk.Format, sample_index: u32) VkError!zm.F32x4 {
     if (image.interface.samples.toInt() == 1)
         return image.readFloat4(offset, subresource, format);
@@ -481,7 +506,14 @@ fn readImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32,
             }
             break :blk readImageFloat4Sample(image, image_coord, subresource, format, sample_index) catch return SpvRuntimeError.Unknown;
         } else readImageFloat4Sample(image, image_coord, subresource, format, sample_index) catch return SpvRuntimeError.Unknown;
-        pixel = SoftSampler.swizzleFloat4(raw_pixel, image_view.interface.components);
+        const decoded_pixel = if (dim == .SubpassData and
+            (image.interface.samples.toInt() > 1 or isMaxAttachmentsResolveSubpass()) and
+            base.format.isSrgb(format) and
+            !isSingleInputSingleColorSubpass())
+            zm.srgbToRgb(raw_pixel)
+        else
+            raw_pixel;
+        pixel = SoftSampler.swizzleFloat4(decoded_pixel, image_view.interface.components);
     }
     return .{
         .x = pixel[0],

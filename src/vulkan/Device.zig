@@ -41,6 +41,8 @@ instance: *Instance,
 physical_device: *const PhysicalDevice,
 queues: std.AutoArrayHashMapUnmanaged(u32, std.ArrayList(*Dispatchable(Queue))),
 host_allocator: VulkanAllocator,
+enabled_khr_swapchain: bool,
+enabled_khr_device_group: bool,
 
 dispatch_table: *const DispatchTable,
 vtable: *const VTable,
@@ -77,12 +79,37 @@ pub const DispatchTable = struct {
     getDeviceGroupSurfacePresentModesKHR: *const fn (*Self, *SurfaceKHR) VkError!vk.DeviceGroupPresentModeFlagsKHR,
 };
 
-pub fn init(allocator: std.mem.Allocator, instance: *Instance, physical_device: *const PhysicalDevice, _: *const vk.DeviceCreateInfo) VkError!Self {
+pub fn isExtensionEnabled(self: *const Self, extension: vk.ApiInfo) bool {
+    if (std.mem.eql(u8, extension.name, vk.extensions.khr_swapchain.name)) {
+        return self.enabled_khr_swapchain;
+    }
+    if (std.mem.eql(u8, extension.name, vk.extensions.khr_device_group.name)) {
+        return self.enabled_khr_device_group;
+    }
+    return false;
+}
+
+pub fn init(allocator: std.mem.Allocator, instance: *Instance, physical_device: *const PhysicalDevice, info: *const vk.DeviceCreateInfo) VkError!Self {
+    var enabled_khr_swapchain = false;
+    var enabled_khr_device_group = false;
+    if (info.pp_enabled_extension_names) |names| {
+        for (0..info.enabled_extension_count) |i| {
+            const name = std.mem.span(names[i]);
+            if (std.mem.eql(u8, name, vk.extensions.khr_swapchain.name)) {
+                enabled_khr_swapchain = true;
+            } else if (std.mem.eql(u8, name, vk.extensions.khr_device_group.name)) {
+                enabled_khr_device_group = true;
+            }
+        }
+    }
+
     return .{
         .instance = instance,
         .physical_device = physical_device,
         .queues = .empty,
         .host_allocator = VulkanAllocator.from(allocator).cloneWithScope(.object),
+        .enabled_khr_swapchain = enabled_khr_swapchain,
+        .enabled_khr_device_group = enabled_khr_device_group,
         .dispatch_table = undefined,
         .vtable = undefined,
     };

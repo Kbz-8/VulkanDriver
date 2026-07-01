@@ -166,6 +166,28 @@ fn readActiveInterfaceOutputs(data: RunData, output: *Renderer.Vertex, rt: *spv.
             else => {},
         };
 
+        const type_word = pointerTargetType(rt, variable.type_word) orelse continue;
+        if (rt.results[type_word].variant) |type_variant| switch (type_variant) {
+            .Type => |t| switch (t) {
+                .Structure => |structure| {
+                    const base_location = location orelse continue;
+                    for (structure.members_type_word, 0..) |_, member_index| {
+                        const member_location = interfaceMemberLocation(rt, type_word, base_location, @intCast(member_index));
+                        if (member_location >= spv.SPIRV_MAX_OUTPUT_LOCATIONS)
+                            continue;
+                        if (output.outputs[member_location][component] != null)
+                            continue;
+                        if (accessChainToMember(rt, global, @intCast(member_index))) |member_word| {
+                            try readVertexOutput(data, output, rt, member_location, component, member_word);
+                        }
+                    }
+                    continue;
+                },
+                else => {},
+            },
+            else => {},
+        };
+
         const target_location = location orelse continue;
         if (target_location >= spv.SPIRV_MAX_OUTPUT_LOCATIONS or component >= 4)
             continue;
@@ -237,14 +259,15 @@ fn interfaceLocationMemberHasDecoration(rt: *const spv.Runtime, location: usize,
             continue;
 
         const type_word = pointerTargetType(rt, variable.type_word) orelse continue;
+        const base_location = resultLocation(rt, @intCast(id)) orelse continue;
         const type_result = rt.results[type_word];
         const type_variant = type_result.variant orelse continue;
         switch (type_variant) {
             .Type => |t| switch (t) {
-                .Structure => {
-                    for (type_result.decorations.items) |member_decoration| {
-                        if (member_decoration.rtype == .Location and member_decoration.literal_1 == location) {
-                            if (interfaceMemberHasDecoration(rt, @intCast(id), member_decoration.index, decoration))
+                .Structure => |structure| {
+                    for (structure.members_type_word, 0..) |_, member_index| {
+                        if (interfaceMemberLocation(rt, type_word, base_location, @intCast(member_index)) == location) {
+                            if (interfaceMemberHasDecoration(rt, @intCast(id), @intCast(member_index), decoration))
                                 return true;
                         }
                     }
@@ -256,6 +279,27 @@ fn interfaceLocationMemberHasDecoration(rt: *const spv.Runtime, location: usize,
     }
 
     return false;
+}
+
+fn resultLocation(rt: *const spv.Runtime, result_word: spv.SpvWord) ?usize {
+    if (result_word >= rt.results.len)
+        return null;
+
+    for (rt.results[result_word].decorations.items) |decoration| {
+        if (decoration.rtype == .Location)
+            return decoration.literal_1;
+    }
+    return null;
+}
+
+fn interfaceMemberLocation(rt: *const spv.Runtime, type_word: spv.SpvWord, base_location: usize, member_index: spv.SpvWord) usize {
+    if (type_word < rt.results.len) {
+        for (rt.results[type_word].decorations.items) |decoration| {
+            if (decoration.rtype == .Location and decoration.index == member_index)
+                return decoration.literal_1;
+        }
+    }
+    return base_location + @as(usize, @intCast(member_index));
 }
 
 fn interfaceMemberHasDecoration(rt: *const spv.Runtime, variable_word: spv.SpvWord, member_index: spv.SpvWord, decoration: anytype) bool {
@@ -284,6 +328,20 @@ fn interfaceMemberHasDecoration(rt: *const spv.Runtime, variable_word: spv.SpvWo
     }
 
     return false;
+}
+
+fn accessChainToMember(rt: *const spv.Runtime, base_word: spv.SpvWord, member_index: spv.SpvWord) ?spv.SpvWord {
+    for (rt.results, 0..) |result, id| {
+        const access_chain = switch (result.variant orelse continue) {
+            .AccessChain => |a| a,
+            else => continue,
+        };
+        if (access_chain.base != base_word)
+            continue;
+        if (firstConstantAccessIndex(rt, access_chain.indexes) == member_index)
+            return @intCast(id);
+    }
+    return null;
 }
 
 fn pointerTargetType(rt: *const spv.Runtime, type_word: spv.SpvWord) ?spv.SpvWord {

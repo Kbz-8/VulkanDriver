@@ -31,7 +31,14 @@ const VkError = base.VkError;
 const Self = @This();
 pub const Interface = base.Device;
 
+const DeviceAllocator = struct {
+    pub inline fn allocator(_: @This()) std.mem.Allocator {
+        return base.fallback_host_allocator;
+    }
+};
+
 interface: Interface,
+allocator: DeviceAllocator,
 
 pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
@@ -73,6 +80,7 @@ pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, a
 
     self.* = .{
         .interface = interface,
+        .allocator = .{},
     };
 
     try self.interface.createQueues(allocator, info);

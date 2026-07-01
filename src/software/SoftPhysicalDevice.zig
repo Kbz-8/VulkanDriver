@@ -95,7 +95,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
         .max_vertex_input_bindings = lib.MAX_VERTEX_INPUT_BINDINGS,
         .max_vertex_input_attribute_offset = 2047,
         .max_vertex_input_binding_stride = 2048,
-        .max_vertex_output_components = 4,
+        .max_vertex_output_components = 64,
         .max_tessellation_generation_level = 0,
         .max_tessellation_patch_size = 0,
         .max_tessellation_control_per_vertex_input_components = 0,
@@ -109,7 +109,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
         .max_geometry_output_components = 0,
         .max_geometry_output_vertices = 0,
         .max_geometry_total_output_components = 0,
-        .max_fragment_input_components = 4,
+        .max_fragment_input_components = 128,
         .max_fragment_output_attachments = 4,
         .max_fragment_dual_src_attachments = 0,
         .max_fragment_combined_output_resources = 4,
@@ -191,6 +191,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
         .shader_float_64 = .true,
         .shader_int_64 = .true,
         .shader_int_16 = .true,
+        .texture_compression_bc = .true,
     };
 
     var queue_family_props = [_]vk.QueueFamilyProperties{
