@@ -60,12 +60,19 @@ fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     self.threaded.deinit();
     allocator.destroy(self);
+
+    mic.unload();
 }
 
 fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator, _: []base.drm.Card) VkError!void {
     if (interface.physical_devices.items.len != 0) {
         return;
     }
+
+    mic.load() catch |err| {
+        std.log.scoped(.MIC).err("Failed to load libmicmgmt: {s}", .{@errorName(err)});
+        return VkError.InitializationFailed;
+    };
 
     var devices = mic.DeviceList.init() catch |err| {
         std.log.scoped(.MIC).err("Failed to create device list: {s}", .{@errorName(err)});

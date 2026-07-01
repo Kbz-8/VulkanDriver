@@ -56,7 +56,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, mic_device
 
     interface.props.api_version = @bitCast(lib.VULKAN_VERSION);
     interface.props.driver_version = @bitCast(base.DRIVER_VERSION);
-    interface.props.device_type = .discrete_gpu;
+    interface.props.device_type = .other;
 
     @memset(interface.props.device_name[0..], 0);
 

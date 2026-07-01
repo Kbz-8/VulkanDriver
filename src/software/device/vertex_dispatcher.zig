@@ -192,24 +192,133 @@ fn readVertexOutput(data: RunData, output: *Renderer.Vertex, rt: *spv.Runtime, l
 fn vertexOutputInterpolationType(data: RunData, rt: *spv.Runtime, location: usize, component: usize, result_word: spv.SpvWord) Renderer.InterpolationType {
     const result_is_integer = resultIsInteger(rt, result_word);
 
-    const fragment_input_word = if (data.pipeline.stages.getPtr(.fragment)) |fragment_shader|
-        fragment_shader.runtimes[0].rt.getResultByLocationComponent(@intCast(location), @intCast(component), .input) catch null
-    else
-        null;
-    const fragment_input_is_flat = if (fragment_input_word) |input_word|
-        data.pipeline.stages.getPtrAssertContains(.fragment).runtimes[0].rt.hasResultOrMemberDecoration(input_word, .Flat)
-    else
-        false;
-    const fragment_input_is_noperspective = if (fragment_input_word) |input_word|
-        data.pipeline.stages.getPtrAssertContains(.fragment).runtimes[0].rt.hasResultOrMemberDecoration(input_word, .NoPerspective)
-    else
-        false;
+    const fragment_input_is_flat = fragmentInputHasDecoration(data, location, component, .Flat);
+    const fragment_input_is_noperspective = fragmentInputHasDecoration(data, location, component, .NoPerspective);
 
     if (fragment_input_is_flat or result_is_integer)
         return .flat;
     if (fragment_input_is_noperspective)
         return .noperspective;
     return .smooth;
+}
+
+fn fragmentInputHasDecoration(data: RunData, location: usize, component: usize, decoration: anytype) bool {
+    const fragment_shader = data.pipeline.stages.getPtr(.fragment) orelse return false;
+    const fragment_rt = &fragment_shader.runtimes[0].rt;
+
+    if (fragment_rt.getResultByLocationComponent(@intCast(location), @intCast(component), .input)) |input_word| {
+        if (fragment_rt.hasResultDecoration(input_word, decoration))
+            return true;
+
+        if (input_word < fragment_rt.results.len) {
+            const input = fragment_rt.results[input_word];
+            if (input.variant) |variant| switch (variant) {
+                .AccessChain => |access_chain| {
+                    const member_index = firstConstantAccessIndex(fragment_rt, access_chain.indexes) orelse return false;
+                    if (interfaceMemberHasDecoration(fragment_rt, access_chain.base, member_index, decoration))
+                        return true;
+                },
+                else => {},
+            };
+        }
+    } else |_| {}
+
+    return interfaceLocationMemberHasDecoration(fragment_rt, location, decoration);
+}
+
+fn interfaceLocationMemberHasDecoration(rt: *const spv.Runtime, location: usize, decoration: anytype) bool {
+    for (rt.results, 0..) |result, id| {
+        const variant = result.variant orelse continue;
+        const variable = switch (variant) {
+            .Variable => |v| v,
+            else => continue,
+        };
+        if (variable.storage_class != .Input)
+            continue;
+
+        const type_word = pointerTargetType(rt, variable.type_word) orelse continue;
+        const type_result = rt.results[type_word];
+        const type_variant = type_result.variant orelse continue;
+        switch (type_variant) {
+            .Type => |t| switch (t) {
+                .Structure => {
+                    for (type_result.decorations.items) |member_decoration| {
+                        if (member_decoration.rtype == .Location and member_decoration.literal_1 == location) {
+                            if (interfaceMemberHasDecoration(rt, @intCast(id), member_decoration.index, decoration))
+                                return true;
+                        }
+                    }
+                },
+                else => {},
+            },
+            else => {},
+        }
+    }
+
+    return false;
+}
+
+fn interfaceMemberHasDecoration(rt: *const spv.Runtime, variable_word: spv.SpvWord, member_index: spv.SpvWord, decoration: anytype) bool {
+    if (variable_word >= rt.results.len)
+        return false;
+
+    const variable = switch (rt.results[variable_word].variant orelse return false) {
+        .Variable => |v| v,
+        else => return false,
+    };
+
+    const type_word = pointerTargetType(rt, variable.type_word) orelse return false;
+    const type_result = rt.results[type_word];
+    const type_variant = type_result.variant orelse return false;
+    switch (type_variant) {
+        .Type => |t| switch (t) {
+            .Structure => {
+                for (type_result.decorations.items) |member_decoration| {
+                    if (member_decoration.index == member_index and member_decoration.rtype == decoration)
+                        return true;
+                }
+            },
+            else => {},
+        },
+        else => {},
+    }
+
+    return false;
+}
+
+fn pointerTargetType(rt: *const spv.Runtime, type_word: spv.SpvWord) ?spv.SpvWord {
+    if (type_word >= rt.results.len)
+        return null;
+
+    const type_variant = rt.results[type_word].variant orelse return null;
+    return switch (type_variant) {
+        .Type => |t| switch (t) {
+            .Pointer => |ptr| ptr.target,
+            else => type_word,
+        },
+        else => null,
+    };
+}
+
+fn firstConstantAccessIndex(rt: *const spv.Runtime, indexes: []const spv.SpvWord) ?spv.SpvWord {
+    if (indexes.len == 0)
+        return null;
+
+    const index_word = indexes[0];
+    if (index_word >= rt.results.len)
+        return null;
+
+    const value = rt.results[index_word].getConstValue() catch return null;
+    return switch (value.*) {
+        .Int => |int| switch (int.bit_count) {
+            8 => if (int.is_signed) @intCast(int.value.sint8) else @intCast(int.value.uint8),
+            16 => if (int.is_signed) @intCast(int.value.sint16) else @intCast(int.value.uint16),
+            32 => if (int.is_signed) @intCast(int.value.sint32) else @intCast(int.value.uint32),
+            64 => if (int.is_signed) @intCast(int.value.sint64) else @intCast(int.value.uint64),
+            else => null,
+        },
+        else => null,
+    };
 }
 
 fn findBindingDescription(binding_descriptions: []const vk.VertexInputBindingDescription, binding: u32) ?vk.VertexInputBindingDescription {

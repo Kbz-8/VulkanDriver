@@ -32,8 +32,8 @@
 
         // Soft dependencies
         .SPIRV_Interpreter = .{
-            .url = "git+https://github.com/Kbz-8/SPIRV-Interpreter#9b6f409bffdbb9105d32d73fa3c3025134b0e7f0",
-            .hash = "SPIRV_Interpreter-0.0.1-ajmpn_U2CQArCKl6BQ5HxvEE9bslrF21gzZVufvTHkJe",
+            .url = "git+https://github.com/Kbz-8/SPIRV-Interpreter#6fbd386ce40286ca9dcf21c994ccc46814fb9b94",
+            .hash = "SPIRV_Interpreter-0.0.1-ajmpn0N2CQDo-XU_Lf_Xt140wvHyoxBnzapYANEOgjdH",
             .lazy = true,
         },
         //.SPIRV_Interpreter = .{
@@ -44,8 +44,8 @@
 
         // Phi dependencies
         .miclib = .{
-            .url = "git+https://git.kbz8.me/kbz_8/miclib-zig.git#9d99ef63bf279c3f464821f8a82b0435c55d56a7",
-            .hash = "miclib-1.0.0-AbDwS3-6AABd_H8542J7l6p1q6asRusmQ-xdpQZ8bQ71",
+            .url = "git+https://git.kbz8.me/kbz_8/miclib-zig.git#f46bd2a058db7acbc9012a657f3fbe79d49c017f",
+            .hash = "miclib-1.0.0-AbDwSzB6AgDVMQ3muWEwaBdfYJBDgm3pJKNf2EEUnmNp",
             .lazy = true,
         },
     },

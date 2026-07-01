@@ -62,7 +62,7 @@ fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator, _
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
 
     for (self.backend_instances.items) |backend| {
-        try appendBackendPhysicalDevices(self, allocator, backend);
+        appendBackendPhysicalDevices(self, allocator, backend) catch continue;
     }
 }
 

@@ -65,6 +65,13 @@ pub fn shaderInvocation(
         SpvRuntimeError.NotFound => {},
         else => return err,
     };
+    if (rt.getBuiltinResult(.FragCoord)) |frag_coord_word| {
+        const frag_x: i32 = @intFromFloat(position[0]);
+        const frag_y: i32 = @intFromFloat(position[1]);
+        const frag_coord_dx = zm.f32x4(if (@mod(frag_x, 2) == 0) 1.0 else -1.0, 0.0, 0.0, 0.0);
+        const frag_coord_dy = zm.f32x4(0.0, if (@mod(frag_y, 2) == 0) 1.0 else -1.0, 0.0, 0.0);
+        try rt.setDerivativeFromMemory(allocator, frag_coord_word, std.mem.asBytes(&frag_coord_dx), std.mem.asBytes(&frag_coord_dy));
+    }
     if (point_coord) |coord| {
         rt.writeBuiltIn(allocator, std.mem.asBytes(&coord), .PointCoord) catch |err| switch (err) {
             SpvRuntimeError.NotFound => {},

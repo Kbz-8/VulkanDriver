@@ -323,8 +323,6 @@ fn customPhi(
     const miclib = b.lazyDependency("miclib", .{
         .target = target,
         .optimize = optimize,
-        .miclib_include = "/usr/local/include",
-        .miclib_libdir = "/usr/local/lib",
         .@"use-llvm" = use_llvm,
     }) orelse return error.UnresolvedDependency;
 

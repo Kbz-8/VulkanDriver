@@ -270,6 +270,8 @@ fn diamondCoverage(a: F32x4, b: F32x4, pixel_x: i32, pixel_y: i32, include_last_
     const cx = @as(f32, @floatFromInt(pixel_x)) + 0.5;
     const cy = @as(f32, @floatFromInt(pixel_y)) + 0.5;
     const clipped = clipSegmentToDiamond(a[0], a[1], b[0], b[1], cx, cy) orelse return null;
+    if (include_last_endpoint and a[1] == b[1] and clipped.min_t >= clipped.max_t and a[1] < cy)
+        return null;
     if (!include_last_endpoint and a[3] == 1.0 and b[3] == 1.0 and clipped.min_t <= 0.0)
         return null;
     if (!include_last_endpoint and clipped.min_t >= 1.0)
