@@ -262,6 +262,9 @@ pub fn interpolateVertexOutputs(
     b0: f32,
     b1: f32,
     b2: f32,
+    centroid_b0: f32,
+    centroid_b1: f32,
+    centroid_b2: f32,
 ) VkError![spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation {
     var inputs = [_]VertexInterpolationLocation{[_]VertexInterpolation{.{
         .blob = &.{},
@@ -290,19 +293,23 @@ pub fn interpolateVertexOutputs(
             const input = allocator.alloc(u8, len + @sizeOf(F32x4)) catch return VkError.OutOfDeviceMemory;
             @memset(input, 0);
 
+            const input_b0 = if (out0.centroid) centroid_b0 else b0;
+            const input_b1 = if (out0.centroid) centroid_b1 else b1;
+            const input_b2 = if (out0.centroid) centroid_b2 else b2;
+
             var byte_index: usize = 0;
             while (byte_index + @sizeOf(F32x4) <= len) : (byte_index += @sizeOf(F32x4)) {
                 const value0 = std.mem.bytesToValue(F32x4, out0.blob[byte_index..]);
                 const value1 = std.mem.bytesToValue(F32x4, out1.blob[byte_index..]);
                 const value2 = std.mem.bytesToValue(F32x4, out2.blob[byte_index..]);
-                base.utils.writePacked(F32x4, input[byte_index..], interpolateF32x4(out0.interpolation_type, value0, value1, value2, v0, v1, v2, b0, b1, b2));
+                base.utils.writePacked(F32x4, input[byte_index..], interpolateF32x4(out0.interpolation_type, value0, value1, value2, v0, v1, v2, input_b0, input_b1, input_b2));
             }
 
             while (byte_index + @sizeOf(f32) <= len) : (byte_index += @sizeOf(f32)) {
                 const value0 = std.mem.bytesToValue(f32, out0.blob[byte_index..]);
                 const value1 = std.mem.bytesToValue(f32, out1.blob[byte_index..]);
                 const value2 = std.mem.bytesToValue(f32, out2.blob[byte_index..]);
-                base.utils.writePacked(f32, input[byte_index..], interpolateF32(out0.interpolation_type, value0, value1, value2, v0, v1, v2, b0, b1, b2));
+                base.utils.writePacked(f32, input[byte_index..], interpolateF32(out0.interpolation_type, value0, value1, value2, v0, v1, v2, input_b0, input_b1, input_b2));
             }
 
             if (byte_index < len)
@@ -322,7 +329,7 @@ pub fn interpolateLineOutputs(
     provoking_vertex: *const Renderer.Vertex,
     t: f32,
 ) VkError![spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation {
-    return interpolateVertexOutputs(allocator, v0, v1, v0, provoking_vertex, 1.0 - t, t, 0.0);
+    return interpolateVertexOutputs(allocator, v0, v1, v0, provoking_vertex, 1.0 - t, t, 0.0, 1.0 - t, t, 0.0);
 }
 
 pub fn interpolateVertexOutputDerivatives(

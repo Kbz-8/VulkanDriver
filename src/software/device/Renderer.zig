@@ -73,6 +73,7 @@ pub const Vertex = struct {
     point_size: f32,
     outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][4]?struct {
         interpolation_type: InterpolationType,
+        centroid: bool,
         blob: []u8,
         size: usize,
     },

@@ -187,6 +187,7 @@ fn interpolateVertexForClipping(allocator: std.mem.Allocator, a: *const Vertex, 
 
             result.outputs[location][component] = .{
                 .interpolation_type = out_a.interpolation_type,
+                .centroid = out_a.centroid,
                 .blob = if (out_a.interpolation_type == .flat)
                     allocator.dupe(u8, out_a.blob) catch return VkError.OutOfDeviceMemory
                 else

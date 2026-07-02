@@ -477,7 +477,7 @@ fn rasterizeTransformedPoint(
                     point_coord,
                     null,
                     true,
-                    try common.interpolateVertexOutputs(allocator, vertex, vertex, vertex, vertex, 1.0, 0.0, 0.0),
+                    try common.interpolateVertexOutputs(allocator, vertex, vertex, vertex, vertex, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0),
                     null,
                 ) catch |err| {
                     if (err == SpvRuntimeError.Killed)

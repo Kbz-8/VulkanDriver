@@ -202,9 +202,10 @@ fn readVertexOutput(data: RunData, output: *Renderer.Vertex, rt: *spv.Runtime, l
     const value = try rt.results[result_word].getConstValue();
     const memory_size = try rt.getResultMemorySize(result_word);
     const interpolation_type = vertexOutputInterpolationType(data, rt, location, component, result_word);
+    const centroid = fragmentInputHasDecoration(data, location, component, .Centroid);
     switch (value.*) {
         .Array, .Matrix => {
-            try readVertexOutputAggregate(data, output, value, location, component, interpolation_type);
+            try readVertexOutputAggregate(data, output, value, location, component, interpolation_type, centroid);
             return;
         },
         else => {},
@@ -212,6 +213,7 @@ fn readVertexOutput(data: RunData, output: *Renderer.Vertex, rt: *spv.Runtime, l
 
     output.outputs[location][component] = .{
         .interpolation_type = interpolation_type,
+        .centroid = centroid,
         .blob = data.allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return VkError.OutOfDeviceMemory,
         .size = memory_size,
     };
@@ -226,22 +228,23 @@ fn readVertexOutputAggregate(
     location: usize,
     component: usize,
     interpolation_type: Renderer.InterpolationType,
+    centroid: bool,
 ) !void {
     var target_location = location;
     switch (value.*) {
         .Array => |array| {
             for (array.values) |*element| {
-                try readVertexOutputAggregate(data, output, element, target_location, component, interpolation_type);
+                try readVertexOutputAggregate(data, output, element, target_location, component, interpolation_type, centroid);
                 target_location += vertexOutputValueLocationCount(element);
             }
         },
         .Matrix => |columns| {
             for (columns) |*column| {
-                try writeVertexOutputValue(data, output, column, target_location, component, interpolation_type);
+                try writeVertexOutputValue(data, output, column, target_location, component, interpolation_type, centroid);
                 target_location += 1;
             }
         },
-        else => try writeVertexOutputValue(data, output, value, location, component, interpolation_type),
+        else => try writeVertexOutputValue(data, output, value, location, component, interpolation_type, centroid),
     }
 }
 
@@ -252,6 +255,7 @@ fn writeVertexOutputValue(
     location: usize,
     component: usize,
     interpolation_type: Renderer.InterpolationType,
+    centroid: bool,
 ) !void {
     if (location >= spv.SPIRV_MAX_OUTPUT_LOCATIONS or component >= 4)
         return VkError.ValidationFailed;
@@ -259,6 +263,7 @@ fn writeVertexOutputValue(
     const memory_size = try value.getPlainMemorySize();
     output.outputs[location][component] = .{
         .interpolation_type = interpolation_type,
+        .centroid = centroid,
         .blob = data.allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return VkError.OutOfDeviceMemory,
         .size = memory_size,
     };

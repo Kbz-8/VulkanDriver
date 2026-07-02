@@ -381,7 +381,7 @@ inline fn run(data: RunData) !void {
             if (early_depth.mask == 0)
                 continue;
 
-            const interpolation_barycentrics = if (data.sample_count > 1 and data.fragment_uses_centroid) blk: {
+            const centroid_barycentrics = if (data.sample_count > 1 and data.fragment_uses_centroid) blk: {
                 const sample_pos = firstCoveredSamplePosition(data.sample_count, early_depth.mask);
                 const centroid_p = zm.f32x4(
                     @as(f32, @floatFromInt(x)) + sample_pos.x,
@@ -398,9 +398,9 @@ inline fn run(data: RunData) !void {
                     centroid_w2 / data.area,
                 };
             } else .{ b0, b1, b2 };
-            const input_b0 = interpolation_barycentrics[0];
-            const input_b1 = interpolation_barycentrics[1];
-            const input_b2 = interpolation_barycentrics[2];
+            const centroid_b0 = centroid_barycentrics[0];
+            const centroid_b1 = centroid_barycentrics[1];
+            const centroid_b2 = centroid_barycentrics[2];
 
             var fragment_result: fragment.InvocationResult = .{
                 .outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8),
@@ -417,7 +417,19 @@ inline fn run(data: RunData) !void {
                     if ((early_depth.mask & sample_coverage_mask) == 0)
                         continue;
 
-                    const inputs = try common.interpolateVertexOutputs(data.allocator, &data.v0, &data.v1, &data.v2, &data.provoking_vertex, input_b0, input_b1, input_b2);
+                    const inputs = try common.interpolateVertexOutputs(
+                        data.allocator,
+                        &data.v0,
+                        &data.v1,
+                        &data.v2,
+                        &data.provoking_vertex,
+                        b0,
+                        b1,
+                        b2,
+                        centroid_b0,
+                        centroid_b1,
+                        centroid_b2,
+                    );
                     const sample_result = fragment.shaderInvocation(
                         data.allocator,
                         data.draw_call,
@@ -459,7 +471,19 @@ inline fn run(data: RunData) !void {
                 continue;
             }
             if (data.has_fragment_shader) {
-                const inputs = try common.interpolateVertexOutputs(data.allocator, &data.v0, &data.v1, &data.v2, &data.provoking_vertex, input_b0, input_b1, input_b2);
+                const inputs = try common.interpolateVertexOutputs(
+                    data.allocator,
+                    &data.v0,
+                    &data.v1,
+                    &data.v2,
+                    &data.provoking_vertex,
+                    b0,
+                    b1,
+                    b2,
+                    centroid_b0,
+                    centroid_b1,
+                    centroid_b2,
+                );
                 const derivative_inputs: ?fragment.DerivativeInputs = if (data.fragment_uses_derivatives) blk: {
                     var derivatives: fragment.DerivativeInputs = undefined;
 
