@@ -119,6 +119,10 @@ pub fn shaderInvocation(
 
     const entry = try rt.getEntryPointByName(shader.entry);
 
+    const processed_inputs = allocator.alloc(bool, rt.results.len) catch return SpvRuntimeError.OutOfMemory;
+    defer allocator.free(processed_inputs);
+    @memset(processed_inputs, false);
+
     for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
         for (0..4) |component| {
             var input = fragment_inputs[location][component];
@@ -134,6 +138,11 @@ pub fn shaderInvocation(
                 },
                 else => return err,
             };
+            if (result_word >= processed_inputs.len)
+                return SpvRuntimeError.InvalidSpirV;
+            if (processed_inputs[result_word])
+                continue;
+            processed_inputs[result_word] = true;
 
             const has_result_value = rt.results[result_word].variant != null;
             const memory_size = if (has_result_value)
