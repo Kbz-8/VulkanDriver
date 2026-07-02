@@ -25,8 +25,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 
     var interface = try Interface.init(device, allocator, info);
 
-    const soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", device));
-    const device_allocator = soft_device.device_allocator.allocator();
+    const device_allocator = device.device_allocator.allocator();
 
     interface.vtable = &.{
         .destroy = destroy,
@@ -62,8 +61,7 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 }
 
 pub fn drop(self: *Self, allocator: std.mem.Allocator) void {
-    const soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", self.interface.owner));
-    const device_allocator = soft_device.device_allocator.allocator();
+    const device_allocator = self.interface.owner.device_allocator.allocator();
 
     self.module.deinit(device_allocator);
 

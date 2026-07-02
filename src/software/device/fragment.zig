@@ -67,10 +67,8 @@ pub fn shaderInvocation(
         else => return err,
     };
     if (rt.getBuiltinResult(.FragCoord)) |frag_coord_word| {
-        const frag_x: i32 = @intFromFloat(position[0]);
-        const frag_y: i32 = @intFromFloat(position[1]);
-        const frag_coord_dx = zm.f32x4(if (@mod(frag_x, 2) == 0) 1.0 else -1.0, 0.0, 0.0, 0.0);
-        const frag_coord_dy = zm.f32x4(0.0, if (@mod(frag_y, 2) == 0) 1.0 else -1.0, 0.0, 0.0);
+        const frag_coord_dx = zm.f32x4(1.0, 0.0, 0.0, 0.0);
+        const frag_coord_dy = zm.f32x4(0.0, 1.0, 0.0, 0.0);
         try rt.setDerivativeFromMemory(allocator, frag_coord_word, std.mem.asBytes(&frag_coord_dx), std.mem.asBytes(&frag_coord_dy));
     }
     if (point_coord) |coord| {
@@ -170,7 +168,9 @@ pub fn shaderInvocation(
 
             if (input.size != 0) {
                 const input_bytes = input.blob[0..input.size];
-                if (!has_result_value or input.size < memory_size)
+                if (has_result_value and input.size < memory_size)
+                    try writeAggregateInputLocations(allocator, rt, fragment_inputs, result_word, location, component, memory_size)
+                else if (!has_result_value)
                     try rt.writeInputLocation(input_bytes, @intCast(location))
                 else
                     try rt.writeInput(allocator, input_bytes, result_word);
@@ -260,6 +260,70 @@ pub fn shaderInvocation(
         .depth = depth,
         .sample_mask = sample_mask,
     };
+}
+
+fn writeAggregateInputLocations(
+    allocator: std.mem.Allocator,
+    rt: *spv.Runtime,
+    inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation,
+    result_word: spv.SpvWord,
+    location: usize,
+    component: usize,
+    memory_size: usize,
+) SpvRuntimeError!void {
+    const value = try rt.results[result_word].getConstValue();
+    switch (value.*) {
+        .Array, .Matrix => {},
+        else => {
+            const input = inputs[location][component];
+            if (input.size != 0)
+                try rt.writeInputLocation(input.blob[0..input.size], @intCast(location));
+            return;
+        },
+    }
+
+    const bytes = allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return SpvRuntimeError.OutOfMemory;
+    defer allocator.free(bytes);
+    @memset(bytes, 0);
+
+    var source_location = location;
+    var offset: usize = 0;
+    try copyAggregateInputLocations(value, inputs, &source_location, component, bytes[0..memory_size], &offset);
+    try rt.writeInput(allocator, bytes[0..memory_size], result_word);
+}
+
+fn copyAggregateInputLocations(
+    value: anytype,
+    inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation,
+    source_location: *usize,
+    component: usize,
+    bytes: []u8,
+    offset: *usize,
+) SpvRuntimeError!void {
+    switch (value.*) {
+        .Array => |array| {
+            for (array.values) |*element|
+                try copyAggregateInputLocations(element, inputs, source_location, component, bytes, offset);
+        },
+        .Matrix => |columns| {
+            for (columns) |*column|
+                try copyAggregateInputLocations(column, inputs, source_location, component, bytes, offset);
+        },
+        else => {
+            if (source_location.* >= inputs.len or component >= 4)
+                return SpvRuntimeError.OutOfBounds;
+            const input = inputs[source_location.*][component];
+            const element_size = try value.getPlainMemorySize();
+            if (offset.* > bytes.len or element_size > bytes.len - offset.*)
+                return SpvRuntimeError.OutOfBounds;
+            if (input.size != 0) {
+                const copy_size = @min(element_size, input.size);
+                @memcpy(bytes[offset.* .. offset.* + copy_size], input.blob[0..copy_size]);
+            }
+            offset.* += element_size;
+            source_location.* += 1;
+        },
+    }
 }
 
 fn readFragmentOutput(

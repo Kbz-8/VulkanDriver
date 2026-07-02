@@ -88,10 +88,12 @@ pub fn build(b: *std.Build) !void {
     const drm = b.dependency("drm", .{}).module("drm");
 
     const logs_option: LogType = b.option(LogType, "logs", "Driver logs") orelse .none;
+    const debug_allocator_option = b.option(bool, "device-debug-allocator", "Debug device allocator") orelse false;
 
     const options = b.addOptions();
     options.addOption(std.SemanticVersion, "driver_version", driver_version);
     options.addOption(LogType, "logs", logs_option);
+    options.addOption(bool, "device_debug_allocator", debug_allocator_option);
 
     base_mod.addImport("vulkan", vulkan);
     base_mod.addImport("zmath", zmath);
@@ -274,14 +276,12 @@ fn customSoft(
 
 fn optionsSoft(b: *std.Build, options: *Step.Options) !void {
     const single_threaded_option = b.option(bool, "soft-single-threaded", "Single threaded runtime mode") orelse false;
-    const debug_allocator_option = b.option(bool, "soft-debug-allocator", "Debug device allocator") orelse false;
     const shaders_simd_option = b.option(bool, "soft-shader-simd", "Shaders SIMD acceleration") orelse true;
     const compute_dump_early_results_table_option = b.option(u32, "soft-compute-dump-early-results-table", "Dump compute shaders results table before invocation");
     const compute_dump_final_results_table_option = b.option(u32, "soft-compute-dump-final-results-table", "Dump compute shaders results table after invocation");
     const approxiamte_rgb_option = b.option(bool, "soft-approximates-rgb", "Approximate sRGB <-> RGB conversions") orelse true;
 
     options.addOption(bool, "soft_single_threaded", single_threaded_option);
-    options.addOption(bool, "soft_debug_allocator", debug_allocator_option);
     options.addOption(bool, "soft_shaders_simd", shaders_simd_option);
     options.addOption(?u32, "soft_compute_dump_early_results_table", compute_dump_early_results_table_option);
     options.addOption(?u32, "soft_compute_dump_final_results_table", compute_dump_final_results_table_option);

@@ -69,7 +69,7 @@ pub fn submit(interface: *Interface, infos: []Interface.SubmitInfo, p_fence: ?*b
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     const soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", interface.owner));
     const io = interface.owner.io();
-    const allocator = soft_device.device_allocator.allocator();
+    const allocator = interface.owner.device_allocator.allocator();
 
     const data = allocator.create(TaskData) catch return VkError.OutOfDeviceMemory;
     errdefer allocator.destroy(data);
@@ -111,7 +111,7 @@ fn executeSubmitInfo(soft_device: *SoftDevice, info: Interface.SubmitInfo) VkErr
 
     var execution_device: ExecutionDevice = undefined;
     execution_device.setup(soft_device);
-    defer execution_device.deinit(soft_device.device_allocator.allocator());
+    defer execution_device.deinit(soft_device.interface.device_allocator.allocator());
 
     for (info.command_buffers.items) |command_buffer| {
         const soft_command_buffer: *SoftCommandBuffer = @alignCast(@fieldParentPtr("interface", command_buffer));
@@ -125,7 +125,7 @@ fn executeSubmitInfo(soft_device: *SoftDevice, info: Interface.SubmitInfo) VkErr
 
 fn taskRunner(data: *TaskData) void {
     const io = data.queue.interface.owner.io();
-    const allocator = data.soft_device.device_allocator.allocator();
+    const allocator = data.soft_device.interface.device_allocator.allocator();
 
     defer {
         deinitSubmitInfos(allocator, &data.infos);

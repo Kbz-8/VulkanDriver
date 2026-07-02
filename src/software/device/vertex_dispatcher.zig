@@ -115,6 +115,7 @@ inline fn run(data: RunData) !void {
 
         try readPosition(rt, std.mem.asBytes(&output.position));
         try readPointSize(rt, &output.point_size);
+        try readActiveInterfaceOutputs(data, output, rt, entry);
 
         for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
             const location_result = rt.getResultByLocation(@intCast(location), .output) catch |err| switch (err) {
@@ -122,7 +123,8 @@ inline fn run(data: RunData) !void {
                 else => return err,
             };
 
-            try readVertexOutput(data, output, rt, location, 0, location_result);
+            if (output.outputs[location][0] == null)
+                try readVertexOutput(data, output, rt, location, 0, location_result);
 
             for (1..4) |component| {
                 const component_result = rt.getResultByLocationComponent(@intCast(location), @intCast(component), .output) catch |err| switch (err) {
@@ -133,11 +135,10 @@ inline fn run(data: RunData) !void {
                 if (component_result == location_result)
                     continue;
 
-                try readVertexOutput(data, output, rt, location, component, component_result);
+                if (output.outputs[location][component] == null)
+                    try readVertexOutput(data, output, rt, location, component, component_result);
             }
         }
-
-        try readActiveInterfaceOutputs(data, output, rt, entry);
 
         try rt.flushDescriptorSets(data.allocator);
     }
@@ -170,9 +171,8 @@ fn readActiveInterfaceOutputs(data: RunData, output: *Renderer.Vertex, rt: *spv.
         if (rt.results[type_word].variant) |type_variant| switch (type_variant) {
             .Type => |t| switch (t) {
                 .Structure => |structure| {
-                    const base_location = location orelse continue;
                     for (structure.members_type_word, 0..) |_, member_index| {
-                        const member_location = interfaceMemberLocation(rt, type_word, base_location, @intCast(member_index));
+                        const member_location = explicitInterfaceMemberLocation(rt, type_word, @intCast(member_index)) orelse continue;
                         if (member_location >= spv.SPIRV_MAX_OUTPUT_LOCATIONS)
                             continue;
                         if (output.outputs[member_location][component] != null)
@@ -199,8 +199,16 @@ fn readActiveInterfaceOutputs(data: RunData, output: *Renderer.Vertex, rt: *spv.
 }
 
 fn readVertexOutput(data: RunData, output: *Renderer.Vertex, rt: *spv.Runtime, location: usize, component: usize, result_word: spv.SpvWord) !void {
+    const value = try rt.results[result_word].getConstValue();
     const memory_size = try rt.getResultMemorySize(result_word);
     const interpolation_type = vertexOutputInterpolationType(data, rt, location, component, result_word);
+    switch (value.*) {
+        .Array, .Matrix => {
+            try readVertexOutputAggregate(data, output, value, location, component, interpolation_type);
+            return;
+        },
+        else => {},
+    }
 
     output.outputs[location][component] = .{
         .interpolation_type = interpolation_type,
@@ -209,6 +217,66 @@ fn readVertexOutput(data: RunData, output: *Renderer.Vertex, rt: *spv.Runtime, l
     };
     @memset(output.outputs[location][component].?.blob, 0);
     try rt.readOutput(output.outputs[location][component].?.blob, result_word);
+}
+
+fn readVertexOutputAggregate(
+    data: RunData,
+    output: *Renderer.Vertex,
+    value: anytype,
+    location: usize,
+    component: usize,
+    interpolation_type: Renderer.InterpolationType,
+) !void {
+    var target_location = location;
+    switch (value.*) {
+        .Array => |array| {
+            for (array.values) |*element| {
+                try readVertexOutputAggregate(data, output, element, target_location, component, interpolation_type);
+                target_location += vertexOutputValueLocationCount(element);
+            }
+        },
+        .Matrix => |columns| {
+            for (columns) |*column| {
+                try writeVertexOutputValue(data, output, column, target_location, component, interpolation_type);
+                target_location += 1;
+            }
+        },
+        else => try writeVertexOutputValue(data, output, value, location, component, interpolation_type),
+    }
+}
+
+fn writeVertexOutputValue(
+    data: RunData,
+    output: *Renderer.Vertex,
+    value: anytype,
+    location: usize,
+    component: usize,
+    interpolation_type: Renderer.InterpolationType,
+) !void {
+    if (location >= spv.SPIRV_MAX_OUTPUT_LOCATIONS or component >= 4)
+        return VkError.ValidationFailed;
+
+    const memory_size = try value.getPlainMemorySize();
+    output.outputs[location][component] = .{
+        .interpolation_type = interpolation_type,
+        .blob = data.allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return VkError.OutOfDeviceMemory,
+        .size = memory_size,
+    };
+    @memset(output.outputs[location][component].?.blob, 0);
+    _ = try value.read(output.outputs[location][component].?.blob[0..memory_size]);
+}
+
+fn vertexOutputValueLocationCount(value: anytype) usize {
+    return switch (value.*) {
+        .Array => |array| count: {
+            var location_count: usize = 0;
+            for (array.values) |*element|
+                location_count += vertexOutputValueLocationCount(element);
+            break :count location_count;
+        },
+        .Matrix => |columns| columns.len,
+        else => 1,
+    };
 }
 
 fn vertexOutputInterpolationType(data: RunData, rt: *spv.Runtime, location: usize, component: usize, result_word: spv.SpvWord) Renderer.InterpolationType {
@@ -259,7 +327,7 @@ fn interfaceLocationMemberHasDecoration(rt: *const spv.Runtime, location: usize,
             continue;
 
         const type_word = pointerTargetType(rt, variable.type_word) orelse continue;
-        const base_location = resultLocation(rt, @intCast(id)) orelse continue;
+        const base_location = resultLocation(rt, @intCast(id));
         const type_result = rt.results[type_word];
         const type_variant = type_result.variant orelse continue;
         switch (type_variant) {
@@ -292,14 +360,21 @@ fn resultLocation(rt: *const spv.Runtime, result_word: spv.SpvWord) ?usize {
     return null;
 }
 
-fn interfaceMemberLocation(rt: *const spv.Runtime, type_word: spv.SpvWord, base_location: usize, member_index: spv.SpvWord) usize {
+fn interfaceMemberLocation(rt: *const spv.Runtime, type_word: spv.SpvWord, base_location: ?usize, member_index: spv.SpvWord) ?usize {
+    if (explicitInterfaceMemberLocation(rt, type_word, member_index)) |location|
+        return location;
+
+    return if (base_location) |location| location + @as(usize, @intCast(member_index)) else null;
+}
+
+fn explicitInterfaceMemberLocation(rt: *const spv.Runtime, type_word: spv.SpvWord, member_index: spv.SpvWord) ?usize {
     if (type_word < rt.results.len) {
         for (rt.results[type_word].decorations.items) |decoration| {
             if (decoration.rtype == .Location and decoration.index == member_index)
                 return decoration.literal_1;
         }
     }
-    return base_location + @as(usize, @intCast(member_index));
+    return null;
 }
 
 fn interfaceMemberHasDecoration(rt: *const spv.Runtime, variable_word: spv.SpvWord, member_index: spv.SpvWord, decoration: anytype) bool {

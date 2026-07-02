@@ -1,5 +1,7 @@
 const std = @import("std");
 const vk = @import("vulkan");
+const lib = @import("lib.zig");
+const config = lib.config;
 
 const Dispatchable = @import("Dispatchable.zig").Dispatchable;
 const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
@@ -37,10 +39,17 @@ const SwapchainKHR = @import("wsi/SwapchainKHR.zig");
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .device;
 
+const DeviceAllocator = struct {
+    pub inline fn allocator(_: @This()) std.mem.Allocator {
+        return lib.fallback_host_allocator;
+    }
+};
+
 instance: *Instance,
 physical_device: *const PhysicalDevice,
 queues: std.AutoArrayHashMapUnmanaged(u32, std.ArrayList(*Dispatchable(Queue))),
 host_allocator: VulkanAllocator,
+device_allocator: if (config.device_debug_allocator) std.heap.DebugAllocator(.{}) else DeviceAllocator,
 enabled_khr_swapchain: bool,
 enabled_khr_device_group: bool,
 
@@ -110,6 +119,7 @@ pub fn init(allocator: std.mem.Allocator, instance: *Instance, physical_device: 
         .host_allocator = VulkanAllocator.from(allocator).cloneWithScope(.object),
         .enabled_khr_swapchain = enabled_khr_swapchain,
         .enabled_khr_device_group = enabled_khr_device_group,
+        .device_allocator = if (config.device_debug_allocator) .init else .{},
         .dispatch_table = undefined,
         .vtable = undefined,
     };
@@ -154,6 +164,17 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) VkError!void {
         family.deinit(allocator);
     }
     self.queues.deinit(allocator);
+
+    if (config.device_debug_allocator) {
+        // All device memory allocations should've been freed by now
+        const leaks = self.device_allocator.detectLeaks();
+        if (leaks != 0)
+            std.log.scoped(.vkDestroyDevice).err("Device was destroyed leaking {d:.3}KB", .{@as(f32, @floatFromInt(leaks)) / 1000})
+        else
+            std.log.scoped(.vkDestroyDevice).debug("No device memory leaks detected", .{});
+        self.device_allocator.deinitWithoutLeakChecks();
+    }
+
     try self.dispatch_table.destroy(self, allocator);
 }
 

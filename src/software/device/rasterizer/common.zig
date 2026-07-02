@@ -612,7 +612,8 @@ pub fn writeToTargets(
             const color = maybe_color orelse continue;
             const color_offset = targetSampleOffset(color, x, y, sample_index) orelse continue;
             if (base.format.isUnnormalizedInteger(color.format)) {
-                blitter.writeInt4(std.mem.bytesToValue(U32x4, &outputs[location]), color.base[color_offset..], color.format);
+                const value = std.mem.bytesToValue(U32x4, &outputs[location]);
+                blitter.writeInt4(value, color.base[color_offset..], color.format);
             } else {
                 const src = fragmentOutputFloat4(outputs[location], color.format);
                 const encoded_dst = blitter.readFloat4(color.base[color_offset..], color.format);

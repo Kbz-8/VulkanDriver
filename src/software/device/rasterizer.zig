@@ -107,7 +107,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
     const pipeline_data = (renderer.state.pipeline orelse return VkError.InvalidHandleDrv).interface.mode.graphics;
     const topology = pipeline_data.input_assembly.topology;
     if (renderer.input_attachment_snapshots.len == 0) {
-        renderer.input_attachment_snapshots = try snapshotInputAttachments(renderer.device.device_allocator.allocator(), draw_call);
+        renderer.input_attachment_snapshots = try snapshotInputAttachments(renderer.device.interface.device_allocator.allocator(), draw_call);
     }
     draw_call.input_attachment_snapshots = renderer.input_attachment_snapshots;
 

@@ -76,7 +76,20 @@ fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator, d
             drm_device.device_info.pci.vendor_id != lib.INTEL_PCI_VENDOR_ID)
             continue;
 
-        const physical_device = try FlintPhysicalDevice.create(allocator, interface, &drm_device);
+        const version = device.getVersion(io_var, allocator) catch continue;
+        defer version.deinit(allocator);
+
+        const kmd_type: lib.KmdType = if (std.mem.eql(u8, version.name, "i915"))
+            .I915
+        else if (std.mem.eql(u8, version.name, "xe"))
+            .Xe
+        else
+            .Invalid;
+
+        if (kmd_type == .Invalid)
+            continue;
+
+        const physical_device = try FlintPhysicalDevice.create(allocator, interface, &drm_device, kmd_type);
         errdefer physical_device.interface.release(allocator) catch {};
 
         const dispatchable = try Dispatchable(base.PhysicalDevice).wrap(allocator, &physical_device.interface);

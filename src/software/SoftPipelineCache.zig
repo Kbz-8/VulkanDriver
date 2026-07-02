@@ -67,8 +67,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    const soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", interface.owner));
-    const data_allocator = soft_device.device_allocator.allocator();
+    const data_allocator = interface.owner.device_allocator.allocator();
 
     for (self.shaders.items) |*shader| {
         shader.deinit(allocator, data_allocator);

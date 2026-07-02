@@ -195,7 +195,7 @@ pub fn beginQuery(interface: *Interface, pool: *base.QueryPool, query: u32, _: v
                     if (active.pool == impl.pool and active.query == impl.query)
                         return;
                 }
-                device.active_occlusion_queries.append(device.renderer.device.device_allocator.allocator(), .{
+                device.active_occlusion_queries.append(device.renderer.device.interface.device_allocator.allocator(), .{
                     .pool = impl.pool,
                     .query = impl.query,
                 }) catch return VkError.OutOfDeviceMemory;

@@ -35,14 +35,7 @@ pub const Interface = base.Device;
 
 const SpawnError = std.Thread.SpawnError;
 
-const DeviceAllocator = struct {
-    pub inline fn allocator(_: @This()) std.mem.Allocator {
-        return base.fallback_host_allocator;
-    }
-};
-
 interface: Interface,
-device_allocator: if (config.soft_debug_allocator) std.heap.DebugAllocator(.{}) else DeviceAllocator,
 
 pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
@@ -91,7 +84,6 @@ pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, a
 
     self.* = .{
         .interface = interface,
-        .device_allocator = if (config.soft_debug_allocator) .init else .{},
     };
     initialized = true;
 
@@ -101,16 +93,6 @@ pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, a
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-
-    if (config.soft_debug_allocator) {
-        // All device memory allocations should've been freed by now
-        const leaks = self.device_allocator.detectLeaks();
-        if (leaks != 0)
-            std.log.scoped(.vkDestroyDevice).err("Device was destroyed leaking {d:.3}KB", .{@as(f32, @floatFromInt(leaks)) / 1000})
-        else
-            std.log.scoped(.vkDestroyDevice).debug("No device memory leaks detected", .{});
-        self.device_allocator.deinitWithoutLeakChecks();
-    }
 
     allocator.destroy(self);
 }

@@ -30,8 +30,9 @@ pub const EXTENSIONS = [_]vk.ExtensionProperties{
 };
 
 interface: Interface,
+kmd_type: lib.KmdType,
 
-pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, drm_device: *const base.drm.Device) VkError!*Self {
+pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, drm_device: *const base.drm.Device, kmd_type: lib.KmdType) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
 
@@ -223,6 +224,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, drm_device
 
     self.* = .{
         .interface = interface,
+        .kmd_type = kmd_type,
     };
 
     return self;

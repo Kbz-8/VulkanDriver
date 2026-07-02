@@ -45,6 +45,7 @@ mode: union(enum) {
             scissor: ?[]vk.Rect2D,
         },
         rasterization: struct {
+            rasterizer_discard_enable: bool,
             polygon_mode: vk.PolygonMode,
             cull_mode: vk.CullModeFlags,
             front_face: vk.FrontFace,
@@ -194,6 +195,7 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
                     },
                 },
                 .rasterization = .{
+                    .rasterizer_discard_enable = rasterizer_discard_enable,
                     .polygon_mode = if (info.p_rasterization_state) |state| state.polygon_mode else return VkError.ValidationFailed,
                     .cull_mode = if (info.p_rasterization_state) |state| state.cull_mode else return VkError.ValidationFailed,
                     .front_face = if (info.p_rasterization_state) |state| state.front_face else return VkError.ValidationFailed,

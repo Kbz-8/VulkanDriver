@@ -276,7 +276,6 @@ pub fn queryImageLod(image: *SoftImage, image_view: *SoftImageView, sampler: *Se
     const clamped_lod = std.math.clamp(biased_lod, sampler.interface.min_lod, sampler.interface.max_lod);
     const max_level: f32 = @floatFromInt(viewMipCount(image_view) - 1);
     const level = std.math.clamp(mipmapModeLevel(sampler, clamped_lod), 0.0, max_level);
-
     return .{ level, lod, 0.0, 0.0 };
 }
 

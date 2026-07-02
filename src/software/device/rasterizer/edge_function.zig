@@ -381,7 +381,7 @@ inline fn run(data: RunData) !void {
             if (early_depth.mask == 0)
                 continue;
 
-            const interpolation_barycentrics = if (data.sample_count > 1) blk: {
+            const interpolation_barycentrics = if (data.sample_count > 1 and data.fragment_uses_centroid) blk: {
                 const sample_pos = firstCoveredSamplePosition(data.sample_count, early_depth.mask);
                 const centroid_p = zm.f32x4(
                     @as(f32, @floatFromInt(x)) + sample_pos.x,

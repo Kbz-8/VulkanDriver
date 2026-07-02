@@ -79,11 +79,10 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
         .destroy = destroy,
     };
 
-    const soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", device));
     const module = try NonDispatchable(ShaderModule).fromHandleObject(info.stage.module);
     const soft_module: *SoftShaderModule = @alignCast(@fieldParentPtr("interface", module));
 
-    const device_allocator = soft_device.device_allocator.allocator();
+    const device_allocator = device.device_allocator.allocator();
     const soft_cache: ?*SoftPipelineCache = if (cache) |pipeline_cache|
         @alignCast(@fieldParentPtr("interface", pipeline_cache))
     else
@@ -123,8 +122,7 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
         .destroy = destroy,
     };
 
-    const soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", device));
-    const device_allocator = soft_device.device_allocator.allocator();
+    const device_allocator = device.device_allocator.allocator();
     const soft_cache: ?*SoftPipelineCache = if (cache) |pipeline_cache|
         @alignCast(@fieldParentPtr("interface", pipeline_cache))
     else
@@ -185,8 +183,7 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    const soft_device: *SoftDevice = @alignCast(@fieldParentPtr("interface", interface.owner));
-    const device_allocator = soft_device.device_allocator.allocator();
+    const device_allocator = interface.owner.device_allocator.allocator();
 
     var it = self.stages.iterator();
     while (it.next()) |entry| {
@@ -486,10 +483,22 @@ fn readImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32,
             .@"2d", .@"2d_array", .cube, .cube_array => .{ .x = x, .y = y, .z = 0 },
             else => .{ .x = x, .y = y, .z = z },
         };
+        const sample_count = image.interface.samples.toInt();
+        const sample_index: u32 = if (sample_count > 1) blk: {
+            if (image_view.interface.view_type == .@"2d_array" or image_view.interface.view_type == .cube_array)
+                break :blk @intCast(@mod(z, @as(i32, @intCast(sample_count))));
+            break :blk @intCast(z);
+        } else 0;
+        const array_z: i32 = if (sample_count > 1 and
+            (image_view.interface.view_type == .@"2d_array" or image_view.interface.view_type == .cube_array))
+            @divFloor(z, @as(i32, @intCast(sample_count)))
+        else
+            z;
         const array_layer = image_view.interface.subresource_range.base_array_layer + switch (image_view.interface.view_type) {
             .@"1d_array" => @as(u32, @intCast(y)),
-            .@"2d_array" => @as(u32, @intCast(z)),
+            .@"2d_array" => @as(u32, @intCast(array_z)),
             .cube => cube_face,
+            .cube_array => @as(u32, @intCast(array_z)),
             else => 0,
         };
         const aspect_mask = imageReadAspect(image_view, false);
@@ -498,7 +507,6 @@ fn readImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32,
             .mip_level = mip_level,
             .array_layer = array_layer,
         };
-        const sample_index: u32 = if (image.interface.samples.toInt() > 1) @intCast(z) else 0;
         const format = base.format.fromAspect(image_view.interface.format, aspect_mask);
         const raw_pixel = if (dim == .SubpassData) blk: {
             if (findInputAttachmentSnapshot(image_view, subresource)) |snapshot| {
@@ -541,10 +549,22 @@ fn readImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, l
             .@"2d", .@"2d_array", .cube, .cube_array => .{ .x = x, .y = y, .z = 0 },
             else => .{ .x = x, .y = y, .z = z },
         };
+        const sample_count = image.interface.samples.toInt();
+        const sample_index: u32 = if (sample_count > 1) blk: {
+            if (image_view.interface.view_type == .@"2d_array" or image_view.interface.view_type == .cube_array)
+                break :blk @intCast(@mod(z, @as(i32, @intCast(sample_count))));
+            break :blk @intCast(z);
+        } else 0;
+        const array_z: i32 = if (sample_count > 1 and
+            (image_view.interface.view_type == .@"2d_array" or image_view.interface.view_type == .cube_array))
+            @divFloor(z, @as(i32, @intCast(sample_count)))
+        else
+            z;
         const array_layer = image_view.interface.subresource_range.base_array_layer + switch (image_view.interface.view_type) {
             .@"1d_array" => @as(u32, @intCast(y)),
-            .@"2d_array" => @as(u32, @intCast(z)),
+            .@"2d_array" => @as(u32, @intCast(array_z)),
             .cube => cube_face,
+            .cube_array => @as(u32, @intCast(array_z)),
             else => 0,
         };
         const aspect_mask = imageReadAspect(image_view, true);
@@ -553,7 +573,6 @@ fn readImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, l
             .mip_level = mip_level,
             .array_layer = array_layer,
         };
-        const sample_index: u32 = if (image.interface.samples.toInt() > 1) @intCast(z) else 0;
         const format = base.format.fromAspect(image_view.interface.format, aspect_mask);
         const raw_pixel = if (dim == .SubpassData) blk: {
             if (findInputAttachmentSnapshot(image_view, subresource)) |snapshot| {

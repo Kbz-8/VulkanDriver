@@ -187,7 +187,7 @@ pub fn init(device: *SoftDevice, state: *PipelineState, active_occlusion_queries
 }
 
 pub fn resetInputAttachmentSnapshots(self: *Self) void {
-    const allocator = self.device.device_allocator.allocator();
+    const allocator = self.device.interface.device_allocator.allocator();
     for (self.input_attachment_snapshots) |snapshot| {
         allocator.free(snapshot.data);
     }
@@ -196,12 +196,12 @@ pub fn resetInputAttachmentSnapshots(self: *Self) void {
 }
 
 pub fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize) VkError!void {
-    var bounded_allocator: BoundedAllocator = .init(self.device.device_allocator.allocator(), 4 * @"1GiB");
+    var bounded_allocator: BoundedAllocator = .init(self.device.interface.device_allocator.allocator(), 4 * @"1GiB");
     try self.drawCall(&bounded_allocator, vertex_count, instance_count, first_vertex, first_instance, null, null);
 }
 
 pub fn drawIndexed(self: *Self, index_count: usize, instance_count: usize, first_index: usize, first_instance: usize, vertex_offset: i32) VkError!void {
-    var bounded_allocator: BoundedAllocator = .init(self.device.device_allocator.allocator(), 4 * @"1GiB");
+    var bounded_allocator: BoundedAllocator = .init(self.device.interface.device_allocator.allocator(), 4 * @"1GiB");
     const allocator = bounded_allocator.allocator();
 
     const indexed_draw = try self.readIndexBuffer(allocator, index_count, first_index, vertex_offset);
@@ -265,6 +265,9 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
 
         return VkError.Unknown;
     };
+
+    if (pipeline.interface.mode.graphics.rasterization.rasterizer_discard_enable)
+        return;
 
     draw_call.viewport = try self.resolveViewport(0);
     draw_call.scissor = try self.resolveScissor(0);
