@@ -12,6 +12,7 @@ const SoftImage = @import("../SoftImage.zig");
 const VkError = base.VkError;
 const SpvRuntimeError = spv.Runtime.RuntimeError;
 const INTERFACE_BLOB_PADDING = @sizeOf(zm.F32x4);
+const PROCESSED_INPUTS_STACK_CAPACITY = 4096;
 
 pub const InvocationResult = struct {
     outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8,
@@ -119,8 +120,13 @@ pub fn shaderInvocation(
 
     const entry = try rt.getEntryPointByName(shader.entry);
 
-    const processed_inputs = allocator.alloc(bool, rt.results.len) catch return SpvRuntimeError.OutOfMemory;
-    defer allocator.free(processed_inputs);
+    var processed_inputs_stack: [PROCESSED_INPUTS_STACK_CAPACITY]bool = undefined;
+    const processed_inputs = if (rt.results.len <= processed_inputs_stack.len)
+        processed_inputs_stack[0..rt.results.len]
+    else
+        allocator.alloc(bool, rt.results.len) catch return SpvRuntimeError.OutOfMemory;
+    defer if (processed_inputs.ptr != &processed_inputs_stack)
+        allocator.free(processed_inputs);
     @memset(processed_inputs, false);
 
     for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
