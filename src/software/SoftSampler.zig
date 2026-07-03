@@ -498,7 +498,18 @@ fn readSampledInt4(
     );
 }
 
-fn sampleImageFloat4Level(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, mip_level: u32, filter: vk.Filter, offset: ImageOffset) VkError!F32x4 {
+fn sampleImageFloat4Level(
+    image: *SoftImage,
+    image_view: *SoftImageView,
+    sampler: *Self,
+    dim: spv.SpvDim,
+    x: f32,
+    y: f32,
+    z: f32,
+    mip_level: u32,
+    filter: vk.Filter,
+    offset: ImageOffset,
+) VkError!F32x4 {
     const extent = image.getMipLevelExtent(mip_level);
     const coord: CubeCoordinate = switch (image_view.interface.view_type) {
         .@"1d_array" => .{
@@ -552,7 +563,17 @@ fn sampleImageFloat4Level(image: *SoftImage, image_view: *SoftImageView, sampler
     );
 }
 
-pub fn sampleImageFloat4(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, lod: ?f32, offset: ImageOffset) VkError!F32x4 {
+pub fn sampleImageFloat4(
+    image: *SoftImage,
+    image_view: *SoftImageView,
+    sampler: *Self,
+    dim: spv.SpvDim,
+    x: f32,
+    y: f32,
+    z: f32,
+    lod: ?f32,
+    offset: ImageOffset,
+) VkError!F32x4 {
     const range = image_view.interface.subresource_range;
     const mip_count = viewMipCount(image_view);
     const clamped_lod = sampleLod(image_view, sampler, lod);

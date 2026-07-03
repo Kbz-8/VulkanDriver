@@ -298,7 +298,15 @@ fn copyDescriptorRange(dst_desc: *Descriptor, dst_array_element: usize, src_desc
     return true;
 }
 
-fn copyDescriptorRangePreservingImmutableSamplers(self: *Self, dst_binding: usize, dst_desc: *Descriptor, dst_array_element: usize, src_desc: Descriptor, src_array_element: usize, descriptor_count: usize) bool {
+fn copyDescriptorRangePreservingImmutableSamplers(
+    self: *Self,
+    dst_binding: usize,
+    dst_desc: *Descriptor,
+    dst_array_element: usize,
+    src_desc: Descriptor,
+    src_array_element: usize,
+    descriptor_count: usize,
+) bool {
     const immutable_samplers = self.interface.layout.bindings[dst_binding].immutable_samplers;
     if (immutable_samplers.len == 0) {
         return copyDescriptorRange(dst_desc, dst_array_element, src_desc, src_array_element, descriptor_count);
