@@ -40,6 +40,150 @@ pub inline fn texelSize(format: vk.Format) usize {
     return lib.c.vkuFormatTexelBlockSize(@intCast(@intFromEnum(format)));
 }
 
+pub inline fn isCompressed(format: vk.Format) bool {
+    return blockWidth(format) > 1 or blockHeight(format) > 1;
+}
+
+pub inline fn blockWidth(format: vk.Format) usize {
+    return switch (format) {
+        .bc1_rgb_unorm_block,
+        .bc1_rgb_srgb_block,
+        .bc1_rgba_unorm_block,
+        .bc1_rgba_srgb_block,
+        .bc2_unorm_block,
+        .bc2_srgb_block,
+        .bc3_unorm_block,
+        .bc3_srgb_block,
+        .bc4_unorm_block,
+        .bc4_snorm_block,
+        .bc5_unorm_block,
+        .bc5_snorm_block,
+        .bc6h_ufloat_block,
+        .bc6h_sfloat_block,
+        .bc7_unorm_block,
+        .bc7_srgb_block,
+        .eac_r11_unorm_block,
+        .eac_r11_snorm_block,
+        .eac_r11g11_unorm_block,
+        .eac_r11g11_snorm_block,
+        .etc2_r8g8b8_unorm_block,
+        .etc2_r8g8b8_srgb_block,
+        .etc2_r8g8b8a1_unorm_block,
+        .etc2_r8g8b8a1_srgb_block,
+        .etc2_r8g8b8a8_unorm_block,
+        .etc2_r8g8b8a8_srgb_block,
+        .astc_4x_4_unorm_block,
+        .astc_4x_4_srgb_block,
+        => 4,
+        .astc_5x_4_unorm_block,
+        .astc_5x_5_unorm_block,
+        .astc_5x_4_srgb_block,
+        .astc_5x_5_srgb_block,
+        => 5,
+        .astc_6x_5_unorm_block,
+        .astc_6x_6_unorm_block,
+        .astc_6x_5_srgb_block,
+        .astc_6x_6_srgb_block,
+        => 6,
+        .astc_8x_5_unorm_block,
+        .astc_8x_6_unorm_block,
+        .astc_8x_8_unorm_block,
+        .astc_8x_5_srgb_block,
+        .astc_8x_6_srgb_block,
+        .astc_8x_8_srgb_block,
+        => 8,
+        .astc_1_0x_5_unorm_block,
+        .astc_1_0x_6_unorm_block,
+        .astc_1_0x_8_unorm_block,
+        .astc_1_0x_10_unorm_block,
+        .astc_1_0x_5_srgb_block,
+        .astc_1_0x_6_srgb_block,
+        .astc_1_0x_8_srgb_block,
+        .astc_1_0x_10_srgb_block,
+        => 10,
+        .astc_1_2x_10_unorm_block,
+        .astc_1_2x_12_unorm_block,
+        .astc_1_2x_10_srgb_block,
+        .astc_1_2x_12_srgb_block,
+        => 12,
+        else => 1,
+    };
+}
+
+pub inline fn blockHeight(format: vk.Format) usize {
+    return switch (format) {
+        .bc1_rgb_unorm_block,
+        .bc1_rgb_srgb_block,
+        .bc1_rgba_unorm_block,
+        .bc1_rgba_srgb_block,
+        .bc2_unorm_block,
+        .bc2_srgb_block,
+        .bc3_unorm_block,
+        .bc3_srgb_block,
+        .bc4_unorm_block,
+        .bc4_snorm_block,
+        .bc5_unorm_block,
+        .bc5_snorm_block,
+        .bc6h_ufloat_block,
+        .bc6h_sfloat_block,
+        .bc7_unorm_block,
+        .bc7_srgb_block,
+        .eac_r11_unorm_block,
+        .eac_r11_snorm_block,
+        .eac_r11g11_unorm_block,
+        .eac_r11g11_snorm_block,
+        .etc2_r8g8b8_unorm_block,
+        .etc2_r8g8b8_srgb_block,
+        .etc2_r8g8b8a1_unorm_block,
+        .etc2_r8g8b8a1_srgb_block,
+        .etc2_r8g8b8a8_unorm_block,
+        .etc2_r8g8b8a8_srgb_block,
+        .astc_4x_4_unorm_block,
+        .astc_5x_4_unorm_block,
+        .astc_4x_4_srgb_block,
+        .astc_5x_4_srgb_block,
+        => 4,
+        .astc_5x_5_unorm_block,
+        .astc_6x_5_unorm_block,
+        .astc_8x_5_unorm_block,
+        .astc_1_0x_5_unorm_block,
+        .astc_5x_5_srgb_block,
+        .astc_6x_5_srgb_block,
+        .astc_8x_5_srgb_block,
+        .astc_1_0x_5_srgb_block,
+        => 5,
+        .astc_6x_6_unorm_block,
+        .astc_8x_6_unorm_block,
+        .astc_1_0x_6_unorm_block,
+        .astc_6x_6_srgb_block,
+        .astc_8x_6_srgb_block,
+        .astc_1_0x_6_srgb_block,
+        => 6,
+        .astc_8x_8_unorm_block,
+        .astc_1_0x_8_unorm_block,
+        .astc_8x_8_srgb_block,
+        .astc_1_0x_8_srgb_block,
+        => 8,
+        .astc_1_0x_10_unorm_block,
+        .astc_1_2x_10_unorm_block,
+        .astc_1_0x_10_srgb_block,
+        .astc_1_2x_10_srgb_block,
+        => 10,
+        .astc_1_2x_12_unorm_block,
+        .astc_1_2x_12_srgb_block,
+        => 12,
+        else => 1,
+    };
+}
+
+pub inline fn blockCountX(format: vk.Format, width: usize) usize {
+    return std.math.divCeil(usize, width, blockWidth(format)) catch unreachable;
+}
+
+pub inline fn blockCountY(format: vk.Format, height: usize) usize {
+    return std.math.divCeil(usize, height, blockHeight(format)) catch unreachable;
+}
+
 pub inline fn componentCount(format: vk.Format) usize {
     return @intCast(lib.c.vkuFormatComponentCount(@intCast(@intFromEnum(format))));
 }
@@ -83,13 +227,11 @@ pub fn supportsColorAttachemendBlend(format: vk.Format) bool {
 }
 
 pub inline fn pitchMemSize(format: vk.Format, width: usize) usize {
-    // To be updated for compressed formats handling
-    return texelSize(format) * width;
+    return texelSize(format) * blockCountX(format, width);
 }
 
 pub inline fn sliceMemSize(format: vk.Format, width: usize, height: usize) usize {
-    // To be updated for compressed formats handling
-    return pitchMemSize(format, width) * height;
+    return pitchMemSize(format, width) * blockCountY(format, height);
 }
 
 pub inline fn isDepthAndStencil(format: vk.Format) bool {

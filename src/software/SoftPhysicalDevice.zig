@@ -335,22 +335,22 @@ pub fn getFormatProperties(interface: *Interface, format: vk.Format) VkError!vk.
         .r32g32b32a32_sfloat,
         .b10g11r11_ufloat_pack32,
         .e5b9g9r9_ufloat_pack32,
-        //.bc1_rgb_unorm_block,
-        //.bc1_rgb_srgb_block,
-        //.bc1_rgba_unorm_block,
-        //.bc1_rgba_srgb_block,
-        //.bc2_unorm_block,
-        //.bc2_srgb_block,
-        //.bc3_unorm_block,
-        //.bc3_srgb_block,
-        //.bc4_unorm_block,
-        //.bc4_snorm_block,
-        //.bc5_unorm_block,
-        //.bc5_snorm_block,
-        //.bc6h_ufloat_block,
-        //.bc6h_sfloat_block,
-        //.bc7_unorm_block,
-        //.bc7_srgb_block,
+        .bc1_rgb_unorm_block,
+        .bc1_rgb_srgb_block,
+        .bc1_rgba_unorm_block,
+        .bc1_rgba_srgb_block,
+        .bc2_unorm_block,
+        .bc2_srgb_block,
+        .bc3_unorm_block,
+        .bc3_srgb_block,
+        .bc4_unorm_block,
+        .bc4_snorm_block,
+        .bc5_unorm_block,
+        .bc5_snorm_block,
+        .bc6h_ufloat_block,
+        .bc6h_sfloat_block,
+        .bc7_unorm_block,
+        .bc7_srgb_block,
         //.etc2_r8g8b8_unorm_block,
         //.etc2_r8g8b8_srgb_block,
         //.etc2_r8g8b8a1_unorm_block,
@@ -442,6 +442,33 @@ pub fn getFormatProperties(interface: *Interface, format: vk.Format) VkError!vk.
             properties.optimal_tiling_features.transfer_src_bit = true;
             properties.optimal_tiling_features.transfer_dst_bit = true;
             properties.optimal_tiling_features.cosited_chroma_samples_bit = true;
+        },
+        else => {},
+    }
+
+    switch (format) {
+        .bc1_rgb_unorm_block,
+        .bc1_rgb_srgb_block,
+        .bc1_rgba_unorm_block,
+        .bc1_rgba_srgb_block,
+        .bc2_unorm_block,
+        .bc2_srgb_block,
+        .bc3_unorm_block,
+        .bc3_srgb_block,
+        .bc4_unorm_block,
+        .bc4_snorm_block,
+        .bc5_unorm_block,
+        .bc5_snorm_block,
+        .bc6h_ufloat_block,
+        .bc6h_sfloat_block,
+        .bc7_unorm_block,
+        .bc7_srgb_block,
+        => {
+            properties.optimal_tiling_features.blit_src_bit = true;
+            properties.optimal_tiling_features.sampled_image_bit = true;
+            properties.optimal_tiling_features.sampled_image_filter_linear_bit = true;
+            properties.optimal_tiling_features.transfer_dst_bit = true;
+            properties.optimal_tiling_features.transfer_src_bit = true;
         },
         else => {},
     }
@@ -819,6 +846,9 @@ fn isFormatSupported(
     tiling: vk.ImageTiling,
     usage: vk.ImageUsageFlags,
 ) VkError!bool {
+    if (base.format.isCompressed(format) and (usage.transfer_src_bit or usage.transfer_dst_bit))
+        return false;
+
     const format_properties = try self.interface.getFormatProperties(format);
     const format_features = switch (tiling) {
         .linear => format_properties.linear_tiling_features,

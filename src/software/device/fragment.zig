@@ -70,12 +70,8 @@ pub fn shaderInvocation(
     };
 
     if (rt.getBuiltinResult(.FragCoord)) |frag_coord_word| {
-        const pixel_x: i32 = @intFromFloat(position[0]);
-        const pixel_y: i32 = @intFromFloat(position[1]);
-        const dx: f32 = if (@mod(pixel_x, 2) == 0) 1.0 else -1.0;
-        const dy: f32 = if (@mod(pixel_y, 2) == 0) 1.0 else -1.0;
-        const frag_coord_dx = zm.f32x4(dx, 0.0, 0.0, 0.0);
-        const frag_coord_dy = zm.f32x4(0.0, dy, 0.0, 0.0);
+        const frag_coord_dx = zm.f32x4(1.0, 0.0, 0.0, 0.0);
+        const frag_coord_dy = zm.f32x4(0.0, 1.0, 0.0, 0.0);
         try rt.setDerivativeFromMemory(allocator, frag_coord_word, std.mem.asBytes(&frag_coord_dx), std.mem.asBytes(&frag_coord_dy));
     }
 
