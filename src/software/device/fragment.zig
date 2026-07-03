@@ -6,8 +6,10 @@ const spv = @import("spv");
 
 const VertexInterpolationLocation = @import("rasterizer/common.zig").VertexInterpolationLocation;
 
+const ExecutionDevice = @import("Device.zig");
 const Renderer = @import("Renderer.zig");
 const SoftImage = @import("../SoftImage.zig");
+const SoftPipeline = @import("../SoftPipeline.zig");
 
 const VkError = base.VkError;
 const SpvRuntimeError = spv.Runtime.RuntimeError;
@@ -60,23 +62,30 @@ pub fn shaderInvocation(
     rt.resetInvocation(allocator);
     if (rt.specialization_constants.count() != 0)
         try rt.applySpecializationInvocationLayout(allocator);
-    try @import("Device.zig").writeDescriptorSets(draw_call.renderer.state, rt);
+    try ExecutionDevice.writeDescriptorSets(draw_call.renderer.state, rt);
     try rt.populatePushConstants(draw_call.renderer.state.push_constant_blob[0..]);
     rt.writeBuiltIn(allocator, std.mem.asBytes(&position), .FragCoord) catch |err| switch (err) {
         SpvRuntimeError.NotFound => {},
         else => return err,
     };
+
     if (rt.getBuiltinResult(.FragCoord)) |frag_coord_word| {
-        const frag_coord_dx = zm.f32x4(1.0, 0.0, 0.0, 0.0);
-        const frag_coord_dy = zm.f32x4(0.0, 1.0, 0.0, 0.0);
+        const pixel_x: i32 = @intFromFloat(position[0]);
+        const pixel_y: i32 = @intFromFloat(position[1]);
+        const dx: f32 = if (@mod(pixel_x, 2) == 0) 1.0 else -1.0;
+        const dy: f32 = if (@mod(pixel_y, 2) == 0) 1.0 else -1.0;
+        const frag_coord_dx = zm.f32x4(dx, 0.0, 0.0, 0.0);
+        const frag_coord_dy = zm.f32x4(0.0, dy, 0.0, 0.0);
         try rt.setDerivativeFromMemory(allocator, frag_coord_word, std.mem.asBytes(&frag_coord_dx), std.mem.asBytes(&frag_coord_dy));
     }
+
     if (point_coord) |coord| {
         rt.writeBuiltIn(allocator, std.mem.asBytes(&coord), .PointCoord) catch |err| switch (err) {
             SpvRuntimeError.NotFound => {},
             else => return err,
         };
     }
+
     if (sample_id) |id| {
         const sample_id_i32: i32 = @intCast(id);
         rt.writeBuiltIn(allocator, std.mem.asBytes(&sample_id_i32), .SampleId) catch |err| switch (err) {
@@ -84,23 +93,25 @@ pub fn shaderInvocation(
             else => return err,
         };
     }
+
     rt.writeBuiltIn(allocator, std.mem.asBytes(&front_face), .FrontFacing) catch |err| switch (err) {
         SpvRuntimeError.NotFound => {},
         else => return err,
     };
+
     const helper_invocation = false;
     rt.writeBuiltIn(allocator, std.mem.asBytes(&helper_invocation), .HelperInvocation) catch |err| switch (err) {
         SpvRuntimeError.NotFound => {},
         else => return err,
     };
 
-    const SoftPipeline = @import("../SoftPipeline.zig");
     const previous_fragment_coord = SoftPipeline.current_fragment_coord;
     const previous_input_attachment_snapshots = SoftPipeline.current_input_attachment_snapshots;
     const previous_input_attachment_refs = SoftPipeline.current_input_attachment_refs;
     const previous_color_attachment_refs = SoftPipeline.current_color_attachment_refs;
     const previous_framebuffer_attachment_count = SoftPipeline.current_framebuffer_attachment_count;
     const subpass = draw_call.render_pass.interface.subpasses[draw_call.renderer.subpass_index];
+
     SoftPipeline.current_fragment_coord = .{
         .x = @intFromFloat(position[0]),
         .y = @intFromFloat(position[1]),
@@ -194,6 +205,7 @@ pub fn shaderInvocation(
         },
         else => return err,
     };
+
     if (rt.helper_invocation) {
         try rt.flushDescriptorSets(allocator);
         return SpvRuntimeError.Killed;

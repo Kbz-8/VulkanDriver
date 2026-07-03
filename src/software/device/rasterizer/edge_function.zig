@@ -228,7 +228,7 @@ inline fn edgeContainsPixel(a: F32x4, b: F32x4, edge_value: f32, area: f32) bool
         edge_value < 0.0 or (edge_value == 0.0 and isInclusiveEdge(b, a));
 }
 
-inline fn standardSamplePosition(sample_count: usize, sample_index: usize) SamplePosition {
+fn standardSamplePosition(sample_count: usize, sample_index: usize) SamplePosition {
     return switch (sample_count) {
         1 => .{ .x = 0.5, .y = 0.5 },
         2 => switch (sample_index) {
