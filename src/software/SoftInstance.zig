@@ -30,6 +30,8 @@ pub const EXTENSIONS = [_]vk.ExtensionProperties{
     castExtension(vk.extensions.khr_get_physical_device_properties_2),
     castExtension(vk.extensions.khr_surface),
     castExtension(vk.extensions.khr_wayland_surface),
+    //castExtension(vk.extensions.khr_xlib_surface),
+    //castExtension(vk.extensions.khr_xcb_surface),
 };
 
 pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) VkError!*Interface {

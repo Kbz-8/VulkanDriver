@@ -43,7 +43,7 @@ pub fn init(allocator: std.mem.Allocator, instance: *Instance) VkError!Self {
             .vendor_id = root.VULKAN_VENDOR_ID,
             .device_id = undefined,
             .device_type = undefined,
-            .device_name = [_]u8{0} ** vk.MAX_PHYSICAL_DEVICE_NAME_SIZE,
+            .device_name = @as([vk.MAX_PHYSICAL_DEVICE_NAME_SIZE]u8, @splat(0)),
             .pipeline_cache_uuid = undefined,
             .limits = std.mem.zeroInit(vk.PhysicalDeviceLimits, .{}),
             .sparse_properties = undefined,

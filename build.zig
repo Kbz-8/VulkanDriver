@@ -2,7 +2,7 @@ const std = @import("std");
 const Step = std.Build.Step;
 const builtin = @import("builtin");
 
-const driver_version: std.SemanticVersion = .{ .major = 1, .minor = 0, .patch = 0 };
+const driver_version: std.SemanticVersion = .{ .major = 2026, .minor = 0, .patch = 0 };
 
 const ImplementationDesc = struct {
     name: []const u8,

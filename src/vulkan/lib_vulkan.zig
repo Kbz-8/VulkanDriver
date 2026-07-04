@@ -1504,11 +1504,7 @@ pub export fn apeGetDeviceGroupPresentCapabilitiesKHR(
     return .success;
 }
 
-pub export fn apeGetDeviceGroupSurfacePresentModesKHR(
-    p_device: vk.Device,
-    p_surface: vk.SurfaceKHR,
-    p_modes: *vk.DeviceGroupPresentModeFlagsKHR,
-) callconv(vk.vulkan_call_conv) vk.Result {
+pub export fn apeGetDeviceGroupSurfacePresentModesKHR(p_device: vk.Device, p_surface: vk.SurfaceKHR, p_modes: *vk.DeviceGroupPresentModeFlagsKHR) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkGetDeviceGroupSurfacePresentModesKHR);
     defer entryPointEndLogTrace();
 

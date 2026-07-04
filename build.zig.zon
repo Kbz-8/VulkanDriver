@@ -1,6 +1,7 @@
 .{
     .name = .VulkanDriver,
-    .version = "0.0.1",
+    .version = "2026.0.0",
+
     .fingerprint = 0x52cb73649f1107de,
     .minimum_zig_version = "0.16.0",
 
@@ -32,8 +33,8 @@
 
         // Soft dependencies
         .SPIRV_Interpreter = .{
-            .url = "git+https://github.com/Kbz-8/SPIRV-Interpreter#32806def90a68f5f0514405d0ff8c1b0cb16772e",
-            .hash = "SPIRV_Interpreter-0.0.1-ajmpn0qdCQANEex9HEO44N5dcyyOjYGzPCXlzdXhvnr7",
+            .url = "git+https://github.com/Kbz-8/SPIRV-Interpreter#92e86ba34fccf32a30e6f717a9cafe0b9e95bb2a",
+            .hash = "SPIRV_Interpreter-1.0.0-ajmpnwSKCQDjTAGgiw6N0rWdZiD3VdEMAE352RSpN4vl",
             .lazy = true,
         },
         //.SPIRV_Interpreter = .{
