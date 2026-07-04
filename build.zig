@@ -2,7 +2,7 @@ const std = @import("std");
 const Step = std.Build.Step;
 const builtin = @import("builtin");
 
-const driver_version: std.SemanticVersion = .{ .major = 2026, .minor = 0, .patch = 0 };
+const driver_version: std.SemanticVersion = .{ .major = 26, .minor = 0, .patch = 0 };
 
 const ImplementationDesc = struct {
     name: []const u8,
@@ -265,8 +265,6 @@ fn customSoft(
     const spv = b.lazyDependency("SPIRV_Interpreter", .{
         .target = target,
         .optimize = optimize,
-        .@"no-example" = true,
-        .@"no-test" = true,
         .@"use-llvm" = use_llvm,
     }) orelse return error.UnresolvedDependency;
 
