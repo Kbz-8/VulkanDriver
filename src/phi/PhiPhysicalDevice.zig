@@ -32,6 +32,7 @@ pub const EXTENSIONS = [_]vk.ExtensionProperties{
 
 interface: Interface,
 scif_node_id: u16,
+mic_device_num: u32,
 
 pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, mic_device: mic.Device, mic_device_num: u32) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
@@ -262,6 +263,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, mic_device
     self.* = .{
         .interface = interface,
         .scif_node_id = deviceNumToScifNode(mic_device_num),
+        .mic_device_num = mic_device_num,
     };
 
     return self;

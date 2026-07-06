@@ -10,9 +10,10 @@ const Self = @This();
 
 epd: scif.epd_t,
 sequence: u64 = 1,
-mutex: base.SpinMutex = .{},
+mutex: std.Io.Mutex = .init,
+instance: *base.Instance,
 
-pub fn init(node_id: u16) VkError!Self {
+pub fn init(instance: *base.Instance, node_id: u16) VkError!Self {
     try scif.load();
     errdefer scif.unload();
 
@@ -33,7 +34,10 @@ pub fn init(node_id: u16) VkError!Self {
         return VkError.InitializationFailed;
     }
 
-    var self: Self = .{ .epd = epd };
+    var self: Self = .{
+        .epd = epd,
+        .instance = instance,
+    };
     try self.handshake();
     return self;
 }
@@ -43,57 +47,10 @@ pub fn deinit(self: *Self) void {
     scif.unload();
 }
 
-pub fn allocMemory(self: *Self, size: u64, memory_type_index: u32) VkError!proto.PhiAllocMemoryReply {
-    self.mutex.lock();
-    defer self.mutex.unlock();
+pub fn request(self: *Self, command: c_uint, payload: []const u8, reply_payload: []u8) VkError!void {
+    self.mutex.lock(self.instance.io()) catch return VkError.DeviceLost;
+    defer self.mutex.unlock(self.instance.io());
 
-    const alloc_request: proto.PhiAllocMemoryRequest = .{
-        .size = size,
-        .memory_type_index = memory_type_index,
-        .flags = 0,
-    };
-    var reply: proto.PhiAllocMemoryReply = undefined;
-    try self.request(proto.PHI_COMMAND_ALLOC_MEMORY, std.mem.asBytes(&alloc_request), std.mem.asBytes(&reply));
-    if (reply.result.status != proto.PHI_STATUS_OK) {
-        return mapStatus(reply.result.status);
-    }
-    return reply;
-}
-
-pub fn freeMemory(self: *Self, remote_handle: u64) void {
-    self.mutex.lock();
-    defer self.mutex.unlock();
-
-    const request_payload: proto.PhiFreeMemoryRequest = .{
-        .remote_handle = remote_handle,
-    };
-    var reply: proto.PhiFreeMemoryReply = undefined;
-    self.request(proto.PHI_COMMAND_FREE_MEMORY, std.mem.asBytes(&request_payload), std.mem.asBytes(&reply)) catch |err| {
-        std.log.scoped(.PhiTransport).err("Remote free failed: {s}", .{@errorName(err)});
-        return;
-    };
-    if (reply.result.status != proto.PHI_STATUS_OK) {
-        std.log.scoped(.PhiTransport).err("Remote free returned status {d}", .{reply.result.status});
-    }
-}
-
-fn handshake(self: *Self) VkError!void {
-    const request_payload: proto.PhiHelloRequest = .{
-        .host_protocol_version = proto.PHI_PROTOCOL_VERSION,
-        .reserved = 0,
-    };
-    var reply: proto.PhiHelloReply = undefined;
-    try self.request(proto.PHI_COMMAND_HELLO, std.mem.asBytes(&request_payload), std.mem.asBytes(&reply));
-    if (reply.result.status != proto.PHI_STATUS_OK) {
-        return mapStatus(reply.result.status);
-    }
-    if (reply.device_protocol_version != proto.PHI_PROTOCOL_VERSION) {
-        std.log.scoped(.PhiTransport).err("Unsupported Phi protocol version {d}", .{reply.device_protocol_version});
-        return VkError.InitializationFailed;
-    }
-}
-
-fn request(self: *Self, command: c_uint, payload: []const u8, reply_payload: []u8) VkError!void {
     const sequence = self.sequence;
     self.sequence += 1;
 
@@ -124,6 +81,14 @@ fn request(self: *Self, command: c_uint, payload: []const u8, reply_payload: []u
     try self.readAll(reply_payload);
 }
 
+pub fn statusToErr(status: c_int) VkError {
+    return switch (status) {
+        proto.PHI_STATUS_OUT_OF_MEMORY => VkError.OutOfDeviceMemory,
+        proto.PHI_STATUS_UNSUPPORTED_VERSION => VkError.InitializationFailed,
+        else => VkError.Unknown,
+    };
+}
+
 fn writeAll(self: *Self, bytes: []const u8) VkError!void {
     var offset: usize = 0;
     while (offset < bytes.len) {
@@ -146,10 +111,18 @@ fn readAll(self: *Self, bytes: []u8) VkError!void {
     }
 }
 
-fn mapStatus(status: c_int) VkError {
-    return switch (status) {
-        proto.PHI_STATUS_OUT_OF_MEMORY => VkError.OutOfDeviceMemory,
-        proto.PHI_STATUS_UNSUPPORTED_VERSION => VkError.InitializationFailed,
-        else => VkError.Unknown,
+fn handshake(self: *Self) VkError!void {
+    const request_payload: proto.PhiHelloRequest = .{
+        .host_protocol_version = proto.PHI_PROTOCOL_VERSION,
+        .reserved = 0,
     };
+    var reply: proto.PhiHelloReply = undefined;
+    try self.request(proto.PHI_COMMAND_HELLO, std.mem.asBytes(&request_payload), std.mem.asBytes(&reply));
+    if (reply.result.status != proto.PHI_STATUS_OK) {
+        return statusToErr(reply.result.status);
+    }
+    if (reply.device_protocol_version != proto.PHI_PROTOCOL_VERSION) {
+        std.log.scoped(.PhiTransport).err("Unsupported Phi protocol version {d}", .{reply.device_protocol_version});
+        return VkError.InitializationFailed;
+    }
 }

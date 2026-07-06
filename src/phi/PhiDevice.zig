@@ -1,10 +1,12 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
+const lib = @import("lib.zig");
 
 const PhiQueue = @import("PhiQueue.zig");
 const PhiPhysicalDevice = @import("PhiPhysicalDevice.zig");
 const PhiTransport = @import("PhiTransport.zig");
+const phi_daemon = @import("phi_daemon");
 
 pub const PhiBinarySemaphore = @import("PhiBinarySemaphore.zig");
 pub const PhiBuffer = @import("PhiBuffer.zig");
@@ -28,6 +30,8 @@ pub const PhiRenderPass = @import("PhiRenderPass.zig");
 pub const PhiSampler = @import("PhiSampler.zig");
 pub const PhiShaderModule = @import("PhiShaderModule.zig");
 
+const config = lib.config;
+const daemon_binary = phi_daemon.data;
 const VkError = base.VkError;
 
 const Self = @This();
@@ -75,7 +79,9 @@ pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, a
     };
 
     const phi_physical_device: *PhiPhysicalDevice = @alignCast(@fieldParentPtr("interface", physical_device));
-    const transport = try PhiTransport.init(phi_physical_device.scif_node_id);
+    try uploadAndLaunchDaemon(instance, allocator, phi_physical_device.mic_device_num);
+
+    const transport = try PhiTransport.init(instance, phi_physical_device.scif_node_id);
 
     self.* = .{
         .interface = interface,
@@ -213,4 +219,66 @@ pub fn getDeviceGroupPresentCapabilitiesKHR(_: *Interface, capabilities: *vk.Dev
 
 pub fn getDeviceGroupSurfacePresentModesKHR(_: *Interface, _: *base.SurfaceKHR) VkError!vk.DeviceGroupPresentModeFlagsKHR {
     return .{ .local_bit_khr = true };
+}
+
+fn uploadAndLaunchDaemon(instance: *base.Instance, allocator: std.mem.Allocator, mic_device_num: u32) VkError!void {
+    const io = instance.io();
+
+    const local_path = std.fmt.allocPrint(allocator, "/tmp/ape_phi_device_{d}_{d}.mic", .{ std.os.linux.getpid(), mic_device_num }) catch return VkError.OutOfHostMemory;
+    defer allocator.free(local_path);
+    defer std.Io.Dir.deleteFileAbsolute(io, local_path) catch {};
+
+    std.Io.Dir.writeFile(.cwd(), io, .{
+        .sub_path = local_path,
+        .data = daemon_binary,
+    }) catch |err| {
+        std.log.scoped(.PhiDevice).err("Failed to write embedded Phi daemon: {s}", .{@errorName(err)});
+        return VkError.InitializationFailed;
+    };
+
+    const host = std.fmt.allocPrint(allocator, "{s}{d}", .{ config.phi_daemon_host_prefix, mic_device_num }) catch return VkError.OutOfHostMemory;
+    defer allocator.free(host);
+
+    const remote_target = std.fmt.allocPrint(allocator, "{s}:{s}", .{ host, config.phi_daemon_remote_path }) catch return VkError.OutOfHostMemory;
+    defer allocator.free(remote_target);
+
+    try runHostCommand(instance, allocator, &.{
+        "scp",
+        local_path,
+        remote_target,
+    });
+
+    const launch_command = std.fmt.allocPrint(
+        allocator,
+        "chmod +x {s} && nohup {s} >/tmp/phi_device.log 2>&1 </dev/null &",
+        .{ config.phi_daemon_remote_path, config.phi_daemon_remote_path },
+    ) catch return VkError.OutOfHostMemory;
+    defer allocator.free(launch_command);
+
+    try runHostCommand(instance, allocator, &.{
+        "ssh",
+        host,
+        launch_command,
+    });
+}
+
+fn runHostCommand(instance: *base.Instance, allocator: std.mem.Allocator, argv: []const []const u8) VkError!void {
+    const result = std.process.run(allocator, instance.io(), .{
+        .argv = argv,
+        .stdout_limit = .limited(4096),
+        .stderr_limit = .limited(4096),
+    }) catch |err| {
+        std.log.scoped(.PhiDevice).err("Failed to run {s}: {s}", .{ argv[0], @errorName(err) });
+        return VkError.InitializationFailed;
+    };
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+
+    switch (result.term) {
+        .exited => |code| if (code == 0) return,
+        else => {},
+    }
+
+    std.log.scoped(.PhiDevice).err("{s} failed: stdout=\"{s}\" stderr=\"{s}\"", .{ argv[0], result.stdout, result.stderr });
+    return VkError.InitializationFailed;
 }

@@ -542,11 +542,28 @@ fn customPhi(
     const daemon = try addPhiCardDaemon(b, optimize, cc, sysroot);
     const install_daemon = b.addInstallFile(daemon, "lib/phi_device.mic");
     lib.step.dependOn(&install_daemon.step);
+
+    const embedded_daemon = addEmbeddedPhiDaemon(b, daemon);
+    lib_mod.addAnonymousImport("phi_daemon", .{
+        .root_source_file = embedded_daemon,
+    });
 }
 
 fn optionsPhi(b: *std.Build, options: *Step.Options) !void {
-    _ = b;
-    _ = options;
+    const daemon_remote_path = b.option(
+        []const u8,
+        "phi-daemon-remote-path",
+        "Path where the Xeon Phi daemon is copied on the card",
+    ) orelse "/tmp/phi_device.mic";
+
+    const daemon_host_prefix = b.option(
+        []const u8,
+        "phi-daemon-host-prefix",
+        "Host prefix used to reach cards over ssh/scp; card N uses <prefix>N",
+    ) orelse "mic";
+
+    options.addOption([]const u8, "phi_daemon_remote_path", daemon_remote_path);
+    options.addOption([]const u8, "phi_daemon_host_prefix", daemon_host_prefix);
 }
 
 fn addPhiCardDaemon(
@@ -600,4 +617,12 @@ fn addPhiCardDaemon(
     });
 
     return cmd.addOutputFileArg("phi_device.mic");
+}
+
+fn addEmbeddedPhiDaemon(b: *std.Build, daemon: std.Build.LazyPath) std.Build.LazyPath {
+    const wf = b.addWriteFiles();
+    _ = wf.addCopyFile(daemon, "phi_device.mic");
+    return wf.add("phi_daemon.zig",
+        \\pub const data = @embedFile("phi_device.mic");
+    );
 }

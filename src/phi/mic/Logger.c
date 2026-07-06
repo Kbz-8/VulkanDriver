@@ -42,7 +42,7 @@ void PhiLog(PhiLogLevel level, const char* fmt, const char* file, const char* fu
 	time_t now = time(0);
 	struct tm tstruct = *localtime(&now);
 	char buffer[128];
-	strftime(buffer, sizeof(buffer), "[%X] ", &tstruct);
+	strftime(buffer, sizeof(buffer), "%X", &tstruct);
 
 	FILE* out = stdout;
 
@@ -51,9 +51,9 @@ void PhiLog(PhiLogLevel level, const char* fmt, const char* file, const char* fu
 
 	// Way too much printf calls
 	SetConsoleColor(out, MAGENTA);
-	fprintf(out, "[Phi device ");
+	fprintf(out, "[ApeDriver ");
 	SetConsoleColor(out, GREEN);
-	fprintf(out, "Phi");
+	fprintf(out, "Phi ");
 	SetConsoleColor(out, YELLOW);
 	fprintf(out, "%s", buffer);
 	SetConsoleColor(out, MAGENTA);
@@ -76,11 +76,13 @@ void PhiLog(PhiLogLevel level, const char* fmt, const char* file, const char* fu
 			break;
 	}
 
+	SetConsoleColor(out, RESET);
+
 	va_list argptr;
 	va_start(argptr, line);
+	vfprintf(out, fmt, argptr);
+	va_end(argptr);
 
-	SetConsoleColor(out, RESET);
-	fprintf(out, fmt, argptr);
 	fputc('\n', out);
 
 	if(level == PHI_LOG_LEVEL_FATAL)

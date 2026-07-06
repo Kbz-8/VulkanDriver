@@ -2,8 +2,10 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 const lib = @import("lib.zig");
+const proto = lib.proto;
 
 const PhiDevice = @import("PhiDevice.zig");
+const PhiTransport = @import("PhiTransport.zig");
 
 const VkError = base.VkError;
 
@@ -38,10 +40,24 @@ pub fn create(device: *PhiDevice, allocator: std.mem.Allocator, size: vk.DeviceS
     const allocation_size = std.math.cast(usize, size) orelse return VkError.OutOfDeviceMemory;
 
     const remote_handle = if (device_local) blk: {
-        const remote = try device.transport.allocMemory(size, memory_type_index);
-        break :blk remote.remote_handle;
+        const alloc_request: proto.PhiAllocMemoryRequest = .{
+            .size = size,
+            .memory_type_index = memory_type_index,
+            .flags = 0,
+        };
+
+        var reply: proto.PhiAllocMemoryReply = undefined;
+        try device.transport.request(proto.PHI_COMMAND_ALLOC_MEMORY, std.mem.asBytes(&alloc_request), std.mem.asBytes(&reply));
+
+        if (reply.result.status != proto.PHI_STATUS_OK) {
+            return PhiTransport.statusToErr(reply.result.status);
+        }
+
+        std.log.scoped(.PhiDeviceMemory).info("Recieved remote handle 0x{X}", .{reply.remote_handle});
+
+        break :blk reply.remote_handle;
     } else 0;
-    errdefer if (remote_handle != 0) device.transport.freeMemory(remote_handle);
+    errdefer if (remote_handle != 0) self.interface.destroy(allocator);
 
     const data = if (host_visible)
         device.interface.device_allocator.allocator().alloc(u8, allocation_size) catch return VkError.OutOfDeviceMemory
@@ -64,7 +80,17 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
         interface.owner.device_allocator.allocator().free(data);
     }
     if (self.remote_handle != 0) {
-        device.transport.freeMemory(self.remote_handle);
+        const request_payload: proto.PhiFreeMemoryRequest = .{
+            .remote_handle = self.remote_handle,
+        };
+        var reply: proto.PhiFreeMemoryReply = undefined;
+        device.transport.request(proto.PHI_COMMAND_FREE_MEMORY, std.mem.asBytes(&request_payload), std.mem.asBytes(&reply)) catch |err| {
+            std.log.scoped(.PhiTransport).err("Remote free failed: {s}", .{@errorName(err)});
+            return;
+        };
+        if (reply.result.status != proto.PHI_STATUS_OK) {
+            std.log.scoped(.PhiTransport).err("Remote free returned status {d}", .{reply.result.status});
+        }
     }
     allocator.destroy(self);
 }
