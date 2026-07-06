@@ -97,7 +97,7 @@ fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator, _
         };
         defer device.deinit();
 
-        const physical_device = try PhiPhysicalDevice.create(allocator, interface, device);
+        const physical_device = try PhiPhysicalDevice.create(allocator, interface, device, device_num);
         errdefer physical_device.interface.release(allocator) catch {};
 
         const dispatchable = try Dispatchable(base.PhysicalDevice).wrap(allocator, &physical_device.interface);

@@ -3,13 +3,16 @@ const vk = @import("vulkan");
 pub const base = @import("base");
 
 pub const c = @import("phi_c");
+pub const proto = @import("phi_protocol_c");
 pub const config = base.config;
 pub const mic = @import("miclib");
+pub const scif = @import("scif.zig");
 
 pub const PhiInstance = @import("PhiInstance.zig");
 pub const PhiDevice = @import("PhiDevice.zig");
 pub const PhiPhysicalDevice = @import("PhiPhysicalDevice.zig");
 pub const PhiQueue = @import("PhiQueue.zig");
+pub const PhiTransport = @import("PhiTransport.zig");
 
 pub const PhiBinarySemaphore = @import("PhiBinarySemaphore.zig");
 pub const PhiBuffer = @import("PhiBuffer.zig");
@@ -70,6 +73,8 @@ test {
     std.testing.refAllDecls(PhiImageView);
     std.testing.refAllDecls(PhiInstance);
     std.testing.refAllDecls(PhiPhysicalDevice);
+    std.testing.refAllDecls(PhiTransport);
+    std.testing.refAllDecls(scif);
     std.testing.refAllDecls(PhiPipeline);
     std.testing.refAllDecls(PhiPipelineCache);
     std.testing.refAllDecls(PhiPipelineLayout);

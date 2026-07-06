@@ -31,8 +31,9 @@ pub const EXTENSIONS = [_]vk.ExtensionProperties{
 };
 
 interface: Interface,
+scif_node_id: u16,
 
-pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, mic_device: mic.Device) VkError!*Self {
+pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, mic_device: mic.Device, mic_device_num: u32) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
 
@@ -233,12 +234,12 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, mic_device
             .size = memory.size() catch 0,
             .flags = .{ .device_local_bit = true },
         };
-        interface.mem_props.memory_heaps[0] = .{
+        interface.mem_props.memory_heaps[1] = .{
             .size = std.process.totalSystemMemory() catch 0,
             .flags = .{},
         };
     } else |err| {
-        std.log.scoped(.MIC).err("Failed to fetch device PCI config: {s}", .{@errorName(err)});
+        std.log.scoped(.MIC).err("Failed to fetch device memory infos: {s}", .{@errorName(err)});
         return VkError.InitializationFailed;
     }
 
@@ -260,9 +261,14 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, mic_device
 
     self.* = .{
         .interface = interface,
+        .scif_node_id = deviceNumToScifNode(mic_device_num),
     };
 
     return self;
+}
+
+fn deviceNumToScifNode(device_num: u32) u16 {
+    return @intCast(device_num + 1);
 }
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {

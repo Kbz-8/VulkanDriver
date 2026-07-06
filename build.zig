@@ -218,120 +218,6 @@ pub fn build(b: *std.Build) !void {
     docs_step.dependOn(&install_docs.step);
 }
 
-fn customApe(
-    b: *std.Build,
-    lib: *Step.Compile,
-    lib_mod: *std.Build.Module,
-    base_mod: *std.Build.Module,
-    vulkan: *std.Build.Module,
-    base_c_mod: *std.Build.Module,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    use_llvm: bool,
-) !void {
-    for (implementations) |impl| {
-        if (std.mem.eql(u8, impl.name, "ape"))
-            continue;
-
-        const mod = b.createModule(.{
-            .root_source_file = b.path(impl.root_source_file),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "base", .module = base_mod },
-                .{ .name = "vulkan", .module = vulkan },
-            },
-        });
-
-        if (impl.custom) |func| {
-            func(b, lib, mod, base_mod, vulkan, base_c_mod, target, optimize, use_llvm) catch continue;
-        }
-
-        lib_mod.addImport(impl.name, mod);
-    }
-}
-
-fn customSoft(
-    b: *std.Build,
-    _: *Step.Compile,
-    lib_mod: *std.Build.Module,
-    _: *std.Build.Module,
-    _: *std.Build.Module,
-    base_c_mod: *std.Build.Module,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    use_llvm: bool,
-) !void {
-    const spv = b.lazyDependency("SPIRV_Interpreter", .{
-        .target = target,
-        .optimize = optimize,
-        .@"use-llvm" = use_llvm,
-    }) orelse return error.UnresolvedDependency;
-
-    lib_mod.addImport("soft_c", base_c_mod);
-    lib_mod.addImport("spv", spv.module("spv"));
-}
-
-fn optionsSoft(b: *std.Build, options: *Step.Options) !void {
-    const single_threaded_option = b.option(bool, "soft-single-threaded", "Single threaded runtime mode") orelse false;
-    const shaders_simd_option = b.option(bool, "soft-shader-simd", "Shaders SIMD acceleration") orelse true;
-    const compute_dump_early_results_table_option = b.option(u32, "soft-compute-dump-early-results-table", "Dump compute shaders results table before invocation");
-    const compute_dump_final_results_table_option = b.option(u32, "soft-compute-dump-final-results-table", "Dump compute shaders results table after invocation");
-    const approxiamte_rgb_option = b.option(bool, "soft-approximates-rgb", "Approximate sRGB <-> RGB conversions") orelse true;
-
-    options.addOption(bool, "soft_single_threaded", single_threaded_option);
-    options.addOption(bool, "soft_shaders_simd", shaders_simd_option);
-    options.addOption(?u32, "soft_compute_dump_early_results_table", compute_dump_early_results_table_option);
-    options.addOption(?u32, "soft_compute_dump_final_results_table", compute_dump_final_results_table_option);
-    options.addOption(bool, "soft_approximates_rgb", approxiamte_rgb_option);
-}
-
-fn customFlint(
-    _: *std.Build,
-    _: *Step.Compile,
-    lib_mod: *std.Build.Module,
-    _: *std.Build.Module,
-    _: *std.Build.Module,
-    base_c_mod: *std.Build.Module,
-    _: std.Build.ResolvedTarget,
-    _: std.builtin.OptimizeMode,
-    _: bool,
-) !void {
-    lib_mod.addImport("intel_c", base_c_mod);
-}
-
-fn optionsFlint(b: *std.Build, options: *Step.Options) !void {
-    _ = b;
-    _ = options;
-}
-
-fn customPhi(
-    b: *std.Build,
-    _: *Step.Compile,
-    lib_mod: *std.Build.Module,
-    _: *std.Build.Module,
-    _: *std.Build.Module,
-    base_c_mod: *std.Build.Module,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    use_llvm: bool,
-) !void {
-    lib_mod.addImport("phi_c", base_c_mod);
-
-    const miclib = b.lazyDependency("miclib", .{
-        .target = target,
-        .optimize = optimize,
-        .@"use-llvm" = use_llvm,
-    }) orelse return error.UnresolvedDependency;
-
-    lib_mod.addImport("miclib", miclib.module("miclib"));
-}
-
-fn optionsPhi(b: *std.Build, options: *Step.Options) !void {
-    _ = b;
-    _ = options;
-}
-
 fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *Step.Compile, comptime mode: RunningMode) !*Step {
     const cts = b.dependency("cts_bin", .{});
 
@@ -501,4 +387,217 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
     run_step.dependOn(&run.step);
 
     return &run.step;
+}
+
+// Ape specialized functions
+
+fn customApe(
+    b: *std.Build,
+    lib: *Step.Compile,
+    lib_mod: *std.Build.Module,
+    base_mod: *std.Build.Module,
+    vulkan: *std.Build.Module,
+    base_c_mod: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    use_llvm: bool,
+) !void {
+    for (implementations) |impl| {
+        if (std.mem.eql(u8, impl.name, "ape"))
+            continue;
+
+        const mod = b.createModule(.{
+            .root_source_file = b.path(impl.root_source_file),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "base", .module = base_mod },
+                .{ .name = "vulkan", .module = vulkan },
+            },
+        });
+
+        if (impl.custom) |func| {
+            func(b, lib, mod, base_mod, vulkan, base_c_mod, target, optimize, use_llvm) catch continue;
+        }
+
+        lib_mod.addImport(impl.name, mod);
+    }
+}
+
+// Soft specialized functions
+
+fn customSoft(
+    b: *std.Build,
+    _: *Step.Compile,
+    lib_mod: *std.Build.Module,
+    _: *std.Build.Module,
+    _: *std.Build.Module,
+    base_c_mod: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    use_llvm: bool,
+) !void {
+    const spv = b.lazyDependency("SPIRV_Interpreter", .{
+        .target = target,
+        .optimize = optimize,
+        .@"use-llvm" = use_llvm,
+    }) orelse return error.UnresolvedDependency;
+
+    lib_mod.addImport("soft_c", base_c_mod);
+    lib_mod.addImport("spv", spv.module("spv"));
+}
+
+fn optionsSoft(b: *std.Build, options: *Step.Options) !void {
+    const single_threaded_option = b.option(bool, "soft-single-threaded", "Single threaded runtime mode") orelse false;
+    const shaders_simd_option = b.option(bool, "soft-shader-simd", "Shaders SIMD acceleration") orelse true;
+    const compute_dump_early_results_table_option = b.option(u32, "soft-compute-dump-early-results-table", "Dump compute shaders results table before invocation");
+    const compute_dump_final_results_table_option = b.option(u32, "soft-compute-dump-final-results-table", "Dump compute shaders results table after invocation");
+    const approxiamte_rgb_option = b.option(bool, "soft-approximates-rgb", "Approximate sRGB <-> RGB conversions") orelse true;
+
+    options.addOption(bool, "soft_single_threaded", single_threaded_option);
+    options.addOption(bool, "soft_shaders_simd", shaders_simd_option);
+    options.addOption(?u32, "soft_compute_dump_early_results_table", compute_dump_early_results_table_option);
+    options.addOption(?u32, "soft_compute_dump_final_results_table", compute_dump_final_results_table_option);
+    options.addOption(bool, "soft_approximates_rgb", approxiamte_rgb_option);
+}
+
+// Flint specialized functions
+
+fn customFlint(
+    _: *std.Build,
+    _: *Step.Compile,
+    lib_mod: *std.Build.Module,
+    _: *std.Build.Module,
+    _: *std.Build.Module,
+    base_c_mod: *std.Build.Module,
+    _: std.Build.ResolvedTarget,
+    _: std.builtin.OptimizeMode,
+    _: bool,
+) !void {
+    lib_mod.addImport("intel_c", base_c_mod);
+}
+
+fn optionsFlint(b: *std.Build, options: *Step.Options) !void {
+    _ = b;
+    _ = options;
+}
+
+// Phi specialized functions
+
+fn customPhi(
+    b: *std.Build,
+    lib: *Step.Compile,
+    lib_mod: *std.Build.Module,
+    _: *std.Build.Module,
+    _: *std.Build.Module,
+    base_c_mod: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    use_llvm: bool,
+) !void {
+    lib_mod.addImport("phi_c", base_c_mod);
+
+    const miclib = b.lazyDependency("miclib", .{
+        .target = target,
+        .optimize = optimize,
+        .@"use-llvm" = use_llvm,
+    }) orelse return error.UnresolvedDependency;
+
+    lib_mod.addImport("miclib", miclib.module("miclib"));
+
+    const phi_protocol_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/phi/shared/Protocol.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = false,
+    });
+
+    lib_mod.addImport("phi_protocol_c", phi_protocol_c.createModule());
+
+    // To avoid duplicated options due to Ape's custom function
+    if (!std.mem.eql(u8, lib.name, "vulkan_phi"))
+        return;
+
+    const build_card = b.option(
+        bool,
+        "phi-build-card",
+        "Build Xeon Phi card daemon",
+    ) orelse true;
+
+    if (!build_card)
+        return;
+
+    const cc = b.option(
+        []const u8,
+        "phi-card-cc",
+        "Path to k1om-mpss-linux-gcc",
+    ) orelse "k1om-mpss-linux-gcc";
+
+    const sysroot = b.option(
+        []const u8,
+        "phi-card-sysroot",
+        "MPSS sysroot path",
+    );
+
+    const daemon = try addPhiCardDaemon(b, optimize, cc, sysroot);
+    const install_daemon = b.addInstallFile(daemon, "lib/phi_device.mic");
+    lib.step.dependOn(&install_daemon.step);
+}
+
+fn optionsPhi(b: *std.Build, options: *Step.Options) !void {
+    _ = b;
+    _ = options;
+}
+
+fn addPhiCardDaemon(
+    b: *std.Build,
+    optimize: std.builtin.OptimizeMode,
+    cc: []const u8,
+    sysroot: ?[]const u8,
+) !std.Build.LazyPath {
+    const cmd = b.addSystemCommand(&.{cc});
+
+    cmd.addArgs(&.{
+        "-std=c11",
+        "-Wall",
+        "-Wextra",
+        "-Wno-unused-parameter",
+        "-pthread",
+    });
+
+    cmd.addArg("-I");
+    cmd.addDirectoryArg(b.path("src/phi/mic"));
+    cmd.addArg("-I");
+    cmd.addDirectoryArg(b.path("src/phi/shared"));
+
+    if (sysroot) |path| {
+        cmd.addArg("--sysroot");
+        cmd.addArg(path);
+    }
+
+    switch (optimize) {
+        .Debug => cmd.addArgs(&.{ "-O0", "-g3" }),
+        .ReleaseSafe => cmd.addArgs(&.{ "-O2", "-g", "-DNDEBUG" }),
+        .ReleaseFast => cmd.addArgs(&.{ "-O3", "-DNDEBUG" }),
+        .ReleaseSmall => cmd.addArgs(&.{ "-Os", "-DNDEBUG" }),
+    }
+
+    const sources = [_][]const u8{
+        "src/phi/mic/main.c",
+        "src/phi/mic/Daemon.c",
+        "src/phi/mic/Logger.c",
+        "src/phi/mic/Memory.c",
+        // Add new files here
+    };
+
+    for (sources) |source| {
+        cmd.addFileArg(b.path(source));
+    }
+
+    cmd.addArgs(&.{
+        "-lscif",
+        "-o",
+    });
+
+    return cmd.addOutputFileArg("phi_device.mic");
 }

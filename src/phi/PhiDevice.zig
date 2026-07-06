@@ -3,6 +3,8 @@ const vk = @import("vulkan");
 const base = @import("base");
 
 const PhiQueue = @import("PhiQueue.zig");
+const PhiPhysicalDevice = @import("PhiPhysicalDevice.zig");
+const PhiTransport = @import("PhiTransport.zig");
 
 pub const PhiBinarySemaphore = @import("PhiBinarySemaphore.zig");
 pub const PhiBuffer = @import("PhiBuffer.zig");
@@ -32,6 +34,7 @@ const Self = @This();
 pub const Interface = base.Device;
 
 interface: Interface,
+transport: PhiTransport,
 
 pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
@@ -71,8 +74,12 @@ pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, a
         .getDeviceGroupSurfacePresentModesKHR = getDeviceGroupSurfacePresentModesKHR,
     };
 
+    const phi_physical_device: *PhiPhysicalDevice = @alignCast(@fieldParentPtr("interface", physical_device));
+    const transport = try PhiTransport.init(phi_physical_device.scif_node_id);
+
     self.* = .{
         .interface = interface,
+        .transport = transport,
     };
 
     try self.interface.createQueues(allocator, info);
@@ -81,6 +88,7 @@ pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, a
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    self.transport.deinit();
     allocator.destroy(self);
 }
 
