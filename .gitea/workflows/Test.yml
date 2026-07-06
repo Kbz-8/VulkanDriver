@@ -25,4 +25,4 @@ jobs:
       run: zig build test-flint --release=safe
 
     - name: Phi Tests
-      run: zig build test-phi --release=safe
+      run: zig build test-phi --release=safe -Dphi-build-daemon=false

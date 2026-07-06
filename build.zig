@@ -520,7 +520,7 @@ fn customPhi(
 
     const build_card = b.option(
         bool,
-        "phi-build-card",
+        "phi-build-daemon",
         "Build Xeon Phi card daemon",
     ) orelse true;
 

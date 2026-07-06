@@ -28,7 +28,7 @@ jobs:
         run: zig build flint --release=safe
 
       - name: Building Phi
-        run: zig build phi --release=safe
+        run: zig build phi --release=safe -Dphi-build-daemon=false
 
       - name: Generating docs
         run: zig build docs
