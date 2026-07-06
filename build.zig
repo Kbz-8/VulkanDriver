@@ -515,8 +515,14 @@ fn customPhi(
     lib_mod.addImport("phi_protocol_c", phi_protocol_c.createModule());
 
     // To avoid duplicated options due to Ape's custom function
-    if (!std.mem.eql(u8, lib.name, "vulkan_phi"))
+    if (!std.mem.eql(u8, lib.name, "vulkan_phi")) {
+        const daemon = try addPhiCardDaemon(b, optimize, "k1om-mpss-linux-gcc", null);
+        const embedded_daemon = addEmbeddedPhiDaemon(b, daemon);
+        lib_mod.addAnonymousImport("phi_daemon", .{
+            .root_source_file = embedded_daemon,
+        });
         return;
+    }
 
     const build_card = b.option(
         bool,
