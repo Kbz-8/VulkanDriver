@@ -371,7 +371,7 @@ pub fn fillBuffer(interface: *Interface, buffer: *base.Buffer, offset: vk.Device
     const memory = try remoteMemory(buffer);
 
     try self.appendCommand(proto.PhiCmdFillBuffer, proto.PHI_CMD_FILL_BUFFER, .{
-        .size = if (size == vk.WHOLE_SIZE) buffer.interface.size - offset else size,
+        .size = if (size == vk.WHOLE_SIZE) buffer.size - offset else size,
         .memory = @intCast(memory.remote_handle),
         .offset = offset,
         .data = data,
