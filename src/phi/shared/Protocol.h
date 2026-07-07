@@ -1,30 +1,30 @@
 #ifndef APE_PHI_PROTOCOL_H
 #define APE_PHI_PROTOCOL_H
 
+#include "Commands.h"
 #include <stdint.h>
 
 #define PHI_PROTOCOL_MAGIC 0x50484941u
 #define PHI_PROTOCOL_VERSION 1u
-#define PHI_RPOTOCOL_VERSION PHI_PROTOCOL_VERSION
 #define PHI_SCIF_PORT 43616u
 
-typedef enum PhiCommandType
+typedef enum PhiPacketType
 {
-	PHI_COMMAND_HELLO = 1,
-	PHI_COMMAND_ALLOC_MEMORY = 2,
-	PHI_COMMAND_FREE_MEMORY = 3,
-	PHI_COMMAND_UPLOAD = 4,
-	PHI_COMMAND_DOWNLOAD = 5,
-	PHI_COMMAND_SUBMIT = 6,
-	PHI_COMMAND_SHUTDOWN = 7,
-} PhiCommandType;
+	PHI_PACKET_HELLO = 1,
+	PHI_PACKET_ALLOC_MEMORY = 2,
+	PHI_PACKET_FREE_MEMORY = 3,
+	PHI_PACKET_UPLOAD = 4,
+	PHI_PACKET_DOWNLOAD = 5,
+	PHI_PACKET_WORK_EXECUTION = 6,
+	PHI_PACKET_SHUTDOWN = 7,
+} PhiPacketType;
 
 typedef enum PhiStatus
 {
 	PHI_STATUS_OK = 0,
 	PHI_STATUS_BAD_MESSAGE = 1,
 	PHI_STATUS_UNSUPPORTED_VERSION = 2,
-	PHI_STATUS_UNSUPPORTED_COMMAND = 3,
+	PHI_STATUS_UNSUPPORTED_PACKET = 3,
 	PHI_STATUS_OUT_OF_MEMORY = 4,
 	PHI_STATUS_INVALID_HANDLE = 5,
 } PhiStatus;
@@ -80,5 +80,16 @@ typedef struct PhiFreeMemoryReply
 {
 	PhiResult result;
 } PhiFreeMemoryReply;
+
+typedef struct PhiWorkExecutionRequest
+{
+	uint64_t cmd_count;
+	uint64_t command_buffer_size;
+} PhiWorkExecutionRequest;
+
+typedef struct PhiWorkExecutionReply
+{
+	PhiResult result;
+} PhiWorkExecutionReply;
 
 #endif

@@ -607,6 +607,8 @@ fn addPhiCardDaemon(
 
     const sources = [_][]const u8{
         "src/phi/mic/main.c",
+        "src/phi/mic/Buffer.c",
+        "src/phi/mic/CommandBuffer.c",
         "src/phi/mic/Daemon.c",
         "src/phi/mic/Logger.c",
         "src/phi/mic/Memory.c",

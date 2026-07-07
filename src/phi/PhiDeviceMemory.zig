@@ -47,7 +47,7 @@ pub fn create(device: *PhiDevice, allocator: std.mem.Allocator, size: vk.DeviceS
         };
 
         var reply: proto.PhiAllocMemoryReply = undefined;
-        try device.transport.request(proto.PHI_COMMAND_ALLOC_MEMORY, std.mem.asBytes(&alloc_request), std.mem.asBytes(&reply));
+        try device.transport.request(proto.PHI_PACKET_ALLOC_MEMORY, std.mem.asBytes(&alloc_request), std.mem.asBytes(&reply));
 
         if (reply.result.status != proto.PHI_STATUS_OK) {
             return PhiTransport.statusToErr(reply.result.status);
@@ -84,7 +84,7 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
             .remote_handle = self.remote_handle,
         };
         var reply: proto.PhiFreeMemoryReply = undefined;
-        device.transport.request(proto.PHI_COMMAND_FREE_MEMORY, std.mem.asBytes(&request_payload), std.mem.asBytes(&reply)) catch |err| {
+        device.transport.request(proto.PHI_PACKET_FREE_MEMORY, std.mem.asBytes(&request_payload), std.mem.asBytes(&reply)) catch |err| {
             std.log.scoped(.PhiTransport).err("Remote free failed: {s}", .{@errorName(err)});
             return;
         };

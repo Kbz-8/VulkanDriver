@@ -1,4 +1,5 @@
 #include <Daemon.h>
+#include <CommandBuffer.h>
 #include <Logger.h>
 #include <Memory.h>
 
@@ -83,24 +84,29 @@ int HandlePacket(scif_epd_t endpoint)
 			continue;
 		}
 
-		switch((PhiCommandType)header.type)
+		switch((PhiPacketType)header.type)
 		{
-			case PHI_COMMAND_HELLO:
+			case PHI_PACKET_HELLO:
 				if(HandleHello(endpoint, &header) < 0)
 					return -1;
 				break;
 
-			case PHI_COMMAND_ALLOC_MEMORY:
+			case PHI_PACKET_ALLOC_MEMORY:
 				if(HandleAllocMemory(endpoint, &header) < 0)
 					return -1;
 				break;
 
-			case PHI_COMMAND_FREE_MEMORY:
+			case PHI_PACKET_FREE_MEMORY:
 				if(HandleFreeMemory(endpoint, &header) < 0)
 					return -1;
 				break;
 
-			case PHI_COMMAND_SHUTDOWN:
+			case PHI_PACKET_WORK_EXECUTION:
+				if(HandleWorkExecution(endpoint, &header) < 0)
+					return -1;
+				break;
+
+			case PHI_PACKET_SHUTDOWN:
 				if(DrainPayload(endpoint, header.payload_size) < 0)
 					return -1;
 				if(SendStatus(endpoint, &header, PHI_STATUS_OK) < 0)
@@ -110,7 +116,7 @@ int HandlePacket(scif_epd_t endpoint)
 			default:
 				if(DrainPayload(endpoint, header.payload_size) < 0)
 					return -1;
-				if(SendStatus(endpoint, &header, PHI_STATUS_UNSUPPORTED_COMMAND) < 0)
+				if(SendStatus(endpoint, &header, PHI_STATUS_UNSUPPORTED_PACKET) < 0)
 					return -1;
 				break;
 		}

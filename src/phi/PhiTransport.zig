@@ -39,12 +39,15 @@ pub fn init(instance: *base.Instance, node_id: u16) VkError!Self {
         .instance = instance,
     };
     try self.handshake();
+
+    std.log.scoped(.PhiTransport).info("Successfully connected", .{});
     return self;
 }
 
 pub fn deinit(self: *Self) void {
     _ = scif.close(self.epd);
     scif.unload();
+    std.log.scoped(.PhiTransport).info("Closed connection", .{});
 }
 
 pub fn request(self: *Self, command: c_uint, payload: []const u8, reply_payload: []u8) VkError!void {
@@ -117,7 +120,7 @@ fn handshake(self: *Self) VkError!void {
         .reserved = 0,
     };
     var reply: proto.PhiHelloReply = undefined;
-    try self.request(proto.PHI_COMMAND_HELLO, std.mem.asBytes(&request_payload), std.mem.asBytes(&reply));
+    try self.request(proto.PHI_PACKET_HELLO, std.mem.asBytes(&request_payload), std.mem.asBytes(&reply));
     if (reply.result.status != proto.PHI_STATUS_OK) {
         return statusToErr(reply.result.status);
     }

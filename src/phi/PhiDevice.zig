@@ -79,9 +79,12 @@ pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, a
     };
 
     const phi_physical_device: *PhiPhysicalDevice = @alignCast(@fieldParentPtr("interface", physical_device));
-    try uploadAndLaunchDaemon(instance, allocator, phi_physical_device.mic_device_num);
 
-    const transport = try PhiTransport.init(instance, phi_physical_device.scif_node_id);
+    const transport = PhiTransport.init(instance, phi_physical_device.scif_node_id) catch blk: {
+        // If first connect failed try to upload the daemon to the card
+        try uploadAndLaunchDaemon(instance, allocator, phi_physical_device.mic_device_num);
+        break :blk try PhiTransport.init(instance, phi_physical_device.scif_node_id);
+    };
 
     self.* = .{
         .interface = interface,
