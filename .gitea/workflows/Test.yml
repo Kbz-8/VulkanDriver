@@ -17,14 +17,32 @@ jobs:
 
     - name: Install MPSS
       run: |
+        set -eux
+
         apt-get update
         apt-get install -y unzip curl
+
         curl -fsSL "https://drive.kbz8.me/dav/public-files/KSKeiOKxnFPyfws/mpss.zip" -o /tmp/mpss.zip
+
         rm -rf /opt/mpss
         unzip -q /tmp/mpss.zip -d /opt
         chmod -R a+rX /opt/mpss
-        test -d /opt/mpss/3.8.6/sysroots/k1om-mpss-linux/bin
-        echo "/opt/mpss/3.8.6/sysroots/k1om-mpss-linux/bin" >> "$GITHUB_PATH"
+
+        MPSS_BIN="/opt/mpss/3.8.6/sysroots/k1om-mpss-linux/bin"
+
+        test -d "$MPSS_BIN"
+
+        echo "$MPSS_BIN" >> "$GITHUB_PATH"
+
+        echo "MPSS installed at:"
+        ls -la /opt/mpss/3.8.6
+        echo "MPSS bin:"
+        ls -la "$MPSS_BIN" | head -50
+
+    - name: Check MPSS PATH
+      run: |
+        echo "$PATH"
+        ls -la /opt/mpss/3.8.6/sysroots/k1om-mpss-linux/bin | head -50
 
     - name: Ape Tests
       run: zig build test-ape --release=safe
