@@ -17,27 +17,32 @@ jobs:
 
     - name: Install MPSS
       run: |
-        set -eux
+        set -euxo pipefail
 
         apt-get update
         apt-get install -y unzip curl
 
-        curl -fsSL "https://drive.kbz8.me/dav/public-files/KSKeiOKxnFPyfws/mpss.zip" -o /tmp/mpss.zip
+        MPSS_URL="https://drive.kbz8.me/dav/public-files/KSKeiOKxnFPyfws/mpss.zip"
+        MPSS_ZIP="/tmp/mpss.zip"
+        MPSS_BIN="/opt/mpss/3.8.6/sysroots/k1om-mpss-linux/bin"
+
+        curl --fail --location --show-error --progress-bar "$MPSS_URL" -o "$MPSS_ZIP"
+
+        size="$(stat -c%s "$MPSS_ZIP")"
+        test "$size" -gt 300000000
+
+        unzip -t "$MPSS_ZIP" >/dev/null
 
         rm -rf /opt/mpss
-        unzip -q /tmp/mpss.zip -d /opt
+        unzip -q "$MPSS_ZIP" -d /opt
         chmod -R a+rX /opt/mpss
-
-        MPSS_BIN="/opt/mpss/3.8.6/sysroots/k1om-mpss-linux/bin"
 
         test -d "$MPSS_BIN"
 
-        echo "$MPSS_BIN" >> "$GITHUB_PATH"
+        # Append as fallback for following CI steps.
+        echo "PATH=$PATH:$MPSS_BIN" >> "$GITHUB_ENV"
 
-        echo "MPSS installed at:"
-        ls -la /opt/mpss/3.8.6
-        echo "MPSS bin:"
-        ls -la "$MPSS_BIN" | head -50
+        echo "MPSS installed."
 
     - name: Check MPSS PATH
       run: |
