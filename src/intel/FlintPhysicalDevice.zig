@@ -25,12 +25,12 @@ fn castExtension(comptime ext: vk.ApiInfo) vk.ExtensionProperties {
 }
 
 pub const EXTENSIONS = [_]vk.ExtensionProperties{
-    castExtension(vk.extensions.khr_device_group),
     castExtension(vk.extensions.khr_swapchain),
 };
 
 interface: Interface,
 kmd_type: lib.KmdType,
+node_path: [base.drm.max_node_name:0]u8,
 
 pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, drm_device: *const base.drm.Device, kmd_type: lib.KmdType) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
@@ -225,9 +225,16 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, drm_device
     self.* = .{
         .interface = interface,
         .kmd_type = kmd_type,
+        .node_path = @splat(0),
     };
+    const node_path = drm_device.nodePath();
+    @memcpy(self.node_path[0..node_path.len], node_path);
 
     return self;
+}
+
+pub fn getNodePath(self: *const Self) [:0]const u8 {
+    return std.mem.sliceTo(&self.node_path, 0);
 }
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {

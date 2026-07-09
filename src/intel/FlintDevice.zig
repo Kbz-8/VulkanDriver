@@ -3,6 +3,8 @@ const vk = @import("vulkan");
 const base = @import("base");
 
 const FlintQueue = @import("FlintQueue.zig");
+const FlintPhysicalDevice = @import("FlintPhysicalDevice.zig");
+const Kmd = @import("kmd.zig");
 
 pub const FlintBinarySemaphore = @import("FlintBinarySemaphore.zig");
 pub const FlintBuffer = @import("FlintBuffer.zig");
@@ -32,12 +34,16 @@ const Self = @This();
 pub const Interface = base.Device;
 
 interface: Interface,
+kmd: Kmd.Device,
 
 pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
 
     var interface = try Interface.init(allocator, instance, physical_device, info);
+    const flint_physical_device: *const FlintPhysicalDevice = @alignCast(@fieldParentPtr("interface", physical_device));
+    var kmd_device = try Kmd.Device.open(instance.io(), flint_physical_device);
+    errdefer kmd_device.close(instance.io());
 
     interface.vtable = &.{
         .createQueue = FlintQueue.create,
@@ -73,6 +79,7 @@ pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, a
 
     self.* = .{
         .interface = interface,
+        .kmd = kmd_device,
     };
 
     try self.interface.createQueues(allocator, info);
@@ -81,6 +88,7 @@ pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, a
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    self.kmd.close(interface.io());
     allocator.destroy(self);
 }
 

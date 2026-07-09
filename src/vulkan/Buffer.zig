@@ -39,21 +39,21 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
     self.vtable.destroy(self, allocator);
 }
 
-pub inline fn bindMemory(self: *Self, memory: *DeviceMemory, offset: vk.DeviceSize) VkError!void {
-    if (offset > memory.size or !self.allowed_memory_types.isSet(memory.memory_type_index)) {
+pub fn bindMemory(self: *Self, memory: *DeviceMemory, offset: vk.DeviceSize) VkError!void {
+    if (offset > memory.size or self.size > memory.size - offset or !self.allowed_memory_types.isSet(memory.memory_type_index)) {
         return VkError.ValidationFailed;
     }
     self.memory = memory;
     self.offset = offset;
 }
 
-pub inline fn getMemoryRequirements(self: *Self, requirements: *vk.MemoryRequirements) void {
+pub fn getMemoryRequirements(self: *Self, requirements: *vk.MemoryRequirements) void {
     requirements.size = self.size;
     requirements.memory_type_bits = self.allowed_memory_types.mask;
     self.vtable.getMemoryRequirements(self, requirements);
 }
 
-pub inline fn getDeviceAddress(self: *Self) VkError!vk.DeviceAddress {
+pub fn getDeviceAddress(self: *Self) VkError!vk.DeviceAddress {
     const memory = self.memory orelse return 0;
     const map = try memory.map(self.offset, self.size);
     return @intCast(@intFromPtr(map.ptr));

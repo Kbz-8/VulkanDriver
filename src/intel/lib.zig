@@ -9,6 +9,7 @@ pub const FlintInstance = @import("FlintInstance.zig");
 pub const FlintDevice = @import("FlintDevice.zig");
 pub const FlintPhysicalDevice = @import("FlintPhysicalDevice.zig");
 pub const FlintQueue = @import("FlintQueue.zig");
+pub const kmd = @import("kmd.zig");
 
 pub const FlintBinarySemaphore = @import("FlintBinarySemaphore.zig");
 pub const FlintBuffer = @import("FlintBuffer.zig");
@@ -85,5 +86,6 @@ test {
     std.testing.refAllDecls(FlintRenderPass);
     std.testing.refAllDecls(FlintSampler);
     std.testing.refAllDecls(FlintShaderModule);
+    std.testing.refAllDecls(kmd);
     std.testing.refAllDecls(base);
 }

@@ -251,6 +251,205 @@ Name                                             | Status
 -------------------------------------------------|--------
 vkAcquireNextImage2KHR                           | ⚙️ WIP
 vkAcquireNextImageKHR                            | ⚙️ WIP
+vkAllocateCommandBuffers                         | ✅ Implemented
+vkAllocateDescriptorSets                         | ⚙️ WIP
+vkAllocateMemory                                 | ✅ Implemented
+vkBeginCommandBuffer                             | ✅ Implemented
+vkBindBufferMemory                               | ⚙️ WIP
+vkBindImageMemory                                | ⚙️ WIP
+vkCmdBeginQuery                                  | ⚙️ WIP
+vkCmdBeginRenderPass                             | ⚙️ WIP
+vkCmdBindDescriptorSets                          | ⚙️ WIP
+vkCmdBindIndexBuffer                             | ⚙️ WIP
+vkCmdBindPipeline                                | ⚙️ WIP
+vkCmdBindVertexBuffers                           | ⚙️ WIP
+vkCmdBlitImage                                   | ⚙️ WIP
+vkCmdClearAttachments                            | ⚙️ WIP
+vkCmdClearColorImage                             | ⚙️ WIP
+vkCmdClearDepthStencilImage                      | ⚙️ WIP
+vkCmdCopyBuffer                                  | ✅ Implemented
+vkCmdCopyBufferToImage                           | ⚙️ WIP
+vkCmdCopyImage                                   | ⚙️ WIP
+vkCmdCopyImageToBuffer                           | ⚙️ WIP
+vkCmdCopyQueryPoolResults                        | ⚙️ WIP
+vkCmdDispatch                                    | ⚙️ WIP
+vkCmdDispatchBaseKHR                             | ⚙️ WIP
+vkCmdDispatchIndirect                            | ⚙️ WIP
+vkCmdDraw                                        | ⚙️ WIP
+vkCmdDrawIndexed                                 | ⚙️ WIP
+vkCmdDrawIndexedIndirect                         | ⚙️ WIP
+vkCmdDrawIndirect                                | ⚙️ WIP
+vkCmdEndQuery                                    | ⚙️ WIP
+vkCmdEndRenderPass                               | ⚙️ WIP
+vkCmdExecuteCommands                             | ⚙️ WIP
+vkCmdFillBuffer                                  | ✅ Implemented
+vkCmdNextSubpass                                 | ⚙️ WIP
+vkCmdPipelineBarrier                             | ⚙️ WIP
+vkCmdPushConstants                               | ⚙️ WIP
+vkCmdResetEvent                                  | ⚙️ WIP
+vkCmdResetQueryPool                              | ⚙️ WIP
+vkCmdResolveImage                                | ⚙️ WIP
+vkCmdSetBlendConstants                           | ⚙️ WIP
+vkCmdSetDepthBias                                | ⚙️ WIP
+vkCmdSetDepthBounds                              | ⚙️ WIP
+vkCmdSetDeviceMaskKHR                            | ⚙️ WIP
+vkCmdSetEvent                                    | ⚙️ WIP
+vkCmdSetLineWidth                                | ⚙️ WIP
+vkCmdSetScissor                                  | ⚙️ WIP
+vkCmdSetStencilCompareMask                       | ⚙️ WIP
+vkCmdSetStencilReference                         | ⚙️ WIP
+vkCmdSetStencilWriteMask                         | ⚙️ WIP
+vkCmdSetViewport                                 | ⚙️ WIP
+vkCmdUpdateBuffer                                | ⚙️ WIP
+vkCmdWaitEvents                                  | ⚙️ WIP
+vkCmdWriteTimestamp                              | ⚙️ WIP
+vkCreateBuffer                                   | ⚙️ WIP
+vkCreateBufferView                               | ⚙️ WIP
+vkCreateCommandPool                              | ✅ Implemented
+vkCreateComputePipelines                         | ⚙️ WIP
+vkCreateDescriptorPool                           | ⚙️ WIP
+vkCreateDescriptorSetLayout                      | ⚙️ WIP
+vkCreateDevice                                   | ✅ Implemented
+vkCreateEvent                                    | ⚙️ WIP
+vkCreateFence                                    | ⚙️ WIP
+vkCreateFramebuffer                              | ⚙️ WIP
+vkCreateGraphicsPipelines                        | ⚙️ WIP
+vkCreateImage                                    | ⚙️ WIP
+vkCreateImageView                                | ⚙️ WIP
+vkCreateInstance                                 | ✅ Implemented
+vkCreatePipelineCache                            | ⚙️ WIP
+vkCreatePipelineLayout                           | ⚙️ WIP
+vkCreateQueryPool                                | ⚙️ WIP
+vkCreateRenderPass                               | ⚙️ WIP
+vkCreateSampler                                  | ⚙️ WIP
+vkCreateSemaphore                                | ⚙️ WIP
+vkCreateShaderModule                             | ⚙️ WIP
+vkCreateSwapchainKHR                             | ⚙️ WIP
+vkCreateWaylandSurfaceKHR                        | ⚙️ WIP
+vkCreateWin32SurfaceKHR                          | ⚙️ WIP
+vkCreateXcbSurfaceKHR                            | ⚙️ WIP
+vkCreateXlibSurfaceKHR                           | ⚙️ WIP
+vkDestroyBuffer                                  | ⚙️ WIP
+vkDestroyBufferView                              | ⚙️ WIP
+vkDestroyCommandPool                             | ✅ Implemented
+vkDestroyDescriptorPool                          | ⚙️ WIP
+vkDestroyDescriptorSetLayout                     | ⚙️ WIP
+vkDestroyDevice                                  | ✅ Implemented
+vkDestroyEvent                                   | ⚙️ WIP
+vkDestroyFence                                   | ⚙️ WIP
+vkDestroyFramebuffer                             | ⚙️ WIP
+vkDestroyImage                                   | ⚙️ WIP
+vkDestroyImageView                               | ⚙️ WIP
+vkDestroyInstance                                | ✅ Implemented
+vkDestroyPipeline                                | ⚙️ WIP
+vkDestroyPipelineCache                           | ⚙️ WIP
+vkDestroyPipelineLayout                          | ⚙️ WIP
+vkDestroyQueryPool                               | ⚙️ WIP
+vkDestroyRenderPass                              | ⚙️ WIP
+vkDestroySampler                                 | ⚙️ WIP
+vkDestroySemaphore                               | ⚙️ WIP
+vkDestroyShaderModule                            | ⚙️ WIP
+vkDestroySurfaceKHR                              | ⚙️ WIP
+vkDestroySwapchainKHR                            | ⚙️ WIP
+vkDeviceWaitIdle                                 | ⚙️ WIP
+vkEndCommandBuffer                               | ✅ Implemented
+vkEnumerateDeviceExtensionProperties             | ⚙️ WIP
+vkEnumerateDeviceLayerProperties                 | ⚙️ WIP
+vkEnumerateInstanceExtensionProperties           | ⚙️ WIP
+vkEnumerateInstanceLayerProperties               | ⚙️ WIP
+vkEnumeratePhysicalDeviceGroupsKHR               | ⚙️ WIP
+vkEnumeratePhysicalDevices                       | ✅ Implemented
+vkFlushMappedMemoryRanges                        | ⚙️ WIP
+vkFreeCommandBuffers                             | ⚙️ WIP
+vkFreeDescriptorSets                             | ⚙️ WIP
+vkFreeMemory                                     | ✅ Implemented
+vkGetBufferDeviceAddress                         | ⚙️ WIP
+vkGetBufferDeviceAddressEXT                      | ⚙️ WIP
+vkGetBufferDeviceAddressKHR                      | ⚙️ WIP
+vkGetBufferMemoryRequirements                    | ⚙️ WIP
+vkGetDeviceGroupPeerMemoryFeaturesKHR            | ⚙️ WIP
+vkGetDeviceGroupPresentCapabilitiesKHR           | ⚙️ WIP
+vkGetDeviceGroupSurfacePresentModesKHR           | ⚙️ WIP
+vkGetDeviceMemoryCommitment                      | ⚙️ WIP
+vkGetDeviceProcAddr                              | ⚙️ WIP
+vkGetDeviceQueue                                 | ⚙️ WIP
+vkGetEventStatus                                 | ⚙️ WIP
+vkGetFenceStatus                                 | ⚙️ WIP
+vkGetImageMemoryRequirements                     | ⚙️ WIP
+vkGetImageSparseMemoryRequirements               | ⚙️ WIP
+vkGetImageSubresourceLayout                      | ⚙️ WIP
+vkGetInstanceProcAddr                            | ⚙️ WIP
+vkGetPhysicalDeviceFeatures                      | ✅ Implemented
+vkGetPhysicalDeviceFormatProperties              | ⚙️ WIP
+vkGetPhysicalDeviceImageFormatProperties         | ⚙️ WIP
+vkGetPhysicalDeviceMemoryProperties              | ✅ Implemented
+vkGetPhysicalDeviceProperties                    | ✅ Implemented
+vkGetPhysicalDeviceQueueFamilyProperties         | ⚙️ WIP
+vkGetPhysicalDeviceSparseImageFormatProperties   | ⚙️ WIP
+vkGetPhysicalDeviceSurfaceCapabilitiesKHR        | ⚙️ WIP
+vkGetPhysicalDeviceSurfaceFormatsKHR             | ⚙️ WIP
+vkGetPhysicalDeviceSurfacePresentModesKHR        | ⚙️ WIP
+vkGetPhysicalDeviceSurfaceSupportKHR             | ⚙️ WIP
+vkGetPhysicalDeviceWaylandPresentationSupportKHR | ⚙️ WIP
+vkGetPhysicalDeviceWin32PresentationSupportKHR   | ⚙️ WIP
+vkGetPhysicalDeviceXcbPresentationSupportKHR     | ⚙️ WIP
+vkGetPhysicalDeviceXlibPresentationSupportKHR    | ⚙️ WIP
+vkGetPipelineCacheData                           | ⚙️ WIP
+vkGetQueryPoolResults                            | ⚙️ WIP
+vkGetRenderAreaGranularity                       | ⚙️ WIP
+vkGetSwapchainImagesKHR                          | ⚙️ WIP
+vkInvalidateMappedMemoryRanges                   | ⚙️ WIP
+vkMapMemory                                      | ⚙️ WIP
+vkMergePipelineCaches                            | ⚙️ WIP
+vkQueueBindSparse                                | ⚙️ WIP
+vkQueuePresentKHR                                | ⚙️ WIP
+vkQueueSubmit                                    | ✅ Implemented
+vkQueueWaitIdle                                  | ⚙️ WIP
+vkResetCommandBuffer                             | ⚙️ WIP
+vkResetCommandPool                               | ✅ Implemented
+vkResetDescriptorPool                            | ⚙️ WIP
+vkResetEvent                                     | ⚙️ WIP
+vkResetFences                                    | ⚙️ WIP
+vkResetQueryPool                                 | ⚙️ WIP
+vkSetEvent                                       | ⚙️ WIP
+vkUnmapMemory                                    | ⚙️ WIP
+vkUpdateDescriptorSets                           | ⚙️ WIP
+vkWaitForFences                                  | ⚙️ WIP
+</details>
+
+## Flint [Intel(R)]
+
+Flint be an implementation of the Vulkan specification, fashioned for the elder Intel iGPUs of generations 9 through 11.
+Whether Haswell and those that followed-even the Xe kindred-shall one day partake of its workings remaineth unwritten.
+
+### Build
+
+If thou art truly determined:
+```
+zig build flint --release=[fast|safe|small]
+```
+
+And should thou seek additional build options with:
+```
+zig build --help
+```
+
+The same rites apply as for the Soft and Phi build.
+
+#### Vulkan 1.0 specification
+<details>
+    <summary>
+        Here standeth the present reckoning of thy Vulkan 1.0 implementation
+    </summary>
+
+\
+⚠️ Implemented, yet perchance not fully tested nor proven conformant, but rather working in a manner most general to thee and thine.\
+Assume thou that functions lacking in this array are, for now, not intended to be wrought.
+
+Name                                             | Status
+-------------------------------------------------|--------
+vkAcquireNextImage2KHR                           | ⚙️ WIP
+vkAcquireNextImageKHR                            | ⚙️ WIP
 vkAllocateCommandBuffers                         | ⚙️ WIP
 vkAllocateDescriptorSets                         | ⚙️ WIP
 vkAllocateMemory                                 | ✅ Implemented
@@ -399,7 +598,7 @@ vkGetQueryPoolResults                            | ⚙️ WIP
 vkGetRenderAreaGranularity                       | ⚙️ WIP
 vkGetSwapchainImagesKHR                          | ⚙️ WIP
 vkInvalidateMappedMemoryRanges                   | ⚙️ WIP
-vkMapMemory                                      | ⚙️ WIP
+vkMapMemory                                      | ✅ Implemented
 vkMergePipelineCaches                            | ⚙️ WIP
 vkQueueBindSparse                                | ⚙️ WIP
 vkQueuePresentKHR                                | ⚙️ WIP
@@ -412,7 +611,7 @@ vkResetEvent                                     | ⚙️ WIP
 vkResetFences                                    | ⚙️ WIP
 vkResetQueryPool                                 | ⚙️ WIP
 vkSetEvent                                       | ⚙️ WIP
-vkUnmapMemory                                    | ⚙️ WIP
+vkUnmapMemory                                    | ✅ Implemented
 vkUpdateDescriptorSets                           | ⚙️ WIP
 vkWaitForFences                                  | ⚙️ WIP
 </details>

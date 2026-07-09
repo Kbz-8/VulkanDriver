@@ -47,7 +47,7 @@ pub fn submit(interface: *Interface, infos: []Interface.SubmitInfo, fence: ?*bas
 
         for (info.command_buffers.items) |command_buffer| {
             const intel_command_buffer: *FlintCommandBuffer = @alignCast(@fieldParentPtr("interface", command_buffer));
-            _ = intel_command_buffer;
+            try intel_command_buffer.submitGpuBatch();
         }
 
         for (info.signal_semaphores.items) |semaphore| {
