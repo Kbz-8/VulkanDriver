@@ -225,12 +225,12 @@ Whether the Knights Landing cards shall one day receive the same providence rema
 
 ### Build
 
-If thou art truly determined:
+To bring forth the driver:
 ```
 zig build phi --release=[fast|safe|small]
 ```
 
-And should thou seek additional build options with:
+And for those who seek another manner of building:
 ```
 zig build --help
 ```
@@ -417,19 +417,19 @@ vkUpdateDescriptorSets                           | ⚙️ WIP
 vkWaitForFences                                  | ⚙️ WIP
 </details>
 
-## Flint [Intel(R)]
+## Flint [Intel]
 
 Flint be an implementation of the Vulkan specification, fashioned for the elder Intel iGPUs of generations 9 through 11.
 Whether Haswell and those that followed-even the Xe kindred-shall one day partake of its workings remaineth unwritten.
 
 ### Build
 
-If thou art truly determined:
+The rite of forging the driver:
 ```
 zig build flint --release=[fast|safe|small]
 ```
 
-And should thou seek additional build options with:
+Should the foregoing not suffice, further build options await thee:
 ```
 zig build --help
 ```
@@ -439,7 +439,7 @@ The same rites apply as for the Soft and Phi build.
 #### Vulkan 1.0 specification
 <details>
     <summary>
-        Here standeth the present reckoning of thy Vulkan 1.0 implementation
+        Behold the present state of thy Vulkan 1.0 implementation
     </summary>
 
 \
@@ -615,6 +615,8 @@ vkUnmapMemory                                    | ✅ Implemented
 vkUpdateDescriptorSets                           | ⚙️ WIP
 vkWaitForFences                                  | ⚙️ WIP
 </details>
+
+[Herein](https://vulkan-driver.kbz8.me/cts/flint/) is the reckoning of the Vulkan 1.0 conformance trials laid bare. Judge it as thou wilt.
 
 ## License
 
