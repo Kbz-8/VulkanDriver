@@ -377,7 +377,6 @@ pub fn getFormatProperties(interface: *Interface, format: vk.Format) VkError!vk.
             properties.optimal_tiling_features.sampled_image_bit = true;
             properties.optimal_tiling_features.transfer_dst_bit = true;
             properties.optimal_tiling_features.transfer_src_bit = true;
-            properties.optimal_tiling_features.sampled_image_filter_linear_bit = true;
         },
 
         // Formats which can be sampled, but don't support filtering
@@ -417,7 +416,6 @@ pub fn getFormatProperties(interface: *Interface, format: vk.Format) VkError!vk.
         .g10x6_b10x6r10x6_2plane_420_unorm_3pack16,
         => {
             properties.optimal_tiling_features.sampled_image_bit = true;
-            properties.optimal_tiling_features.sampled_image_filter_linear_bit = true;
             properties.optimal_tiling_features.sampled_image_ycbcr_conversion_linear_filter_bit = true;
             properties.optimal_tiling_features.transfer_src_bit = true;
             properties.optimal_tiling_features.transfer_dst_bit = true;
@@ -687,6 +685,11 @@ pub fn getFormatProperties(interface: *Interface, format: vk.Format) VkError!vk.
         properties.linear_tiling_features.transfer_dst_bit = true;
     }
 
+    if (properties.optimal_tiling_features.blit_src_bit or properties.optimal_tiling_features.blit_dst_bit) {
+        properties.optimal_tiling_features.blit_src_bit = true;
+        properties.optimal_tiling_features.blit_dst_bit = true;
+    }
+
     return properties;
 }
 
@@ -696,19 +699,47 @@ pub fn getImageFormatProperties(
     image_type: vk.ImageType,
     tiling: vk.ImageTiling,
     usage: vk.ImageUsageFlags,
-    _: vk.ImageCreateFlags,
+    flags: vk.ImageCreateFlags,
 ) VkError!vk.ImageFormatProperties {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     if (!try self.isFormatSupported(format, image_type, tiling, usage))
         return VkError.FormatNotSupported;
 
-    const properties: vk.ImageFormatProperties = .{
-        .max_extent = .{ .width = 0, .height = 0, .depth = 1 },
+    var properties: vk.ImageFormatProperties = .{
+        .max_extent = .{ .width = 1, .height = 1, .depth = 1 },
         .max_mip_levels = 1,
-        .max_array_layers = 1,
+        .max_array_layers = interface.props.limits.max_image_array_layers,
         .sample_counts = .{ .@"1_bit" = true },
         .max_resource_size = std.math.maxInt(u32),
     };
+
+    switch (image_type) {
+        .@"1d" => {
+            properties.max_extent.width = interface.props.limits.max_image_dimension_1d;
+            properties.max_mip_levels = std.math.log2_int(u32, properties.max_extent.width) + 1;
+        },
+        .@"2d" => {
+            const dimension = if (flags.cube_compatible_bit)
+                interface.props.limits.max_image_dimension_cube
+            else
+                interface.props.limits.max_image_dimension_2d;
+            properties.max_extent.width = dimension;
+            properties.max_extent.height = dimension;
+            properties.max_mip_levels = std.math.log2_int(u32, dimension) + 1;
+        },
+        .@"3d" => {
+            const dimension = interface.props.limits.max_image_dimension_3d;
+            properties.max_extent = .{ .width = dimension, .height = dimension, .depth = dimension };
+            properties.max_mip_levels = std.math.log2_int(u32, dimension) + 1;
+            properties.max_array_layers = 1;
+        },
+        else => return VkError.FormatNotSupported,
+    }
+
+    if (tiling == .linear) {
+        properties.max_mip_levels = 1;
+        properties.max_array_layers = 1;
+    }
 
     return properties;
 }

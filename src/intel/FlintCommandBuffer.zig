@@ -1,37 +1,20 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
+const kmd = @import("kmd.zig");
 
 const VkError = base.VkError;
 const FlintDevice = @import("FlintDevice.zig");
 const FlintDeviceMemory = @import("FlintDeviceMemory.zig");
-const kmd = @import("kmd.zig");
+const FlintImage = @import("FlintImage.zig");
+
+const MemoryRange = @import("MemoryRange.zig");
+
+const copy = @import("copy_commands.zig");
+const blitter = @import("blitter.zig");
 
 const Self = @This();
 pub const Interface = base.CommandBuffer;
-
-const BufferRange = struct {
-    memory: *FlintDeviceMemory,
-    offset: vk.DeviceSize,
-    size: vk.DeviceSize,
-
-    fn init(buffer: *base.Buffer, offset: vk.DeviceSize, size: vk.DeviceSize) VkError!BufferRange {
-        const base_memory = buffer.memory orelse return VkError.InvalidDeviceMemoryDrv;
-        const memory: *FlintDeviceMemory = @alignCast(@fieldParentPtr("interface", base_memory));
-
-        const bound, const bound_overflow = @addWithOverflow(offset, size);
-        if (bound_overflow != 0 or bound > buffer.size) return VkError.ValidationFailed;
-
-        const memory_offset, const memory_offset_overflow = @addWithOverflow(buffer.offset, offset);
-        if (memory_offset_overflow != 0) return VkError.ValidationFailed;
-
-        return .{
-            .memory = memory,
-            .offset = memory_offset,
-            .size = size,
-        };
-    }
-};
 
 interface: Interface,
 batch: std.ArrayList(u32),
@@ -122,39 +105,6 @@ pub fn submitGpuBatch(self: *Self) VkError!void {
     try device.kmd.submitBatch(self.interface.owner.io(), allocator, self.batch.items, self.relocations.items);
 }
 
-fn emit(self: *Self, dword: u32) VkError!void {
-    self.batch.append(self.interface.host_allocator.allocator(), dword) catch return VkError.OutOfHostMemory;
-}
-
-fn emitRelocatedAddress(self: *Self, range: BufferRange, read: bool, write: bool) VkError!void {
-    const address_offset = self.batch.items.len * @sizeOf(u32);
-    try self.emit(@intCast(range.offset));
-    try self.emit(0);
-    self.relocations.append(self.interface.host_allocator.allocator(), .{
-        .target_handle = try range.memory.allocation.handle(),
-        .offset = @intCast(address_offset),
-        .delta = @intCast(range.offset),
-        .read = read,
-        .write = write,
-    }) catch return VkError.OutOfHostMemory;
-}
-
-fn copyRangeFromRegion(buffer: *base.Buffer, offset: vk.DeviceSize, size: vk.DeviceSize) VkError!BufferRange {
-    return BufferRange.init(buffer, offset, size);
-}
-
-fn fillRange(buffer: *base.Buffer, offset: vk.DeviceSize, size: vk.DeviceSize) VkError!BufferRange {
-    const resolved_size = if (size == vk.WHOLE_SIZE) blk: {
-        if (offset > buffer.size) return VkError.ValidationFailed;
-        break :blk std.mem.alignBackward(vk.DeviceSize, buffer.size - offset, @sizeOf(u32));
-    } else blk: {
-        if (size % @sizeOf(u32) != 0) return VkError.ValidationFailed;
-        break :blk size;
-    };
-
-    return BufferRange.init(buffer, offset, resolved_size);
-}
-
 pub fn begin(interface: *Interface, info: *const vk.CommandBufferBeginInfo) VkError!void {
     _ = interface;
     _ = info;
@@ -174,6 +124,23 @@ pub fn reset(interface: *Interface, flags: vk.CommandBufferResetFlags) VkError!v
         self.batch.clearRetainingCapacity();
         self.relocations.clearRetainingCapacity();
     }
+}
+
+pub fn emit(self: *Self, dword: u32) VkError!void {
+    self.batch.append(self.interface.host_allocator.allocator(), dword) catch return VkError.OutOfHostMemory;
+}
+
+pub fn emitRelocatedAddress(self: *Self, range: MemoryRange, read: bool, write: bool) VkError!void {
+    const address_offset = self.batch.items.len * @sizeOf(u32);
+    try self.emit(@intCast(range.offset));
+    try self.emit(0);
+    self.relocations.append(self.interface.host_allocator.allocator(), .{
+        .target_handle = try range.memory.allocation.handle(),
+        .offset = @intCast(address_offset),
+        .delta = @intCast(range.offset),
+        .read = read,
+        .write = write,
+    }) catch return VkError.OutOfHostMemory;
 }
 
 pub fn beginQuery(interface: *Interface, pool: *base.QueryPool, query: u32, flags: vk.QueryControlFlags) VkError!void {
@@ -229,13 +196,13 @@ pub fn bindVertexBuffer(interface: *Interface, index: usize, buffer: *base.Buffe
 }
 
 pub fn blitImage(interface: *Interface, src: *base.Image, src_layout: vk.ImageLayout, dst: *base.Image, dst_layout: vk.ImageLayout, regions: []const vk.ImageBlit, filter: vk.Filter) VkError!void {
-    _ = interface;
-    _ = src;
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     _ = src_layout;
-    _ = dst;
     _ = dst_layout;
-    _ = regions;
-    _ = filter;
+    if (filter != .nearest) return VkError.FeatureNotPresent;
+
+    for (regions) |region|
+        try blitter.blitImageRegion(self, src, dst, region);
 }
 
 pub fn clearAttachment(interface: *Interface, attachment: vk.ClearAttachment, rect: vk.ClearRect) VkError!void {
@@ -264,36 +231,17 @@ pub fn copyBuffer(interface: *Interface, src: *base.Buffer, dst: *base.Buffer, r
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
 
     for (regions) |region| {
-        const src_range = try copyRangeFromRegion(src, region.src_offset, region.size);
-        const dst_range = try copyRangeFromRegion(dst, region.dst_offset, region.size);
-
-        var copied: vk.DeviceSize = 0;
-        while (copied < src_range.size) {
-            const chunk = @min(src_range.size - copied, kmd.max_blt_span);
-            const src_chunk: BufferRange = .{ .memory = src_range.memory, .offset = src_range.offset + copied, .size = chunk };
-            const dst_chunk: BufferRange = .{ .memory = dst_range.memory, .offset = dst_range.offset + copied, .size = chunk };
-            const width: u32 = @intCast(chunk);
-
-            try self.emit(kmd.xy_src_copy_blt | kmd.xy_blt_write_alpha | kmd.xy_blt_write_rgb);
-            try self.emit(kmd.blt_depth_8 | kmd.rop_source_copy | width);
-            try self.emit(0);
-            try self.emit((1 << 16) | width);
-            try self.emitRelocatedAddress(dst_chunk, false, true);
-            try self.emit(0);
-            try self.emit(width);
-            try self.emitRelocatedAddress(src_chunk, true, false);
-
-            copied += chunk;
-        }
+        const src_range = try copy.copyRangeFromRegion(src, region.src_offset, region.size);
+        const dst_range = try copy.copyRangeFromRegion(dst, region.dst_offset, region.size);
+        try copy.emitLinearCopy(self, src_range, dst_range);
     }
 }
 
 pub fn copyBufferToImage(interface: *Interface, src: *base.Buffer, dst: *base.Image, dst_layout: vk.ImageLayout, regions: []const vk.BufferImageCopy) VkError!void {
-    _ = interface;
-    _ = src;
-    _ = dst;
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     _ = dst_layout;
-    _ = regions;
+    for (regions) |region|
+        try copy.copyBufferImage(self, src, dst, region, true);
 }
 
 pub fn copyImage(interface: *Interface, src: *base.Image, src_layout: vk.ImageLayout, dst: *base.Image, dst_layout: vk.ImageLayout, regions: []const vk.ImageCopy) VkError!void {
@@ -306,11 +254,10 @@ pub fn copyImage(interface: *Interface, src: *base.Image, src_layout: vk.ImageLa
 }
 
 pub fn copyImageToBuffer(interface: *Interface, src: *base.Image, src_layout: vk.ImageLayout, dst: *base.Buffer, regions: []const vk.BufferImageCopy) VkError!void {
-    _ = interface;
-    _ = src;
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     _ = src_layout;
-    _ = dst;
-    _ = regions;
+    for (regions) |region|
+        try copy.copyBufferImage(self, dst, src, region, false);
 }
 
 pub fn copyQueryPoolResults(interface: *Interface, pool: *base.QueryPool, first: u32, count: u32, dst: *base.Buffer, offset: vk.DeviceSize, stride: vk.DeviceSize, flags: vk.QueryResultFlags) VkError!void {
@@ -409,11 +356,11 @@ pub fn executeCommands(interface: *Interface, commands: *Interface) VkError!void
 
 pub fn fillBuffer(interface: *Interface, buffer: *base.Buffer, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    const dst_range = try fillRange(buffer, offset, size);
+    const dst_range = try copy.fillRange(buffer, offset, size);
 
     var filled: vk.DeviceSize = 0;
     while (filled < dst_range.size) {
-        const dst_chunk: BufferRange = .{ .memory = dst_range.memory, .offset = dst_range.offset + filled, .size = @sizeOf(u32) };
+        const dst_chunk: MemoryRange = .{ .memory = dst_range.memory, .offset = dst_range.offset + filled, .size = @sizeOf(u32) };
 
         try self.emit(kmd.mi_store_data_imm_dword);
         try self.emitRelocatedAddress(dst_chunk, false, true);

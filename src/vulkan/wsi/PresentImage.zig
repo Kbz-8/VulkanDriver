@@ -30,7 +30,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Image
 
     const memory = try device.allocateMemory(allocator, &.{
         .allocation_size = requirements.size,
-        .memory_type_index = requirements.memory_type_bits,
+        .memory_type_index = @ctz(requirements.memory_type_bits),
     });
     errdefer memory.destroy(allocator);
 

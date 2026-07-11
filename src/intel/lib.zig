@@ -48,6 +48,9 @@ pub const VULKAN_VERSION = vk.makeApiVersion(
     config.flint_vulkan_version.patch,
 );
 
+/// GEM buffer objects are page based
+pub const IMAGE_MEMORY_ALIGNMENT = std.heap.page_size_max;
+
 pub const KmdType = enum {
     Invalid,
     I915,
