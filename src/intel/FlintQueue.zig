@@ -2,6 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 
+const FlintBinarySemaphore = @import("FlintBinarySemaphore.zig");
 const FlintCommandBuffer = @import("FlintCommandBuffer.zig");
 const FlintDevice = @import("FlintDevice.zig");
 const FlintFence = @import("FlintFence.zig");
@@ -55,51 +56,67 @@ pub fn bindSparse(interface: *Interface, info: []const vk.BindSparseInfo, fence:
 pub fn submit(interface: *Interface, infos: []Interface.SubmitInfo, fence: ?*base.Fence) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     const device: *FlintDevice = @alignCast(@fieldParentPtr("interface", interface.owner));
-
-    var remaining_batches: usize = 0;
-    for (infos) |info| {
-        for (info.command_buffers.items) |command_buffer| {
-            const intel_command_buffer: *FlintCommandBuffer = @alignCast(@fieldParentPtr("interface", command_buffer));
-            if (intel_command_buffer.batch.items.len != 0) remaining_batches += 1;
-        }
-    }
-    const batch_count = remaining_batches;
+    const allocator = interface.host_allocator.allocator();
 
     try self.completion.interface.reset();
 
-    for (infos) |info| {
-        for (info.wait_semaphores.items) |semaphore| {
-            try semaphore.wait();
-        }
+    for (infos, 0..) |info, info_index| {
+        const last_info = info_index + 1 == infos.len;
+        const request_count = @max(info.command_buffers.items.len, 1);
 
-        for (info.command_buffers.items) |command_buffer| {
-            const intel_command_buffer: *FlintCommandBuffer = @alignCast(@fieldParentPtr("interface", command_buffer));
-            if (intel_command_buffer.batch.items.len == 0) {
-                try intel_command_buffer.submitGpuBatch(&.{});
-                continue;
-            }
+        for (0..request_count) |request_index| {
+            const first_request = request_index == 0;
+            const last_request = request_index + 1 == request_count;
 
-            remaining_batches -= 1;
-            var syncs: [2]kmd.SyncDependency = undefined;
-            var sync_count: usize = 0;
-            if (remaining_batches == 0) {
-                syncs[sync_count] = .{ .handle = self.completion.handle, .signal = true };
-                sync_count += 1;
-                if (fence) |base_fence| {
-                    const flint_fence: *FlintFence = @alignCast(@fieldParentPtr("interface", base_fence));
-                    syncs[sync_count] = .{ .handle = flint_fence.handle, .signal = true };
-                    sync_count += 1;
+            var syncs = std.ArrayList(kmd.SyncDependency).empty;
+            defer syncs.deinit(allocator);
+
+            if (first_request) {
+                for (info.wait_semaphores.items) |base_semaphore| {
+                    const semaphore: *FlintBinarySemaphore = @alignCast(@fieldParentPtr("interface", base_semaphore));
+                    syncs.append(allocator, .{ .handle = semaphore.handle, .wait = true }) catch return VkError.OutOfHostMemory;
                 }
             }
-            try intel_command_buffer.submitGpuBatch(syncs[0..sync_count]);
-        }
 
-        for (info.signal_semaphores.items) |semaphore| {
-            try semaphore.signal();
+            if (last_request) {
+                for (info.signal_semaphores.items) |base_semaphore| {
+                    const semaphore: *FlintBinarySemaphore = @alignCast(@fieldParentPtr("interface", base_semaphore));
+                    syncs.append(allocator, .{ .handle = semaphore.handle, .signal = true }) catch return VkError.OutOfHostMemory;
+                }
+
+                if (last_info) {
+                    syncs.append(allocator, .{ .handle = self.completion.handle, .signal = true }) catch return VkError.OutOfHostMemory;
+                    if (fence) |base_fence| {
+                        const flint_fence: *FlintFence = @alignCast(@fieldParentPtr("interface", base_fence));
+                        syncs.append(allocator, .{ .handle = flint_fence.handle, .signal = true }) catch return VkError.OutOfHostMemory;
+                    }
+                }
+            }
+
+            if (info.command_buffers.items.len == 0) {
+                try device.kmd.submitBatch(
+                    interface.owner.io(),
+                    allocator,
+                    &.{},
+                    &.{},
+                    syncs.items,
+                );
+            } else {
+                const command_buffer = info.command_buffers.items[request_index];
+                const intel_command_buffer: *FlintCommandBuffer = @alignCast(@fieldParentPtr("interface", command_buffer));
+                try intel_command_buffer.submitGpuBatch(syncs.items);
+            }
+
+            if (first_request) {
+                for (info.wait_semaphores.items) |base_semaphore| {
+                    const semaphore: *FlintBinarySemaphore = @alignCast(@fieldParentPtr("interface", base_semaphore));
+                    try FlintBinarySemaphore.reset(&semaphore.interface);
+                }
+            }
         }
     }
 
-    if (batch_count == 0) {
+    if (infos.len == 0) {
         var syncs: [2]kmd.SyncDependency = undefined;
         var sync_count: usize = 1;
         syncs[0] = .{ .handle = self.completion.handle, .signal = true };
@@ -109,11 +126,9 @@ pub fn submit(interface: *Interface, infos: []Interface.SubmitInfo, fence: ?*bas
             sync_count += 1;
         }
 
-        // A real no-op request preserves queue order: its output fence cannot
-        // signal ahead of an earlier request that is still running.
         try device.kmd.submitBatch(
             interface.owner.io(),
-            interface.host_allocator.allocator(),
+            allocator,
             &.{},
             &.{},
             syncs[0..sync_count],

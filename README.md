@@ -521,7 +521,7 @@ vkCreatePipelineLayout                           | ⚙️ WIP
 vkCreateQueryPool                                | ⚙️ WIP
 vkCreateRenderPass                               | ⚙️ WIP
 vkCreateSampler                                  | ⚙️ WIP
-vkCreateSemaphore                                | ⚙️ WIP
+vkCreateSemaphore                                | ✅ Implemented
 vkCreateShaderModule                             | ⚙️ WIP
 vkCreateSwapchainKHR                             | ⚙️ WIP
 vkCreateWaylandSurfaceKHR                        | ⚙️ WIP
@@ -546,7 +546,7 @@ vkDestroyPipelineLayout                          | ⚙️ WIP
 vkDestroyQueryPool                               | ⚙️ WIP
 vkDestroyRenderPass                              | ⚙️ WIP
 vkDestroySampler                                 | ⚙️ WIP
-vkDestroySemaphore                               | ⚙️ WIP
+vkDestroySemaphore                               | ✅ Implemented
 vkDestroyShaderModule                            | ⚙️ WIP
 vkDestroySurfaceKHR                              | ⚙️ WIP
 vkDestroySwapchainKHR                            | ⚙️ WIP
