@@ -8,6 +8,7 @@ const i915_kmd = @import("i915/kmd.zig");
 const xe = @import("xe/kmd.zig");
 
 const VkError = base.VkError;
+const IOCTL = std.os.linux.IOCTL;
 
 pub const xy_src_copy_blt: u32 = (2 << 29) | (0x53 << 22) | 8;
 pub const xy_blt_write_alpha: u32 = 1 << 21;
@@ -23,6 +24,12 @@ pub const Relocation = struct {
     delta: u32,
     read: bool = false,
     write: bool = false,
+};
+
+pub const SyncDependency = struct {
+    handle: u32,
+    wait: bool = false,
+    signal: bool = false,
 };
 
 pub const Device = union(lib.KmdType) {
@@ -55,10 +62,18 @@ pub const Device = union(lib.KmdType) {
         };
     }
 
-    pub fn submitBatch(self: *Device, io: std.Io, allocator: std.mem.Allocator, commands: []const u32, relocations: []const Relocation) VkError!void {
+    pub fn submitBatch(self: *Device, io: std.Io, allocator: std.mem.Allocator, commands: []const u32, relocations: []const Relocation, syncs: []const SyncDependency) VkError!void {
         return switch (self.*) {
-            .I915 => |*device| device.submitBatch(io, allocator, commands, relocations),
-            .Xe => |*device| device.submitBatch(io, allocator, commands, relocations),
+            .I915 => |*device| device.submitBatch(io, allocator, commands, relocations, syncs),
+            .Xe => |*device| device.submitBatch(io, allocator, commands, relocations, syncs),
+            .Invalid => VkError.DeviceLost,
+        };
+    }
+
+    pub fn file(self: *Device) VkError!std.Io.File {
+        return switch (self.*) {
+            .I915 => |*device| device.card.handle,
+            .Xe => |*device| device.card.handle,
             .Invalid => VkError.DeviceLost,
         };
     }
@@ -142,3 +157,11 @@ pub const Memory = union(lib.KmdType) {
         };
     }
 };
+
+pub inline fn drmIoctlIow(nr: u8, comptime T: type) u32 {
+    return IOCTL.IOW('d', nr, T);
+}
+
+pub inline fn drmIoctlIowr(nr: u8, comptime T: type) u32 {
+    return IOCTL.IOWR('d', nr, T);
+}

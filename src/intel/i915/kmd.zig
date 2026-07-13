@@ -38,7 +38,7 @@ pub const Device = struct {
             .handle = 0,
             .pad = 0,
         };
-        base.utils.ioctl(self.card.handle, io, drmIoctlIowr(drm.command_base + drm.i915_gem_create, drm.GemCreate), &create) catch return VkError.OutOfDeviceMemory;
+        base.utils.ioctl(self.card.handle, io, common_kmd.drmIoctlIowr(drm.command_base + drm.i915_gem_create, drm.GemCreate), &create) catch return VkError.OutOfDeviceMemory;
 
         var memory = Memory{
             .handle = create.handle,
@@ -51,7 +51,7 @@ pub const Device = struct {
         return memory;
     }
 
-    pub fn submitBatch(self: *Device, io: std.Io, allocator: std.mem.Allocator, commands: []const u32, relocations: []const common_kmd.Relocation) VkError!void {
+    pub fn submitBatch(self: *Device, io: std.Io, allocator: std.mem.Allocator, commands: []const u32, relocations: []const common_kmd.Relocation, syncs: []const common_kmd.SyncDependency) VkError!void {
         const trailer_words = 6;
         const batch_size = (commands.len + trailer_words) * @sizeOf(u32);
         var batch = try self.allocateMemory(io, batch_size);
@@ -121,6 +121,16 @@ pub const Device = struct {
             .rsvd2 = 0,
         }) catch return VkError.OutOfHostMemory;
 
+        var exec_fences = std.ArrayList(drm.ExecFence).empty;
+        defer exec_fences.deinit(allocator);
+        for (syncs) |sync| {
+            exec_fences.append(allocator, .{
+                .handle = sync.handle,
+                .flags = (if (sync.wait) drm.i915_exec_fence_wait else 0) |
+                    (if (sync.signal) drm.i915_exec_fence_signal else 0),
+            }) catch return VkError.OutOfHostMemory;
+        }
+
         var execbuffer = drm.ExecBuffer2{
             .buffers_ptr = @intFromPtr(objects.items.ptr),
             .buffer_count = @intCast(objects.items.len),
@@ -128,25 +138,13 @@ pub const Device = struct {
             .batch_len = @intCast(batch_size),
             .DR1 = 0,
             .DR4 = 0,
-            .num_cliprects = 0,
-            .cliprects_ptr = 0,
-            .flags = drm.i915_exec_blt,
+            .num_cliprects = @intCast(exec_fences.items.len),
+            .cliprects_ptr = if (exec_fences.items.len == 0) 0 else @intFromPtr(exec_fences.items.ptr),
+            .flags = drm.i915_exec_blt | (if (exec_fences.items.len == 0) 0 else drm.i915_exec_fence_array),
             .rsvd1 = 0,
             .rsvd2 = 0,
         };
-        base.utils.ioctl(self.card.handle, io, drmIoctlIowr(drm.command_base + drm.i915_gem_execbuffer2, drm.ExecBuffer2), &execbuffer) catch return VkError.DeviceLost;
-
-        for (object_handles.items) |handle| {
-            const object = objects.items[std.mem.indexOfScalar(u32, object_handles.items, handle).?];
-            if (object.flags & drm.exec_object_write == 0) continue;
-
-            var wait = drm.GemWait{
-                .bo_handle = handle,
-                .flags = 0,
-                .timeout_ns = -1,
-            };
-            base.utils.ioctl(self.card.handle, io, drmIoctlIowr(drm.command_base + drm.i915_gem_wait, drm.GemWait), &wait) catch return VkError.DeviceLost;
-        }
+        base.utils.ioctl(self.card.handle, io, common_kmd.drmIoctlIowr(drm.command_base + drm.i915_gem_execbuffer2, drm.ExecBuffer2), &execbuffer) catch return VkError.DeviceLost;
     }
 };
 
@@ -162,7 +160,7 @@ pub const Memory = struct {
             .handle = self.handle,
             .pad = 0,
         };
-        base.utils.ioctl(device.card.handle, io, drmIoctlIow(drm.gem_close, drm.GemClose), &close) catch {};
+        base.utils.ioctl(device.card.handle, io, common_kmd.drmIoctlIow(drm.gem_close, drm.GemClose), &close) catch {};
 
         self.* = undefined;
     }
@@ -185,7 +183,7 @@ pub const Memory = struct {
             .flags = drm.i915_mmap_offset_wb,
             .extensions = 0,
         };
-        base.utils.ioctl(device.card.handle, io, drmIoctlIowr(drm.command_base + drm.i915_gem_mmap_gtt, drm.GemMmapOffset), &mmap_offset) catch return VkError.MemoryMapFailed;
+        base.utils.ioctl(device.card.handle, io, common_kmd.drmIoctlIowr(drm.command_base + drm.i915_gem_mmap_gtt, drm.GemMmapOffset), &mmap_offset) catch return VkError.MemoryMapFailed;
 
         if (self.size > std.math.maxInt(usize)) return VkError.MemoryMapFailed;
         const full_size: usize = @intCast(self.size);
@@ -227,14 +225,6 @@ pub const Memory = struct {
             .read_domains = read_domains,
             .write_domain = write_domain,
         };
-        base.utils.ioctl(device.card.handle, io, drmIoctlIow(drm.command_base + drm.i915_gem_set_domain, drm.GemSetDomain), &domain) catch return VkError.DeviceLost;
+        base.utils.ioctl(device.card.handle, io, common_kmd.drmIoctlIow(drm.command_base + drm.i915_gem_set_domain, drm.GemSetDomain), &domain) catch return VkError.DeviceLost;
     }
 };
-
-inline fn drmIoctlIow(nr: u8, comptime T: type) u32 {
-    return IOCTL.IOW('d', nr, T);
-}
-
-inline fn drmIoctlIowr(nr: u8, comptime T: type) u32 {
-    return IOCTL.IOWR('d', nr, T);
-}

@@ -2,6 +2,8 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 
+const common_kmd = @import("../kmd.zig");
+
 const VkError = base.VkError;
 
 pub const Device = struct {
@@ -21,7 +23,7 @@ pub const Device = struct {
         return VkError.OutOfDeviceMemory;
     }
 
-    pub fn submitBatch(_: *Device, _: std.Io, _: std.mem.Allocator, _: []const u32, _: []const @import("../kmd.zig").Relocation) VkError!void {
+    pub fn submitBatch(_: *Device, _: std.Io, _: std.mem.Allocator, _: []const u32, _: []const common_kmd.Relocation, _: []const common_kmd.SyncDependency) VkError!void {
         return VkError.FeatureNotPresent;
     }
 };
@@ -43,7 +45,3 @@ pub const Memory = struct {
         return VkError.FeatureNotPresent;
     }
 };
-
-test {
-    std.testing.refAllDecls(@This());
-}

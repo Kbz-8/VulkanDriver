@@ -94,7 +94,7 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     allocator.destroy(self);
 }
 
-pub fn submitGpuBatch(self: *Self) VkError!void {
+pub fn submitGpuBatch(self: *Self, syncs: []const kmd.SyncDependency) VkError!void {
     try self.interface.submit();
     defer self.interface.finish() catch {};
 
@@ -102,7 +102,7 @@ pub fn submitGpuBatch(self: *Self) VkError!void {
 
     const device: *FlintDevice = @alignCast(@fieldParentPtr("interface", self.interface.owner));
     const allocator = self.interface.host_allocator.allocator();
-    try device.kmd.submitBatch(self.interface.owner.io(), allocator, self.batch.items, self.relocations.items);
+    try device.kmd.submitBatch(self.interface.owner.io(), allocator, self.batch.items, self.relocations.items, syncs);
 }
 
 pub fn begin(interface: *Interface, info: *const vk.CommandBufferBeginInfo) VkError!void {
@@ -245,12 +245,11 @@ pub fn copyBufferToImage(interface: *Interface, src: *base.Buffer, dst: *base.Im
 }
 
 pub fn copyImage(interface: *Interface, src: *base.Image, src_layout: vk.ImageLayout, dst: *base.Image, dst_layout: vk.ImageLayout, regions: []const vk.ImageCopy) VkError!void {
-    _ = interface;
-    _ = src;
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     _ = src_layout;
-    _ = dst;
     _ = dst_layout;
-    _ = regions;
+    for (regions) |region|
+        try copy.copyImage(self, src, dst, region);
 }
 
 pub fn copyImageToBuffer(interface: *Interface, src: *base.Image, src_layout: vk.ImageLayout, dst: *base.Buffer, regions: []const vk.BufferImageCopy) VkError!void {

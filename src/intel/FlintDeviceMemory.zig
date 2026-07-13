@@ -3,7 +3,7 @@ const vk = @import("vulkan");
 const base = @import("base");
 
 const FlintDevice = @import("FlintDevice.zig");
-const Kmd = @import("kmd.zig");
+const kmd = @import("kmd.zig");
 
 const VkError = base.VkError;
 
@@ -11,7 +11,7 @@ const Self = @This();
 pub const Interface = base.DeviceMemory;
 
 interface: Interface,
-allocation: Kmd.Memory,
+allocation: kmd.Memory,
 
 pub fn create(device: *FlintDevice, allocator: std.mem.Allocator, size: vk.DeviceSize, memory_type_index: u32) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;

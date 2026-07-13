@@ -5,13 +5,15 @@ pub const i915_gem_create = 0x1b;
 pub const i915_gem_mmap_gtt = 0x24;
 pub const i915_gem_set_domain = 0x1f;
 pub const i915_gem_execbuffer2 = 0x29;
-pub const i915_gem_wait = 0x2c;
 pub const gem_close = 0x09;
 
 pub const i915_mmap_offset_wb = 2;
 pub const i915_gem_domain_cpu = 0x00000001;
 pub const i915_gem_domain_gtt = 0x00000040;
 pub const i915_exec_blt = 3 << 0;
+pub const i915_exec_fence_array: u64 = 1 << 19;
+pub const i915_exec_fence_wait: u32 = 1 << 0;
+pub const i915_exec_fence_signal: u32 = 1 << 1;
 pub const exec_object_write = 1 << 2;
 pub const mi_flush_dw: u32 = (0x26 << 23) | 3;
 
@@ -74,8 +76,7 @@ pub const ExecBuffer2 = extern struct {
     rsvd2: u64,
 };
 
-pub const GemWait = extern struct {
-    bo_handle: u32,
+pub const ExecFence = extern struct {
+    handle: u32,
     flags: u32,
-    timeout_ns: i64,
 };

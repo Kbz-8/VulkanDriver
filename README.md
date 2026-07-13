@@ -455,7 +455,7 @@ vkAllocateDescriptorSets                         | ⚙️ WIP
 vkAllocateMemory                                 | ✅ Implemented
 vkBeginCommandBuffer                             | ✅ Implemented
 vkBindBufferMemory                               | ✅ Implemented
-vkBindImageMemory                                | ⚙️ WIP
+vkBindImageMemory                                | ✅ Implemented
 vkCmdBeginQuery                                  | ⚙️ WIP
 vkCmdBeginRenderPass                             | ⚙️ WIP
 vkCmdBindDescriptorSets                          | ⚙️ WIP
@@ -467,9 +467,9 @@ vkCmdClearAttachments                            | ⚙️ WIP
 vkCmdClearColorImage                             | ⚙️ WIP
 vkCmdClearDepthStencilImage                      | ⚙️ WIP
 vkCmdCopyBuffer                                  | ✅ Implemented
-vkCmdCopyBufferToImage                           | ⚙️ WIP
-vkCmdCopyImage                                   | ⚙️ WIP
-vkCmdCopyImageToBuffer                           | ⚙️ WIP
+vkCmdCopyBufferToImage                           | ✅ Implemented
+vkCmdCopyImage                                   | ✅ Implemented
+vkCmdCopyImageToBuffer                           | ✅ Implemented
 vkCmdCopyQueryPoolResults                        | ⚙️ WIP
 vkCmdDispatch                                    | ⚙️ WIP
 vkCmdDispatchBaseKHR                             | ⚙️ WIP
@@ -510,10 +510,10 @@ vkCreateDescriptorPool                           | ⚙️ WIP
 vkCreateDescriptorSetLayout                      | ⚙️ WIP
 vkCreateDevice                                   | ✅ Implemented
 vkCreateEvent                                    | ⚙️ WIP
-vkCreateFence                                    | ⚙️ WIP
+vkCreateFence                                    | ✅ Implemented
 vkCreateFramebuffer                              | ⚙️ WIP
 vkCreateGraphicsPipelines                        | ⚙️ WIP
-vkCreateImage                                    | ⚙️ WIP
+vkCreateImage                                    | ✅ Implemented
 vkCreateImageView                                | ⚙️ WIP
 vkCreateInstance                                 | ✅ Implemented
 vkCreatePipelineCache                            | ⚙️ WIP
@@ -535,9 +535,9 @@ vkDestroyDescriptorPool                          | ⚙️ WIP
 vkDestroyDescriptorSetLayout                     | ⚙️ WIP
 vkDestroyDevice                                  | ✅ Implemented
 vkDestroyEvent                                   | ⚙️ WIP
-vkDestroyFence                                   | ⚙️ WIP
+vkDestroyFence                                   | ✅ Implemented
 vkDestroyFramebuffer                             | ⚙️ WIP
-vkDestroyImage                                   | ⚙️ WIP
+vkDestroyImage                                   | ✅ Implemented
 vkDestroyImageView                               | ⚙️ WIP
 vkDestroyInstance                                | ✅ Implemented
 vkDestroyPipeline                                | ⚙️ WIP
@@ -550,7 +550,7 @@ vkDestroySemaphore                               | ⚙️ WIP
 vkDestroyShaderModule                            | ⚙️ WIP
 vkDestroySurfaceKHR                              | ⚙️ WIP
 vkDestroySwapchainKHR                            | ⚙️ WIP
-vkDeviceWaitIdle                                 | ⚙️ WIP
+vkDeviceWaitIdle                                 | ✅ Implemented
 vkEndCommandBuffer                               | ✅ Implemented
 vkEnumerateDeviceExtensionProperties             | ✅ Implemented
 vkEnumerateDeviceLayerProperties                 | ⚙️ WIP
@@ -573,7 +573,7 @@ vkGetDeviceMemoryCommitment                      | ⚙️ WIP
 vkGetDeviceProcAddr                              | ✅ Implemented
 vkGetDeviceQueue                                 | ✅ Implemented
 vkGetEventStatus                                 | ⚙️ WIP
-vkGetFenceStatus                                 | ⚙️ WIP
+vkGetFenceStatus                                 | ✅ Implemented
 vkGetImageMemoryRequirements                     | ⚙️ WIP
 vkGetImageSparseMemoryRequirements               | ⚙️ WIP
 vkGetImageSubresourceLayout                      | ⚙️ WIP
@@ -603,17 +603,17 @@ vkMergePipelineCaches                            | ⚙️ WIP
 vkQueueBindSparse                                | ⚙️ WIP
 vkQueuePresentKHR                                | ⚙️ WIP
 vkQueueSubmit                                    | ✅ Implemented
-vkQueueWaitIdle                                  | ⚙️ WIP
+vkQueueWaitIdle                                  | ✅ Implemented
 vkResetCommandBuffer                             | ✅ Implemented
 vkResetCommandPool                               | ✅ Implemented
 vkResetDescriptorPool                            | ⚙️ WIP
 vkResetEvent                                     | ⚙️ WIP
-vkResetFences                                    | ⚙️ WIP
+vkResetFences                                    | ✅ Implemented
 vkResetQueryPool                                 | ⚙️ WIP
 vkSetEvent                                       | ⚙️ WIP
 vkUnmapMemory                                    | ✅ Implemented
 vkUpdateDescriptorSets                           | ⚙️ WIP
-vkWaitForFences                                  | ⚙️ WIP
+vkWaitForFences                                  | ✅ Implemented
 </details>
 
 [Herein](https://vulkan-driver.kbz8.me/cts/flint/) is the reckoning of the Vulkan 1.0 conformance trials laid bare. Judge it as thou wilt.

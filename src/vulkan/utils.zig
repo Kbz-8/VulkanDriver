@@ -30,19 +30,19 @@ pub fn writePacked(comptime T: type, bytes: []u8, value: T) void {
 }
 
 pub fn ioctl(file: std.Io.File, io: std.Io, request: u32, arg: ?*anyopaque) (std.Io.Cancelable || std.posix.UnexpectedError)!void {
+    return switch (try ioctlErrno(file, io, request, arg)) {
+        .SUCCESS => {},
+        else => |e| std.posix.unexpectedErrno(e),
+    };
+}
+
+pub fn ioctlErrno(file: std.Io.File, io: std.Io, request: u32, arg: ?*anyopaque) std.Io.Cancelable!std.posix.E {
     const result = try io.operate(.{ .device_io_control = .{
         .file = file,
         .code = request,
         .arg = arg,
     } });
 
-    const rc = if (@import("builtin").link_libc)
-        @as(c_int, @intCast(result.device_io_control))
-    else
-        @as(usize, @bitCast(@as(isize, @intCast(result.device_io_control))));
-
-    return switch (std.posix.errno(rc)) {
-        .SUCCESS => {},
-        else => |e| std.posix.unexpectedErrno(e),
-    };
+    const rc = result.device_io_control;
+    return if (rc < 0) @enumFromInt(-rc) else .SUCCESS;
 }
