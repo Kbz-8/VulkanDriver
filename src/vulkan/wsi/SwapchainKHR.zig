@@ -7,7 +7,6 @@ const VkError = @import("../error_set.zig").VkError;
 const BinarySemaphore = lib.BinarySemaphore;
 const Device = @import("../Device.zig");
 const Fence = lib.Fence;
-const Image = lib.Image;
 const PresentImage = @import("PresentImage.zig");
 const SurfaceKHR = lib.SurfaceKHR;
 
@@ -42,7 +41,7 @@ pub fn create(device: *Device, allocator: std.mem.Allocator, surface: *SurfaceKH
     var initialized_image_count: usize = 0;
     errdefer {
         for (images[0..initialized_image_count]) |*image| {
-            surface.detachImage(allocator, image) catch {};
+            surface.detachImage(allocator, image) catch @panic("Caught an error while handling an error");
             image.deinit(allocator);
         }
     }
@@ -86,8 +85,8 @@ pub fn getNextImage(self: *const Self, timeout: u64, semaphore: ?*BinarySemaphor
     // TODO: handle timeout correctly
 
     for (self.images, 0..) |*image, i| {
-        if (image.state == .Available) {
-            image.state = .Drawing;
+        if (image.state == .available) {
+            image.state = .drawing;
             index.* = @intCast(i);
             if (semaphore) |s|
                 try s.signal();
@@ -105,7 +104,7 @@ pub fn present(self: *Self, index: usize) VkError!void {
 
     const image = &self.images[index];
     if (self.surface) |surface| {
-        image.state = .Presenting;
+        image.state = .presenting;
         try surface.presentImage(allocator, image);
     }
 }
@@ -116,7 +115,7 @@ pub fn detachSurface(self: *Self) VkError!void {
     if (self.surface) |surface| {
         surface.swapchain = null;
         for (self.images) |*image| {
-            if (image.state == .Available)
+            if (image.state == .available)
                 try surface.detachImage(allocator, image);
         }
     }
@@ -126,7 +125,7 @@ pub fn detachSurface(self: *Self) VkError!void {
 pub fn destroy(self: *Self, allocator: std.mem.Allocator) void {
     for (self.images) |*image| {
         if (self.surface) |surface| {
-            surface.detachImage(allocator, image) catch {};
+            surface.detachImage(allocator, image) catch @panic("Caught an error while handling an error");
         }
         image.deinit(allocator);
     }

@@ -20,7 +20,7 @@ const WaylandImage = struct {
 };
 
 fn wlRegistryHandleGlobal(data: ?*anyopaque, registry: ?*wayland.wl_registry, name: u32, interface: [*c]const u8, _: u32) callconv(.c) void {
-    const pshm: **wayland.wl_shm = @ptrCast(@alignCast(data orelse return));
+    const pshm: *?*wayland.wl_shm = @ptrCast(@alignCast(data orelse return));
     if (std.mem.eql(u8, std.mem.span(interface), "wl_shm")) {
         if (wayland.wl_registry_bind(registry orelse return, name, wayland.wl_shm_interface, 1)) |shm| {
             pshm.* = @ptrCast(@alignCast(shm));
@@ -38,7 +38,7 @@ const wl_registry_listener: wayland.wl_registry_listener = .{
 interface: Interface,
 display: *wayland.wl_display,
 surface: *wayland.wl_surface,
-shm: *wayland.wl_shm,
+shm: ?*wayland.wl_shm,
 image_map: std.AutoHashMapUnmanaged(*PresentImage, *WaylandImage),
 
 pub fn create(instance: *Instance, allocator: std.mem.Allocator, info: *const vk.WaylandSurfaceCreateInfoKHR) VkError!*Interface {
@@ -61,13 +61,14 @@ pub fn create(instance: *Instance, allocator: std.mem.Allocator, info: *const vk
         .interface = interface,
         .display = info.display,
         .surface = info.surface,
-        .shm = undefined,
+        .shm = null,
         .image_map = .empty,
     };
 
     const registry = wayland.wl_display_get_registry(@ptrCast(self.display)) orelse return VkError.Unknown;
     _ = wayland.wl_registry_add_listener(registry, &wl_registry_listener, @ptrCast(&self.shm));
     _ = wayland.wl_display_dispatch(@ptrCast(self.display));
+    if (self.shm == null) return VkError.Unknown;
 
     return &self.interface;
 }
@@ -106,7 +107,8 @@ pub fn attachImage(interface: *Interface, allocator: std.mem.Allocator, image: *
     const data = std.posix.mmap(null, size, .{ .READ = true, .WRITE = true }, .{ .TYPE = .SHARED }, fd, 0) catch return VkError.OutOfHostMemory;
     errdefer std.posix.munmap(data);
 
-    const pool = wayland.wl_shm_create_pool(self.shm, fd, @intCast(size)) orelse return VkError.Unknown;
+    const shm = self.shm orelse return VkError.Unknown;
+    const pool = wayland.wl_shm_create_pool(shm, fd, @intCast(size)) orelse return VkError.Unknown;
     defer wayland.wl_shm_pool_destroy(pool);
 
     const buffer = wayland.wl_shm_pool_create_buffer(pool, 0, @intCast(width), @intCast(height), @intCast(stride), wayland.WL_SHM_FORMAT_ARGB8888) orelse return VkError.Unknown;
@@ -152,7 +154,7 @@ pub fn presentImage(interface: *Interface, allocator: std.mem.Allocator, image: 
 
     _ = wayland.wl_display_flush(@ptrCast(self.display));
 
-    image.state = .Available;
+    image.state = .available;
 }
 
 fn createShmFile(size: usize) VkError!std.posix.fd_t {

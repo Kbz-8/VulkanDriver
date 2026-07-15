@@ -13,12 +13,12 @@ const VkError = base.VkError;
 const INTERFACE_BLOB_PADDING = @sizeOf(F32x4);
 
 const ClipPlane = enum {
-    Left,
-    Right,
-    Bottom,
-    Top,
-    Near,
-    Far,
+    left,
+    right,
+    bottom,
+    top,
+    near,
+    far,
 };
 
 const MAX_CLIPPED_POLYGON_VERTICES = 16;
@@ -29,7 +29,7 @@ pub const ClippedLine = struct {
 };
 
 const ClippedPolygon = struct {
-    vertices: [MAX_CLIPPED_POLYGON_VERTICES]Vertex = undefined,
+    vertices: [MAX_CLIPPED_POLYGON_VERTICES]Vertex = std.mem.zeroes([MAX_CLIPPED_POLYGON_VERTICES]Vertex),
     len: usize = 0,
 
     fn append(self: *@This(), vertex: Vertex) VkError!void {
@@ -48,12 +48,12 @@ pub fn clipTriangle(allocator: std.mem.Allocator, v0: *const Vertex, v1: *const 
     try polygon.append(v2.*);
 
     const planes = [_]ClipPlane{
-        .Left,
-        .Right,
-        .Bottom,
-        .Top,
-        .Near,
-        .Far,
+        .left,
+        .right,
+        .bottom,
+        .top,
+        .near,
+        .far,
     };
 
     for (planes) |plane| {
@@ -72,12 +72,12 @@ pub fn clipLine(allocator: std.mem.Allocator, v0: *const Vertex, v1: *const Vert
     };
 
     const planes = [_]ClipPlane{
-        .Left,
-        .Right,
-        .Bottom,
-        .Top,
-        .Near,
-        .Far,
+        .left,
+        .right,
+        .bottom,
+        .top,
+        .near,
+        .far,
     };
 
     for (planes) |plane| {
@@ -131,12 +131,12 @@ pub fn viewportTransformVertex(viewport: vk.Viewport, vertex: *Vertex) void {
 fn clipDistance(position: F32x4, plane: ClipPlane) f32 {
     const x, const y, const z, const w = position;
     return switch (plane) {
-        .Left => x + w,
-        .Right => w - x,
-        .Bottom => y + w,
-        .Top => w - y,
-        .Near => z,
-        .Far => w - z,
+        .left => x + w,
+        .right => w - x,
+        .bottom => y + w,
+        .top => w - y,
+        .near => z,
+        .far => w - z,
     };
 }
 
@@ -173,7 +173,7 @@ fn interpolateVertexForClipping(allocator: std.mem.Allocator, a: *const Vertex, 
         .primitive_restart = false,
         .position = a.position + ((b.position - a.position) * zm.f32x4s(t)),
         .point_size = a.point_size + ((b.point_size - a.point_size) * t),
-        .outputs = undefined,
+        .outputs = @splat(@splat(null)),
     };
 
     for (&result.outputs) |*location| {

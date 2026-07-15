@@ -3,7 +3,6 @@ const vk = @import("vulkan");
 const base = @import("base");
 
 const VkError = base.VkError;
-const Device = base.Device;
 
 const blitter = @import("device/blitter.zig");
 

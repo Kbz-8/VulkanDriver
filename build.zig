@@ -175,7 +175,13 @@ pub fn build(b: *std.Build) !void {
         const install_step = b.step(impl.name, b.fmt("Build libvulkan_{s}", .{impl.name}));
         install_step.dependOn(&lib_install.step);
 
-        const lib_tests = b.addTest(.{ .root_module = lib_mod });
+        const lib_tests = b.addTest(.{
+            .root_module = lib_mod,
+            .test_runner = .{
+                .path = b.path("test/test_runner.zig"),
+                .mode = .simple,
+            },
+        });
 
         const run_tests = b.addRunArtifact(lib_tests);
         const test_step = b.step(b.fmt("test-{s}", .{impl.name}), b.fmt("Run libvulkan_{s} tests", .{impl.name}));

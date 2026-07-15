@@ -5,8 +5,6 @@ const kmd = @import("kmd.zig");
 
 const VkError = base.VkError;
 const FlintDevice = @import("FlintDevice.zig");
-const FlintDeviceMemory = @import("FlintDeviceMemory.zig");
-const FlintImage = @import("FlintImage.zig");
 
 const MemoryRange = @import("MemoryRange.zig");
 
@@ -96,7 +94,7 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 
 pub fn submitGpuBatch(self: *Self, syncs: []const kmd.SyncDependency) VkError!void {
     try self.interface.submit();
-    defer self.interface.finish() catch {};
+    defer self.interface.finish() catch @panic("Caught an error while handling an error");
 
     if (self.batch.items.len == 0) return;
 

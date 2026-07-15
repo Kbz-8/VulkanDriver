@@ -1,8 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
 
-const NonDispatchable = @import("NonDispatchable.zig");
-
 const VkError = @import("error_set.zig").VkError;
 
 const Device = @import("Device.zig");
@@ -25,6 +23,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Semap
     _ = info;
     return .{
         .owner = device,
+        // SAFETY: the backend assigns the vtable before returning the semaphore.
         .vtable = undefined,
     };
 }

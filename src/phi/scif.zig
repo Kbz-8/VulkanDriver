@@ -13,12 +13,18 @@ pub const PortId = extern struct {
 pub const SEND_BLOCK = 1;
 pub const RECV_BLOCK = 1;
 
+// SAFETY: load assigns every function pointer before the public wrappers can be used.
 var scif_open: *const fn () callconv(.c) epd_t = undefined;
+// SAFETY: load assigns every function pointer before the public wrappers can be used.
 var scif_close: *const fn (epd: epd_t) callconv(.c) c_int = undefined;
+// SAFETY: load assigns every function pointer before the public wrappers can be used.
 var scif_connect: *const fn (epd: epd_t, dst: *const PortId) callconv(.c) c_int = undefined;
+// SAFETY: load assigns every function pointer before the public wrappers can be used.
 var scif_send: *const fn (epd: epd_t, msg: ?*const anyopaque, len: usize, flags: c_int) callconv(.c) isize = undefined;
+// SAFETY: load assigns every function pointer before the public wrappers can be used.
 var scif_recv: *const fn (epd: epd_t, msg: ?*anyopaque, len: usize, flags: c_int) callconv(.c) isize = undefined;
 
+// SAFETY: load initializes the module before it can be closed or queried.
 var module: std.DynLib = undefined;
 var ref_count = std.atomic.Value(usize).init(0);
 var load_mutex: base.SpinMutex = .{};

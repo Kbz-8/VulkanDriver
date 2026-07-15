@@ -1,8 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
-const builtin = @import("builtin");
-const config = base.config;
 
 const SoftQueue = @import("SoftQueue.zig");
 
@@ -33,8 +31,6 @@ const VkError = base.VkError;
 const Self = @This();
 pub const Interface = base.Device;
 
-const SpawnError = std.Thread.SpawnError;
-
 interface: Interface,
 
 pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!*Self {
@@ -42,7 +38,7 @@ pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, a
     var initialized = false;
     errdefer {
         if (initialized) {
-            self.interface.destroy(allocator) catch {};
+            self.interface.destroy(allocator) catch @panic("Caught an error while handling an error");
         } else {
             allocator.destroy(self);
         }

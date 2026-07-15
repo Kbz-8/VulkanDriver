@@ -229,7 +229,7 @@ fn uploadAndLaunchDaemon(instance: *base.Instance, allocator: std.mem.Allocator,
 
     const local_path = std.fmt.allocPrint(allocator, "/tmp/ape_phi_device_{d}_{d}.mic", .{ std.os.linux.getpid(), mic_device_num }) catch return VkError.OutOfHostMemory;
     defer allocator.free(local_path);
-    defer std.Io.Dir.deleteFileAbsolute(io, local_path) catch {};
+    defer std.Io.Dir.deleteFileAbsolute(io, local_path) catch @panic("Caught an error while handling an error");
 
     std.Io.Dir.writeFile(.cwd(), io, .{
         .sub_path = local_path,

@@ -11,16 +11,16 @@ pub const wl_registry_listener = extern struct {
     global_remove: ?*const fn (data: ?*anyopaque, wl_registry: ?*wl_registry, name: u32) callconv(.c) void = null,
 };
 
-pub const WL_BUFFER_DESTROY = @as(c_int, 0);
-pub const WL_DISPLAY_GET_REGISTRY = @as(c_int, 1);
-pub const WL_REGISTRY_BIND = @as(c_int, 0);
-pub const WL_SHM_CREATE_POOL = @as(c_int, 0);
-pub const WL_SHM_FORMAT_ARGB8888 = @as(c_int, 0);
-pub const WL_SHM_POOL_CREATE_BUFFER = @as(c_int, 0);
-pub const WL_SHM_POOL_DESTROY = @as(c_int, 1);
-pub const WL_SURFACE_ATTACH = @as(c_int, 1);
-pub const WL_SURFACE_COMMIT = @as(c_int, 6);
-pub const WL_SURFACE_DAMAGE = @as(c_int, 2);
+pub const WL_BUFFER_DESTROY: c_int = 0;
+pub const WL_DISPLAY_GET_REGISTRY: c_int = 1;
+pub const WL_REGISTRY_BIND: c_int = 0;
+pub const WL_SHM_CREATE_POOL: c_int = 0;
+pub const WL_SHM_FORMAT_ARGB8888: c_int = 0;
+pub const WL_SHM_POOL_CREATE_BUFFER: c_int = 0;
+pub const WL_SHM_POOL_DESTROY: c_int = 1;
+pub const WL_SURFACE_ATTACH: c_int = 1;
+pub const WL_SURFACE_COMMIT: c_int = 6;
+pub const WL_SURFACE_DAMAGE: c_int = 2;
 
 pub const wl_buffer = opaque {};
 pub const wl_callback = opaque {};
@@ -46,17 +46,27 @@ pub const wl_interface = extern struct {
     events: ?[*]const wl_message = null,
 };
 
+// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_display_dispatch: *const fn (*wl_display) callconv(.c) c_int = undefined;
+// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_proxy_marshal_flags: *const fn (*wl_proxy, u32, ?*const wl_interface, u32, u32, ...) callconv(.c) ?*wl_proxy = undefined;
+// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_proxy_get_version: *const fn (*wl_proxy) callconv(.c) u32 = undefined;
+// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_proxy_add_listener: *const fn (*wl_proxy, **const fn (void) void, ?*anyopaque) callconv(.c) c_int = undefined;
+// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_display_flush: *const fn (*wl_display) callconv(.c) c_int = undefined;
 
+// SAFETY: load resolves every interface pointer before a surface can be created.
 pub var wl_buffer_interface: *wl_interface = undefined;
+// SAFETY: load resolves every interface pointer before a surface can be created.
 pub var wl_registry_interface: *wl_interface = undefined;
+// SAFETY: load resolves every interface pointer before a surface can be created.
 pub var wl_shm_interface: *wl_interface = undefined;
+// SAFETY: load resolves every interface pointer before a surface can be created.
 pub var wl_shm_pool_interface: *wl_interface = undefined;
 
+// SAFETY: load initializes the module before it can be closed or queried.
 pub var module: std.DynLib = undefined;
 
 pub var ref_count = std.atomic.Value(usize).init(0);

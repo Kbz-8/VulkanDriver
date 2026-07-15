@@ -56,7 +56,7 @@ pub fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), compti
         .warn, .err => stderr_file,
     };
 
-    file.lock(io, .exclusive) catch {};
+    file.lock(io, .exclusive) catch @panic("Caught an error while handling an error");
     defer file.unlock(io);
 
     const now = std.Io.Timestamp.now(io, .real).toMicroseconds();
@@ -69,7 +69,7 @@ pub fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), compti
 
     var fmt_buffer = std.mem.zeroes([4096]u8);
     var fmt_writer = std.Io.Writer.fixed(&fmt_buffer);
-    fmt_writer.print(format ++ "\n", args) catch {};
+    fmt_writer.print(format ++ "\n", args) catch @panic("Caught an error while handling an error");
     fmt_writer.flush() catch return;
 
     mutex.lock(io) catch return;
@@ -86,31 +86,31 @@ pub fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), compti
             .mode = std.Io.Terminal.Mode.detect(io, file, false, false) catch return,
         };
 
-        term.setColor(.magenta) catch {};
+        term.setColor(.magenta) catch @panic("Caught an error while handling an error");
         writer.writeAll("[ApeDriver") catch continue;
         if (!builtin.is_test) {
-            term.setColor(.cyan) catch {};
+            term.setColor(.cyan) catch @panic("Caught an error while handling an error");
             writer.print(" {s} ", .{root.DRIVER_NAME}) catch continue;
         }
-        term.setColor(.yellow) catch {};
+        term.setColor(.yellow) catch @panic("Caught an error while handling an error");
         writer.print("{d}:{d}:{d}.{d:0>3}.{d:0>3}", .{ now_hour, now_min, now_sec, now_ms, now_us }) catch continue;
-        term.setColor(.magenta) catch {};
+        term.setColor(.magenta) catch @panic("Caught an error while handling an error");
         writer.writeAll("]") catch continue;
 
-        term.setColor(.cyan) catch {};
+        term.setColor(.cyan) catch @panic("Caught an error while handling an error");
         writer.print("[Thread {d: >8}]", .{std.Thread.getCurrentId()}) catch continue;
 
-        term.setColor(level_color) catch {};
+        term.setColor(level_color) catch @panic("Caught an error while handling an error");
         writer.print(prefix, .{}) catch continue;
 
         term.setColor(switch (level) {
             .err => .red,
             .warn => .magenta,
             else => .green,
-        }) catch {};
+        }) catch @panic("Caught an error while handling an error");
         writer.print("{s: >30}", .{scope_prefix}) catch continue;
 
-        term.setColor(.reset) catch {};
+        term.setColor(.reset) catch @panic("Caught an error while handling an error");
 
         writer.print("{s}\n", .{fmt_buffer[last_pos..pos]}) catch continue;
         writer.flush() catch continue;

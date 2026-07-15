@@ -28,6 +28,7 @@ pub fn init(device: *Device, size: vk.DeviceSize, memory_type_index: u32) VkErro
         .size = size,
         .memory_type_index = memory_type_index,
         .is_mapped = false,
+        // SAFETY: the backend assigns the vtable before returning device memory.
         .vtable = undefined,
     };
 }

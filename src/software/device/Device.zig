@@ -6,14 +6,10 @@ const spv = @import("spv");
 
 const SoftDescriptorSet = @import("../SoftDescriptorSet.zig");
 const SoftDevice = @import("../SoftDevice.zig");
-const SoftFramebuffer = @import("../SoftFramebuffer.zig");
 const SoftPipeline = @import("../SoftPipeline.zig");
-const SoftRenderPass = @import("../SoftRenderPass.zig");
 
 const ComputeDispatcher = @import("ComputeDispatcher.zig");
 const Renderer = @import("Renderer.zig");
-
-const VkError = base.VkError;
 
 const Self = @This();
 
@@ -58,7 +54,9 @@ pub fn setup(self: *Self, device: *SoftDevice) void {
             .data = switch (i) {
                 GRAPHICS_PIPELINE_STATE => .{
                     .graphics = .{
+                        // SAFETY: indexed draws bind the index buffer before the renderer reads it.
                         .index_buffer = undefined,
+                        // SAFETY: each vertex binding is populated before an attribute reads it.
                         .vertex_buffers = undefined,
                     },
                 },

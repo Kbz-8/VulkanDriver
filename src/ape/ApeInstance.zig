@@ -6,7 +6,6 @@ const soft = @import("soft");
 const flint = @import("flint");
 const phi = @import("phi");
 
-const Dispatchable = base.Dispatchable;
 const VkError = base.VkError;
 
 const Self = @This();
@@ -37,15 +36,15 @@ pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo)
     };
 
     const soft_instance = try soft.Instance.create(allocator, infos);
-    errdefer soft_instance.deinit(allocator) catch {};
+    errdefer soft_instance.deinit(allocator) catch @panic("Caught an error while handling an error");
     self.backend_instances.append(allocator, soft_instance) catch return VkError.OutOfHostMemory;
 
     const flint_instance = try flint.Instance.create(allocator, infos);
-    errdefer flint_instance.deinit(allocator) catch {};
+    errdefer flint_instance.deinit(allocator) catch @panic("Caught an error while handling an error");
     self.backend_instances.append(allocator, flint_instance) catch return VkError.OutOfHostMemory;
 
     const phi_instance = try phi.Instance.create(allocator, infos);
-    errdefer phi_instance.deinit(allocator) catch {};
+    errdefer phi_instance.deinit(allocator) catch @panic("Caught an error while handling an error");
     self.backend_instances.append(allocator, phi_instance) catch return VkError.OutOfHostMemory;
 
     return &self.interface;
@@ -68,7 +67,7 @@ fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator, _
 
 fn appendBackendPhysicalDevices(self: *Self, allocator: std.mem.Allocator, backend: *Interface) VkError!void {
     try backend.requestPhysicalDevices(allocator);
-    errdefer backend.releasePhysicalDevices(allocator) catch {};
+    errdefer backend.releasePhysicalDevices(allocator) catch @panic("Caught an error while handling an error");
 
     self.interface.physical_devices.appendSlice(allocator, backend.physical_devices.items) catch return VkError.OutOfHostMemory;
     backend.physical_devices.deinit(allocator);

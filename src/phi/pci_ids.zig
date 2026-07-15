@@ -1,4 +1,3 @@
-const std = @import("std");
 
 const PciInfo = struct {
     id: u16,

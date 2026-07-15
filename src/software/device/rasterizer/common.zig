@@ -53,14 +53,14 @@ pub fn clampDepthBias(bias: f32, clamp: f32) f32 {
 }
 
 pub fn scissorContainsPixel(scissor: vk.Rect2D, x: i32, y: i32) bool {
-    const min_x: i64 = @as(i64, scissor.offset.x);
-    const min_y: i64 = @as(i64, scissor.offset.y);
+    const min_x: i64 = scissor.offset.x;
+    const min_y: i64 = scissor.offset.y;
 
     const max_x: i64 = min_x + @as(i64, @intCast(scissor.extent.width));
     const max_y: i64 = min_y + @as(i64, @intCast(scissor.extent.height));
 
-    const pixel_x: i64 = @as(i64, x);
-    const pixel_y: i64 = @as(i64, y);
+    const pixel_x: i64 = x;
+    const pixel_y: i64 = y;
 
     return pixel_x >= min_x and
         pixel_x < max_x and
@@ -69,8 +69,8 @@ pub fn scissorContainsPixel(scissor: vk.Rect2D, x: i32, y: i32) bool {
 }
 
 pub fn rectContainsPixel(rect: vk.Rect2D, x: usize, y: usize) bool {
-    const min_x: i64 = @as(i64, rect.offset.x);
-    const min_y: i64 = @as(i64, rect.offset.y);
+    const min_x: i64 = rect.offset.x;
+    const min_y: i64 = rect.offset.y;
 
     const max_x: i64 = min_x + @as(i64, @intCast(rect.extent.width));
     const max_y: i64 = min_y + @as(i64, @intCast(rect.extent.height));

@@ -485,6 +485,7 @@ inline fn run(data: RunData) !void {
                     centroid_b2,
                 );
                 const derivative_inputs: ?fragment.DerivativeInputs = if (data.fragment_uses_derivatives) blk: {
+                    // SAFETY: both dx and dy are assigned below before derivatives is returned.
                     var derivatives: fragment.DerivativeInputs = undefined;
 
                     const p_dx = zm.f32x4(@as(f32, @floatFromInt(x)) + 1.5, @as(f32, @floatFromInt(y)) + 0.5, 0.0, 1.0);

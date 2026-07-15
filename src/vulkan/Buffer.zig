@@ -31,6 +31,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Buffe
         .usage = info.usage,
         .memory = null,
         .allowed_memory_types = std.bit_set.IntegerBitSet(32).initFull(),
+        // SAFETY: the backend assigns the vtable before returning the buffer.
         .vtable = undefined,
     };
 }

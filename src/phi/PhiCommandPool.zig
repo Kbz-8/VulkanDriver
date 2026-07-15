@@ -2,9 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 
-const NonDispatchable = base.NonDispatchable;
 const VkError = base.VkError;
-const Device = base.Device;
 
 const PhiCommandBuffer = @import("PhiCommandBuffer.zig");
 

@@ -1,7 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
-const lib = @import("lib.zig");
 const SoftPhysicalDevice = @import("SoftPhysicalDevice.zig");
 
 const Dispatchable = base.Dispatchable;
@@ -63,7 +62,7 @@ fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
 fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator, _: []base.drm.Card) VkError!void {
     // Software driver has only one physical device (the CPU)
     const physical_device = try SoftPhysicalDevice.create(allocator, interface);
-    errdefer physical_device.interface.release(allocator) catch {};
+    errdefer physical_device.interface.release(allocator) catch @panic("Caught an error while handling an error");
     const dispatchable = try Dispatchable(base.PhysicalDevice).wrap(allocator, &physical_device.interface);
     errdefer dispatchable.destroy(allocator);
     interface.physical_devices.append(allocator, dispatchable) catch return VkError.OutOfHostMemory;

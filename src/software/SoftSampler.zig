@@ -6,7 +6,6 @@ const zm = base.zm;
 const blitter = @import("device/blitter.zig");
 
 const VkError = base.VkError;
-const Device = base.Device;
 const F32x4 = zm.F32x4;
 const U32x4 = blitter.U32x4;
 

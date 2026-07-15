@@ -1,7 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
-const kmd = @import("kmd.zig");
 
 const VkError = base.VkError;
 const FlintImage = @import("FlintImage.zig");
@@ -158,7 +157,7 @@ fn bitwiseCompatibleFormats(src: vk.Format, dst: vk.Format) bool {
 
 fn nearestBlitCoordinate(src_0: i32, src_1: i32, dst_0: i32, dst_1: i32, dst: i32, extent: u32) usize {
     const numerator = @as(i64, 2 * (dst - dst_0) + 1) * @as(i64, src_1 - src_0);
-    const denominator = @as(i64, 2 * (dst_1 - dst_0));
+    const denominator: i64 = 2 * (dst_1 - dst_0);
     const coordinate = @as(i64, src_0) + @divFloor(numerator, denominator);
     return @intCast(std.math.clamp(coordinate, 0, @as(i64, extent) - 1));
 }

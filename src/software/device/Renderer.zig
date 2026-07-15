@@ -9,16 +9,13 @@ const PipelineState = ExecutionDevice.PipelineState;
 const BoundedAllocator = @import("BoundedAllocator.zig");
 
 const SoftBuffer = @import("../SoftBuffer.zig");
-const SoftDescriptorSet = @import("../SoftDescriptorSet.zig");
 const SoftDevice = @import("../SoftDevice.zig");
 const SoftFramebuffer = @import("../SoftFramebuffer.zig");
 const SoftPipeline = @import("../SoftPipeline.zig");
 const SoftRenderPass = @import("../SoftRenderPass.zig");
 
-const blitter = @import("blitter.zig");
 const rasterizer = @import("rasterizer.zig");
 const vertex_dispatcher = @import("vertex_dispatcher.zig");
-const clip = @import("clip.zig");
 
 const VkError = base.VkError;
 const F32x4 = zm.F32x4;
@@ -110,7 +107,9 @@ pub const DrawCall = struct {
             .vertex_count = vertex_count,
             .instance_count = instance_count,
             .renderer = renderer,
+            // SAFETY: draw assigns the viewport before the rasterizer receives this value.
             .viewport = undefined,
+            // SAFETY: draw assigns the scissor before the rasterizer receives this value.
             .scissor = undefined,
             .color_attachments = framebuffer.interface.attachments[0..],
             .depth_attachment = if (render_pass.interface.subpasses[renderer.subpass_index].depth_stencil_attachments) |desc| framebuffer.interface.attachments[desc.attachment] else null,

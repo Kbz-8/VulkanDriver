@@ -4,7 +4,6 @@ const lib = @import("lib.zig");
 const config = lib.config;
 
 const Dispatchable = @import("Dispatchable.zig").Dispatchable;
-const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
 const VulkanAllocator = @import("VulkanAllocator.zig");
 const VkError = @import("error_set.zig").VkError;
 
@@ -16,7 +15,6 @@ const Buffer = @import("Buffer.zig");
 const BufferView = @import("BufferView.zig");
 const CommandPool = @import("CommandPool.zig");
 const DescriptorPool = @import("DescriptorPool.zig");
-const DescriptorSet = @import("DescriptorSet.zig");
 const DescriptorSetLayout = @import("DescriptorSetLayout.zig");
 const DeviceMemory = @import("DeviceMemory.zig");
 const Event = @import("Event.zig");
@@ -34,7 +32,6 @@ const Sampler = @import("Sampler.zig");
 const ShaderModule = @import("ShaderModule.zig");
 
 const SurfaceKHR = @import("wsi/SurfaceKHR.zig");
-const SwapchainKHR = @import("wsi/SwapchainKHR.zig");
 
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .device;
@@ -120,7 +117,9 @@ pub fn init(allocator: std.mem.Allocator, instance: *Instance, physical_device: 
         .enabled_khr_swapchain = enabled_khr_swapchain,
         .enabled_khr_device_group = enabled_khr_device_group,
         .device_allocator = if (config.device_debug_allocator) .init else .{},
+        // SAFETY: the backend assigns both tables before returning the device.
         .dispatch_table = undefined,
+        // SAFETY: the backend assigns both tables before returning the device.
         .vtable = undefined,
     };
 }
@@ -141,7 +140,7 @@ pub fn createQueues(self: *Self, allocator: std.mem.Allocator, info: *const vk.D
         }
 
         const queue = try self.vtable.createQueue(allocator, self, queue_info.queue_family_index, @intCast(family_ptr.items.len), queue_info.flags);
-        errdefer self.vtable.destroyQueue(queue, allocator) catch {};
+        errdefer self.vtable.destroyQueue(queue, allocator) catch @panic("Caught an error while handling an error");
 
         const dispatchable_queue = try Dispatchable(Queue).wrap(allocator, queue);
         errdefer dispatchable_queue.destroy(allocator);

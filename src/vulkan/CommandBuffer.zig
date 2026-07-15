@@ -18,11 +18,11 @@ const QueryPool = @import("QueryPool.zig");
 const RenderPass = @import("RenderPass.zig");
 
 const State = enum {
-    Initial,
-    Recording,
-    Executable,
-    Pending,
-    Invalid,
+    initial,
+    recording,
+    executable,
+    pending,
+    invalid,
 };
 
 const Self = @This();
@@ -100,13 +100,15 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Comma
     return .{
         .owner = device,
         .pool = try NonDispatchable(CommandPool).fromHandleObject(info.command_pool),
-        .state = .Initial,
+        .state = .initial,
         .begin_info = null,
         .usage_flags = .{},
         .device_mask = 1,
         .host_allocator = VulkanAllocator.from(allocator).cloneWithScope(.object),
         .state_mutex = .init,
+        // SAFETY: the backend assigns both tables before returning the command buffer.
         .vtable = undefined,
+        // SAFETY: the backend assigns both tables before returning the command buffer.
         .dispatch_table = undefined,
     };
 }
@@ -128,9 +130,9 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
 }
 
 pub fn begin(self: *Self, info: *const vk.CommandBufferBeginInfo) VkError!void {
-    const implicitly_reset = self.state == .Executable or self.state == .Invalid;
+    const implicitly_reset = self.state == .executable or self.state == .invalid;
 
-    self.transitionState(.Recording, &.{ .Initial, .Executable, .Invalid }) catch return VkError.ValidationFailed;
+    self.transitionState(.recording, &.{ .initial, .executable, .invalid }) catch return VkError.ValidationFailed;
     if (implicitly_reset) {
         try self.dispatch_table.reset(self, .{});
         self.begin_info = null;
@@ -143,7 +145,7 @@ pub fn begin(self: *Self, info: *const vk.CommandBufferBeginInfo) VkError!void {
 }
 
 pub fn end(self: *Self) VkError!void {
-    self.transitionState(.Executable, &.{.Recording}) catch return VkError.ValidationFailed;
+    self.transitionState(.executable, &.{.recording}) catch return VkError.ValidationFailed;
     try self.dispatch_table.end(self);
 }
 
@@ -156,7 +158,7 @@ pub fn reset(self: *Self, flags: vk.CommandBufferResetFlags) VkError!void {
 }
 
 pub fn resetFromPool(self: *Self, flags: vk.CommandBufferResetFlags) VkError!void {
-    self.transitionState(.Initial, &.{ .Initial, .Recording, .Executable, .Invalid }) catch return VkError.ValidationFailed;
+    self.transitionState(.initial, &.{ .initial, .recording, .executable, .invalid }) catch return VkError.ValidationFailed;
     try self.dispatch_table.reset(self, flags);
     self.begin_info = null;
     self.usage_flags = .{};
@@ -165,18 +167,18 @@ pub fn resetFromPool(self: *Self, flags: vk.CommandBufferResetFlags) VkError!voi
 
 pub fn submit(self: *Self) VkError!void {
     if (!self.usage_flags.simultaneous_use_bit) {
-        self.transitionState(.Pending, &.{.Executable}) catch return VkError.ValidationFailed;
+        self.transitionState(.pending, &.{.executable}) catch return VkError.ValidationFailed;
         return;
     }
-    self.transitionState(.Pending, &.{ .Pending, .Executable }) catch return VkError.ValidationFailed;
+    self.transitionState(.pending, &.{ .pending, .executable }) catch return VkError.ValidationFailed;
 }
 
 pub fn finish(self: *Self) VkError!void {
     if (self.usage_flags.one_time_submit_bit) {
-        self.transitionState(.Invalid, &.{.Pending}) catch return VkError.ValidationFailed;
+        self.transitionState(.invalid, &.{.pending}) catch return VkError.ValidationFailed;
         return;
     }
-    self.transitionState(.Executable, &.{.Pending}) catch return VkError.ValidationFailed;
+    self.transitionState(.executable, &.{.pending}) catch return VkError.ValidationFailed;
 }
 
 // Commands ====================================================================================================

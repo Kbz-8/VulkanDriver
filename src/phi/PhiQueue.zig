@@ -66,7 +66,7 @@ pub fn submit(interface: *Interface, infos: []Interface.SubmitInfo, fence: ?*bas
             @memcpy(payload[@sizeOf(proto.PhiWorkExecutionRequest)..], phi_command_buffer.commands.items);
 
             // Synchronous queues for now
-            var reply: proto.PhiWorkExecutionReply = undefined;
+            var reply = std.mem.zeroes(proto.PhiWorkExecutionReply);
             try device.transport.request(proto.PHI_PACKET_WORK_EXECUTION, payload, std.mem.asBytes(&reply));
 
             if (reply.result.status != proto.PHI_STATUS_OK) {

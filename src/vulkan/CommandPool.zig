@@ -44,6 +44,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Comma
         .host_allocator = VulkanAllocator.from(allocator).clone(),
         .buffers = std.ArrayList(*Dispatchable(CommandBuffer)).initCapacity(allocator, BUFFER_POOL_BASE_CAPACITY) catch return VkError.OutOfHostMemory,
         .first_free_buffer_index = 0,
+        // SAFETY: the backend assigns the vtable before returning the command pool.
         .vtable = undefined,
     };
 }
@@ -112,6 +113,6 @@ pub fn reset(self: *Self, flags: vk.CommandPoolResetFlags) VkError!void {
     self.first_free_buffer_index = 0;
 
     for (self.buffers.items) |dis_cmd| {
-        _ = dis_cmd.object.resetFromPool(.{ .release_resources_bit = flags.release_resources_bit }) catch {};
+        _ = dis_cmd.object.resetFromPool(.{ .release_resources_bit = flags.release_resources_bit }) catch @panic("Caught an error while handling an error");
     }
 }

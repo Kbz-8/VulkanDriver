@@ -80,17 +80,17 @@ fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator, d
         defer version.deinit(allocator);
 
         const kmd_type: lib.KmdType = if (std.mem.eql(u8, version.name, "i915"))
-            .I915
+            .i915
         else if (std.mem.eql(u8, version.name, "xe"))
-            .Xe
+            .xe
         else
-            .Invalid;
+            .invalid;
 
-        if (kmd_type == .Invalid)
+        if (kmd_type == .invalid)
             continue;
 
         const physical_device = try FlintPhysicalDevice.create(allocator, interface, &drm_device, kmd_type);
-        errdefer physical_device.interface.release(allocator) catch {};
+        errdefer physical_device.interface.release(allocator) catch @panic("Caught an error while handling an error");
 
         const dispatchable = try Dispatchable(base.PhysicalDevice).wrap(allocator, &physical_device.interface);
         errdefer dispatchable.destroy(allocator);

@@ -133,7 +133,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
         );
         const color_attachment_subresource_size = renderTargetSubresourceSize(render_target, render_target_view, color_range.aspect_mask, color_range.base_mip_level);
         access.* = .{
-            .mutex = undefined,
+            .mutex = .init,
             .base = try render_target.mapAsSliceWithAddedOffset(u8, color_attachment_subresource_offset, color_attachment_subresource_size),
             .row_pitch = render_target.getRowPitchMemSizeForMipLevelWithFormat(color_range.aspect_mask, color_range.base_mip_level, color_format),
             .texel_size = base.format.texelSize(color_format),

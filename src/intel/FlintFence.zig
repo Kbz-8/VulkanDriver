@@ -170,7 +170,7 @@ fn destroyHandle(device: *FlintDevice, io: std.Io, handle: u32) void {
         io,
         kmd.drmIoctlIowr(drm_syncobj_destroy, SyncObjDestroy),
         &destroy_info,
-    ) catch {};
+    ) catch @panic("ioctl failed");
 }
 
 fn absoluteTimeout(io: std.Io, timeout: u64) i64 {

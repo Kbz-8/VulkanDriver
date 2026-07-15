@@ -1,6 +1,5 @@
 const std = @import("std");
 const vk = @import("vulkan");
-const lib = @import("lib.zig");
 
 const VkError = @import("error_set.zig").VkError;
 const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
@@ -33,6 +32,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Image
         .format = info.format,
         .components = info.components,
         .subresource_range = info.subresource_range,
+        // SAFETY: the backend assigns the vtable before returning the image view.
         .vtable = undefined,
     };
 }

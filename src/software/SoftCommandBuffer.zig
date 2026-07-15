@@ -3,7 +3,6 @@ const vk = @import("vulkan");
 const base = @import("base");
 const lib = @import("lib.zig");
 
-const Device = base.Device;
 const VkError = base.VkError;
 
 const SoftBuffer = @import("SoftBuffer.zig");
@@ -129,10 +128,9 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 
     self.* = .{
         .interface = interface,
-        .command_allocator = undefined,
+        .command_allocator = .init(interface.host_allocator.allocator()),
         .commands = .empty,
     };
-    self.command_allocator = .init(self.interface.host_allocator.allocator());
     return self;
 }
 
@@ -144,7 +142,7 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 
 pub fn execute(self: *Self, device: *ExecutionDevice) VkError!void {
     try self.interface.submit();
-    defer self.interface.finish() catch {};
+    defer self.interface.finish() catch @panic("Caught an error while handling an error");
 
     for (self.commands.items) |command| {
         command.vtable.execute(@ptrCast(command.ptr), device) catch |err| {
@@ -1063,7 +1061,11 @@ pub fn endRenderPass(interface: *Interface) VkError!void {
         }
     };
 
-    self.commands.append(allocator, .{ .ptr = undefined, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
+    self.commands.append(allocator, .{
+        // SAFETY: this command's execute callback does not inspect its context pointer.
+        .ptr = undefined,
+        .vtable = &.{ .execute = CommandImpl.execute },
+    }) catch return VkError.OutOfHostMemory;
 }
 
 pub fn executeCommands(interface: *Interface, commands: *Interface) VkError!void {

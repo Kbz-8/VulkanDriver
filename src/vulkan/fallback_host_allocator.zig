@@ -8,9 +8,10 @@ const SpinMutex = @import("SpinMutex.zig");
 
 var mutex: SpinMutex = .{};
 var child_allocator: std.mem.Allocator = if (builtin.link_libc) std.heap.c_allocator else std.heap.smp_allocator;
+var fallback_host_allocator_context: u8 = 0;
 
 pub const fallback_host_allocator: Allocator = .{
-    .ptr = undefined,
+    .ptr = &fallback_host_allocator_context,
     .vtable = &vtable,
 };
 

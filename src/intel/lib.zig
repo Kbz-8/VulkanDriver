@@ -52,9 +52,9 @@ pub const VULKAN_VERSION = vk.makeApiVersion(
 pub const IMAGE_MEMORY_ALIGNMENT = std.heap.page_size_max;
 
 pub const KmdType = enum {
-    Invalid,
-    I915,
-    Xe,
+    invalid,
+    i915,
+    xe,
 };
 
 pub const std_options = base.std_options;

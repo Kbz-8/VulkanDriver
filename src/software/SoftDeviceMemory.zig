@@ -2,7 +2,6 @@ const std = @import("std");
 const vk = @import("vulkan");
 const SoftDevice = @import("SoftDevice.zig");
 const base = @import("base");
-const lib = @import("lib.zig");
 
 const VkError = base.VkError;
 

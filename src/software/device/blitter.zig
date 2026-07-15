@@ -1640,7 +1640,7 @@ fn encodeUFloat(value: f32, mantissa_bits: comptime_int) u32 {
         return max_exponent << mantissa_bits;
 
     if (adjusted_exponent <= 0) {
-        const mantissa = @as(u32, @intFromFloat(@round(value * @as(f32, @floatFromInt(1 << (mantissa_bits + exponent_bias - 1))))));
+        const mantissa: u32 = @intFromFloat(@round(value * @as(f32, @floatFromInt(1 << (mantissa_bits + exponent_bias - 1)))));
 
         return mantissa;
     }

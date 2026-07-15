@@ -38,25 +38,26 @@ pub fn init(allocator: std.mem.Allocator, instance: *Instance) VkError!Self {
     _ = allocator;
     return .{
         .props = .{
-            .api_version = undefined,
-            .driver_version = undefined,
+            .api_version = 0,
+            .driver_version = 0,
             .vendor_id = root.VULKAN_VENDOR_ID,
-            .device_id = undefined,
-            .device_type = undefined,
+            .device_id = 0,
+            .device_type = .other,
             .device_name = @as([vk.MAX_PHYSICAL_DEVICE_NAME_SIZE]u8, @splat(0)),
-            .pipeline_cache_uuid = undefined,
+            .pipeline_cache_uuid = @splat(0),
             .limits = std.mem.zeroInit(vk.PhysicalDeviceLimits, .{}),
-            .sparse_properties = undefined,
+            .sparse_properties = std.mem.zeroes(vk.PhysicalDeviceSparseProperties),
         },
         .mem_props = .{
             .memory_type_count = 0,
-            .memory_types = undefined,
+            .memory_types = @splat(.{ .heap_index = 0 }),
             .memory_heap_count = 0,
-            .memory_heaps = undefined,
+            .memory_heaps = @splat(.{ .size = 0 }),
         },
         .queue_family_props = .empty,
         .features = .{},
         .instance = instance,
+        // SAFETY: the backend assigns the dispatch table before returning the physical device.
         .dispatch_table = undefined,
     };
 }

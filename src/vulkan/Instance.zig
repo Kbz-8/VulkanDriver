@@ -1,7 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const vk = @import("vulkan");
-const config = @import("lib.zig").config;
 const utils = @import("utils.zig");
 const drm = @import("drm.zig");
 const lib = @import("lib.zig");
@@ -22,12 +21,6 @@ comptime {
 
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .instance;
-
-const DeviceAllocator = struct {
-    pub inline fn allocator(_: @This()) std.mem.Allocator {
-        return std.heap.smp_allocator;
-    }
-};
 
 /// Dummy
 pub const EXTENSIONS = [_]vk.ExtensionProperties{};
@@ -52,7 +45,9 @@ pub fn init(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) V
     _ = infos;
     return .{
         .physical_devices = .empty,
+        // SAFETY: the backend assigns both tables before returning the instance.
         .dispatch_table = undefined,
+        // SAFETY: the backend assigns both tables before returning the instance.
         .vtable = undefined,
     };
 }

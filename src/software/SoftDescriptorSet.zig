@@ -3,7 +3,6 @@ const vk = @import("vulkan");
 const base = @import("base");
 
 const VkError = base.VkError;
-const Device = base.Device;
 const Buffer = base.Buffer;
 const BufferView = base.BufferView;
 const ImageView = base.ImageView;

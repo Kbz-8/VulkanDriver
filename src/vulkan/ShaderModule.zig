@@ -1,8 +1,5 @@
 const std = @import("std");
 const vk = @import("vulkan");
-const lib = @import("lib.zig");
-
-const NonDispatchable = @import("NonDispatchable.zig");
 
 const VkError = @import("error_set.zig").VkError;
 
@@ -24,6 +21,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Shade
     _ = info;
     return .{
         .owner = device,
+        // SAFETY: the backend assigns the vtable before returning the shader module.
         .vtable = undefined,
     };
 }

@@ -2,12 +2,9 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 const spv = @import("spv");
-const lib = @import("lib.zig");
 
 const VkError = base.VkError;
-const Device = base.Device;
 
-const SoftDevice = @import("SoftDevice.zig");
 
 const Self = @This();
 pub const Interface = base.ShaderModule;

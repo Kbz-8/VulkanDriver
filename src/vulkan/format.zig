@@ -177,11 +177,11 @@ pub inline fn blockHeight(format: vk.Format) usize {
 }
 
 pub inline fn blockCountX(format: vk.Format, width: usize) usize {
-    return std.math.divCeil(usize, width, blockWidth(format)) catch unreachable;
+    return std.math.divCeil(usize, width, blockWidth(format)) catch @panic("Division failed");
 }
 
 pub inline fn blockCountY(format: vk.Format, height: usize) usize {
-    return std.math.divCeil(usize, height, blockHeight(format)) catch unreachable;
+    return std.math.divCeil(usize, height, blockHeight(format)) catch @panic("Division failed");
 }
 
 pub inline fn componentCount(format: vk.Format) usize {

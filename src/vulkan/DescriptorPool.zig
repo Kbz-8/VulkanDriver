@@ -2,7 +2,6 @@ const std = @import("std");
 const vk = @import("vulkan");
 
 const VkError = @import("error_set.zig").VkError;
-const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
 
 const Device = @import("Device.zig");
 
@@ -29,6 +28,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Descr
     return .{
         .owner = device,
         .flags = info.flags,
+        // SAFETY: the backend assigns the vtable before returning the descriptor pool.
         .vtable = undefined,
     };
 }

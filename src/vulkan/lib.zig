@@ -1,7 +1,6 @@
 //! Here lies the documentation of the common internal API that Ape backends need to implement
 
 const std = @import("std");
-const builtin = @import("builtin");
 const vk = @import("vulkan");
 pub const c = @import("base_c");
 

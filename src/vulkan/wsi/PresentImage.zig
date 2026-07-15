@@ -9,9 +9,9 @@ const Image = @import("../Image.zig");
 const NonDispatchable = @import("../NonDispatchable.zig").NonDispatchable;
 
 pub const State = enum {
-    Available,
-    Drawing,
-    Presenting,
+    available,
+    drawing,
+    presenting,
 };
 
 const Self = @This();
@@ -25,7 +25,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Image
     const image = try device.createImage(allocator, info);
     errdefer image.destroy(allocator);
 
-    var requirements: vk.MemoryRequirements = undefined;
+    var requirements = std.mem.zeroes(vk.MemoryRequirements);
     try image.getMemoryRequirements(&requirements);
 
     const memory = try device.allocateMemory(allocator, &.{
@@ -40,7 +40,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Image
         .image = image,
         .non_dispatchable_image = try NonDispatchable(Image).wrap(allocator, image),
         .memory = memory,
-        .state = .Available,
+        .state = .available,
     };
 }
 

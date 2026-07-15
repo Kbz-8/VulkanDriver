@@ -19,7 +19,7 @@ const BindingLayout = struct {
     /// This slice points to an array located after the binding layouts array
     immutable_samplers: []const *const Sampler,
 
-    driver_data: *anyopaque,
+    driver_data: ?*anyopaque,
 };
 
 owner: *Device,
@@ -77,7 +77,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Descr
             .array_size = 0,
             .dynamic_index = 0,
             .immutable_samplers = &.{},
-            .driver_data = undefined,
+            .driver_data = null,
         };
     }
 
@@ -119,7 +119,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Descr
                 .array_size = descriptor_count,
                 .dynamic_index = dynamic_index,
                 .immutable_samplers = binding_immutable_samplers,
-                .driver_data = undefined,
+                .driver_data = null,
             };
 
             stages = stages.merge(binding_info.stage_flags);
@@ -134,6 +134,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Descr
         .dynamic_descriptor_count = dynamic_descriptor_count,
         .stages = stages,
         .ref_count = std.atomic.Value(usize).init(1),
+        // SAFETY: the backend assigns the vtable before returning the descriptor set layout.
         .vtable = undefined,
     };
 }

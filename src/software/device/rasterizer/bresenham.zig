@@ -8,7 +8,6 @@ const common = @import("common.zig");
 const fragment = @import("../fragment.zig");
 
 const Renderer = @import("../Renderer.zig");
-const SoftImage = @import("../../SoftImage.zig");
 
 const VkError = base.VkError;
 const SpvRuntimeError = spv.Runtime.RuntimeError;

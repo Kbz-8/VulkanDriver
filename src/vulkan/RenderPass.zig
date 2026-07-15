@@ -79,6 +79,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Rende
         .owner = device,
         .attachments = attachments,
         .subpasses = subpasses,
+        // SAFETY: the backend assigns the vtable before returning the render pass.
         .vtable = undefined,
     };
 }

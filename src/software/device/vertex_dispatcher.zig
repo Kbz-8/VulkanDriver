@@ -526,7 +526,7 @@ fn isConstantZero(rt: *spv.Runtime, result_word: spv.SpvWord) bool {
     const variant = rt.results[result_word].variant orelse return false;
     switch (variant) {
         .Constant => |constant| {
-            var value: u32 = undefined;
+            var value: u32 = 0;
             _ = constant.value.read(std.mem.asBytes(&value)) catch return false;
             return value == 0;
         },

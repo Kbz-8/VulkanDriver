@@ -98,7 +98,7 @@ fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator, _
         defer device.deinit();
 
         const physical_device = try PhiPhysicalDevice.create(allocator, interface, device, device_num);
-        errdefer physical_device.interface.release(allocator) catch {};
+        errdefer physical_device.interface.release(allocator) catch @panic("Caught an error while handling an error");
 
         const dispatchable = try Dispatchable(base.PhysicalDevice).wrap(allocator, &physical_device.interface);
         errdefer dispatchable.destroy(allocator);

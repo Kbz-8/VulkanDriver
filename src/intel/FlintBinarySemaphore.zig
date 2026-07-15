@@ -4,7 +4,6 @@ const base = @import("base");
 const kmd = @import("kmd.zig");
 
 const VkError = base.VkError;
-const Device = base.Device;
 const FlintDevice = @import("FlintDevice.zig");
 
 const drm_syncobj_create = 0xbf;
@@ -159,5 +158,5 @@ fn destroyHandle(device: *FlintDevice, io: std.Io, handle: u32) void {
         io,
         kmd.drmIoctlIowr(drm_syncobj_destroy, SyncObjDestroy),
         &destroy_info,
-    ) catch {};
+    ) catch @panic("Caught an error while handling an error");
 }

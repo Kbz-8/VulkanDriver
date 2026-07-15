@@ -4,7 +4,6 @@ const base = @import("base");
 const spv = @import("spv");
 
 const VkError = base.VkError;
-const SoftDevice = @import("SoftDevice.zig");
 const SoftShaderModule = @import("SoftShaderModule.zig");
 
 const Self = @This();

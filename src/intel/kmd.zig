@@ -1,7 +1,8 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
-const lib = @import("lib.zig");
+
+const KmdType = @import("lib.zig").KmdType;
 
 const FlintPhysicalDevice = @import("FlintPhysicalDevice.zig");
 const i915_kmd = @import("i915/kmd.zig");
@@ -32,128 +33,128 @@ pub const SyncDependency = struct {
     signal: bool = false,
 };
 
-pub const Device = union(lib.KmdType) {
-    Invalid: void,
-    I915: i915_kmd.Device,
-    Xe: xe.Device,
+pub const Device = union(KmdType) {
+    invalid: void,
+    i915: i915_kmd.Device,
+    xe: xe.Device,
 
     pub fn open(io: std.Io, physical_device: *const FlintPhysicalDevice) VkError!Device {
         return switch (physical_device.kmd_type) {
-            .I915 => .{ .I915 = try i915_kmd.Device.open(io, physical_device.getNodePath()) },
-            .Xe => .{ .Xe = try xe.Device.open(io, physical_device.getNodePath()) },
-            .Invalid => VkError.InitializationFailed,
+            .i915 => .{ .i915 = try i915_kmd.Device.open(io, physical_device.getNodePath()) },
+            .xe => .{ .xe = try xe.Device.open(io, physical_device.getNodePath()) },
+            .invalid => VkError.InitializationFailed,
         };
     }
 
     pub fn close(self: *Device, io: std.Io) void {
         switch (self.*) {
-            .I915 => |*device| device.close(io),
-            .Xe => |*device| device.close(io),
-            .Invalid => {},
+            .i915 => |*device| device.close(io),
+            .xe => |*device| device.close(io),
+            .invalid => {},
         }
-        self.* = .{ .Invalid = {} };
+        self.* = .{ .invalid = {} };
     }
 
     pub fn allocateMemory(self: *Device, io: std.Io, size: vk.DeviceSize) VkError!Memory {
         return switch (self.*) {
-            .I915 => |*device| .{ .I915 = try device.allocateMemory(io, size) },
-            .Xe => |*device| .{ .Xe = try device.allocateMemory(io, size) },
-            .Invalid => VkError.OutOfDeviceMemory,
+            .i915 => |*device| .{ .i915 = try device.allocateMemory(io, size) },
+            .xe => |*device| .{ .xe = try device.allocateMemory(io, size) },
+            .invalid => VkError.OutOfDeviceMemory,
         };
     }
 
     pub fn submitBatch(self: *Device, io: std.Io, allocator: std.mem.Allocator, commands: []const u32, relocations: []const Relocation, syncs: []const SyncDependency) VkError!void {
         return switch (self.*) {
-            .I915 => |*device| device.submitBatch(io, allocator, commands, relocations, syncs),
-            .Xe => |*device| device.submitBatch(io, allocator, commands, relocations, syncs),
-            .Invalid => VkError.DeviceLost,
+            .i915 => |*device| device.submitBatch(io, allocator, commands, relocations, syncs),
+            .xe => |*device| device.submitBatch(io, allocator, commands, relocations, syncs),
+            .invalid => VkError.DeviceLost,
         };
     }
 
     pub fn file(self: *Device) VkError!std.Io.File {
         return switch (self.*) {
-            .I915 => |*device| device.card.handle,
-            .Xe => |*device| device.card.handle,
-            .Invalid => VkError.DeviceLost,
+            .i915 => |*device| device.card.handle,
+            .xe => |*device| device.card.handle,
+            .invalid => VkError.DeviceLost,
         };
     }
 };
 
-pub const Memory = union(lib.KmdType) {
-    Invalid: void,
-    I915: i915_kmd.Memory,
-    Xe: xe.Memory,
+pub const Memory = union(KmdType) {
+    invalid: void,
+    i915: i915_kmd.Memory,
+    xe: xe.Memory,
 
     pub fn deinit(self: *Memory, device: *Device, io: std.Io) void {
         switch (self.*) {
-            .I915 => |*memory| switch (device.*) {
-                .I915 => |*adapter| memory.deinit(adapter, io),
+            .i915 => |*memory| switch (device.*) {
+                .i915 => |*adapter| memory.deinit(adapter, io),
                 else => {},
             },
-            .Xe => |*memory| switch (device.*) {
-                .Xe => |*adapter| memory.deinit(adapter, io),
+            .xe => |*memory| switch (device.*) {
+                .xe => |*adapter| memory.deinit(adapter, io),
                 else => {},
             },
-            .Invalid => {},
+            .invalid => {},
         }
-        self.* = .{ .Invalid = {} };
+        self.* = .{ .invalid = {} };
     }
 
     pub fn map(self: *Memory, device: *Device, io: std.Io, offset: vk.DeviceSize, size: vk.DeviceSize) VkError![]u8 {
         return switch (self.*) {
-            .I915 => |*memory| switch (device.*) {
-                .I915 => |*adapter| memory.map(adapter, io, offset, size),
+            .i915 => |*memory| switch (device.*) {
+                .i915 => |*adapter| memory.map(adapter, io, offset, size),
                 else => VkError.MemoryMapFailed,
             },
-            .Xe => |*memory| switch (device.*) {
-                .Xe => |*adapter| memory.map(adapter, io, offset, size),
+            .xe => |*memory| switch (device.*) {
+                .xe => |*adapter| memory.map(adapter, io, offset, size),
                 else => VkError.MemoryMapFailed,
             },
-            .Invalid => VkError.MemoryMapFailed,
+            .invalid => VkError.MemoryMapFailed,
         };
     }
 
     pub fn unmap(self: *Memory) void {
         switch (self.*) {
-            .I915 => |*memory| memory.unmap(),
-            .Xe => |*memory| memory.unmap(),
-            .Invalid => {},
+            .i915 => |*memory| memory.unmap(),
+            .xe => |*memory| memory.unmap(),
+            .invalid => {},
         }
     }
 
     pub fn flushRange(self: *Memory, device: *Device, io: std.Io, offset: vk.DeviceSize, size: vk.DeviceSize) VkError!void {
         return switch (self.*) {
-            .I915 => |*memory| switch (device.*) {
-                .I915 => |*adapter| memory.flushRange(adapter, io, offset, size),
+            .i915 => |*memory| switch (device.*) {
+                .i915 => |*adapter| memory.flushRange(adapter, io, offset, size),
                 else => VkError.InvalidDeviceMemoryDrv,
             },
-            .Xe => |*memory| switch (device.*) {
-                .Xe => |*adapter| memory.flushRange(adapter, io, offset, size),
+            .xe => |*memory| switch (device.*) {
+                .xe => |*adapter| memory.flushRange(adapter, io, offset, size),
                 else => VkError.InvalidDeviceMemoryDrv,
             },
-            .Invalid => VkError.InvalidDeviceMemoryDrv,
+            .invalid => VkError.InvalidDeviceMemoryDrv,
         };
     }
 
     pub fn invalidateRange(self: *Memory, device: *Device, io: std.Io, offset: vk.DeviceSize, size: vk.DeviceSize) VkError!void {
         return switch (self.*) {
-            .I915 => |*memory| switch (device.*) {
-                .I915 => |*adapter| memory.invalidateRange(adapter, io, offset, size),
+            .i915 => |*memory| switch (device.*) {
+                .i915 => |*adapter| memory.invalidateRange(adapter, io, offset, size),
                 else => VkError.InvalidDeviceMemoryDrv,
             },
-            .Xe => |*memory| switch (device.*) {
-                .Xe => |*adapter| memory.invalidateRange(adapter, io, offset, size),
+            .xe => |*memory| switch (device.*) {
+                .xe => |*adapter| memory.invalidateRange(adapter, io, offset, size),
                 else => VkError.InvalidDeviceMemoryDrv,
             },
-            .Invalid => VkError.InvalidDeviceMemoryDrv,
+            .invalid => VkError.InvalidDeviceMemoryDrv,
         };
     }
 
     pub fn handle(self: *const Memory) VkError!u32 {
         return switch (self.*) {
-            .I915 => |*memory| memory.handle,
-            .Xe => VkError.FeatureNotPresent,
-            .Invalid => VkError.InvalidDeviceMemoryDrv,
+            .i915 => |*memory| memory.handle,
+            .xe => VkError.FeatureNotPresent,
+            .invalid => VkError.InvalidDeviceMemoryDrv,
         };
     }
 };

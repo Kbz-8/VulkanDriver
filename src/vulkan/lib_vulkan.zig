@@ -52,7 +52,7 @@ const has_wayland = switch (builtin.os.tag) {
     else => false,
 };
 
-pub const WaylandSurfaceKHR = if (has_wayland) @import("wsi/WaylandSurfaceKHR.zig") else undefined;
+pub const WaylandSurfaceKHR = if (has_wayland) @import("wsi/WaylandSurfaceKHR.zig") else null;
 
 inline fn entryPointBeginLogTrace(comptime scope: @EnumLiteral()) void {
     std.log.scoped(scope).debug("Calling {s}...", .{@tagName(scope)});
@@ -358,6 +358,7 @@ pub export fn apeCreateInstance(info: *const vk.InstanceCreateInfo, callbacks: ?
     const allocator = VulkanAllocator.init(callbacks, .instance).allocator();
     Instance.validateCreateInfo(info) catch |err| return toVkResult(err);
 
+    // SAFETY: will be proprely initiated when not in test
     var instance: *lib.Instance = undefined;
     if (!builtin.is_test) {
         // Will call impl instead of interface as `root` refs the impl module
@@ -365,12 +366,12 @@ pub export fn apeCreateInstance(info: *const vk.InstanceCreateInfo, callbacks: ?
     }
 
     instance.requestPhysicalDevices(allocator) catch |err| {
-        if (!builtin.is_test) instance.deinit(allocator) catch {};
+        if (!builtin.is_test) instance.deinit(allocator) catch @panic("Caught an error while handling an error");
         return toVkResult(err);
     };
 
     const dispatchable = Dispatchable(Instance).wrap(allocator, instance) catch |err| {
-        if (!builtin.is_test) instance.deinit(allocator) catch {};
+        if (!builtin.is_test) instance.deinit(allocator) catch @panic("Caught an error while handling an error");
         return toVkResult(err);
     };
     p_instance.* = dispatchable.toVkHandle(vk.Instance);
@@ -489,7 +490,7 @@ pub export fn apeCreateDevice(p_physical_device: vk.PhysicalDevice, info: *const
 
     const device = physical_device.createDevice(allocator, info) catch |err| return toVkResult(err);
     const dispatchable = Dispatchable(Device).wrap(allocator, device) catch |err| {
-        device.destroy(allocator) catch {};
+        device.destroy(allocator) catch @panic("Caught an error while handling an error");
         return toVkResult(err);
     };
     p_device.* = dispatchable.toVkHandle(vk.Device);

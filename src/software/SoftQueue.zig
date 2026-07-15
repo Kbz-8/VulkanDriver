@@ -3,9 +3,7 @@ const vk = @import("vulkan");
 const base = @import("base");
 
 const ExecutionDevice = @import("device/Device.zig");
-const Dispatchable = base.Dispatchable;
 
-const CommandBuffer = base.CommandBuffer;
 const SoftDevice = @import("SoftDevice.zig");
 const SoftCommandBuffer = @import("SoftCommandBuffer.zig");
 
@@ -109,6 +107,7 @@ fn executeSubmitInfo(soft_device: *SoftDevice, info: Interface.SubmitInfo) VkErr
         try semaphore.wait();
     }
 
+    // SAFETY: setup initializes every field before execution_device is read.
     var execution_device: ExecutionDevice = undefined;
     execution_device.setup(soft_device);
     defer execution_device.deinit(soft_device.interface.device_allocator.allocator());

@@ -8,10 +8,8 @@ const VertexInterpolationLocation = @import("rasterizer/common.zig").VertexInter
 
 const ExecutionDevice = @import("Device.zig");
 const Renderer = @import("Renderer.zig");
-const SoftImage = @import("../SoftImage.zig");
 const SoftPipeline = @import("../SoftPipeline.zig");
 
-const VkError = base.VkError;
 const SpvRuntimeError = spv.Runtime.RuntimeError;
 const INTERFACE_BLOB_PADDING = @sizeOf(zm.F32x4);
 const PROCESSED_INPUTS_STACK_CAPACITY = 4096;
@@ -49,8 +47,10 @@ pub fn shaderInvocation(
 
     const io = draw_call.renderer.device.interface.io();
 
+    // SAFETY: fragment dispatch only occurs after a graphics pipeline has been bound.
     const pipeline = draw_call.renderer.state.pipeline orelse return undefined;
 
+    // SAFETY: fragment dispatch only occurs when the bound pipeline has a fragment stage.
     const shader = pipeline.stages.getPtr(.fragment) orelse return undefined;
     const runtime = &shader.runtimes[batch_id];
     const mutex = &runtime.mutex;
@@ -245,7 +245,7 @@ pub fn shaderInvocation(
     }
 
     var depth: ?f32 = null;
-    var frag_depth: f32 = undefined;
+    var frag_depth: f32 = 0;
     if (rt.readBuiltIn(std.mem.asBytes(&frag_depth), .FragDepth)) {
         depth = frag_depth;
     } else |err| switch (err) {
@@ -254,7 +254,7 @@ pub fn shaderInvocation(
     }
 
     var sample_mask: ?vk.SampleMask = null;
-    var frag_sample_mask: [1]vk.SampleMask = undefined;
+    var frag_sample_mask: [1]vk.SampleMask = .{0};
     if (rt.readBuiltIn(std.mem.asBytes(&frag_sample_mask), .SampleMask)) {
         sample_mask = frag_sample_mask[0];
     } else |err| switch (err) {

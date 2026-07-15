@@ -96,6 +96,7 @@ pub fn init(allocator: std.mem.Allocator, device: *Device, index: u32, family_in
         .index = index,
         .flags = flags,
         .host_allocator = VulkanAllocator.from(allocator).clone(),
+        // SAFETY: the backend assigns the dispatch table before returning the queue.
         .dispatch_table = undefined,
     };
 }

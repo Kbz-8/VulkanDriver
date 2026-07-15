@@ -2,12 +2,10 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 
-const drm = @import("drm.zig");
+const _i915 = @import("i915.zig");
 const common_kmd = @import("../kmd.zig");
 
 const VkError = base.VkError;
-
-const IOCTL = std.os.linux.IOCTL;
 
 const Mapping = struct {
     bytes: []align(std.heap.page_size_min) u8,
@@ -33,12 +31,17 @@ pub const Device = struct {
     }
 
     pub fn allocateMemory(self: *Device, io: std.Io, size: vk.DeviceSize) VkError!Memory {
-        var create = drm.GemCreate{
+        var create = _i915.GemCreate{
             .size = size,
             .handle = 0,
             .pad = 0,
         };
-        base.utils.ioctl(self.card.handle, io, common_kmd.drmIoctlIowr(drm.command_base + drm.i915_gem_create, drm.GemCreate), &create) catch return VkError.OutOfDeviceMemory;
+        base.utils.ioctl(
+            self.card.handle,
+            io,
+            common_kmd.drmIoctlIowr(_i915.command_base + _i915.gem_create, _i915.GemCreate),
+            &create,
+        ) catch return VkError.OutOfDeviceMemory;
 
         var memory = Memory{
             .handle = create.handle,
@@ -47,7 +50,7 @@ pub const Device = struct {
         };
         errdefer memory.deinit(self, io);
 
-        try memory.setDomain(self, io, drm.i915_gem_domain_cpu, 0);
+        try memory.setDomain(self, io, _i915.gem_domain_cpu, 0);
         return memory;
     }
 
@@ -61,7 +64,7 @@ pub const Device = struct {
             const batch_map = try batch.map(self, io, 0, batch_size);
             const batch_words = std.mem.bytesAsSlice(u32, batch_map);
             @memcpy(batch_words[0..commands.len], commands);
-            batch_words[commands.len + 0] = drm.mi_flush_dw;
+            batch_words[commands.len + 0] = _i915.mi_flush_dw;
             batch_words[commands.len + 1] = 0;
             batch_words[commands.len + 2] = 0;
             batch_words[commands.len + 3] = 0;
@@ -71,7 +74,7 @@ pub const Device = struct {
         }
         try batch.flushRange(self, io, 0, batch_size);
 
-        var objects = std.ArrayList(drm.ExecObject2).empty;
+        var objects = std.ArrayList(_i915.ExecObject2).empty;
         defer objects.deinit(allocator);
 
         var object_handles = std.ArrayList(u32).empty;
@@ -86,17 +89,17 @@ pub const Device = struct {
                     .relocs_ptr = 0,
                     .alignment = 0,
                     .offset = 0,
-                    .flags = if (relocation.write) drm.exec_object_write else 0,
+                    .flags = if (relocation.write) _i915.exec_object_write else 0,
                     .rsvd1 = 0,
                     .rsvd2 = 0,
                 }) catch return VkError.OutOfHostMemory;
             } else if (relocation.write) {
                 const index = std.mem.indexOfScalar(u32, object_handles.items, relocation.target_handle).?;
-                objects.items[index].flags |= drm.exec_object_write;
+                objects.items[index].flags |= _i915.exec_object_write;
             }
         }
 
-        var i915_relocations = std.ArrayList(drm.RelocationEntry).empty;
+        var i915_relocations = std.ArrayList(_i915.RelocationEntry).empty;
         defer i915_relocations.deinit(allocator);
 
         for (relocations) |relocation| {
@@ -121,17 +124,16 @@ pub const Device = struct {
             .rsvd2 = 0,
         }) catch return VkError.OutOfHostMemory;
 
-        var exec_fences = std.ArrayList(drm.ExecFence).empty;
+        var exec_fences = std.ArrayList(_i915.ExecFence).empty;
         defer exec_fences.deinit(allocator);
         for (syncs) |sync| {
             exec_fences.append(allocator, .{
                 .handle = sync.handle,
-                .flags = (if (sync.wait) drm.i915_exec_fence_wait else 0) |
-                    (if (sync.signal) drm.i915_exec_fence_signal else 0),
+                .flags = (if (sync.wait) _i915.exec_fence_wait else 0) | (if (sync.signal) _i915.exec_fence_signal else 0),
             }) catch return VkError.OutOfHostMemory;
         }
 
-        var execbuffer = drm.ExecBuffer2{
+        var execbuffer = _i915.ExecBuffer2{
             .buffers_ptr = @intFromPtr(objects.items.ptr),
             .buffer_count = @intCast(objects.items.len),
             .batch_start_offset = 0,
@@ -140,11 +142,16 @@ pub const Device = struct {
             .DR4 = 0,
             .num_cliprects = @intCast(exec_fences.items.len),
             .cliprects_ptr = if (exec_fences.items.len == 0) 0 else @intFromPtr(exec_fences.items.ptr),
-            .flags = drm.i915_exec_blt | (if (exec_fences.items.len == 0) 0 else drm.i915_exec_fence_array),
+            .flags = _i915.exec_blt | (if (exec_fences.items.len == 0) 0 else _i915.exec_fence_array),
             .rsvd1 = 0,
             .rsvd2 = 0,
         };
-        base.utils.ioctl(self.card.handle, io, common_kmd.drmIoctlIowr(drm.command_base + drm.i915_gem_execbuffer2, drm.ExecBuffer2), &execbuffer) catch return VkError.DeviceLost;
+        base.utils.ioctl(
+            self.card.handle,
+            io,
+            common_kmd.drmIoctlIowr(_i915.command_base + _i915.gem_execbuffer2, _i915.ExecBuffer2),
+            &execbuffer,
+        ) catch return VkError.DeviceLost;
     }
 };
 
@@ -156,11 +163,11 @@ pub const Memory = struct {
     pub fn deinit(self: *Memory, device: *Device, io: std.Io) void {
         self.unmap();
 
-        var close = drm.GemClose{
+        var close = _i915.GemClose{
             .handle = self.handle,
             .pad = 0,
         };
-        base.utils.ioctl(device.card.handle, io, common_kmd.drmIoctlIow(drm.gem_close, drm.GemClose), &close) catch {};
+        base.utils.ioctl(device.card.handle, io, common_kmd.drmIoctlIow(_i915.gem_close, _i915.GemClose), &close) catch @panic("Caught an error while handling an error");
 
         self.* = undefined;
     }
@@ -176,14 +183,19 @@ pub const Memory = struct {
             return mapping.slice(offset, map_size);
         }
 
-        var mmap_offset = drm.GemMmapOffset{
+        var mmap_offset = _i915.GemMmapOffset{
             .handle = self.handle,
             .pad = 0,
             .offset = 0,
-            .flags = drm.i915_mmap_offset_wb,
+            .flags = _i915.mmap_offset_wb,
             .extensions = 0,
         };
-        base.utils.ioctl(device.card.handle, io, common_kmd.drmIoctlIowr(drm.command_base + drm.i915_gem_mmap_gtt, drm.GemMmapOffset), &mmap_offset) catch return VkError.MemoryMapFailed;
+        base.utils.ioctl(
+            device.card.handle,
+            io,
+            common_kmd.drmIoctlIowr(_i915.command_base + _i915.gem_mmap_gtt, _i915.GemMmapOffset),
+            &mmap_offset,
+        ) catch return VkError.MemoryMapFailed;
 
         if (self.size > std.math.maxInt(usize)) return VkError.MemoryMapFailed;
         const full_size: usize = @intCast(self.size);
@@ -210,21 +222,26 @@ pub const Memory = struct {
     pub fn flushRange(self: *Memory, device: *Device, io: std.Io, offset: vk.DeviceSize, size: vk.DeviceSize) VkError!void {
         _ = offset;
         _ = size;
-        try self.setDomain(device, io, drm.i915_gem_domain_cpu, 0);
+        try self.setDomain(device, io, _i915.gem_domain_cpu, 0);
     }
 
     pub fn invalidateRange(self: *Memory, device: *Device, io: std.Io, offset: vk.DeviceSize, size: vk.DeviceSize) VkError!void {
         _ = offset;
         _ = size;
-        try self.setDomain(device, io, drm.i915_gem_domain_cpu, 0);
+        try self.setDomain(device, io, _i915.gem_domain_cpu, 0);
     }
 
     fn setDomain(self: *Memory, device: *Device, io: std.Io, read_domains: u32, write_domain: u32) VkError!void {
-        var domain = drm.GemSetDomain{
+        var domain = _i915.GemSetDomain{
             .handle = self.handle,
             .read_domains = read_domains,
             .write_domain = write_domain,
         };
-        base.utils.ioctl(device.card.handle, io, common_kmd.drmIoctlIow(drm.command_base + drm.i915_gem_set_domain, drm.GemSetDomain), &domain) catch return VkError.DeviceLost;
+        base.utils.ioctl(
+            device.card.handle,
+            io,
+            common_kmd.drmIoctlIow(_i915.command_base + _i915.gem_set_domain, _i915.GemSetDomain),
+            &domain,
+        ) catch return VkError.DeviceLost;
     }
 };

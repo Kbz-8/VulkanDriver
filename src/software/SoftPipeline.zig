@@ -7,7 +7,6 @@ const zm = base.zm;
 
 const blitter = @import("device/blitter.zig");
 
-const Device = base.Device;
 const VkError = base.VkError;
 const SpvRuntimeError = spv.Runtime.RuntimeError;
 
@@ -31,7 +30,6 @@ pub threadlocal var current_framebuffer_attachment_count: usize = 0;
 const NonDispatchable = base.NonDispatchable;
 const ShaderModule = base.ShaderModule;
 
-const SoftDevice = @import("SoftDevice.zig");
 const SoftBuffer = @import("SoftBuffer.zig");
 const SoftBufferView = @import("SoftBufferView.zig");
 const SoftImage = @import("SoftImage.zig");

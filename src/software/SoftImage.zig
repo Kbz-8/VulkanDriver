@@ -61,10 +61,8 @@ const F32x4 = blitter.F32x4;
 const U32x4 = blitter.U32x4;
 
 const VkError = base.VkError;
-const Device = base.Device;
 
 const SoftBuffer = @import("SoftBuffer.zig");
-const SoftDevice = @import("SoftDevice.zig");
 
 const Self = @This();
 pub const Interface = base.Image;

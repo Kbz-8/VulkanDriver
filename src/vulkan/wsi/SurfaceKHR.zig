@@ -39,6 +39,7 @@ pub fn init(instance: *Instance, allocator: std.mem.Allocator) VkError!Self {
     return .{
         .owner = instance,
         .swapchain = null,
+        // SAFETY: the backend assigns the vtable before returning the surface.
         .vtable = undefined,
     };
 }

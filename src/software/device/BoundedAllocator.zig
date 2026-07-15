@@ -1,5 +1,4 @@
 const std = @import("std");
-const base = @import("base");
 
 const Self = @This();
 

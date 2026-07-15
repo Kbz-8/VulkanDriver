@@ -3,9 +3,6 @@ const vk = @import("vulkan");
 const base = @import("base");
 
 const VkError = base.VkError;
-const VulkanAllocator = base.VulkanAllocator;
-
-const Device = base.Device;
 
 const Self = @This();
 pub const Interface = base.DescriptorPool;

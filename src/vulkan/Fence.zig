@@ -25,6 +25,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Fence
     return .{
         .owner = device,
         .flags = info.flags,
+        // SAFETY: the backend assigns the vtable before returning the fence.
         .vtable = undefined,
     };
 }

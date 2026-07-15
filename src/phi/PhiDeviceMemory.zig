@@ -46,7 +46,7 @@ pub fn create(device: *PhiDevice, allocator: std.mem.Allocator, size: vk.DeviceS
             .flags = 0,
         };
 
-        var reply: proto.PhiAllocMemoryReply = undefined;
+        var reply = std.mem.zeroes(proto.PhiAllocMemoryReply);
         try device.transport.request(proto.PHI_PACKET_ALLOC_MEMORY, std.mem.asBytes(&alloc_request), std.mem.asBytes(&reply));
 
         if (reply.result.status != proto.PHI_STATUS_OK) {

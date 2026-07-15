@@ -10,7 +10,6 @@ const pci_ids = @import("pci_ids.zig").map;
 const PhiDevice = @import("PhiDevice.zig");
 
 const VkError = base.VkError;
-const VulkanAllocator = base.VulkanAllocator;
 const SurfaceKHR = base.SurfaceKHR;
 
 const Self = @This();
@@ -87,7 +86,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, mic_device
         return VkError.InitializationFailed;
     }
 
-    interface.props.pipeline_cache_uuid = undefined;
+    interface.props.pipeline_cache_uuid = @splat(0);
     interface.props.limits = .{
         .max_image_dimension_1d = 4096,
         .max_image_dimension_2d = 4096,
@@ -872,10 +871,10 @@ fn cpuid(leaf_id: u32, subleaf_id: u32) CpuidRegs {
         }
     }
 
-    var eax: u32 = undefined;
-    var ebx: u32 = undefined;
-    var ecx: u32 = undefined;
-    var edx: u32 = undefined;
+    var eax: u32 = 0;
+    var ebx: u32 = 0;
+    var ecx: u32 = 0;
+    var edx: u32 = 0;
 
     asm volatile ("cpuid"
         : [_] "={eax}" (eax),

@@ -39,8 +39,9 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Pipel
         .set_layouts = [_]?*DescriptorSetLayout{null} ** lib.VULKAN_MAX_DESCRIPTOR_SETS,
         .dynamic_descriptor_offsets = [_]usize{0} ** lib.VULKAN_MAX_DESCRIPTOR_SETS,
         .push_ranges_count = info.push_constant_range_count,
-        .push_ranges = undefined,
+        .push_ranges = @splat(std.mem.zeroes(vk.PushConstantRange)),
         .ref_count = std.atomic.Value(usize).init(1),
+        // SAFETY: the backend assigns the vtable before returning the pipeline layout.
         .vtable = undefined,
     };
 
