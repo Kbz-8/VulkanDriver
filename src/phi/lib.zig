@@ -38,11 +38,11 @@ pub const PhiShaderModule = @import("PhiShaderModule.zig");
 
 pub const Instance = PhiInstance;
 
-pub const DRIVER_NAME = "Phi";
+pub const driver_name = "Phi";
 
-pub const PHYSICAL_DEVICE_DEFAULT_NAME = "Intel(R) Xeon Phi(TM) Coprocessor";
+pub const physical_device_default_name = "Intel(R) Xeon Phi(TM) Coprocessor";
 
-pub const VULKAN_VERSION = vk.makeApiVersion(
+pub const vulkan_version = vk.makeApiVersion(
     0,
     config.phi_vulkan_version.major,
     config.phi_vulkan_version.minor,

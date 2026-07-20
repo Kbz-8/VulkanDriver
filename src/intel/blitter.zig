@@ -32,7 +32,7 @@ pub fn blitImageRegion(cmd: *FlintCommandBuffer, src: *base.Image, dst: *base.Im
     if (base.format.isCompressed(src_format) or base.format.isCompressed(dst_format))
         return VkError.FormatNotSupported;
 
-    // XY_SRC_COPY_BLT does not perform component conversion. Different Vulkan
+    // xy_src_copy_blt does not perform component conversion. Different Vulkan
     // names are safe only when they describe the same bytes and values.
     if (!bitwiseCompatibleFormats(src_format, dst_format) or src_texel_size != dst_texel_size)
         return VkError.FormatNotSupported;

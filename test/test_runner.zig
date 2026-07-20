@@ -5,7 +5,7 @@ const builtin = @import("builtin");
 
 const Allocator = std.mem.Allocator;
 
-const BORDER = "=" ** 80;
+const border = "=" ** 80;
 
 // use in custom panic handler
 var current_test: ?[]const u8 = null;
@@ -64,7 +64,7 @@ pub fn main() !void {
 
         if (std.testing.allocator_instance.deinit() == .leak) {
             leak += 1;
-            Printer.status(.fail, "\n{s}\n\"{s}\" - Memory Leak\n{s}\n", .{ BORDER, friendly_name, BORDER });
+            Printer.status(.fail, "\n{s}\n\"{s}\" - Memory Leak\n{s}\n", .{ border, friendly_name, border });
         }
 
         if (result) |_| {
@@ -77,7 +77,7 @@ pub fn main() !void {
             else => {
                 status = .fail;
                 fail += 1;
-                Printer.status(.fail, "\n{s}\n\"{s}\" - {s}\n{s}\n", .{ BORDER, friendly_name, @errorName(err), BORDER });
+                Printer.status(.fail, "\n{s}\n\"{s}\" - {s}\n{s}\n", .{ border, friendly_name, @errorName(err), border });
                 if (@errorReturnTrace()) |trace| {
                     std.debug.dumpErrorReturnTrace(trace);
                 }
@@ -214,7 +214,7 @@ const SlowTracker = struct {
 pub const panic = std.debug.FullPanic(struct {
     pub fn panicFn(msg: []const u8, first_trace_addr: ?usize) noreturn {
         if (current_test) |ct| {
-            Printer.fmt("\x1b[31m{s}\npanic running \"{s}\"\n{s}\x1b[0m\n", .{ BORDER, ct, BORDER });
+            Printer.fmt("\x1b[31m{s}\npanic running \"{s}\"\n{s}\x1b[0m\n", .{ border, ct, border });
         }
         std.debug.defaultPanic(msg, first_trace_addr);
     }

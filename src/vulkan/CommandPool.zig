@@ -13,7 +13,7 @@ pub const ObjectType: vk.ObjectType = .command_pool;
 
 /// Base capacity of the command buffer pool.
 /// Every increase of the capacity will be by this amount.
-pub const BUFFER_POOL_BASE_CAPACITY = 64;
+pub const buffer_pool_base_capacity = 64;
 
 owner: *Device,
 flags: vk.CommandPoolCreateFlags,
@@ -42,7 +42,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Comma
         .flags = info.flags,
         .queue_family_index = info.queue_family_index,
         .host_allocator = VulkanAllocator.from(allocator).clone(),
-        .buffers = std.ArrayList(*Dispatchable(CommandBuffer)).initCapacity(allocator, BUFFER_POOL_BASE_CAPACITY) catch return VkError.OutOfHostMemory,
+        .buffers = std.ArrayList(*Dispatchable(CommandBuffer)).initCapacity(allocator, buffer_pool_base_capacity) catch return VkError.OutOfHostMemory,
         .first_free_buffer_index = 0,
         // SAFETY: the backend assigns the vtable before returning the command pool.
         .vtable = undefined,
@@ -54,7 +54,7 @@ pub fn allocateCommandBuffers(self: *Self, info: *const vk.CommandBufferAllocate
 
     if (self.buffers.items.len < self.first_free_buffer_index + info.command_buffer_count) {
         while (self.buffers.capacity < self.buffers.items.len + info.command_buffer_count) {
-            self.buffers.ensureUnusedCapacity(allocator, BUFFER_POOL_BASE_CAPACITY) catch return VkError.OutOfHostMemory;
+            self.buffers.ensureUnusedCapacity(allocator, buffer_pool_base_capacity) catch return VkError.OutOfHostMemory;
         }
         const original_len = self.buffers.items.len;
         errdefer {

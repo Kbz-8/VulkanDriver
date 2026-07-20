@@ -11,16 +11,16 @@ pub const wl_registry_listener = extern struct {
     global_remove: ?*const fn (data: ?*anyopaque, wl_registry: ?*wl_registry, name: u32) callconv(.c) void = null,
 };
 
-pub const WL_BUFFER_DESTROY: c_int = 0;
-pub const WL_DISPLAY_GET_REGISTRY: c_int = 1;
-pub const WL_REGISTRY_BIND: c_int = 0;
-pub const WL_SHM_CREATE_POOL: c_int = 0;
-pub const WL_SHM_FORMAT_ARGB8888: c_int = 0;
-pub const WL_SHM_POOL_CREATE_BUFFER: c_int = 0;
-pub const WL_SHM_POOL_DESTROY: c_int = 1;
-pub const WL_SURFACE_ATTACH: c_int = 1;
-pub const WL_SURFACE_COMMIT: c_int = 6;
-pub const WL_SURFACE_DAMAGE: c_int = 2;
+pub const wl_buffer_destroy_opcode: c_int = 0;
+pub const wl_display_get_registry_opcode: c_int = 1;
+pub const wl_registry_bind_opcode: c_int = 0;
+pub const wl_shm_create_pool_opcode: c_int = 0;
+pub const wl_shm_format_argb8888: c_int = 0;
+pub const wl_shm_pool_create_buffer_opcode: c_int = 0;
+pub const wl_shm_pool_destroy_opcode: c_int = 1;
+pub const wl_surface_attach_opcode: c_int = 1;
+pub const wl_surface_commit_opcode: c_int = 6;
+pub const wl_surface_damage_opcode: c_int = 2;
 
 pub const wl_buffer = opaque {};
 pub const wl_callback = opaque {};
@@ -104,7 +104,7 @@ pub fn unload() void {
 pub fn wl_registry_bind(registry: *wl_registry, name: u32, interface: *const wl_interface, version: u32) ?*wl_proxy {
     return wl_proxy_marshal_flags(
         @ptrCast(@alignCast(registry)),
-        WL_REGISTRY_BIND,
+        wl_registry_bind_opcode,
         interface,
         version,
         0,
@@ -118,7 +118,7 @@ pub fn wl_registry_bind(registry: *wl_registry, name: u32, interface: *const wl_
 pub fn wl_display_get_registry(display: *wl_display) ?*wl_registry {
     return @ptrCast(@alignCast(wl_proxy_marshal_flags(
         @ptrCast(@alignCast(display)),
-        WL_DISPLAY_GET_REGISTRY,
+        wl_display_get_registry_opcode,
         wl_registry_interface,
         wl_proxy_get_version(@ptrCast(@alignCast(display))),
         0,
@@ -133,7 +133,7 @@ pub fn wl_registry_add_listener(registry: *wl_registry, listener: *const wl_regi
 pub fn wl_shm_create_pool(shm: *wl_shm, fd: i32, size: i32) callconv(.c) ?*wl_shm_pool {
     return @ptrCast(@alignCast(wl_proxy_marshal_flags(
         @ptrCast(@alignCast(shm)),
-        WL_SHM_CREATE_POOL,
+        wl_shm_create_pool_opcode,
         wl_shm_pool_interface,
         wl_proxy_get_version(@ptrCast(@alignCast(shm))),
         0,
@@ -146,7 +146,7 @@ pub fn wl_shm_create_pool(shm: *wl_shm, fd: i32, size: i32) callconv(.c) ?*wl_sh
 pub fn wl_shm_pool_destroy(shm_pool: *wl_shm_pool) void {
     _ = wl_proxy_marshal_flags(
         @ptrCast(@alignCast(shm_pool)),
-        WL_SHM_POOL_DESTROY,
+        wl_shm_pool_destroy_opcode,
         null,
         wl_proxy_get_version(@ptrCast(@alignCast(shm_pool))),
         @bitCast(@as(c_int, @as(c_int, 1) << @intCast(@as(c_int, 0)))),
@@ -156,7 +156,7 @@ pub fn wl_shm_pool_destroy(shm_pool: *wl_shm_pool) void {
 pub fn wl_shm_pool_create_buffer(shm_pool: *wl_shm_pool, offset: i32, width: i32, height: i32, stride: i32, format: u32) ?*wl_buffer {
     return @ptrCast(@alignCast(wl_proxy_marshal_flags(
         @ptrCast(@alignCast(shm_pool)),
-        WL_SHM_POOL_CREATE_BUFFER,
+        wl_shm_pool_create_buffer_opcode,
         wl_buffer_interface,
         wl_proxy_get_version(@ptrCast(@alignCast(shm_pool))),
         0,
@@ -172,7 +172,7 @@ pub fn wl_shm_pool_create_buffer(shm_pool: *wl_shm_pool, offset: i32, width: i32
 pub fn wl_buffer_destroy(buffer: *wl_buffer) void {
     _ = wl_proxy_marshal_flags(
         @ptrCast(@alignCast(buffer)),
-        WL_BUFFER_DESTROY,
+        wl_buffer_destroy_opcode,
         null,
         wl_proxy_get_version(@ptrCast(@alignCast(buffer))),
         @bitCast(@as(c_int, @as(c_int, 1) << @intCast(@as(c_int, 0)))),
@@ -182,7 +182,7 @@ pub fn wl_buffer_destroy(buffer: *wl_buffer) void {
 pub fn wl_surface_attach(surface: *wl_surface, buffer: *wl_buffer, x: i32, y: i32) void {
     _ = wl_proxy_marshal_flags(
         @ptrCast(@alignCast(surface)),
-        WL_SURFACE_ATTACH,
+        wl_surface_attach_opcode,
         null,
         wl_proxy_get_version(@ptrCast(@alignCast(surface))),
         0,
@@ -195,7 +195,7 @@ pub fn wl_surface_attach(surface: *wl_surface, buffer: *wl_buffer, x: i32, y: i3
 pub fn wl_surface_damage(surface: *wl_surface, x: i32, y: i32, width: i32, height: i32) void {
     _ = wl_proxy_marshal_flags(
         @ptrCast(@alignCast(surface)),
-        WL_SURFACE_DAMAGE,
+        wl_surface_damage_opcode,
         null,
         wl_proxy_get_version(@ptrCast(@alignCast(surface))),
         0,
@@ -209,7 +209,7 @@ pub fn wl_surface_damage(surface: *wl_surface, x: i32, y: i32, width: i32, heigh
 pub fn wl_surface_commit(surface: *wl_surface) void {
     _ = wl_proxy_marshal_flags(
         @ptrCast(@alignCast(surface)),
-        WL_SURFACE_COMMIT,
+        wl_surface_commit_opcode,
         null,
         wl_proxy_get_version(@ptrCast(@alignCast(surface))),
         0,

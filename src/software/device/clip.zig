@@ -10,7 +10,7 @@ const Renderer = @import("Renderer.zig");
 const Vertex = Renderer.Vertex;
 
 const VkError = base.VkError;
-const INTERFACE_BLOB_PADDING = @sizeOf(F32x4);
+const interface_blob_padding = @sizeOf(F32x4);
 
 const ClipPlane = enum {
     left,
@@ -21,7 +21,7 @@ const ClipPlane = enum {
     far,
 };
 
-const MAX_CLIPPED_POLYGON_VERTICES = 16;
+const max_clipped_polygon_vertices = 16;
 
 pub const ClippedLine = struct {
     v0: Vertex,
@@ -29,7 +29,7 @@ pub const ClippedLine = struct {
 };
 
 const ClippedPolygon = struct {
-    vertices: [MAX_CLIPPED_POLYGON_VERTICES]Vertex = std.mem.zeroes([MAX_CLIPPED_POLYGON_VERTICES]Vertex),
+    vertices: [max_clipped_polygon_vertices]Vertex = std.mem.zeroes([max_clipped_polygon_vertices]Vertex),
     len: usize = 0,
 
     fn append(self: *@This(), vertex: Vertex) VkError!void {
@@ -146,7 +146,7 @@ fn isVertexInsidePlane(vertex: *const Vertex, plane: ClipPlane) bool {
 
 fn interpolateBlob(allocator: std.mem.Allocator, a: []const u8, b: []const u8, size: usize, t: f32) VkError![]u8 {
     const len = @min(size, a.len, b.len);
-    const result = allocator.alloc(u8, len + INTERFACE_BLOB_PADDING) catch return VkError.OutOfDeviceMemory;
+    const result = allocator.alloc(u8, len + interface_blob_padding) catch return VkError.OutOfDeviceMemory;
     @memset(result, 0);
 
     var byte_index: usize = 0;

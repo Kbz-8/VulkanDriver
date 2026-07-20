@@ -14,7 +14,7 @@ pub const Interface = base.Instance;
 interface: Interface,
 backend_instances: std.ArrayList(*Interface),
 
-pub const EXTENSIONS = soft.Instance.EXTENSIONS;
+pub const extensions = soft.Instance.extensions;
 
 pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) VkError!*Interface {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;

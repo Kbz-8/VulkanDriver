@@ -22,7 +22,7 @@ fn castExtension(comptime ext: vk.ApiInfo) vk.ExtensionProperties {
     return props;
 }
 
-pub const EXTENSIONS = [_]vk.ExtensionProperties{
+pub const extensions = [_]vk.ExtensionProperties{
     castExtension(vk.extensions.khr_device_group),
     castExtension(vk.extensions.khr_swapchain),
 };
@@ -56,11 +56,11 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
         .getSurfaceSupportKHR = getSurfaceSupportKHR,
     };
 
-    interface.props.api_version = @bitCast(lib.VULKAN_VERSION);
-    interface.props.driver_version = @bitCast(base.DRIVER_VERSION);
-    interface.props.device_id = lib.DEVICE_ID;
+    interface.props.api_version = @bitCast(lib.vulkan_version);
+    interface.props.driver_version = @bitCast(base.driver_version);
+    interface.props.device_id = lib.device_id;
     interface.props.device_type = .cpu;
-    interface.props.pipeline_cache_uuid = lib.PIPELINE_CACHE_UUID;
+    interface.props.pipeline_cache_uuid = lib.pipeline_cache_uuid;
     interface.props.limits = .{
         .max_image_dimension_1d = 4096,
         .max_image_dimension_2d = 4096,
@@ -70,12 +70,12 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
         .max_texel_buffer_elements = 65536,
         .max_uniform_buffer_range = 16384,
         .max_storage_buffer_range = 134217728,
-        .max_push_constants_size = lib.PUSH_CONSTANT_SIZE,
+        .max_push_constants_size = lib.push_constant_size,
         .max_memory_allocation_count = std.math.maxInt(u32),
         .max_sampler_allocation_count = 4096,
         .buffer_image_granularity = 131072,
         .sparse_address_space_size = 0,
-        .max_bound_descriptor_sets = base.VULKAN_MAX_DESCRIPTOR_SETS,
+        .max_bound_descriptor_sets = base.vulkan_max_descriptor_sets,
         .max_per_stage_descriptor_samplers = 16,
         .max_per_stage_descriptor_uniform_buffers = 12,
         .max_per_stage_descriptor_storage_buffers = 4,
@@ -91,8 +91,8 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
         .max_descriptor_set_sampled_images = 96,
         .max_descriptor_set_storage_images = 24,
         .max_descriptor_set_input_attachments = 4,
-        .max_vertex_input_attributes = lib.MAX_VERTEX_INPUT_ATTRIBUTES,
-        .max_vertex_input_bindings = lib.MAX_VERTEX_INPUT_BINDINGS,
+        .max_vertex_input_attributes = lib.max_vertex_input_attributes,
+        .max_vertex_input_bindings = lib.max_vertex_input_bindings,
         .max_vertex_input_attribute_offset = 2047,
         .max_vertex_input_binding_stride = 2048,
         .max_vertex_output_components = 64,
@@ -182,7 +182,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
     };
     interface.mem_props.memory_heap_count = 1;
     interface.mem_props.memory_heaps[0] = .{
-        .size = std.process.totalSystemMemory() catch lib.PHYSICAL_DEVICE_FALLBACK_HEAP_SIZE,
+        .size = std.process.totalSystemMemory() catch lib.physical_device_fallback_heap_size,
         .flags = .{ .device_local_bit = true },
     };
 
@@ -240,12 +240,12 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
                 }
             }
 
-            break :blk command_allocator.dupe(u8, lib.PHYSICAL_DEVICE_DEFAULT_NAME) catch return VkError.OutOfHostMemory;
+            break :blk command_allocator.dupe(u8, lib.physical_device_default_name) catch return VkError.OutOfHostMemory;
         };
         defer command_allocator.free(name);
 
         var writer = std.Io.Writer.fixed(device_name[0 .. vk.MAX_PHYSICAL_DEVICE_NAME_SIZE - 1]);
-        writer.print("{s} [" ++ lib.DRIVER_NAME ++ " ApeDriver]", .{name}) catch return VkError.InitializationFailed;
+        writer.print("{s} [" ++ lib.driver_name ++ " ApeDriver]", .{name}) catch return VkError.InitializationFailed;
     }
 
     @memcpy(&interface.props.device_name, &device_name);
@@ -277,10 +277,10 @@ pub fn enumerateExtensionProperties(_: *const Interface, layer_name: ?[]const u8
         return VkError.LayerNotPresent;
     }
 
-    const available = EXTENSIONS.len;
+    const available = extensions.len;
     if (p_properties) |properties| {
         const write_count = @min(count.*, available);
-        for (EXTENSIONS[0..write_count], properties[0..write_count]) |ext, *prop| {
+        for (extensions[0..write_count], properties[0..write_count]) |ext, *prop| {
             prop.* = ext;
         }
         count.* = @intCast(write_count);
@@ -752,26 +752,26 @@ pub fn getImageFormatProperties(
     var properties: vk.ImageFormatProperties = .{
         .max_extent = .{ .width = 0, .height = 0, .depth = 1 },
         .max_mip_levels = 1,
-        .max_array_layers = lib.MAX_IMAGE_ARRAY_LAYERS,
+        .max_array_layers = lib.max_image_array_layers,
         .sample_counts = .{ .@"1_bit" = true },
         .max_resource_size = std.math.maxInt(u32),
     };
 
     switch (image_type) {
         .@"1d" => {
-            properties.max_mip_levels = lib.MAX_IMAGE_LEVELS_1D;
-            properties.max_extent.width = 1 << (lib.MAX_IMAGE_LEVELS_1D - 1);
+            properties.max_mip_levels = lib.max_image_levels_1d;
+            properties.max_extent.width = 1 << (lib.max_image_levels_1d - 1);
             properties.max_extent.height = 1;
         },
         .@"2d" => {
             if (flags.cube_compatible_bit) {
-                properties.max_mip_levels = lib.MAX_IMAGE_LEVELS_CUBE;
-                properties.max_extent.width = 1 << (lib.MAX_IMAGE_LEVELS_CUBE - 1);
-                properties.max_extent.height = 1 << (lib.MAX_IMAGE_LEVELS_CUBE - 1);
+                properties.max_mip_levels = lib.max_image_levels_cube;
+                properties.max_extent.width = 1 << (lib.max_image_levels_cube - 1);
+                properties.max_extent.height = 1 << (lib.max_image_levels_cube - 1);
             } else {
-                properties.max_mip_levels = lib.MAX_IMAGE_LEVELS_2D;
-                properties.max_extent.width = 1 << (lib.MAX_IMAGE_LEVELS_2D - 1);
-                properties.max_extent.height = 1 << (lib.MAX_IMAGE_LEVELS_2D - 1);
+                properties.max_mip_levels = lib.max_image_levels_2d;
+                properties.max_extent.width = 1 << (lib.max_image_levels_2d - 1);
+                properties.max_extent.height = 1 << (lib.max_image_levels_2d - 1);
 
                 const format_properties = try interface.getFormatProperties(format);
                 const format_features = if (tiling == .linear) format_properties.linear_tiling_features else format_properties.optimal_tiling_features;
@@ -781,10 +781,10 @@ pub fn getImageFormatProperties(
             }
         },
         .@"3d" => {
-            properties.max_mip_levels = lib.MAX_IMAGE_LEVELS_3D;
-            properties.max_extent.width = 1 << (lib.MAX_IMAGE_LEVELS_3D - 1);
-            properties.max_extent.height = 1 << (lib.MAX_IMAGE_LEVELS_3D - 1);
-            properties.max_extent.depth = 1 << (lib.MAX_IMAGE_LEVELS_3D - 1);
+            properties.max_mip_levels = lib.max_image_levels_3d;
+            properties.max_extent.width = 1 << (lib.max_image_levels_3d - 1);
+            properties.max_extent.height = 1 << (lib.max_image_levels_3d - 1);
+            properties.max_extent.depth = 1 << (lib.max_image_levels_3d - 1);
             properties.max_array_layers = 1;
         },
         else => return VkError.FormatNotSupported,

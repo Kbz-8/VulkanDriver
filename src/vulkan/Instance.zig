@@ -13,8 +13,8 @@ const root = @import("root");
 
 comptime {
     if (!builtin.is_test) {
-        if (!@hasDecl(root, "VULKAN_VERSION")) {
-            @compileError("Missing VULKAN_VERSION in module root");
+        if (!@hasDecl(root, "vulkan_version")) {
+            @compileError("Missing vulkan_version in module root");
         }
     }
 }
@@ -23,7 +23,7 @@ const Self = @This();
 pub const ObjectType: vk.ObjectType = .instance;
 
 /// Dummy
-pub const EXTENSIONS = [_]vk.ExtensionProperties{};
+pub const extensions = [_]vk.ExtensionProperties{};
 
 physical_devices: std.ArrayList(*Dispatchable(PhysicalDevice)),
 
@@ -58,7 +58,7 @@ pub fn validateCreateInfo(info: *const vk.InstanceCreateInfo) VkError!void {
         const supported: vk.Version = if (comptime builtin.is_test)
             vk.API_VERSION_1_0
         else
-            @bitCast(root.VULKAN_VERSION);
+            @bitCast(root.vulkan_version);
         if (requested.variant != 0 or requested.major > supported.major or (requested.major == supported.major and requested.minor > supported.minor)) {
             return VkError.IncompatibleDriver;
         }
@@ -78,7 +78,7 @@ pub fn validateCreateInfo(info: *const vk.InstanceCreateInfo) VkError!void {
         const supported_extensions = if (comptime !@hasDecl(root, "Instance"))
             &[_]vk.ExtensionProperties{}
         else
-            root.Instance.EXTENSIONS[0..];
+            root.Instance.extensions[0..];
 
         for (0..info.enabled_extension_count) |i| {
             const name = utils.boundedName(names[i], vk.MAX_EXTENSION_NAME_SIZE) orelse return VkError.ExtensionNotPresent;
@@ -124,11 +124,11 @@ pub fn enumerateExtensionProperties(layer_name: ?[]const u8, count: *u32, p_prop
         return VkError.LayerNotPresent;
     }
 
-    if (comptime !builtin.is_test and @hasDecl(root.Instance, "EXTENSIONS")) {
-        const available = root.Instance.EXTENSIONS.len;
+    if (comptime !builtin.is_test and @hasDecl(root.Instance, "extensions")) {
+        const available = root.Instance.extensions.len;
         if (p_properties) |properties| {
             const write_count = @min(count.*, available);
-            for (root.Instance.EXTENSIONS[0..write_count], properties[0..write_count]) |ext, *prop| {
+            for (root.Instance.extensions[0..write_count], properties[0..write_count]) |ext, *prop| {
                 prop.* = ext;
             }
             count.* = @intCast(write_count);
@@ -145,7 +145,7 @@ pub fn enumerateVersion(version: *u32) VkError!void {
     if (comptime builtin.is_test) {
         version.* = @bitCast(vk.makeApiVersion(0, 1, 0, 0));
     } else {
-        version.* = @bitCast(root.VULKAN_VERSION);
+        version.* = @bitCast(root.vulkan_version);
     }
 }
 

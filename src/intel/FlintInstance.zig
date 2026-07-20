@@ -26,7 +26,7 @@ fn castExtension(comptime ext: vk.ApiInfo) vk.ExtensionProperties {
     return props;
 }
 
-pub const EXTENSIONS = [_]vk.ExtensionProperties{
+pub const extensions = [_]vk.ExtensionProperties{
     castExtension(vk.extensions.khr_device_group_creation),
     castExtension(vk.extensions.khr_get_physical_device_properties_2),
     castExtension(vk.extensions.khr_surface),
@@ -73,7 +73,7 @@ fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator, d
 
         if (drm_device.node_type != .render or
             std.meta.activeTag(drm_device.device_info) != .pci or
-            drm_device.device_info.pci.vendor_id != lib.INTEL_PCI_VENDOR_ID)
+            drm_device.device_info.pci.vendor_id != lib.intel_pci_vendor_id)
             continue;
 
         const version = device.getVersion(io_var, allocator) catch continue;

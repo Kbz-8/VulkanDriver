@@ -407,7 +407,7 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
     self.commands.append(allocator, .{ .ptr = cmd, .vtable = &.{ .execute = CommandImpl.execute } }) catch return VkError.OutOfHostMemory;
 }
 
-pub fn bindDescriptorSets(interface: *Interface, bind_point: vk.PipelineBindPoint, first_set: u32, sets: [base.VULKAN_MAX_DESCRIPTOR_SETS]?*base.DescriptorSet, dynamic_offsets: []const u32) VkError!void {
+pub fn bindDescriptorSets(interface: *Interface, bind_point: vk.PipelineBindPoint, first_set: u32, sets: [base.vulkan_max_descriptor_sets]?*base.DescriptorSet, dynamic_offsets: []const u32) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     const allocator = self.command_allocator.allocator();
 
@@ -416,7 +416,7 @@ pub fn bindDescriptorSets(interface: *Interface, bind_point: vk.PipelineBindPoin
 
         bind_point: vk.PipelineBindPoint,
         first_set: u32,
-        sets: [base.VULKAN_MAX_DESCRIPTOR_SETS]?*base.DescriptorSet,
+        sets: [base.vulkan_max_descriptor_sets]?*base.DescriptorSet,
         dynamic_offsets: []const u32,
 
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
@@ -430,7 +430,7 @@ pub fn bindDescriptorSets(interface: *Interface, bind_point: vk.PipelineBindPoin
                 state.sets[i] = soft_set;
 
                 const dynamic_count = soft_set.interface.layout.dynamic_descriptor_count;
-                if (dynamic_count > ExecutionDevice.MAX_DYNAMIC_DESCRIPTORS_PER_SET or
+                if (dynamic_count > ExecutionDevice.max_dynamic_descriptors_per_set or
                     dynamic_offset_index + dynamic_count > impl.dynamic_offsets.len)
                 {
                     return VkError.ValidationFailed;
@@ -496,7 +496,7 @@ pub fn bindIndexBuffer(interface: *Interface, buffer: *base.Buffer, offset: usiz
 
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
-            device.pipeline_states[ExecutionDevice.GRAPHICS_PIPELINE_STATE].data.graphics.index_buffer = .{
+            device.pipeline_states[ExecutionDevice.graphics_pipeline_state].data.graphics.index_buffer = .{
                 .buffer = impl.buffer,
                 .offset = impl.offset,
                 .index_type = impl.index_type,
@@ -527,7 +527,7 @@ pub fn bindVertexBuffer(interface: *Interface, index: usize, buffer: *base.Buffe
 
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
-            device.pipeline_states[ExecutionDevice.GRAPHICS_PIPELINE_STATE].data.graphics.vertex_buffers[impl.index] = .{
+            device.pipeline_states[ExecutionDevice.graphics_pipeline_state].data.graphics.vertex_buffers[impl.index] = .{
                 .buffer = impl.buffer,
                 .offset = impl.offset,
                 .size = 0,
@@ -1191,7 +1191,7 @@ pub fn pushConstants(interface: *Interface, stages: vk.ShaderStageFlags, offset:
 
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
-            const size = @min(lib.PUSH_CONSTANT_SIZE - impl.offset, impl.blob.len);
+            const size = @min(lib.push_constant_size - impl.offset, impl.blob.len);
 
             if (impl.stages.vertex_bit or
                 impl.stages.tessellation_control_bit or
@@ -1199,12 +1199,12 @@ pub fn pushConstants(interface: *Interface, stages: vk.ShaderStageFlags, offset:
                 impl.stages.geometry_bit or
                 impl.stages.fragment_bit)
             {
-                const state = &device.pipeline_states[ExecutionDevice.GRAPHICS_PIPELINE_STATE];
+                const state = &device.pipeline_states[ExecutionDevice.graphics_pipeline_state];
                 @memcpy(state.push_constant_blob[impl.offset .. impl.offset + size], impl.blob[0..size]);
             }
 
             if (impl.stages.compute_bit) {
-                const state = &device.pipeline_states[ExecutionDevice.COMPUTE_PIPELINE_STATE];
+                const state = &device.pipeline_states[ExecutionDevice.compute_pipeline_state];
                 @memcpy(state.push_constant_blob[impl.offset .. impl.offset + size], impl.blob[0..size]);
             }
         }

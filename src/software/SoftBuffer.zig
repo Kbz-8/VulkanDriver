@@ -17,7 +17,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 
     var interface = try Interface.init(device, allocator, info);
     interface.allowed_memory_types = std.bit_set.IntegerBitSet(32).initEmpty();
-    interface.allowed_memory_types.set(lib.MEMORY_TYPE_GENERIC_BIT);
+    interface.allowed_memory_types.set(lib.memory_type_generic_bit);
 
     interface.vtable = &.{
         .destroy = destroy,
@@ -36,15 +36,15 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 }
 
 pub fn getMemoryRequirements(interface: *Interface, requirements: *vk.MemoryRequirements) void {
-    requirements.alignment = lib.MEMORY_REQUIREMENTS_BUFFER_ALIGNMENT;
+    requirements.alignment = lib.memory_requirements_buffer_alignment;
     if (interface.usage.uniform_texel_buffer_bit or interface.usage.storage_texel_buffer_bit) {
-        requirements.alignment = @max(requirements.alignment, lib.MIN_TEXEL_BUFFER_ALIGNMENT);
+        requirements.alignment = @max(requirements.alignment, lib.min_texel_buffer_alignment);
     }
     if (interface.usage.storage_buffer_bit) {
-        requirements.alignment = @max(requirements.alignment, lib.MIN_STORAGE_BUFFER_ALIGNMENT);
+        requirements.alignment = @max(requirements.alignment, lib.min_storage_buffer_alignment);
     }
     if (interface.usage.uniform_buffer_bit) {
-        requirements.alignment = @max(requirements.alignment, lib.MIN_UNIFORM_BUFFER_ALIGNMENT);
+        requirements.alignment = @max(requirements.alignment, lib.min_uniform_buffer_alignment);
     }
 }
 

@@ -9,7 +9,7 @@ const i915_kmd = @import("i915/kmd.zig");
 const xe = @import("xe/kmd.zig");
 
 const VkError = base.VkError;
-const IOCTL = std.os.linux.IOCTL;
+const ioctl = std.os.linux.IOCTL;
 
 pub const xy_src_copy_blt: u32 = (2 << 29) | (0x53 << 22) | 8;
 pub const xy_blt_write_alpha: u32 = 1 << 21;
@@ -160,9 +160,9 @@ pub const Memory = union(KmdType) {
 };
 
 pub inline fn drmIoctlIow(nr: u8, comptime T: type) u32 {
-    return IOCTL.IOW('d', nr, T);
+    return ioctl.IOW('d', nr, T);
 }
 
 pub inline fn drmIoctlIowr(nr: u8, comptime T: type) u32 {
-    return IOCTL.IOWR('d', nr, T);
+    return ioctl.IOWR('d', nr, T);
 }

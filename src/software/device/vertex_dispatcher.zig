@@ -12,7 +12,7 @@ const SoftPipeline = @import("../SoftPipeline.zig");
 const blitter = @import("blitter.zig");
 
 const VkError = base.VkError;
-const INTERFACE_BLOB_PADDING = @sizeOf(F32x4);
+const interface_blob_padding = @sizeOf(F32x4);
 
 pub const RunData = struct {
     allocator: std.mem.Allocator,
@@ -214,7 +214,7 @@ fn readVertexOutput(data: RunData, output: *Renderer.Vertex, rt: *spv.Runtime, l
     output.outputs[location][component] = .{
         .interpolation_type = interpolation_type,
         .centroid = centroid,
-        .blob = data.allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return VkError.OutOfDeviceMemory,
+        .blob = data.allocator.alloc(u8, memory_size + interface_blob_padding) catch return VkError.OutOfDeviceMemory,
         .size = memory_size,
     };
     @memset(output.outputs[location][component].?.blob, 0);
@@ -264,7 +264,7 @@ fn writeVertexOutputValue(
     output.outputs[location][component] = .{
         .interpolation_type = interpolation_type,
         .centroid = centroid,
-        .blob = data.allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return VkError.OutOfDeviceMemory,
+        .blob = data.allocator.alloc(u8, memory_size + interface_blob_padding) catch return VkError.OutOfDeviceMemory,
         .size = memory_size,
     };
     @memset(output.outputs[location][component].?.blob, 0);

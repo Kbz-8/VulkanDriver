@@ -23,7 +23,7 @@ fn castExtension(comptime ext: vk.ApiInfo) vk.ExtensionProperties {
     return props;
 }
 
-pub const EXTENSIONS = [_]vk.ExtensionProperties{
+pub const extensions = [_]vk.ExtensionProperties{
     castExtension(vk.extensions.khr_swapchain),
 };
 
@@ -53,9 +53,9 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, drm_device
         .getSurfaceSupportKHR = getSurfaceSupportKHR,
     };
 
-    interface.props.api_version = @bitCast(lib.VULKAN_VERSION);
-    interface.props.vendor_id = lib.INTEL_PCI_VENDOR_ID;
-    interface.props.driver_version = @bitCast(base.DRIVER_VERSION);
+    interface.props.api_version = @bitCast(lib.vulkan_version);
+    interface.props.vendor_id = lib.intel_pci_vendor_id;
+    interface.props.driver_version = @bitCast(base.driver_version);
     interface.props.device_id = drm_device.device_info.pci.device_id;
     interface.props.device_type = .integrated_gpu;
 
@@ -256,10 +256,10 @@ pub fn enumerateExtensionProperties(_: *const Interface, layer_name: ?[]const u8
         return VkError.LayerNotPresent;
     }
 
-    const available = EXTENSIONS.len;
+    const available = extensions.len;
     if (p_properties) |properties| {
         const write_count = @min(count.*, available);
-        for (EXTENSIONS[0..write_count], properties[0..write_count]) |ext, *prop| {
+        for (extensions[0..write_count], properties[0..write_count]) |ext, *prop| {
             prop.* = ext;
         }
         count.* = @intCast(write_count);

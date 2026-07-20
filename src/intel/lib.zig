@@ -35,13 +35,13 @@ pub const FlintShaderModule = @import("FlintShaderModule.zig");
 
 pub const Instance = FlintInstance;
 
-pub const DRIVER_NAME = "Flint";
+pub const driver_name = "Flint";
 
-pub const PHYSICAL_DEVICE_DEFAULT_NAME = "Unkown Intel device";
+pub const physical_device_default_name = "Unkown Intel device";
 
-pub const INTEL_PCI_VENDOR_ID = 0x8086;
+pub const intel_pci_vendor_id = 0x8086;
 
-pub const VULKAN_VERSION = vk.makeApiVersion(
+pub const vulkan_version = vk.makeApiVersion(
     0,
     config.flint_vulkan_version.major,
     config.flint_vulkan_version.minor,
@@ -49,7 +49,7 @@ pub const VULKAN_VERSION = vk.makeApiVersion(
 );
 
 /// GEM buffer objects are page based
-pub const IMAGE_MEMORY_ALIGNMENT = std.heap.page_size_max;
+pub const image_memory_alignment = std.heap.page_size_max;
 
 pub const KmdType = enum {
     invalid,

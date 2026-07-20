@@ -44,7 +44,7 @@ pub const DispatchTable = struct {
     begin: *const fn (*Self, *const vk.CommandBufferBeginInfo) VkError!void,
     beginQuery: *const fn (*Self, *QueryPool, u32, vk.QueryControlFlags) VkError!void,
     beginRenderPass: *const fn (*Self, *RenderPass, *Framebuffer, vk.Rect2D, ?[]const vk.ClearValue) VkError!void,
-    bindDescriptorSets: *const fn (*Self, vk.PipelineBindPoint, u32, [lib.VULKAN_MAX_DESCRIPTOR_SETS]?*DescriptorSet, []const u32) VkError!void,
+    bindDescriptorSets: *const fn (*Self, vk.PipelineBindPoint, u32, [lib.vulkan_max_descriptor_sets]?*DescriptorSet, []const u32) VkError!void,
     bindPipeline: *const fn (*Self, vk.PipelineBindPoint, *Pipeline) VkError!void,
     bindIndexBuffer: *const fn (*Self, *Buffer, usize, vk.IndexType) VkError!void,
     bindVertexBuffer: *const fn (*Self, usize, *Buffer, usize) VkError!void,
@@ -192,10 +192,10 @@ pub inline fn beginQuery(self: *Self, pool: *QueryPool, query: u32, flags: vk.Qu
 }
 
 pub fn bindDescriptorSets(self: *Self, bind_point: vk.PipelineBindPoint, first_set: u32, sets: []const vk.DescriptorSet, dynamic_offsets: []const u32) VkError!void {
-    if (sets.len > lib.VULKAN_MAX_DESCRIPTOR_SETS or first_set > lib.VULKAN_MAX_DESCRIPTOR_SETS or first_set + sets.len > lib.VULKAN_MAX_DESCRIPTOR_SETS)
+    if (sets.len > lib.vulkan_max_descriptor_sets or first_set > lib.vulkan_max_descriptor_sets or first_set + sets.len > lib.vulkan_max_descriptor_sets)
         return VkError.ValidationFailed;
 
-    var inner_sets: [lib.VULKAN_MAX_DESCRIPTOR_SETS]?*DescriptorSet = @splat(null);
+    var inner_sets: [lib.vulkan_max_descriptor_sets]?*DescriptorSet = @splat(null);
     for (sets, inner_sets[0..sets.len]) |set, *inner_set| {
         inner_set.* = try NonDispatchable(DescriptorSet).fromHandleObject(set);
     }

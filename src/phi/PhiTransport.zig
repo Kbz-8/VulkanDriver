@@ -96,7 +96,7 @@ pub fn statusToErr(status: c_int) VkError {
 fn writeAll(self: *Self, bytes: []const u8) VkError!void {
     var offset: usize = 0;
     while (offset < bytes.len) {
-        const written = scif.send(self.epd, bytes[offset..].ptr, bytes.len - offset, scif.SEND_BLOCK);
+        const written = scif.send(self.epd, bytes[offset..].ptr, bytes.len - offset, scif.send_block);
         if (written <= 0) {
             return VkError.InitializationFailed;
         }
@@ -107,7 +107,7 @@ fn writeAll(self: *Self, bytes: []const u8) VkError!void {
 fn readAll(self: *Self, bytes: []u8) VkError!void {
     var offset: usize = 0;
     while (offset < bytes.len) {
-        const read = scif.recv(self.epd, bytes[offset..].ptr, bytes.len - offset, scif.RECV_BLOCK);
+        const read = scif.recv(self.epd, bytes[offset..].ptr, bytes.len - offset, scif.recv_block);
         if (read <= 0) {
             return VkError.InitializationFailed;
         }

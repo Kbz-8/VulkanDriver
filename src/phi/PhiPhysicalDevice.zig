@@ -24,7 +24,7 @@ fn castExtension(comptime ext: vk.ApiInfo) vk.ExtensionProperties {
     return props;
 }
 
-pub const EXTENSIONS = [_]vk.ExtensionProperties{
+pub const extensions = [_]vk.ExtensionProperties{
     castExtension(vk.extensions.khr_device_group),
     castExtension(vk.extensions.khr_swapchain),
 };
@@ -55,8 +55,8 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, mic_device
         .getSurfaceSupportKHR = getSurfaceSupportKHR,
     };
 
-    interface.props.api_version = @bitCast(lib.VULKAN_VERSION);
-    interface.props.driver_version = @bitCast(base.DRIVER_VERSION);
+    interface.props.api_version = @bitCast(lib.vulkan_version);
+    interface.props.driver_version = @bitCast(base.driver_version);
     interface.props.device_type = .other;
 
     @memset(interface.props.device_name[0..], 0);
@@ -292,10 +292,10 @@ pub fn enumerateExtensionProperties(_: *const Interface, layer_name: ?[]const u8
         return VkError.LayerNotPresent;
     }
 
-    const available = EXTENSIONS.len;
+    const available = extensions.len;
     if (p_properties) |properties| {
         const write_count = @min(count.*, available);
-        for (EXTENSIONS[0..write_count], properties[0..write_count]) |ext, *prop| {
+        for (extensions[0..write_count], properties[0..write_count]) |ext, *prop| {
             prop.* = ext;
         }
         count.* = @intCast(write_count);

@@ -10,8 +10,8 @@ pub const PortId = extern struct {
     port: u16,
 };
 
-pub const SEND_BLOCK = 1;
-pub const RECV_BLOCK = 1;
+pub const send_block = 1;
+pub const recv_block = 1;
 
 // SAFETY: load assigns every function pointer before the public wrappers can be used.
 var scif_open: *const fn () callconv(.c) epd_t = undefined;

@@ -94,7 +94,7 @@ fn makeHeader(device: *const Device) Header {
     return .{
         .header_size = @sizeOf(Header),
         .header_version = .one,
-        .vendor_id = @intCast(root.VULKAN_VENDOR_ID),
+        .vendor_id = @intCast(root.vulkan_vendor_id),
         .device_id = device.physical_device.props.device_id,
         .pipeline_cache_uuid = device.physical_device.props.pipeline_cache_uuid,
     };

@@ -27,7 +27,7 @@ fn castExtension(comptime ext: vk.ApiInfo) vk.ExtensionProperties {
     return props;
 }
 
-pub const EXTENSIONS = [_]vk.ExtensionProperties{
+pub const extensions = [_]vk.ExtensionProperties{
     castExtension(vk.extensions.khr_device_group_creation),
     castExtension(vk.extensions.khr_get_physical_device_properties_2),
     castExtension(vk.extensions.khr_surface),

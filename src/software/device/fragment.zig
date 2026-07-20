@@ -11,8 +11,8 @@ const Renderer = @import("Renderer.zig");
 const SoftPipeline = @import("../SoftPipeline.zig");
 
 const SpvRuntimeError = spv.Runtime.RuntimeError;
-const INTERFACE_BLOB_PADDING = @sizeOf(zm.F32x4);
-const PROCESSED_INPUTS_STACK_CAPACITY = 4096;
+const interface_blob_padding = @sizeOf(zm.F32x4);
+const processed_inputs_stack_capacity = 4096;
 
 pub const InvocationResult = struct {
     outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8,
@@ -131,7 +131,7 @@ pub fn shaderInvocation(
 
     const entry = try rt.getEntryPointByName(shader.entry);
 
-    var processed_inputs_stack: [PROCESSED_INPUTS_STACK_CAPACITY]bool = undefined;
+    var processed_inputs_stack: [processed_inputs_stack_capacity]bool = undefined;
     const processed_inputs = if (rt.results.len <= processed_inputs_stack.len)
         processed_inputs_stack[0..rt.results.len]
     else
@@ -169,7 +169,7 @@ pub fn shaderInvocation(
             else
                 input.size;
             if (input.size == 0) {
-                const zeroes = allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return SpvRuntimeError.OutOfMemory;
+                const zeroes = allocator.alloc(u8, memory_size + interface_blob_padding) catch return SpvRuntimeError.OutOfMemory;
                 @memset(zeroes, 0);
                 fragment_inputs[location][component] = .{
                     .blob = zeroes,
@@ -296,7 +296,7 @@ fn writeAggregateInputLocations(
         },
     }
 
-    const bytes = allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return SpvRuntimeError.OutOfMemory;
+    const bytes = allocator.alloc(u8, memory_size + interface_blob_padding) catch return SpvRuntimeError.OutOfMemory;
     defer allocator.free(bytes);
     @memset(bytes, 0);
 
@@ -357,7 +357,7 @@ fn readFragmentOutput(
                     return SpvRuntimeError.OutOfBounds;
 
                 const memory_size = try element.getPlainMemorySize();
-                const output = allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return SpvRuntimeError.OutOfMemory;
+                const output = allocator.alloc(u8, memory_size + interface_blob_padding) catch return SpvRuntimeError.OutOfMemory;
                 defer allocator.free(output);
                 @memset(output, 0);
 
@@ -370,14 +370,14 @@ fn readFragmentOutput(
     }
 
     const memory_size = try rt.getResultMemorySize(result_word);
-    if (memory_size <= INTERFACE_BLOB_PADDING) {
-        var output = std.mem.zeroes([INTERFACE_BLOB_PADDING]u8);
+    if (memory_size <= interface_blob_padding) {
+        var output = std.mem.zeroes([interface_blob_padding]u8);
         try rt.readOutput(output[0..memory_size], result_word);
         try copyFragmentOutputBytes(outputs, output[0..memory_size], location, component);
         return;
     }
 
-    const output = allocator.alloc(u8, memory_size + INTERFACE_BLOB_PADDING) catch return SpvRuntimeError.OutOfMemory;
+    const output = allocator.alloc(u8, memory_size + interface_blob_padding) catch return SpvRuntimeError.OutOfMemory;
     defer allocator.free(output);
     @memset(output, 0);
 

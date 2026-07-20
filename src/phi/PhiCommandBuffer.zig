@@ -154,7 +154,7 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
     _ = clear_values;
 }
 
-pub fn bindDescriptorSets(interface: *Interface, bind_point: vk.PipelineBindPoint, first_set: u32, sets: [base.VULKAN_MAX_DESCRIPTOR_SETS]?*base.DescriptorSet, dynamic_offsets: []const u32) VkError!void {
+pub fn bindDescriptorSets(interface: *Interface, bind_point: vk.PipelineBindPoint, first_set: u32, sets: [base.vulkan_max_descriptor_sets]?*base.DescriptorSet, dynamic_offsets: []const u32) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     self.cmd_count += 1;
     _ = bind_point;

@@ -52,11 +52,11 @@ pub const ShaderModule = @import("ShaderModule.zig");
 pub const SurfaceKHR = @import("wsi/SurfaceKHR.zig");
 pub const SwapchainKHR = @import("wsi/SwapchainKHR.zig");
 
-pub const VULKAN_VENDOR_ID: i32 = @intFromEnum(vk.VendorId.ape);
+pub const vulkan_vendor_id: i32 = @intFromEnum(vk.VendorId.ape);
 
 /// Default driver name
-pub const DRIVER_NAME = "Unnamed Ape Driver";
-pub const DRIVER_VERSION = vk.makeApiVersion(
+pub const driver_name = "Unnamed Ape Driver";
+pub const driver_version = vk.makeApiVersion(
     0,
     config.driver_version.major,
     config.driver_version.minor,
@@ -64,10 +64,10 @@ pub const DRIVER_VERSION = vk.makeApiVersion(
 );
 
 /// Dummy fallback
-pub const VULKAN_VERSION = vk.makeApiVersion(0, 1, 0, 0);
+pub const vulkan_version = vk.makeApiVersion(0, 1, 0, 0);
 
 /// Maximum number of descriptor sets per pipeline
-pub const VULKAN_MAX_DESCRIPTOR_SETS = 8;
+pub const vulkan_max_descriptor_sets = 8;
 
 /// The number of push constant ranges is effectively bounded
 /// by the number of possible shader stages. Not the number of stages that can
@@ -80,7 +80,7 @@ pub const VULKAN_MAX_DESCRIPTOR_SETS = 8;
 /// - VK_SHADER_STAGE_GEOMETRY_BIT
 /// - VK_SHADER_STAGE_FRAGMENT_BIT
 /// - VK_SHADER_STAGE_COMPUTE_BIT
-pub const VULKAN_MAX_PUSH_CONSTANT_RANGES = 6;
+pub const vulkan_max_push_constant_ranges = 6;
 
 pub const std_options: std.Options = .{
     .log_level = .debug,

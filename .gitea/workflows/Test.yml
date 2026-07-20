@@ -2,9 +2,9 @@ name: Test
 
 on:
   push:
-    branches: [ "master" ]
+    branches: ["master"]
   pull_request:
-    branches: [ "master" ]
+    branches: ["master"]
 
 jobs:
   build_and_test:
@@ -12,51 +12,57 @@ jobs:
     if: "!contains(github.event.head_commit.message, 'ci skip') && !contains(github.event.head_commit.message, 'test skip')"
 
     steps:
-    - uses: actions/checkout@v4
-    - uses: https://codeberg.org/mlugg/setup-zig@v2
+      - uses: actions/checkout@v4
+      - uses: https://codeberg.org/mlugg/setup-zig@v2
 
-    - name: Install MPSS
-      run: |
-        set -euxo pipefail
+      - name: Install MPSS
+        run: |
+          set -euxo pipefail
 
-        apt-get update
-        apt-get install -y unzip curl
+          apt-get update
+          apt-get install -y unzip curl
 
-        MPSS_URL="https://drive.kbz8.me/dav/public-files/KSKeiOKxnFPyfws/mpss.zip"
-        MPSS_ZIP="/tmp/mpss.zip"
-        MPSS_BIN="/opt/mpss/3.8.6/sysroots/k1om-mpss-linux/bin"
+          MPSS_URL="https://drive.kbz8.me/dav/public-files/KSKeiOKxnFPyfws/mpss.zip"
+          MPSS_ZIP="/tmp/mpss.zip"
+          MPSS_BIN="/opt/mpss/3.8.6/sysroots/k1om-mpss-linux/bin"
 
-        curl --fail --location --show-error --progress-bar "$MPSS_URL" -o "$MPSS_ZIP"
+          curl --fail --location --show-error --progress-bar "$MPSS_URL" -o "$MPSS_ZIP"
 
-        size="$(stat -c%s "$MPSS_ZIP")"
-        test "$size" -gt 300000000
+          size="$(stat -c%s "$MPSS_ZIP")"
+          test "$size" -gt 300000000
 
-        unzip -t "$MPSS_ZIP" >/dev/null
+          unzip -t "$MPSS_ZIP" >/dev/null
 
-        rm -rf /opt/mpss
-        unzip -q "$MPSS_ZIP" -d /opt
-        chmod -R a+rX /opt/mpss
+          rm -rf /opt/mpss
+          unzip -q "$MPSS_ZIP" -d /opt
+          chmod -R a+rX /opt/mpss
 
-        test -d "$MPSS_BIN"
+          test -d "$MPSS_BIN"
 
-        # Append as fallback for following CI steps.
-        echo "PATH=$PATH:$MPSS_BIN" >> "$GITHUB_ENV"
+          # Append as fallback for following CI steps.
+          echo "PATH=$PATH:$MPSS_BIN" >> "$GITHUB_ENV"
 
-        echo "MPSS installed."
+          echo "MPSS installed."
 
-    - name: Check MPSS PATH
-      run: |
-        echo "$PATH"
-        ls -la /opt/mpss/3.8.6/sysroots/k1om-mpss-linux/bin | head -50
+      - name: Check MPSS PATH
+        run: |
+          echo "$PATH"
+          ls -la /opt/mpss/3.8.6/sysroots/k1om-mpss-linux/bin | head -50
 
-    - name: Ape Tests
-      run: zig build test-ape --release=safe
+      - name: Installing dependencies
+        run: apt update && apt install spirv-tools
 
-    - name: Soft Tests
-      run: zig build test-soft --release=safe
+      - name: Ape Tests
+        run: zig build test-ape --release=safe
 
-    - name: Flint Tests
-      run: zig build test-flint --release=safe
+      - name: Soft Tests
+        run: zig build test-soft --release=safe
 
-    - name: Phi Tests
-      run: zig build test-phi --release=safe
+      - name: Flint Tests
+        run: zig build test-flint --release=safe
+
+      - name: Phi Tests
+        run: zig build test-phi --release=safe
+
+      - name: IR Tests
+        run: zig build test-ir --release=safe

@@ -10,9 +10,9 @@ pub const ApeInstance = @import("ApeInstance.zig");
 
 pub const Instance = ApeInstance;
 
-pub const DRIVER_NAME = "Ape";
+pub const driver_name = "Ape";
 
-pub const VULKAN_VERSION = vk.makeApiVersion(
+pub const vulkan_version = vk.makeApiVersion(
     0,
     config.ape_vulkan_version.major,
     config.ape_vulkan_version.minor,

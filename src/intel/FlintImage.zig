@@ -46,8 +46,8 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 }
 
 pub fn getMemoryRequirements(_: *Interface, requirements: *vk.MemoryRequirements) VkError!void {
-    requirements.alignment = lib.IMAGE_MEMORY_ALIGNMENT;
-    requirements.size = std.mem.alignForward(vk.DeviceSize, requirements.size, lib.IMAGE_MEMORY_ALIGNMENT);
+    requirements.alignment = lib.image_memory_alignment;
+    requirements.size = std.mem.alignForward(vk.DeviceSize, requirements.size, lib.image_memory_alignment);
 }
 
 pub fn copyToMemory(interface: *const Interface, dst: []u8, subresource: vk.ImageSubresourceLayers) VkError!void {

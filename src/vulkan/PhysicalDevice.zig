@@ -40,7 +40,7 @@ pub fn init(allocator: std.mem.Allocator, instance: *Instance) VkError!Self {
         .props = .{
             .api_version = 0,
             .driver_version = 0,
-            .vendor_id = root.VULKAN_VENDOR_ID,
+            .vendor_id = root.vulkan_vendor_id,
             .device_id = 0,
             .device_type = .other,
             .device_name = @as([vk.MAX_PHYSICAL_DEVICE_NAME_SIZE]u8, @splat(0)),

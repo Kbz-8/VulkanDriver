@@ -1,4 +1,3 @@
-
 const PciInfo = struct {
     id: u16,
     name: []const u8,

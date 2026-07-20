@@ -36,45 +36,45 @@ pub const SoftShaderModule = @import("SoftShaderModule.zig");
 
 pub const Instance = SoftInstance;
 
-pub const DRIVER_NAME = "Soft";
+pub const driver_name = "Soft";
 
-pub const VULKAN_VERSION = vk.makeApiVersion(
+pub const vulkan_version = vk.makeApiVersion(
     0,
     config.soft_vulkan_version.major,
     config.soft_vulkan_version.minor,
     config.soft_vulkan_version.patch,
 );
-pub const DEVICE_ID = 0x600DCAFE;
-pub const PIPELINE_CACHE_UUID: [vk.UUID_SIZE]u8 = "ApeSoftCacheUUID".*;
+pub const device_id = 0x600DCAFE;
+pub const pipeline_cache_uuid: [vk.UUID_SIZE]u8 = "ApeSoftCacheUUID".*;
 
 /// Generic system memory.
-pub const MEMORY_TYPE_GENERIC_BIT = 0;
+pub const memory_type_generic_bit = 0;
 
 /// 16 bytes for 128-bit vector types.
-pub const MEMORY_REQUIREMENTS_BUFFER_ALIGNMENT = 16;
+pub const memory_requirements_buffer_alignment = 16;
 
-pub const MEMORY_REQUIREMENTS_IMAGE_ALIGNMENT = 256;
+pub const memory_requirements_image_alignment = 256;
 
 /// Vulkan 1.2 requires buffer offset alignment to be at most 256.
-pub const MIN_TEXEL_BUFFER_ALIGNMENT = 256;
+pub const min_texel_buffer_alignment = 256;
 /// Vulkan 1.2 requires buffer offset alignment to be at most 256.
-pub const MIN_UNIFORM_BUFFER_ALIGNMENT = 256;
+pub const min_uniform_buffer_alignment = 256;
 /// Vulkan 1.2 requires buffer offset alignment to be at most 256.
-pub const MIN_STORAGE_BUFFER_ALIGNMENT = 256;
+pub const min_storage_buffer_alignment = 256;
 
-pub const MAX_VERTEX_INPUT_BINDINGS = 16;
-pub const MAX_VERTEX_INPUT_ATTRIBUTES = 16;
+pub const max_vertex_input_bindings = 16;
+pub const max_vertex_input_attributes = 16;
 
-pub const PUSH_CONSTANT_SIZE = 128;
+pub const push_constant_size = 128;
 
-pub const MAX_IMAGE_LEVELS_1D = 15;
-pub const MAX_IMAGE_LEVELS_2D = 15;
-pub const MAX_IMAGE_LEVELS_3D = 12;
-pub const MAX_IMAGE_LEVELS_CUBE = 15;
-pub const MAX_IMAGE_ARRAY_LAYERS = 2048;
+pub const max_image_levels_1d = 15;
+pub const max_image_levels_2d = 15;
+pub const max_image_levels_3d = 12;
+pub const max_image_levels_cube = 15;
+pub const max_image_array_layers = 2048;
 
-pub const PHYSICAL_DEVICE_DEFAULT_NAME = "Ape software device";
-pub const PHYSICAL_DEVICE_FALLBACK_HEAP_SIZE = 0x10000000; // 256MB
+pub const physical_device_default_name = "Ape software device";
+pub const physical_device_fallback_heap_size = 0x10000000; // 256MB
 
 pub const std_options = base.std_options;
 

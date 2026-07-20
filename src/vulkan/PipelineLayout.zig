@@ -16,12 +16,12 @@ owner: *Device,
 
 set_count: usize,
 
-set_layouts: [lib.VULKAN_MAX_DESCRIPTOR_SETS]?*DescriptorSetLayout,
+set_layouts: [lib.vulkan_max_descriptor_sets]?*DescriptorSetLayout,
 
-dynamic_descriptor_offsets: [lib.VULKAN_MAX_DESCRIPTOR_SETS]usize,
+dynamic_descriptor_offsets: [lib.vulkan_max_descriptor_sets]usize,
 
 push_ranges_count: usize,
-push_ranges: [lib.VULKAN_MAX_PUSH_CONSTANT_RANGES]vk.PushConstantRange,
+push_ranges: [lib.vulkan_max_push_constant_ranges]vk.PushConstantRange,
 
 ref_count: std.atomic.Value(usize),
 
@@ -36,8 +36,8 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Pipel
     var self: Self = .{
         .owner = device,
         .set_count = info.set_layout_count,
-        .set_layouts = [_]?*DescriptorSetLayout{null} ** lib.VULKAN_MAX_DESCRIPTOR_SETS,
-        .dynamic_descriptor_offsets = [_]usize{0} ** lib.VULKAN_MAX_DESCRIPTOR_SETS,
+        .set_layouts = [_]?*DescriptorSetLayout{null} ** lib.vulkan_max_descriptor_sets,
+        .dynamic_descriptor_offsets = [_]usize{0} ** lib.vulkan_max_descriptor_sets,
         .push_ranges_count = info.push_constant_range_count,
         .push_ranges = @splat(std.mem.zeroes(vk.PushConstantRange)),
         .ref_count = std.atomic.Value(usize).init(1),

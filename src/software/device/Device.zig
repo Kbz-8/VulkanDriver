@@ -13,9 +13,9 @@ const Renderer = @import("Renderer.zig");
 
 const Self = @This();
 
-pub const GRAPHICS_PIPELINE_STATE = 0;
-pub const COMPUTE_PIPELINE_STATE = 1;
-pub const MAX_DYNAMIC_DESCRIPTORS_PER_SET = 64;
+pub const graphics_pipeline_state = 0;
+pub const compute_pipeline_state = 1;
+pub const max_dynamic_descriptors_per_set = 64;
 
 pub const ActiveOcclusionQuery = struct {
     pool: *base.QueryPool,
@@ -24,14 +24,14 @@ pub const ActiveOcclusionQuery = struct {
 
 pub const PipelineState = struct {
     pipeline: ?*SoftPipeline,
-    sets: [base.VULKAN_MAX_DESCRIPTOR_SETS]?*SoftDescriptorSet,
-    dynamic_offsets: [base.VULKAN_MAX_DESCRIPTOR_SETS][MAX_DYNAMIC_DESCRIPTORS_PER_SET]u32,
-    push_constant_blob: [lib.PUSH_CONSTANT_SIZE]u8,
+    sets: [base.vulkan_max_descriptor_sets]?*SoftDescriptorSet,
+    dynamic_offsets: [base.vulkan_max_descriptor_sets][max_dynamic_descriptors_per_set]u32,
+    push_constant_blob: [lib.push_constant_size]u8,
     data: union {
         compute: struct {},
         graphics: struct {
             index_buffer: Renderer.IndexBuffer,
-            vertex_buffers: [lib.MAX_VERTEX_INPUT_BINDINGS]Renderer.VertexBuffer,
+            vertex_buffers: [lib.max_vertex_input_bindings]Renderer.VertexBuffer,
         },
     },
 };
@@ -48,11 +48,11 @@ pub fn setup(self: *Self, device: *SoftDevice) void {
     for (self.pipeline_states[0..], 0..) |*state, i| {
         state.* = .{
             .pipeline = null,
-            .sets = [_]?*SoftDescriptorSet{null} ** base.VULKAN_MAX_DESCRIPTOR_SETS,
-            .dynamic_offsets = [_][MAX_DYNAMIC_DESCRIPTORS_PER_SET]u32{[_]u32{0} ** MAX_DYNAMIC_DESCRIPTORS_PER_SET} ** base.VULKAN_MAX_DESCRIPTOR_SETS,
+            .sets = [_]?*SoftDescriptorSet{null} ** base.vulkan_max_descriptor_sets,
+            .dynamic_offsets = [_][max_dynamic_descriptors_per_set]u32{[_]u32{0} ** max_dynamic_descriptors_per_set} ** base.vulkan_max_descriptor_sets,
             .push_constant_blob = @splat(0),
             .data = switch (i) {
-                GRAPHICS_PIPELINE_STATE => .{
+                graphics_pipeline_state => .{
                     .graphics = .{
                         // SAFETY: indexed draws bind the index buffer before the renderer reads it.
                         .index_buffer = undefined,
@@ -60,7 +60,7 @@ pub fn setup(self: *Self, device: *SoftDevice) void {
                         .vertex_buffers = undefined,
                     },
                 },
-                COMPUTE_PIPELINE_STATE => .{ .compute = .{} },
+                compute_pipeline_state => .{ .compute = .{} },
                 else => unreachable,
             },
         };

@@ -8,6 +8,7 @@ const Self = @This();
 pub const Interface = base.Pipeline;
 
 interface: Interface,
+host_allocator: base.VulkanAllocator,
 
 pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: ?*base.PipelineCache, info: *const vk.ComputePipelineCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
@@ -15,8 +16,12 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
 
     var interface = try Interface.initCompute(device, allocator, cache, info);
     interface.vtable = &.{ .destroy = destroy };
+    self.* = .{
+        .interface = interface,
+        .host_allocator = base.VulkanAllocator.from(allocator).clone(),
+    };
+    errdefer self.interface.layout.unref(allocator);
 
-    self.* = .{ .interface = interface };
     return self;
 }
 
@@ -27,7 +32,12 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
     var interface = try Interface.initGraphics(device, allocator, cache, info);
     interface.vtable = &.{ .destroy = destroy };
 
-    self.* = .{ .interface = interface };
+    self.* = .{
+        .interface = interface,
+        .host_allocator = base.VulkanAllocator.from(allocator).clone(),
+    };
+    errdefer self.interface.layout.unref(allocator);
+
     return self;
 }
 

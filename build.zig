@@ -71,6 +71,37 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const ir_mod = b.createModule(.{
+        .root_source_file = b.path("src/compiler/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const ir_tests = b.addTest(.{
+        .root_module = ir_mod,
+        .test_runner = .{
+            .path = b.path("test/test_runner.zig"),
+            .mode = .simple,
+        },
+    });
+    const run_ir_tests = b.addRunArtifact(ir_tests);
+    const ir_test_step = b.step("test-ir", "Run shared shader ir tests");
+    ir_test_step.dependOn(&run_ir_tests.step);
+
+    const ir_autodoc_test = b.addObject(.{
+        .name = "lib",
+        .root_module = ir_mod,
+    });
+
+    const ir_install_docs = b.addInstallDirectory(.{
+        .source_dir = ir_autodoc_test.getEmittedDocs(),
+        .install_dir = .prefix,
+        .install_subdir = "docs-ir",
+    });
+
+    const ir_docs_step = b.step("docs-ir", "Build and install the documentation or shader IR");
+    ir_docs_step.dependOn(&ir_install_docs.step);
+
     const base_mod = b.createModule(.{
         .root_source_file = b.path("src/vulkan/lib.zig"),
         .target = target,
@@ -357,7 +388,7 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
 
     run.addArg("run");
     run.addArg("--timeout");
-    run.addArg("300");
+    run.addArg("60");
     run.addArg("--deqp");
     run.addArg(cts_exe_path);
     run.addArg("--caselist");
@@ -470,17 +501,22 @@ fn optionsSoft(b: *std.Build, options: *Step.Options) !void {
 // Flint specialized functions
 
 fn customFlint(
-    _: *std.Build,
+    b: *std.Build,
     _: *Step.Compile,
     lib_mod: *std.Build.Module,
     _: *std.Build.Module,
     _: *std.Build.Module,
     base_c_mod: *std.Build.Module,
-    _: std.Build.ResolvedTarget,
-    _: std.builtin.OptimizeMode,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
     _: bool,
 ) !void {
     lib_mod.addImport("intel_c", base_c_mod);
+    lib_mod.addImport("shader_compiler", b.createModule(.{
+        .root_source_file = b.path("src/compiler/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
 }
 
 fn optionsFlint(b: *std.Build, options: *Step.Options) !void {

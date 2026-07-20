@@ -5,8 +5,8 @@ const lib = @import("lib.zig");
 
 comptime {
     if (!builtin.is_test) {
-        if (!@hasDecl(root, "DRIVER_NAME")) {
-            @compileError("Missing DRIVER_NAME in module root");
+        if (!@hasDecl(root, "driver_name")) {
+            @compileError("Missing driver_name in module root");
         }
     }
 }
@@ -90,7 +90,7 @@ pub fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), compti
         writer.writeAll("[ApeDriver") catch continue;
         if (!builtin.is_test) {
             term.setColor(.cyan) catch @panic("Caught an error while handling an error");
-            writer.print(" {s} ", .{root.DRIVER_NAME}) catch continue;
+            writer.print(" {s} ", .{root.driver_name}) catch continue;
         }
         term.setColor(.yellow) catch @panic("Caught an error while handling an error");
         writer.print("{d}:{d}:{d}.{d:0>3}.{d:0>3}", .{ now_hour, now_min, now_sec, now_ms, now_us }) catch continue;

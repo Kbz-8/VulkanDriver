@@ -1,4 +1,3 @@
-
 pub const command_base = 0x40;
 pub const gem_create = 0x1b;
 pub const gem_mmap_gtt = 0x24;

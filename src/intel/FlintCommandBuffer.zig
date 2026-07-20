@@ -5,6 +5,8 @@ const kmd = @import("kmd.zig");
 
 const VkError = base.VkError;
 const FlintDevice = @import("FlintDevice.zig");
+const FlintDescriptorSet = @import("FlintDescriptorSet.zig");
+const FlintPipeline = @import("FlintPipeline.zig");
 
 const MemoryRange = @import("MemoryRange.zig");
 
@@ -17,6 +19,8 @@ pub const Interface = base.CommandBuffer;
 interface: Interface,
 batch: std.ArrayList(u32),
 relocations: std.ArrayList(kmd.Relocation),
+bound_compute_pipeline: ?*FlintPipeline,
+bound_compute_descriptor_sets: [base.vulkan_max_descriptor_sets]?*FlintDescriptorSet,
 
 pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const vk.CommandBufferAllocateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
@@ -80,6 +84,8 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .interface = interface,
         .batch = .empty,
         .relocations = .empty,
+        .bound_compute_pipeline = null,
+        .bound_compute_descriptor_sets = @splat(null),
     };
     return self;
 }
@@ -96,8 +102,7 @@ pub fn submitGpuBatch(self: *Self, syncs: []const kmd.SyncDependency) VkError!vo
     try self.interface.submit();
     defer self.interface.finish() catch @panic("Caught an error while handling an error");
 
-    if (self.batch.items.len == 0) return;
-
+    // Empty command buffers still need a no-op submission to carry queue synchronization.
     const device: *FlintDevice = @alignCast(@fieldParentPtr("interface", self.interface.owner));
     const allocator = self.interface.host_allocator.allocator();
     try device.kmd.submitBatch(self.interface.owner.io(), allocator, self.batch.items, self.relocations.items, syncs);
@@ -122,6 +127,8 @@ pub fn reset(interface: *Interface, flags: vk.CommandBufferResetFlags) VkError!v
         self.batch.clearRetainingCapacity();
         self.relocations.clearRetainingCapacity();
     }
+    self.bound_compute_pipeline = null;
+    self.bound_compute_descriptor_sets = @splat(null);
 }
 
 pub fn emit(self: *Self, dword: u32) VkError!void {
@@ -165,18 +172,27 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
     _ = clear_values;
 }
 
-pub fn bindDescriptorSets(interface: *Interface, bind_point: vk.PipelineBindPoint, first_set: u32, sets: [base.VULKAN_MAX_DESCRIPTOR_SETS]?*base.DescriptorSet, dynamic_offsets: []const u32) VkError!void {
-    _ = interface;
-    _ = bind_point;
-    _ = first_set;
-    _ = sets;
+pub fn bindDescriptorSets(interface: *Interface, bind_point: vk.PipelineBindPoint, first_set: u32, sets: [base.vulkan_max_descriptor_sets]?*base.DescriptorSet, dynamic_offsets: []const u32) VkError!void {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    if (bind_point != .compute) return;
+    if (first_set >= base.vulkan_max_descriptor_sets) return VkError.ValidationFailed;
+
+    for (sets, 0..) |set, index| {
+        const base_set = set orelse break;
+        const destination = first_set + index;
+        if (destination >= base.vulkan_max_descriptor_sets) return VkError.ValidationFailed;
+        self.bound_compute_descriptor_sets[destination] = @alignCast(@fieldParentPtr("interface", base_set));
+    }
     _ = dynamic_offsets;
 }
 
 pub fn bindPipeline(interface: *Interface, bind_point: vk.PipelineBindPoint, pipeline: *base.Pipeline) VkError!void {
-    _ = interface;
-    _ = bind_point;
-    _ = pipeline;
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    if (bind_point != .compute)
+        return;
+
+    const flint_pipeline: *FlintPipeline = @alignCast(@fieldParentPtr("interface", pipeline));
+    self.bound_compute_pipeline = flint_pipeline;
 }
 
 pub fn bindIndexBuffer(interface: *Interface, buffer: *base.Buffer, offset: usize, index_type: vk.IndexType) VkError!void {
@@ -269,10 +285,7 @@ pub fn copyQueryPoolResults(interface: *Interface, pool: *base.QueryPool, first:
 }
 
 pub fn dispatch(interface: *Interface, group_count_x: u32, group_count_y: u32, group_count_z: u32) VkError!void {
-    _ = interface;
-    _ = group_count_x;
-    _ = group_count_y;
-    _ = group_count_z;
+    try dispatchBase(interface, 0, 0, 0, group_count_x, group_count_y, group_count_z);
 }
 
 pub fn dispatchBase(interface: *Interface, base_group_x: u32, base_group_y: u32, base_group_z: u32, group_count_x: u32, group_count_y: u32, group_count_z: u32) VkError!void {

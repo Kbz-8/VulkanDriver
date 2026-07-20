@@ -97,7 +97,7 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 }
 
 pub fn getMemoryRequirements(_: *Interface, requirements: *vk.MemoryRequirements) VkError!void {
-    requirements.alignment = lib.MEMORY_REQUIREMENTS_IMAGE_ALIGNMENT;
+    requirements.alignment = lib.memory_requirements_image_alignment;
 }
 
 pub fn getClearFormat(self: *Self) VkError!vk.Format {

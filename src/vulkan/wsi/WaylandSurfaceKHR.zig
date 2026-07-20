@@ -111,7 +111,7 @@ pub fn attachImage(interface: *Interface, allocator: std.mem.Allocator, image: *
     const pool = wayland.wl_shm_create_pool(shm, fd, @intCast(size)) orelse return VkError.Unknown;
     defer wayland.wl_shm_pool_destroy(pool);
 
-    const buffer = wayland.wl_shm_pool_create_buffer(pool, 0, @intCast(width), @intCast(height), @intCast(stride), wayland.WL_SHM_FORMAT_ARGB8888) orelse return VkError.Unknown;
+    const buffer = wayland.wl_shm_pool_create_buffer(pool, 0, @intCast(width), @intCast(height), @intCast(stride), wayland.wl_shm_format_argb8888) orelse return VkError.Unknown;
     errdefer wayland.wl_buffer_destroy(buffer);
 
     wl_image.* = .{

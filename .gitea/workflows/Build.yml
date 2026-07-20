@@ -2,9 +2,9 @@ name: Build
 
 on:
   push:
-    branches: [ "master" ]
+    branches: ["master"]
   pull_request:
-    branches: [ "master" ]
+    branches: ["master"]
 
 jobs:
   build:
@@ -52,6 +52,9 @@ jobs:
           echo "$PATH"
           ls -la /opt/mpss/3.8.6/sysroots/k1om-mpss-linux/bin | head -50
 
+      - name: ZLint pass
+        uses: DonIsaac/zlint-action@v0.0.1
+
       - name: Building Ape
         run: zig build ape --release=safe
 
@@ -77,5 +80,21 @@ jobs:
           remote-password: ${{ secrets.SFTP_PASSWORD_DOCS }}
           remote-port: 6969
           local-path: "./zig-out/docs"
+          remote-path: "/www"
+          sync: full
+
+      - name: Generating IR docs
+        run: zig build docs-ir
+
+      - name: Deploying IR docs
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+        uses: milanmk/actions-file-deployer@master
+        with:
+          remote-protocol: sftp
+          remote-host: ${{ secrets.SFTP_HOST_DOCS_IR }}
+          remote-user: ${{ secrets.SFTP_USER_DOCS_IR }}
+          remote-password: ${{ secrets.SFTP_PASSWORD_DOCS_IR  }}
+          remote-port: 6969
+          local-path: "./zig-out/docs-ir"
           remote-path: "/www"
           sync: full
