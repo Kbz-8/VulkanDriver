@@ -25,7 +25,7 @@ int HandleAllocMemory(scif_epd_t endpoint, const PhiMessageHeader* header)
 	if(ReadAll(endpoint, &request, sizeof(request)) < 0)
 		return -1;
 
-	void* memory = malloc((size_t)request.size);
+	const void* memory = malloc((size_t)request.size);
 
 	if(memory == NULL)
 	{

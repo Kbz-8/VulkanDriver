@@ -1,0 +1,336 @@
+name: Sync GitHub PR to Gitea
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+      - ready_for_review
+      - converted_to_draft
+      - closed
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: gitea-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    env:
+      GITEA_URL: ${{ vars.GITEA_URL }}
+      GITEA_OWNER: ${{ vars.GITEA_OWNER }}
+      GITEA_REPO: ${{ vars.GITEA_REPO }}
+      GITEA_SSH_REMOTE: ${{ vars.GITEA_SSH_REMOTE }}
+      GITEA_BASE_BRANCH: ${{ vars.GITEA_BASE_BRANCH }}
+
+      GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+      GITEA_SSH_KEY: ${{ secrets.GITEA_SSH_KEY }}
+      GITEA_KNOWN_HOSTS: ${{ secrets.GITEA_KNOWN_HOSTS }}
+
+      GH_REPO_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Synchronize pull request
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          RequireVariable() {
+            local variable_name="$1"
+
+            if [[ -z "${!variable_name:-}" ]]; then
+              echo "Missing required variable: ${variable_name}" >&2
+              exit 1
+            fi
+          }
+
+          ApiRequest() {
+            local method="$1"
+            local path="$2"
+            local data="${3:-}"
+
+            if [[ -n "${data}" ]]; then
+              curl \
+                --silent \
+                --show-error \
+                --fail-with-body \
+                --request "${method}" \
+                --header "Authorization: token ${GITEA_TOKEN}" \
+                --header "Content-Type: application/json" \
+                --data "${data}" \
+                "${GITEA_URL%/}/api/v1${path}"
+            else
+              curl \
+                --silent \
+                --show-error \
+                --fail-with-body \
+                --request "${method}" \
+                --header "Authorization: token ${GITEA_TOKEN}" \
+                --header "Accept: application/json" \
+                "${GITEA_URL%/}/api/v1${path}"
+            fi
+          }
+
+          FindGiteaPullRequest() {
+            local branch_name="$1"
+            local page
+            local response
+            local pull_number
+
+            for page in $(seq 1 100); do
+              response="$(
+                ApiRequest GET \
+                  "/repos/${GITEA_OWNER}/${GITEA_REPO}/pulls?state=all&page=${page}&limit=50"
+              )"
+
+              pull_number="$(
+                jq \
+                  -r \
+                  --arg branch_name "${branch_name}" \
+                  --arg base_branch "${GITEA_BASE_BRANCH}" \
+                  '
+                    .[]
+                    | select(
+                        .head.ref == $branch_name
+                        and .base.ref == $base_branch
+                      )
+                    | (.number // .index)
+                  ' \
+                  <<<"${response}" \
+                  | head -n 1
+              )"
+
+              if [[
+                -n "${pull_number}"
+                && "${pull_number}" != "null"
+              ]]; then
+                printf '%s\n' "${pull_number}"
+                return 0
+              fi
+
+              if [[ "$(jq 'length' <<<"${response}")" -lt 50 ]]; then
+                break
+              fi
+            done
+
+            return 1
+          }
+
+          for variable_name in \
+            GITEA_URL \
+            GITEA_OWNER \
+            GITEA_REPO \
+            GITEA_SSH_REMOTE \
+            GITEA_BASE_BRANCH \
+            GITEA_TOKEN \
+            GITEA_SSH_KEY \
+            GITEA_KNOWN_HOSTS \
+            GH_REPO_TOKEN; do
+            RequireVariable "${variable_name}"
+          done
+
+          action="$(
+            jq -r '.action' "${GITHUB_EVENT_PATH}"
+          )"
+
+          pr_number="$(
+            jq -r '.pull_request.number' "${GITHUB_EVENT_PATH}"
+          )"
+
+          pr_title="$(
+            jq -r '.pull_request.title' "${GITHUB_EVENT_PATH}"
+          )"
+
+          pr_body="$(
+            jq -r '.pull_request.body // ""' "${GITHUB_EVENT_PATH}"
+          )"
+
+          pr_url="$(
+            jq -r '.pull_request.html_url' "${GITHUB_EVENT_PATH}"
+          )"
+
+          pr_author="$(
+            jq -r '.pull_request.user.login' "${GITHUB_EVENT_PATH}"
+          )"
+
+          expected_sha="$(
+            jq -r '.pull_request.head.sha' "${GITHUB_EVENT_PATH}"
+          )"
+
+          github_base_branch="$(
+            jq -r '.pull_request.base.ref' "${GITHUB_EVENT_PATH}"
+          )"
+
+          imported_branch="github-pr/${pr_number}"
+
+          if [[
+            "${github_base_branch}" != "${GITEA_BASE_BRANCH}"
+          ]]; then
+            echo \
+              "Ignoring PR #${pr_number}: base branch" \
+              "${github_base_branch} is not ${GITEA_BASE_BRANCH}."
+
+            exit 0
+          fi
+
+          install -d -m 700 "${HOME}/.ssh"
+
+          printf '%s\n' "${GITEA_SSH_KEY}" \
+            > "${HOME}/.ssh/id_ed25519"
+
+          printf '%s\n' "${GITEA_KNOWN_HOSTS}" \
+            > "${HOME}/.ssh/known_hosts"
+
+          chmod 600 "${HOME}/.ssh/id_ed25519"
+          chmod 644 "${HOME}/.ssh/known_hosts"
+
+          repository_dir="$(mktemp -d)"
+
+          trap 'rm -rf "${repository_dir}"' EXIT
+
+          git -C "${repository_dir}" init --bare
+
+          git -C "${repository_dir}" remote add github \
+            "https://github.com/${GITHUB_REPOSITORY}.git"
+
+          git -C "${repository_dir}" remote add gitea \
+            "${GITEA_SSH_REMOTE}"
+
+          github_basic_auth="$(
+            printf \
+              'x-access-token:%s' \
+              "${GH_REPO_TOKEN}" \
+              | base64 \
+              | tr -d '\n'
+          )"
+
+          git -C "${repository_dir}" config \
+            http.https://github.com/.extraheader \
+            "AUTHORIZATION: basic ${github_basic_auth}"
+
+          gitea_pull_number="$(
+            FindGiteaPullRequest "${imported_branch}" || true
+          )"
+
+          if [[ "${action}" == "closed" ]]; then
+            if [[ -n "${gitea_pull_number}" ]]; then
+              close_payload="$(
+                jq -n '{state: "closed"}'
+              )"
+
+              ApiRequest \
+                PATCH \
+                "/repos/${GITEA_OWNER}/${GITEA_REPO}/pulls/${gitea_pull_number}" \
+                "${close_payload}" \
+                >/dev/null
+            fi
+
+            git -C "${repository_dir}" push gitea \
+              ":refs/heads/${imported_branch}" \
+              || true
+
+            exit 0
+          fi
+
+          git -C "${repository_dir}" fetch \
+            --no-tags \
+            github \
+            "+refs/pull/${pr_number}/head:refs/remotes/github/pr/${pr_number}"
+
+          fetched_sha="$(
+            git -C "${repository_dir}" rev-parse \
+              "refs/remotes/github/pr/${pr_number}"
+          )"
+
+          if [[ "${fetched_sha}" != "${expected_sha}" ]]; then
+            echo \
+              "Fetched ${fetched_sha}, expected ${expected_sha}." \
+              "Refusing to synchronize." \
+              >&2
+
+            exit 1
+          fi
+
+          current_gitea_sha="$(
+            git -C "${repository_dir}" ls-remote \
+              gitea \
+              "refs/heads/${imported_branch}" \
+              | awk 'NR == 1 { print $1 }'
+          )"
+
+          if [[ -n "${current_gitea_sha}" ]]; then
+            git -C "${repository_dir}" push \
+              --force-with-lease="refs/heads/${imported_branch}:${current_gitea_sha}" \
+              gitea \
+              "refs/remotes/github/pr/${pr_number}:refs/heads/${imported_branch}"
+          else
+            git -C "${repository_dir}" push \
+              gitea \
+              "refs/remotes/github/pr/${pr_number}:refs/heads/${imported_branch}"
+          fi
+
+          marker="<!-- github-pr:${GITHUB_REPOSITORY}#${pr_number} -->"
+
+          imported_body="$(cat <<EOF
+          ${marker}
+
+          Imported from ${pr_url}.
+
+          GitHub author: @${pr_author}
+          GitHub head commit: \`${expected_sha}\`
+
+          ---
+
+          ${pr_body}
+          EOF
+          )"
+
+          imported_title="[GitHub #${pr_number}] ${pr_title}"
+
+          if [[ -z "${gitea_pull_number}" ]]; then
+            create_payload="$(
+              jq \
+                -n \
+                --arg base "${GITEA_BASE_BRANCH}" \
+                --arg head "${imported_branch}" \
+                --arg title "${imported_title}" \
+                --arg body "${imported_body}" \
+                '{
+                  base: $base,
+                  head: $head,
+                  title: $title,
+                  body: $body
+                }'
+            )"
+
+            ApiRequest \
+              POST \
+              "/repos/${GITEA_OWNER}/${GITEA_REPO}/pulls" \
+              "${create_payload}" \
+              >/dev/null
+          else
+            update_payload="$(
+              jq \
+                -n \
+                --arg title "${imported_title}" \
+                --arg body "${imported_body}" \
+                '{
+                  title: $title,
+                  body: $body,
+                  state: "open"
+                }'
+            )"
+
+            ApiRequest \
+              PATCH \
+              "/repos/${GITEA_OWNER}/${GITEA_REPO}/pulls/${gitea_pull_number}" \
+              "${update_payload}" \
+              >/dev/null
+          fi

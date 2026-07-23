@@ -1,7 +1,7 @@
 #ifndef APE_PHI_PROTOCOL_H
 #define APE_PHI_PROTOCOL_H
 
-#include "Commands.h"
+#include "Commands.h" // IWYU pragma: keep
 #include <stdint.h>
 
 #define PHI_PROTOCOL_MAGIC 0x50484941u

@@ -1,5 +1,5 @@
-#include <Daemon.h>
 #include <CommandBuffer.h>
+#include <Daemon.h>
 #include <Logger.h>
 #include <Memory.h>
 
@@ -50,7 +50,7 @@ scif_epd_t StartDaemon()
 		return 0;
 	}
 
-	if(scif_listen(endpoint, 1) < 0)
+	if(scif_listen(endpoint, 16) < 0)
 	{
 		PhiLogError("Could not listen to SCIF port");
 		scif_close(endpoint);

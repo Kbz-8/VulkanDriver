@@ -45,6 +45,11 @@ pub fn init(instance: *base.Instance, node_id: u16) VkError!Self {
 }
 
 pub fn deinit(self: *Self) void {
+    var reply: proto.PhiResult = undefined;
+    self.request(proto.PHI_PACKET_SHUTDOWN, &.{}, std.mem.asBytes(&reply)) catch |err| {
+        std.log.scoped(.PhiTransport).warn("Failed to shut down remote session: {s}", .{@errorName(err)});
+    };
+
     _ = scif.close(self.epd);
     scif.unload();
     std.log.scoped(.PhiTransport).info("Closed connection", .{});

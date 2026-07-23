@@ -1,0 +1,190 @@
+name: Mirror Gitea refs to GitHub
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "*"
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+
+    env:
+      MIRROR_REPOSITORY: ${{ vars.MIRROR_REPOSITORY }}
+      MIRROR_BASE_BRANCH: ${{ vars.MIRROR_BASE_BRANCH }}
+
+      MIRROR_GITHUB_SSH_KEY: ${{ secrets.MIRROR_GITHUB_SSH_KEY }}
+      MIRROR_GITHUB_KNOWN_HOSTS: ${{ secrets.MIRROR_GITHUB_KNOWN_HOSTS }}
+
+      MIRROR_REF_TYPE: ${{ gitea.ref_type }}
+      MIRROR_REF_NAME: ${{ gitea.ref_name }}
+
+    steps:
+      - name: Check out the authoritative Gitea repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push without rewriting GitHub history
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          RequireVariable() {
+            local variable_name="$1"
+
+            if [[ -z "${!variable_name:-}" ]]; then
+              echo "Missing required variable: ${variable_name}" >&2
+              exit 1
+            fi
+          }
+
+          for variable_name in \
+            MIRROR_REPOSITORY \
+            MIRROR_BASE_BRANCH \
+            MIRROR_GITHUB_SSH_KEY \
+            MIRROR_GITHUB_KNOWN_HOSTS \
+            MIRROR_REF_TYPE \
+            MIRROR_REF_NAME; do
+            RequireVariable "${variable_name}"
+          done
+
+          install -d -m 700 "${HOME}/.ssh"
+
+          printf '%s\n' "${MIRROR_GITHUB_SSH_KEY}" \
+            > "${HOME}/.ssh/id_ed25519"
+
+          printf '%s\n' "${MIRROR_GITHUB_KNOWN_HOSTS}" \
+            > "${HOME}/.ssh/known_hosts"
+
+          chmod 600 "${HOME}/.ssh/id_ed25519"
+          chmod 644 "${HOME}/.ssh/known_hosts"
+
+          git remote remove github 2>/dev/null || true
+
+          git remote add github \
+            "git@github.com:${MIRROR_REPOSITORY}.git"
+
+          if [[ "${MIRROR_REF_TYPE}" == "branch" ]]; then
+            if [[
+              "${MIRROR_REF_NAME}" != "${MIRROR_BASE_BRANCH}"
+            ]]; then
+              echo \
+                "Ignoring non-authoritative branch" \
+                "${MIRROR_REF_NAME}."
+
+              exit 0
+            fi
+
+            git fetch origin \
+              "+refs/heads/${MIRROR_BASE_BRANCH}:refs/remotes/origin/${MIRROR_BASE_BRANCH}"
+
+            local_sha="$(
+              git rev-parse \
+                "refs/remotes/origin/${MIRROR_BASE_BRANCH}"
+            )"
+
+            remote_sha="$(
+              git ls-remote \
+                github \
+                "refs/heads/${MIRROR_BASE_BRANCH}" \
+                | awk 'NR == 1 { print $1 }'
+            )"
+
+            if [[ -z "${remote_sha}" ]]; then
+              git push github \
+                "${local_sha}:refs/heads/${MIRROR_BASE_BRANCH}"
+
+              exit 0
+            fi
+
+            if [[ "${local_sha}" == "${remote_sha}" ]]; then
+              echo \
+                "GitHub ${MIRROR_BASE_BRANCH}" \
+                "is already synchronized."
+
+              exit 0
+            fi
+
+            git fetch \
+              --no-tags \
+              github \
+              "refs/heads/${MIRROR_BASE_BRANCH}:refs/remotes/github/${MIRROR_BASE_BRANCH}"
+
+            if ! git merge-base \
+              --is-ancestor \
+              "${remote_sha}" \
+              "${local_sha}"; then
+
+              echo \
+                "Refusing to overwrite GitHub" \
+                "${MIRROR_BASE_BRANCH}." \
+                >&2
+
+              echo \
+                "GitHub ${remote_sha} is not an ancestor" \
+                "of Gitea ${local_sha}." \
+                >&2
+
+              echo \
+                "Import and resolve the GitHub commit" \
+                "on Gitea first." \
+                >&2
+
+              exit 1
+            fi
+
+            git push github \
+              "${local_sha}:refs/heads/${MIRROR_BASE_BRANCH}"
+
+            exit 0
+          fi
+
+          if [[ "${MIRROR_REF_TYPE}" == "tag" ]]; then
+            local_tag_sha="$(
+              git rev-parse \
+                "refs/tags/${MIRROR_REF_NAME}"
+            )"
+
+            remote_tag_sha="$(
+              git ls-remote \
+                github \
+                "refs/tags/${MIRROR_REF_NAME}" \
+                | awk 'NR == 1 { print $1 }'
+            )"
+
+            if [[ -z "${remote_tag_sha}" ]]; then
+              git push github \
+                "refs/tags/${MIRROR_REF_NAME}:refs/tags/${MIRROR_REF_NAME}"
+
+              exit 0
+            fi
+
+            if [[ "${local_tag_sha}" == "${remote_tag_sha}" ]]; then
+              echo \
+                "GitHub tag ${MIRROR_REF_NAME}" \
+                "is already synchronized."
+
+              exit 0
+            fi
+
+            echo \
+              "Refusing to rewrite GitHub tag" \
+              "${MIRROR_REF_NAME}." \
+              >&2
+
+            echo \
+              "GitHub has ${remote_tag_sha};" \
+              "Gitea has ${local_tag_sha}." \
+              >&2
+
+            exit 1
+          fi
+
+          echo \
+            "Unsupported ref type: ${MIRROR_REF_TYPE}" \
+            >&2
+
+          exit 1

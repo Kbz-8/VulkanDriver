@@ -512,7 +512,7 @@ fn customFlint(
     _: bool,
 ) !void {
     lib_mod.addImport("intel_c", base_c_mod);
-    lib_mod.addImport("shader_compiler", b.createModule(.{
+    lib_mod.addImport("shader_ir", b.createModule(.{
         .root_source_file = b.path("src/compiler/root.zig"),
         .target = target,
         .optimize = optimize,
