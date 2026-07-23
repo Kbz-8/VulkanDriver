@@ -128,9 +128,10 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 
     self.* = .{
         .interface = interface,
-        .command_allocator = .init(interface.host_allocator.allocator()),
+        .command_allocator = undefined,
         .commands = .empty,
     };
+    self.command_allocator = .init(interface.host_allocator.allocator());
     return self;
 }
 
