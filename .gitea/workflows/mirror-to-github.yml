@@ -3,7 +3,7 @@ name: Mirror Gitea refs to GitHub
 on:
   push:
     branches:
-      - main
+      - master
     tags:
       - "*"
 
