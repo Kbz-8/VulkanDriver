@@ -32,6 +32,7 @@ pub const FlintQueryPool = @import("FlintQueryPool.zig");
 pub const FlintRenderPass = @import("FlintRenderPass.zig");
 pub const FlintSampler = @import("FlintSampler.zig");
 pub const FlintShaderModule = @import("FlintShaderModule.zig");
+pub const compiler = @import("compiler/root.zig");
 
 pub const Instance = FlintInstance;
 
@@ -89,6 +90,7 @@ test {
     std.testing.refAllDecls(FlintRenderPass);
     std.testing.refAllDecls(FlintSampler);
     std.testing.refAllDecls(FlintShaderModule);
+    std.testing.refAllDecls(compiler);
     std.testing.refAllDecls(kmd);
     std.testing.refAllDecls(base);
 }
