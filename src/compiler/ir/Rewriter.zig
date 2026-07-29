@@ -2,6 +2,7 @@ const std = @import("std");
 const ids = @import("id.zig");
 const module_ir = @import("module.zig");
 const Builder = @import("Builder.zig");
+const validator = @import("validator/validator.zig");
 
 const Self = @This();
 
@@ -52,11 +53,11 @@ pub fn countUses(self: *const Self, value: ids.ValueId) usize {
 }
 
 pub fn replaceAllUses(self: *Self, old: ids.ValueId, replacement: ids.ValueId) Error!usize {
-    const old_value = self.module.values.get(old) orelse return error.InvalidValue;
-    const replacement_value = self.module.values.get(replacement) orelse return error.InvalidValue;
+    const old_value = self.module.values.get(old) orelse return Error.InvalidValue;
+    const replacement_value = self.module.values.get(replacement) orelse return Error.InvalidValue;
 
     if (old_value.type != replacement_value.type)
-        return error.TypeMismatch;
+        return Error.TypeMismatch;
 
     if (old == replacement)
         return 0;
@@ -77,17 +78,17 @@ pub fn replaceAllUses(self: *Self, old: ids.ValueId, replacement: ids.ValueId) E
 }
 
 pub fn eraseInstruction(self: *Self, instruction_id: ids.InstructionId) Error!void {
-    const instruction = self.module.instructions.get(instruction_id) orelse return error.InvalidInstruction;
+    const instruction = self.module.instructions.get(instruction_id) orelse return Error.InvalidInstruction;
 
     if (instruction.operation.hasSideEffects())
-        return error.SideEffectingInstruction;
+        return Error.SideEffectingInstruction;
 
     if (instruction.result) |result| {
         if (self.countUses(result) != 0)
-            return error.ResultStillUsed;
+            return Error.ResultStillUsed;
     }
 
-    const block = self.module.blocks.getMut(instruction.parent_block) orelse return error.InvalidBlock;
+    const block = self.module.blocks.getMut(instruction.parent_block) orelse return Error.InvalidBlock;
     var owned_index: ?usize = null;
 
     for (block.instructions.items, 0..) |candidate, index| {
@@ -97,29 +98,23 @@ pub fn eraseInstruction(self: *Self, instruction_id: ids.InstructionId) Error!vo
         }
     }
 
-    _ = block.instructions.orderedRemove(owned_index orelse return error.InstructionNotOwnedByBlock);
+    _ = block.instructions.orderedRemove(owned_index orelse return Error.InstructionNotOwnedByBlock);
     if (instruction.result) |result|
         _ = self.module.values.remove(result);
     _ = self.module.instructions.remove(instruction_id);
 }
 
-pub fn redirectEdges(
-    self: *Self,
-    source: ids.BlockId,
-    old_target: ids.BlockId,
-    new_target: ids.BlockId,
-    new_arguments: []const ids.ValueId,
-) Error!usize {
-    const source_block = self.module.blocks.get(source) orelse return error.InvalidBlock;
-    const target_block = self.module.blocks.get(new_target) orelse return error.InvalidBlock;
+pub fn redirectEdges(self: *Self, source: ids.BlockId, old_target: ids.BlockId, new_target: ids.BlockId, new_arguments: []const ids.ValueId) Error!usize {
+    const source_block = self.module.blocks.get(source) orelse return Error.InvalidBlock;
+    const target_block = self.module.blocks.get(new_target) orelse return Error.InvalidBlock;
 
     if (source_block.parent_function != target_block.parent_function)
-        return error.InvalidFunction;
+        return Error.InvalidFunction;
 
     try self.validateArguments(target_block, new_arguments);
 
     const mutable_source = self.module.blocks.getMut(source).?;
-    const terminator = if (mutable_source.terminator) |*value| value else return error.InvalidBlock;
+    const terminator = if (mutable_source.terminator) |*value| value else return Error.InvalidBlock;
 
     var count: usize = 0;
 
@@ -141,29 +136,23 @@ pub fn redirectEdges(
     return count;
 }
 
-pub fn addBlockParameter(
-    self: *Self,
-    block_id: ids.BlockId,
-    ty: ids.TypeId,
-    name: ?[]const u8,
-    incoming: []const IncomingValue,
-) Error!ids.ValueId {
-    const block = self.module.blocks.get(block_id) orelse return error.InvalidBlock;
-    const function = self.module.functions.get(block.parent_function) orelse return error.InvalidFunction;
+pub fn addBlockParameter(self: *Self, block_id: ids.BlockId, ty: ids.TypeId, name: ?[]const u8, incoming: []const IncomingValue) Error!ids.ValueId {
+    const block = self.module.blocks.get(block_id) orelse return Error.InvalidBlock;
+    const function = self.module.functions.get(block.parent_function) orelse return Error.InvalidFunction;
 
     for (incoming) |item| {
-        const value = self.module.values.get(item.value) orelse return error.InvalidValue;
+        const value = self.module.values.get(item.value) orelse return Error.InvalidValue;
 
         if (value.type != ty)
-            return error.TypeMismatch;
+            return Error.TypeMismatch;
 
         if (!functionHasEdgeTo(self.module, function, item.predecessor, block_id))
-            return error.UnexpectedIncomingValue;
+            return Error.UnexpectedIncomingValue;
     }
     for (function.blocks.items) |predecessor| {
         const edge_count = countEdgesTo(self.module.blocks.get(predecessor).?, block_id);
         if (edge_count != 0 and findIncoming(incoming, predecessor) == null)
-            return error.MissingIncomingValue;
+            return Error.MissingIncomingValue;
     }
 
     var builder = Builder.init(self.module);
@@ -177,19 +166,14 @@ pub fn addBlockParameter(
     return parameter;
 }
 
-pub fn removeBlockParameter(
-    self: *Self,
-    block_id: ids.BlockId,
-    parameter_index: usize,
-    replacement: ids.ValueId,
-) Error!void {
-    const block = self.module.blocks.get(block_id) orelse return error.InvalidBlock;
-    if (parameter_index >= block.parameters.items.len) return error.InvalidParameterIndex;
+pub fn removeBlockParameter(self: *Self, block_id: ids.BlockId, parameter_index: usize, replacement: ids.ValueId) Error!void {
+    const block = self.module.blocks.get(block_id) orelse return Error.InvalidBlock;
+    if (parameter_index >= block.parameters.items.len) return Error.InvalidParameterIndex;
     const parameter = block.parameters.items[parameter_index];
-    if (parameter == replacement) return error.InvalidValue;
+    if (parameter == replacement) return Error.InvalidValue;
     _ = try self.replaceAllUses(parameter, replacement);
 
-    const function = self.module.functions.get(block.parent_function) orelse return error.InvalidFunction;
+    const function = self.module.functions.get(block.parent_function) orelse return Error.InvalidFunction;
     for (function.blocks.items) |predecessor| {
         try self.removeArgumentFromEdges(predecessor, block_id, parameter_index);
     }
@@ -198,7 +182,7 @@ pub fn removeBlockParameter(
     _ = mutable_block.parameters.orderedRemove(parameter_index);
 
     for (mutable_block.parameters.items[parameter_index..], parameter_index..) |value_id, index| {
-        const value = self.module.values.getMut(value_id) orelse return error.InvalidValue;
+        const value = self.module.values.getMut(value_id) orelse return Error.InvalidValue;
         value.definition.block_parameter.index = @intCast(index);
     }
 
@@ -206,21 +190,15 @@ pub fn removeBlockParameter(
 }
 
 fn validateArguments(self: *const Self, target: *const module_ir.Block, arguments: []const ids.ValueId) Error!void {
-    if (arguments.len != target.parameters.items.len) return error.TypeMismatch;
+    if (arguments.len != target.parameters.items.len) return Error.TypeMismatch;
     for (arguments, target.parameters.items) |argument, parameter| {
-        const argument_value = self.module.values.get(argument) orelse return error.InvalidValue;
-        const parameter_value = self.module.values.get(parameter) orelse return error.InvalidValue;
-        if (argument_value.type != parameter_value.type) return error.TypeMismatch;
+        const argument_value = self.module.values.get(argument) orelse return Error.InvalidValue;
+        const parameter_value = self.module.values.get(parameter) orelse return Error.InvalidValue;
+        if (argument_value.type != parameter_value.type) return Error.TypeMismatch;
     }
 }
 
-fn redirectOne(
-    self: *Self,
-    edge: *module_ir.Edge,
-    old_target: ids.BlockId,
-    new_target: ids.BlockId,
-    arguments: []const ids.ValueId,
-) !bool {
+fn redirectOne(self: *Self, edge: *module_ir.Edge, old_target: ids.BlockId, new_target: ids.BlockId, arguments: []const ids.ValueId) !bool {
     if (edge.target != old_target)
         return false;
 
@@ -230,8 +208,8 @@ fn redirectOne(
 }
 
 fn appendArgumentToEdges(self: *Self, predecessor: ids.BlockId, target: ids.BlockId, value: ids.ValueId) !void {
-    const block = self.module.blocks.getMut(predecessor) orelse return error.InvalidBlock;
-    const terminator = if (block.terminator) |*item| item else return error.InvalidBlock;
+    const block = self.module.blocks.getMut(predecessor) orelse return Error.InvalidBlock;
+    const terminator = if (block.terminator) |*item| item else return Error.InvalidBlock;
 
     switch (terminator.*) {
         .branch => |*edge| {
@@ -257,8 +235,8 @@ fn appendEdgeArgument(self: *Self, edge: *module_ir.Edge, value: ids.ValueId) !v
 }
 
 fn removeArgumentFromEdges(self: *Self, predecessor: ids.BlockId, target: ids.BlockId, index: usize) !void {
-    const block = self.module.blocks.getMut(predecessor) orelse return error.InvalidBlock;
-    const terminator = if (block.terminator) |*item| item else return error.InvalidBlock;
+    const block = self.module.blocks.getMut(predecessor) orelse return Error.InvalidBlock;
+    const terminator = if (block.terminator) |*item| item else return Error.InvalidBlock;
 
     switch (terminator.*) {
         .branch => |*edge| {
@@ -278,7 +256,7 @@ fn removeArgumentFromEdges(self: *Self, predecessor: ids.BlockId, target: ids.Bl
 
 fn removeEdgeArgument(self: *Self, edge: *module_ir.Edge, index: usize) !void {
     if (index >= edge.arguments.len)
-        return error.InvalidParameterIndex;
+        return Error.InvalidParameterIndex;
 
     const arguments = try self.module.allocator().alloc(ids.ValueId, edge.arguments.len - 1);
     @memcpy(arguments[0..index], edge.arguments[0..index]);
@@ -299,12 +277,7 @@ fn findIncoming(incoming: []const IncomingValue, predecessor: ids.BlockId) ?ids.
     return null;
 }
 
-fn functionHasEdgeTo(
-    module: *const module_ir.Module,
-    function: *const module_ir.Function,
-    predecessor: ids.BlockId,
-    target: ids.BlockId,
-) bool {
+fn functionHasEdgeTo(module: *const module_ir.Module, function: *const module_ir.Function, predecessor: ids.BlockId, target: ids.BlockId) bool {
     for (function.blocks.items) |block_id| {
         if (block_id != predecessor)
             continue;
@@ -320,4 +293,136 @@ fn countEdgesTo(block: *const module_ir.Block, target: ids.BlockId) usize {
         .conditional_branch => |branch| @intFromBool(branch.true_edge.target == target) + @intFromBool(branch.false_edge.target == target),
         else => 0,
     };
+}
+
+test "Rewriter: replace all ID uses, safely erase dead instruction" {
+    // shader compute @main
+    // {
+    //     %0: constant u32 = bits(0x1)
+    //     %1: constant u32 = bits(0x2)
+    //
+    //     fn @main() -> void
+    //     {
+    //         .entry():
+    //             %2: u32 = integer_add %0, %1
+    //             %3: u32 = integer_multiply %2, %1
+    //             return
+    //     }
+    // }
+
+    var module = module_ir.Module.init(std.testing.allocator, .compute);
+    defer module.deinit();
+
+    var builder = Builder.init(&module);
+
+    const void_type = try builder.internType(.void);
+    const u32_type = try builder.internType(.{ .integer = .{ .bits = 32, .signedness = .unsigned } });
+
+    const one = try builder.internConstant(u32_type, .{ .integer_bits = 1 });
+    const two = try builder.internConstant(u32_type, .{ .integer_bits = 2 });
+
+    const main = try builder.addFunction(void_type, "main");
+    builder.setEntryPoint(main);
+
+    const entry = try builder.addBlock(main, "entry");
+    const sum = (try builder.appendInstruction(entry, u32_type, .{
+        .binary = .{
+            .opcode = .integer_add,
+            .lhs = one,
+            .rhs = two,
+        },
+    }, null)).?;
+    _ = try builder.appendInstruction(entry, u32_type, .{
+        .binary = .{
+            .opcode = .integer_multiply,
+            .lhs = sum,
+            .rhs = two,
+        },
+    }, null);
+    try builder.setTerminator(entry, .return_void);
+
+    try validator.validate(&module);
+
+    const sum_instruction = module.values.get(sum).?.definition.instruction;
+    var rewriter = Self.init(&module);
+
+    try std.testing.expectEqual(@as(usize, 1), try rewriter.replaceAllUses(sum, one));
+    try rewriter.eraseInstruction(sum_instruction);
+
+    try std.testing.expect(module.values.get(sum) == null);
+    try std.testing.expect(module.instructions.get(sum_instruction) == null);
+
+    try validator.validate(&module);
+}
+
+test "Rewriter: add block parameter and sync branch calls" {
+    // shader compute @main
+    // {
+    //     %0: constant u32 = bits(0x1)
+    //
+    //     fn @main() -> void
+    //     {
+    //         .entry():
+    //             branch .merge()
+    //
+    //         .merge():
+    //             return
+    //
+    //         .alternate():
+    //             return
+    //     }
+    // }
+
+    var module = module_ir.Module.init(std.testing.allocator, .compute);
+    defer module.deinit();
+
+    var builder = Builder.init(&module);
+
+    const void_type = try builder.internType(.void);
+    const u32_type = try builder.internType(.{ .integer = .{ .bits = 32, .signedness = .unsigned } });
+
+    const one = try builder.internConstant(u32_type, .{ .integer_bits = 1 });
+
+    const main = try builder.addFunction(void_type, "main");
+    builder.setEntryPoint(main);
+
+    const entry = try builder.addBlock(main, "entry");
+    const merge = try builder.addBlock(main, "merge");
+    const alternate = try builder.addBlock(main, "alternate");
+
+    try builder.setTerminator(entry, .{ .branch = try builder.edge(merge, &.{}) });
+    try builder.setTerminator(merge, .return_void);
+    try builder.setTerminator(alternate, .return_void);
+
+    var rewriter = Self.init(&module);
+
+    const parameter = try rewriter.addBlockParameter(merge, u32_type, "incoming", &.{
+        .{
+            .predecessor = entry,
+            .value = one,
+        },
+    });
+    const merge_edge = module.blocks.get(entry).?.terminator.?.branch;
+    try std.testing.expectEqualSlices(ids.ValueId, &.{one}, merge_edge.arguments);
+
+    _ = try builder.appendInstruction(merge, u32_type, .{
+        .binary = .{
+            .opcode = .integer_add,
+            .lhs = parameter,
+            .rhs = one,
+        },
+    }, null);
+    try validator.validate(&module);
+
+    try rewriter.removeBlockParameter(merge, 0, one);
+
+    try std.testing.expectEqual(@as(usize, 0), module.blocks.get(merge).?.parameters.items.len);
+    try std.testing.expectEqual(@as(usize, 0), module.blocks.get(entry).?.terminator.?.branch.arguments.len);
+
+    try validator.validate(&module);
+
+    try std.testing.expectEqual(@as(usize, 1), try rewriter.redirectEdges(entry, merge, alternate, &.{}));
+    try std.testing.expectEqual(alternate, module.blocks.get(entry).?.terminator.?.branch.target);
+
+    try validator.validate(&module);
 }

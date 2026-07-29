@@ -48,11 +48,22 @@ pub const cfg = @import("cfg.zig");
 pub const constant = @import("constant.zig");
 pub const id = @import("id.zig");
 pub const instruction = @import("instruction.zig");
+pub const inline_all_functions = @import("transformers/inline_all_functions.zig");
 pub const module = @import("module.zig");
 pub const parser = @import("parser/parser.zig");
-pub const pass_manager = @import("pass_manager.zig");
+pub const transformer_manager = @import("transformer_manager.zig");
 pub const printer = @import("printer.zig");
 pub const types = @import("type.zig");
 pub const validator = @import("validator/validator.zig");
 pub const value = @import("value.zig");
 pub const visitor = @import("visitor.zig");
+
+test {
+    _ = Builder;
+    _ = Rewriter;
+    _ = inline_all_functions;
+    _ = module;
+    _ = parser;
+    _ = transformer_manager;
+    _ = validator;
+}

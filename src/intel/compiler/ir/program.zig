@@ -1,6 +1,6 @@
 const std = @import("std");
 const shared_ir = @import("shader_ir").ir.module;
-const device = @import("device.zig");
+const device = @import("../device.zig");
 const ids = @import("id.zig");
 const instructions = @import("instruction.zig");
 const operand = @import("operand.zig");
@@ -10,7 +10,6 @@ pub const Stage = shared_ir.Stage;
 pub const Properties = packed struct {
     instructions_selected: bool = false,
     block_parameters_lowered: bool = false,
-    calls_lowered: bool = false,
 
     stage_io_lowered: bool = false,
     resources_lowered: bool = false,
@@ -24,7 +23,7 @@ pub const Properties = packed struct {
     flags_allocated: bool = false,
     branches_resolved: bool = false,
 
-    _padding: u20 = 0,
+    _padding: u21 = 0,
 };
 
 pub const VertexPayload = struct {
@@ -43,15 +42,6 @@ pub const ProgramData = struct {
     scratch_size_bytes: u32 = 0,
 };
 
-pub const Function = struct {
-    return_type: ?operand.DataType,
-    parameters: std.ArrayList(ids.VirtualRegisterId) = .empty,
-    blocks: std.ArrayList(ids.BlockId) = .empty,
-    entry_block: ?ids.BlockId = null,
-    name: ?[]const u8 = null,
-};
-
-pub const FunctionStore = ids.Store(ids.FunctionId, Function);
 pub const BlockStore = ids.Store(ids.BlockId, instructions.Block);
 pub const InstructionStore = ids.Store(ids.InstructionId, instructions.Instruction);
 pub const VirtualRegisterStore = ids.Store(ids.VirtualRegisterId, operand.VirtualRegister);
@@ -64,9 +54,8 @@ pub const Program = struct {
     device_info: device.DeviceInfo,
     dispatch_width: device.DispatchWidth,
 
-    entry_function: ?ids.FunctionId = null,
+    entry_block: ?ids.BlockId = null,
 
-    functions: FunctionStore = .{},
     blocks: BlockStore = .{},
     instructions: InstructionStore = .{},
     virtual_registers: VirtualRegisterStore = .{},
@@ -76,12 +65,7 @@ pub const Program = struct {
     program_data: ProgramData = .{},
     properties: Properties = .{},
 
-    pub fn init(
-        backing_allocator: std.mem.Allocator,
-        stage: Stage,
-        device_info: device.DeviceInfo,
-        dispatch_width: device.DispatchWidth,
-    ) Program {
+    pub fn init(backing_allocator: std.mem.Allocator, stage: Stage, device_info: device.DeviceInfo, dispatch_width: device.DispatchWidth) Program {
         return .{
             .arena = std.heap.ArenaAllocator.init(backing_allocator),
             .stage = stage,
@@ -99,27 +83,6 @@ pub const Program = struct {
         return self.arena.allocator();
     }
 
-    pub fn addFunction(self: *Program, return_type: ?operand.DataType, name: ?[]const u8) !ids.FunctionId {
-        const owned_name = if (name) |value| try self.allocator().dupe(u8, value) else null;
-        return self.functions.add(self.allocator(), .{
-            .return_type = return_type,
-            .name = owned_name,
-        });
-    }
-
-    pub fn setEntryFunction(self: *Program, function_id: ids.FunctionId) !void {
-        if (!self.functions.isLive(function_id))
-            return error.InvalidFunction;
-        self.entry_function = function_id;
-    }
-
-    pub fn addFunctionParameter(self: *Program, function_id: ids.FunctionId, register_id: ids.VirtualRegisterId) !void {
-        const function = self.functions.getMut(function_id) orelse return error.InvalidFunction;
-        if (!self.virtual_registers.isLive(register_id))
-            return error.InvalidVirtualRegister;
-        try function.parameters.append(self.allocator(), register_id);
-    }
-
     pub fn addVirtualRegister(self: *Program, register: operand.VirtualRegister) !ids.VirtualRegisterId {
         var owned = register;
         if (register.name) |name|
@@ -134,40 +97,30 @@ pub const Program = struct {
         return self.virtual_flags.add(self.allocator(), owned);
     }
 
-    pub fn addBlock(self: *Program, function_id: ids.FunctionId, name: ?[]const u8) !ids.BlockId {
-        const function = self.functions.getMut(function_id) orelse return error.InvalidFunction;
+    pub fn addBlock(self: *Program, name: ?[]const u8) !ids.BlockId {
         const owned_name = if (name) |value| try self.allocator().dupe(u8, value) else null;
         const block_id = try self.blocks.add(self.allocator(), .{
-            .parent_function = function_id,
             .name = owned_name,
         });
-        errdefer _ = self.blocks.remove(block_id);
-
-        try function.blocks.append(self.allocator(), block_id);
-        if (function.entry_block == null)
-            function.entry_block = block_id;
+        if (self.entry_block == null)
+            self.entry_block = block_id;
         return block_id;
     }
 
-    pub fn appendInstruction(
-        self: *Program,
-        block_id: ids.BlockId,
-        execution_size: device.ExecutionSize,
-        predicate: ?operand.Predicate,
-        operation: instructions.Operation,
-    ) !ids.InstructionId {
+    pub fn setEntryBlock(self: *Program, block_id: ids.BlockId) !void {
+        if (!self.blocks.isLive(block_id))
+            return error.InvalidBlock;
+        self.entry_block = block_id;
+    }
+
+    pub fn appendInstruction(self: *Program, block_id: ids.BlockId, execution_size: device.ExecutionSize, predicate: ?operand.Predicate, operation: instructions.Operation) !ids.InstructionId {
         const block = self.blocks.getMut(block_id) orelse return error.InvalidBlock;
-        var owned_operation = operation;
-        switch (owned_operation) {
-            .call => |*call| call.arguments = try self.allocator().dupe(operand.Source, call.arguments),
-            else => {},
-        }
 
         const instruction_id = try self.instructions.add(self.allocator(), .{
             .parent_block = block_id,
             .execution_size = execution_size,
             .predicate = predicate,
-            .operation = owned_operation,
+            .operation = operation,
         });
         try block.instructions.append(self.allocator(), instruction_id);
         return instruction_id;

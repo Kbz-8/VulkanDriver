@@ -19,8 +19,8 @@ const DominanceUseContext = struct {
 
 pub fn validate(module: *const module_ir.Module, function_id: ids.FunctionId) Error!void {
     var analysis = cfg.init(module.backingAllocator(), module, function_id) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return error.InvalidBlock,
+        std.mem.Allocator.Error.OutOfMemory => return Error.OutOfMemory,
+        else => return Error.InvalidBlock,
     };
     defer analysis.deinit();
 
@@ -41,7 +41,7 @@ pub fn validate(module: *const module_ir.Module, function_id: ids.FunctionId) Er
             instruction.operation.visitValueUses(&context, checkDominanceUse);
 
             if (!context.valid)
-                return error.DefinitionDoesNotDominateUse;
+                return Error.DefinitionDoesNotDominateUse;
         }
 
         var context: DominanceUseContext = .{
@@ -55,7 +55,7 @@ pub fn validate(module: *const module_ir.Module, function_id: ids.FunctionId) Er
         module_ir.visitTerminatorValueUses(block.terminator.?, &context, checkDominanceUse);
 
         if (!context.valid)
-            return error.DefinitionDoesNotDominateUse;
+            return Error.DefinitionDoesNotDominateUse;
     }
 }
 

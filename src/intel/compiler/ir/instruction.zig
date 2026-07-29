@@ -1,5 +1,5 @@
 const std = @import("std");
-const device = @import("device.zig");
+const device = @import("../device.zig");
 const ids = @import("id.zig");
 const operand = @import("operand.zig");
 
@@ -91,19 +91,12 @@ pub const Send = struct {
     response: ?operand.RegisterSpan = null,
 };
 
-pub const Call = struct {
-    function: ids.FunctionId,
-    destination: ?operand.Destination = null,
-    arguments: []const operand.Source,
-};
-
 pub const Operation = union(enum) {
     load_input: LoadInput,
     store_output: StoreOutput,
     move: Move,
     binary: Binary,
     compare: Compare,
-    call: Call,
     send: Send,
 };
 
@@ -121,8 +114,6 @@ pub const Terminator = union(enum) {
         true_block: ids.BlockId,
         false_block: ids.BlockId,
     },
-    return_void,
-    return_value: operand.Source,
     end_thread,
     @"unreachable",
 };
@@ -139,7 +130,6 @@ pub const StructuredControl = union(enum) {
 };
 
 pub const Block = struct {
-    parent_function: ids.FunctionId,
     instructions: std.ArrayList(ids.InstructionId) = .empty,
     terminator: ?Terminator = null,
     structured_control: StructuredControl = .none,

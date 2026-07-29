@@ -1072,3 +1072,179 @@ fn allocOptional(comptime T: type, allocator: std.mem.Allocator, count: usize) !
     @memset(values, null);
     return values;
 }
+
+test "SPIR-V: structured branches and OpPhi to block parameters" {
+    const assembly =
+        \\ OpCapability Shader
+        \\ OpMemoryModel Logical GLSL450
+        \\ OpEntryPoint GLCompute %main "main"
+        \\ OpExecutionMode %main LocalSize 1 1 1
+        \\ OpName %main "main"
+        \\ OpName %entry "entry"
+        \\ OpName %true "true"
+        \\ OpName %one "one"
+        \\ OpName %then "then"
+        \\ OpName %then_value "then_value"
+        \\ OpName %else "else"
+        \\ OpName %else_value "else_value"
+        \\ OpName %merge "merge"
+        \\ OpName %merged "merged"
+        \\ OpName %product "product"
+        \\
+        \\ %void = OpTypeVoid
+        \\ %bool = OpTypeBool
+        \\ %uint = OpTypeInt 32 0
+        \\ %fn_void = OpTypeFunction %void
+        \\ %true = OpConstantTrue %bool
+        \\ %one = OpConstant %uint 1
+        \\
+        \\ %main = OpFunction %void None %fn_void
+        \\     %entry = OpLabel
+        \\     OpSelectionMerge %merge None
+        \\     OpBranchConditional %true %then %else
+        \\     %then = OpLabel
+        \\     %then_value = OpIAdd %uint %one %one
+        \\     OpBranch %merge
+        \\     %else = OpLabel
+        \\     %else_value = OpISub %uint %one %one
+        \\     OpBranch %merge
+        \\     %merge = OpLabel
+        \\     %merged = OpPhi %uint %then_value %then %else_value %else
+        \\     %product = OpIMul %uint %merged %one
+        \\     OpReturn
+        \\ OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+
+    try std.testing.expectEqual(ir.module.Stage.compute, module.stage);
+    try std.testing.expectEqual([3]u32{ 1, 1, 1 }, module.execution_modes.workgroup_size.?);
+    try std.testing.expect(module.properties.valid_cfg);
+    try std.testing.expect(module.properties.valid_ssa);
+
+    const function = module.functions.get(module.entry_point.?).?;
+    try std.testing.expectEqual(@as(usize, 4), function.blocks.items.len);
+    const entry = module.blocks.get(function.blocks.items[0]).?;
+    try std.testing.expect(entry.structured_control == .selection);
+    const merge = module.blocks.get(function.blocks.items[3]).?;
+    try std.testing.expectEqual(@as(usize, 1), merge.parameters.items.len);
+    try std.testing.expectEqual(@as(usize, 1), merge.instructions.items.len);
+    const multiply = module.instructions.get(merge.instructions.items[0]).?;
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.integer_multiply, multiply.operation.binary.opcode);
+
+    const text = try ir.printer.allocPrint(std.testing.allocator, &module);
+    defer std.testing.allocator.free(text);
+
+    try std.testing.expect(std.mem.indexOf(u8, text, "%one: constant u32 = bits(0x1)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "%true: constant bool = true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "conditional_branch %true, .then(), .else()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "%then_value: u32 = integer_add %one, %one") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "branch .merge(%then_value)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "%else_value: u32 = integer_subtract %one, %one") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, ".merge(%merged: u32)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "%product: u32 = integer_multiply %merged, %one") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "integerMultiply") == null);
+
+    var parsed = try ir.parser.parseString(std.testing.allocator, text);
+    defer parsed.deinit();
+    const round_trip = try ir.printer.allocPrint(std.testing.allocator, &parsed);
+    defer std.testing.allocator.free(round_trip);
+    try std.testing.expectEqualStrings(text, round_trip);
+}
+
+test "SPIR-V: decorated vertex interfaces and load-store operations" {
+    const assembly =
+        \\ OpCapability Shader
+        \\ OpMemoryModel Logical GLSL450
+        \\ OpEntryPoint Vertex %main "main" %in_color %out_color
+        \\ OpName %in_color "in_color"
+        \\ OpName %out_color "out_color"
+        \\ OpDecorate %in_color Location 0
+        \\ OpDecorate %out_color Location 0
+        \\
+        \\ %void = OpTypeVoid
+        \\ %float = OpTypeFloat 32
+        \\ %vec4 = OpTypeVector %float 4
+        \\ %input_vec4 = OpTypePointer Input %vec4
+        \\ %output_vec4 = OpTypePointer Output %vec4
+        \\ %fn_void = OpTypeFunction %void
+        \\ %in_color = OpVariable %input_vec4 Input
+        \\ %out_color = OpVariable %output_vec4 Output
+        \\
+        \\ %main = OpFunction %void None %fn_void
+        \\     %entry = OpLabel
+        \\     %color = OpLoad %vec4 %in_color
+        \\     OpStore %out_color %color
+        \\     OpReturn
+        \\ OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+    try std.testing.expectEqual(ir.module.Stage.vertex, module.stage);
+    try std.testing.expectEqual(@as(usize, 2), module.interface_variables.entries.items.len);
+
+    const text = try ir.printer.allocPrint(std.testing.allocator, &module);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "load_interface @in_color") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "store_interface @out_color") != null);
+}
+
+fn assembleSpirv(allocator: std.mem.Allocator, assembly: []const u8) ![]u32 {
+    var io_backend: std.Io.Threaded = .init(allocator, .{});
+    defer io_backend.deinit();
+    const io = io_backend.io();
+
+    var child = try std.process.spawn(io, .{
+        .argv = &.{ "spirv-as", "--target-env", "spv1.0", "-o", "-", "-" },
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+    defer child.kill(io);
+
+    {
+        const stdin = child.stdin.?;
+        var stdin_writer = stdin.writer(io, &.{});
+        try stdin_writer.interface.writeAll(assembly);
+        try stdin_writer.interface.flush();
+        stdin.close(io);
+        child.stdin = null;
+    }
+
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(io, &stdout_buffer);
+    const binary = try stdout_reader.interface.allocRemaining(allocator, .limited(1024 * 1024));
+    defer allocator.free(binary);
+
+    var stderr_buffer: [4096]u8 = undefined;
+    var stderr_reader = child.stderr.?.reader(io, &stderr_buffer);
+    const stderr = try stderr_reader.interface.allocRemaining(allocator, .limited(64 * 1024));
+    defer allocator.free(stderr);
+
+    const term = try child.wait(io);
+    switch (term) {
+        .exited => |code| if (code != 0) {
+            std.log.err("spirv-as failed:\n{s}", .{stderr});
+            return error.SpirvAssemblyFailed;
+        },
+        else => {
+            std.log.err("spirv-as terminated unexpectedly:\n{s}", .{stderr});
+            return error.SpirvAssemblyFailed;
+        },
+    }
+
+    if (binary.len % @sizeOf(u32) != 0) return error.InvalidSpirvBinaryLength;
+    const words = try allocator.alloc(u32, binary.len / @sizeOf(u32));
+    errdefer allocator.free(words);
+    for (words, 0..) |*word, index| {
+        const offset = index * @sizeOf(u32);
+        word.* = std.mem.readInt(u32, binary[offset..][0..4], .little);
+    }
+    return words;
+}

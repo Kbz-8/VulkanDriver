@@ -225,3 +225,116 @@ fn constantEql(a: constant_ir.ConstantValue, b: constant_ir.ConstantValue) bool 
         .composite => |value| b == .composite and std.mem.eql(ids.ConstantId, value, b.composite),
     };
 }
+
+test "Builder: generation" {
+    const cfg = @import("cfg.zig");
+    const parser = @import("parser/parser.zig");
+    const printer = @import("printer.zig");
+    const validator = @import("validator/validator.zig");
+
+    // shader vertex @main
+    // {
+    //     @color: vec4[f32] = input[location(0), component(0), index(0)]
+    //     @out_color: vec4[f32] = output[location(0), component(0), index(0)]
+    //     %0: constant bool = true
+    //     %1: constant f32 = bits(0x3f800000)
+    //
+    //     fn @main() -> void
+    //     {
+    //         .entry():
+    //             %3: vec4[f32] = load_interface @color
+    //             conditional_branch %0, .pass(), .merge(%3)
+    //
+    //         .pass():
+    //             %4: vec4[f32] = composite_construct %1, %1, %1, %1
+    //             branch .merge(%4)
+    //
+    //         .merge(%2: vec4[f32]):
+    //             store_interface @out_color, %2
+    //             return
+    //     }
+    // }
+
+    var module = module_ir.Module.init(std.testing.allocator, .vertex);
+    defer module.deinit();
+    var builder = Self.init(&module);
+
+    const void_type = try builder.internType(.void);
+    const bool_type = try builder.internType(.boolean);
+    const f32_type = try builder.internType(.{ .floating = .{ .bits = 32 } });
+    const duplicate_f32 = try builder.internType(.{ .floating = .{ .bits = 32 } });
+    try std.testing.expectEqual(f32_type, duplicate_f32);
+    const vec4_type = try builder.internType(.{ .vector = .{ .element_type = f32_type, .length = 4 } });
+
+    const true_value = try builder.internConstant(bool_type, .{ .boolean = true });
+    const one = try builder.internConstant(f32_type, .{ .float_bits = @as(u32, @bitCast(@as(f32, 1.0))) });
+
+    const input = try builder.addInterfaceVariable(vec4_type, .input, .{ .location = .{ .location = 0 } }, "color");
+    const output = try builder.addInterfaceVariable(vec4_type, .output, .{ .location = .{ .location = 0 } }, "out_color");
+    const main = try builder.addFunction(void_type, "main");
+    builder.setEntryPoint(main);
+    const entry = try builder.addBlock(main, "entry");
+    const pass = try builder.addBlock(main, "pass");
+    const merge = try builder.addBlock(main, "merge");
+    const merged = try builder.addBlockParameter(merge, vec4_type, "merged");
+
+    const loaded = (try builder.appendInstruction(entry, vec4_type, .{
+        .load_interface = .{ .variable = input },
+    }, "loaded")).?;
+    try builder.setTerminator(entry, .{ .conditional_branch = .{
+        .condition = true_value,
+        .true_edge = try builder.edge(pass, &.{}),
+        .false_edge = try builder.edge(merge, &.{loaded}),
+    } });
+
+    const splat = (try builder.appendInstruction(pass, vec4_type, .{
+        .composite_construct = .{ .elements = &.{ one, one, one, one } },
+    }, "white")).?;
+    try builder.setTerminator(pass, .{ .branch = try builder.edge(merge, &.{splat}) });
+    _ = try builder.appendInstruction(merge, null, .{
+        .store_interface = .{ .variable = output, .value = merged },
+    }, null);
+    try builder.setTerminator(merge, .return_void);
+
+    try validator.validate(&module);
+
+    var control_flow = try cfg.init(std.testing.allocator, &module, main);
+    defer control_flow.deinit();
+    try std.testing.expectEqual(@as(usize, 2), control_flow.predecessors(merge).?.len);
+    try std.testing.expect(control_flow.dominates(entry, merge));
+    try std.testing.expect(!control_flow.dominates(pass, merge));
+
+    const text = try printer.allocPrint(std.testing.allocator, &module);
+
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "shader vertex @main") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "@color: vec4[f32] = input[location(0), component(0), index(0)]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "@out_color: vec4[f32] = output[location(0), component(0), index(0)]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "conditional_branch %0, .pass(), .merge(%loaded)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, ".merge(%merged: vec4[f32])") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "store_interface @out_color, %merged") != null);
+
+    var parsed = try parser.parseString(std.testing.allocator, text);
+    defer parsed.deinit();
+    const round_trip = try printer.allocPrint(std.testing.allocator, &parsed);
+    defer std.testing.allocator.free(round_trip);
+    try std.testing.expectEqualStrings(text, round_trip);
+
+    const io = std.Options.debug_io;
+    const path = ".zig-cache/ir-parser-round-trip.ir";
+    const file = try std.Io.Dir.cwd().createFile(io, path, .{ .truncate = true });
+    {
+        defer file.close(io);
+        var file_buffer: [4096]u8 = @splat(0);
+        var file_writer = file.writer(io, &file_buffer);
+        try file_writer.interface.writeAll(text);
+        try file_writer.interface.flush();
+    }
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch @panic("Caught an error while handling an error");
+
+    var parsed_file = try parser.parseFile(std.testing.allocator, io, path);
+    defer parsed_file.deinit();
+    const file_round_trip = try printer.allocPrint(std.testing.allocator, &parsed_file);
+    defer std.testing.allocator.free(file_round_trip);
+    try std.testing.expectEqualStrings(text, file_round_trip);
+}

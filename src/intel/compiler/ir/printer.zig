@@ -1,4 +1,5 @@
 const std = @import("std");
+const device = @import("../device.zig");
 const ids = @import("id.zig");
 const inst_ir = @import("instruction.zig");
 const operand = @import("operand.zig");
@@ -11,25 +12,18 @@ pub fn write(program: *const program_ir.Program, writer: *std.Io.Writer) std.Io.
     try writer.print(";   .stage: {t}\n", .{program.stage});
     try writer.print(";   .generation: {t}\n", .{program.device_info.generation});
     try writer.print(";   .platform: {t}\n", .{program.device_info.platform});
-    try writer.print(";   .dispatch_width: {t}\n", .{program.dispatch_width});
-    if (program.entry_function) |entry| {
-        try writer.writeAll(";   .entry: ");
-        try writeFunctionRef(program, writer, entry);
-        try writer.writeByte('\n');
-    }
-
-    try writer.writeByte('\n');
+    try writer.print(";   .dispatch_width: {t}\n\n", .{program.dispatch_width});
 
     for (program.virtual_registers.entries.items, 0..) |entry, index| {
         const register = entry orelse continue;
         try writeVirtualRegisterRef(program, writer, ids.VirtualRegisterId.fromIndex(index));
-        try writer.print(": vgrf {t}[{d}] = class({t}), size({d}), alignment({d}), spillable({})\n", .{
+        try writer.print(": vgrf {t}[{d}], class({t}), size({d}), alignment({d}){s}\n", .{
             register.element_type,
             register.lane_count,
             register.class,
             register.size_bytes,
             register.alignment_bytes,
-            register.spillable,
+            if (register.spillable) ", spillable" else "",
         });
     }
 
@@ -39,69 +33,45 @@ pub fn write(program: *const program_ir.Program, writer: *std.Io.Writer) std.Io.
         try writer.writeAll(": vflag\n");
     }
 
-    for (program.functions.entries.items, 0..) |entry, function_index| {
-        const function = entry orelse continue;
+    try writer.writeByte('\n');
 
-        try writer.writeAll("\nfn ");
-        try writeFunctionRef(program, writer, ids.FunctionId.fromIndex(function_index));
-        try writer.writeByte('(');
-        for (function.parameters.items, 0..) |parameter, index| {
-            if (index != 0)
-                try writer.writeAll(", ");
-            try writeVirtualRegisterRef(program, writer, parameter);
-            try writer.writeAll(": ");
-            if (program.virtual_registers.get(parameter)) |register|
-                try writer.print("{t}", .{register.element_type})
-            else
-                try writer.print("<invalid-vgrf-{d}>", .{parameter.index()});
-        }
-        try writer.writeAll(") -> ");
-        if (function.return_type) |return_type|
-            try writer.print("{t}", .{return_type})
-        else
-            try writer.writeAll("void");
-        try writer.writeAll("\n{\n");
+    for (program.blocks.entries.items, 0..) |entry, block_index| {
+        const block = entry orelse continue;
+        const block_id = ids.BlockId.fromIndex(block_index);
 
-        for (function.blocks.items) |block_id| {
-            const block = program.blocks.get(block_id) orelse continue;
+        try writeBlockRef(program, writer, block_id);
+        try writer.writeAll(":\n");
 
-            try writer.writeAll(indent);
-            try writeBlockRef(program, writer, block_id);
-            try writer.writeAll(":\n");
-
-            switch (block.structured_control) {
-                .none => {},
-                .selection => |selection| {
-                    try writer.writeAll(indent ** 2 ++ "structured_selection ");
-                    try writeBlockRef(program, writer, selection.merge_block);
-                    try writer.writeByte('\n');
-                },
-                .loop => |loop| {
-                    try writer.writeAll(indent ** 2 ++ "structured_loop merge(");
-                    try writeBlockRef(program, writer, loop.merge_block);
-                    try writer.writeAll("), continue(");
-                    try writeBlockRef(program, writer, loop.continue_block);
-                    try writer.writeAll(")\n");
-                },
-            }
-
-            for (block.instructions.items) |instruction_id| {
-                const instruction = program.instructions.get(instruction_id) orelse continue;
-                try writer.writeAll(indent ** 2);
-                try writeInstruction(program, writer, instruction.*);
+        switch (block.structured_control) {
+            .none => {},
+            .selection => |selection| {
+                try writer.writeAll(indent ++ "structured_selection ");
+                try writeBlockRef(program, writer, selection.merge_block);
                 try writer.writeByte('\n');
-            }
-
-            if (block.terminator) |terminator| {
-                try writer.writeAll(indent ** 2);
-                try writeTerminator(program, writer, terminator);
-                try writer.writeAll("\n\n");
-            } else {
-                try writer.writeAll(indent ** 2 ++ "<missing terminator>\n\n");
-            }
+            },
+            .loop => |loop| {
+                try writer.writeAll(indent ++ "structured_loop merge(");
+                try writeBlockRef(program, writer, loop.merge_block);
+                try writer.writeAll("), continue(");
+                try writeBlockRef(program, writer, loop.continue_block);
+                try writer.writeAll(")\n");
+            },
         }
 
-        try writer.writeAll("}\n");
+        for (block.instructions.items) |instruction_id| {
+            const instruction = program.instructions.get(instruction_id) orelse continue;
+            try writer.writeAll(indent);
+            try writeInstruction(program, writer, instruction.*);
+            try writer.writeByte('\n');
+        }
+
+        if (block.terminator) |terminator| {
+            try writer.writeAll(indent);
+            try writeTerminator(program, writer, terminator);
+            try writer.writeAll("\n\n");
+        } else {
+            try writer.writeAll(indent ++ "<missing terminator>\n\n");
+        }
     }
 }
 
@@ -118,62 +88,51 @@ fn writeInstruction(program: *const program_ir.Program, writer: *std.Io.Writer, 
         try writePredicate(program, writer, predicate);
         try writer.writeByte(' ');
     }
-    try writeOperation(program, writer, instruction.operation);
+    try writeOperation(program, writer, instruction.execution_size, instruction.operation);
 }
 
-fn writeOperation(program: *const program_ir.Program, writer: *std.Io.Writer, operation: inst_ir.Operation) !void {
+fn writeOperation(program: *const program_ir.Program, writer: *std.Io.Writer, execution_size: device.ExecutionSize, operation: inst_ir.Operation) !void {
     switch (operation) {
         .load_input => |op| {
-            try writeDestination(program, writer, op.destination);
-            try writer.writeAll(" = load_input ");
+            try writer.writeAll("load_input ");
+            try writeDestination(program, writer, execution_size, op.destination);
+            try writer.writeAll(", ");
             try writeInterfaceSemantic(writer, op.semantic);
         },
         .store_output => |op| {
             try writer.writeAll("store_output ");
             try writeInterfaceSemantic(writer, op.semantic);
             try writer.writeAll(", ");
-            try writeSource(program, writer, op.source);
+            try writeSource(program, writer, execution_size, op.source);
         },
         .move => |op| {
-            try writeDestination(program, writer, op.destination);
-            try writer.writeAll(" = move ");
-            try writeSource(program, writer, op.source);
+            try writer.writeAll("mov ");
+            try writeDestination(program, writer, execution_size, op.destination);
+            try writer.writeAll(", ");
+            try writeSource(program, writer, execution_size, op.source);
         },
         .binary => |op| {
-            try writeDestination(program, writer, op.destination);
-            try writer.print(" = {t} ", .{op.opcode});
-            try writeSource(program, writer, op.lhs);
+            try writer.print("{t} ", .{op.opcode});
+            try writeDestination(program, writer, execution_size, op.destination);
             try writer.writeAll(", ");
-            try writeSource(program, writer, op.rhs);
+            try writeSource(program, writer, execution_size, op.lhs);
+            try writer.writeAll(", ");
+            try writeSource(program, writer, execution_size, op.rhs);
         },
         .compare => |op| {
+            try writer.print("cmp_{t} ", .{op.opcode});
             try writeFlagRef(program, writer, op.destination);
-            try writer.print(" = cmp_{t} ", .{op.opcode});
-            try writeSource(program, writer, op.lhs);
             try writer.writeAll(", ");
-            try writeSource(program, writer, op.rhs);
-        },
-        .call => |op| {
-            if (op.destination) |destination| {
-                try writeDestination(program, writer, destination);
-                try writer.writeAll(" = ");
-            }
-            try writer.writeAll("call ");
-            try writeFunctionRef(program, writer, op.function);
-            try writer.writeByte('(');
-            for (op.arguments, 0..) |argument, index| {
-                if (index != 0)
-                    try writer.writeAll(", ");
-                try writeSource(program, writer, argument);
-            }
-            try writer.writeByte(')');
+            try writeSource(program, writer, execution_size, op.lhs);
+            try writer.writeAll(", ");
+            try writeSource(program, writer, execution_size, op.rhs);
         },
         .send => |op| {
+            try writer.writeAll("send ");
             if (op.response) |response| {
                 try writeRegisterSpan(program, writer, response);
-                try writer.writeAll(" = ");
+                try writer.writeAll(", ");
             }
-            try writer.writeAll("send ");
             try writeMessage(writer, op.message);
             try writer.writeAll(", payload(");
             try writeRegisterSpan(program, writer, op.payload);
@@ -196,63 +155,94 @@ fn writeTerminator(program: *const program_ir.Program, writer: *std.Io.Writer, t
             try writer.writeAll(", ");
             try writeBlockRef(program, writer, branch.false_block);
         },
-        .return_void => try writer.writeAll("return"),
-        .return_value => |value| {
-            try writer.writeAll("return ");
-            try writeSource(program, writer, value);
-        },
         .end_thread => try writer.writeAll("end_thread"),
         .@"unreachable" => try writer.writeAll("unreachable"),
     }
 }
 
-fn writeSource(program: *const program_ir.Program, writer: *std.Io.Writer, source: operand.Source) !void {
+fn writeSource(program: *const program_ir.Program, writer: *std.Io.Writer, execution_size: device.ExecutionSize, source: operand.Source) !void {
     if (source.negate)
         try writer.writeByte('-');
     if (source.absolute)
         try writer.writeAll("abs(");
 
-    switch (source.register) {
-        .immediate => |immediate| try writeImmediate(writer, immediate),
-        else => {
-            try writeRegisterAtOffset(program, writer, source.register, source.region.byte_offset);
-            try writer.print("<{d};{d},{d}>", .{
-                source.region.vertical_stride,
-                source.region.width,
-                source.region.horizontal_stride,
-            });
-        },
-    }
+    try writeRegister(program, writer, source.register);
     try writer.print(":{t}", .{source.type});
+    if (source.register != .immediate)
+        try writeSourceRegion(writer, execution_size, source.register, source.region);
 
     if (source.absolute)
         try writer.writeByte(')');
 }
 
-fn writeDestination(program: *const program_ir.Program, writer: *std.Io.Writer, destination: operand.Destination) !void {
-    try writeRegisterAtOffset(program, writer, destination.register, destination.region.byte_offset);
-    try writer.print("<{d}>:{t}", .{ destination.region.horizontal_stride, destination.type });
+fn writeDestination(program: *const program_ir.Program, writer: *std.Io.Writer, execution_size: device.ExecutionSize, destination: operand.Destination) !void {
+    _ = execution_size;
+    try writeRegister(program, writer, destination.register);
+    try writer.print(":{t}", .{destination.type});
+    try writeDestinationRegion(writer, destination.register, destination.region);
 }
 
-fn writeRegisterAtOffset(
-    program: *const program_ir.Program,
-    writer: *std.Io.Writer,
-    register: operand.RegisterRef,
-    byte_offset: u16,
-) !void {
+fn writeSourceRegion(writer: *std.Io.Writer, execution_size: device.ExecutionSize, register: operand.RegisterRef, region: operand.Region) !void {
+    const byte_offset = registerByteOffset(register) + region.byte_offset;
+    const execution_width: u8 = @intFromEnum(execution_size);
+    const is_default = region.vertical_stride == execution_width and
+        region.width == execution_width and
+        region.horizontal_stride == 1;
+    const is_broadcast = region.vertical_stride == 0 and
+        region.width == 1 and
+        region.horizontal_stride == 0;
+
+    if (byte_offset == 0 and is_default)
+        return;
+
+    try writer.writeByte('[');
+    if (byte_offset != 0)
+        try writer.print("byte={d}", .{byte_offset});
+
+    if (is_broadcast) {
+        if (byte_offset != 0)
+            try writer.writeAll(", ");
+        try writer.writeAll("broadcast");
+    } else if (!is_default) {
+        if (byte_offset != 0)
+            try writer.writeAll(", ");
+        try writer.print("vstride={d}, width={d}, hstride={d}", .{
+            region.vertical_stride,
+            region.width,
+            region.horizontal_stride,
+        });
+    }
+    try writer.writeByte(']');
+}
+
+fn writeDestinationRegion(writer: *std.Io.Writer, register: operand.RegisterRef, region: operand.DestinationRegion) !void {
+    const byte_offset = registerByteOffset(register) + region.byte_offset;
+    if (byte_offset == 0 and region.horizontal_stride == 1)
+        return;
+
+    try writer.writeByte('[');
+    if (byte_offset != 0)
+        try writer.print("byte={d}", .{byte_offset});
+    if (region.horizontal_stride != 1) {
+        if (byte_offset != 0)
+            try writer.writeAll(", ");
+        try writer.print("hstride={d}", .{region.horizontal_stride});
+    }
+    try writer.writeByte(']');
+}
+
+fn registerByteOffset(register: operand.RegisterRef) u16 {
+    return switch (register) {
+        .physical_grf => |physical| physical.byte_offset,
+        else => 0,
+    };
+}
+
+fn writeRegister(program: *const program_ir.Program, writer: *std.Io.Writer, register: operand.RegisterRef) !void {
     switch (register) {
-        .virtual => |virtual| {
-            try writeVirtualRegisterRef(program, writer, virtual);
-            try writer.print(".{d}", .{byte_offset});
-        },
-        .physical_grf => |physical| try writer.print("r{d}.{d}", .{
-            physical.number,
-            @as(u16, physical.byte_offset) + byte_offset,
-        }),
-        .architecture => |architecture| {
-            try writeArchitectureRegister(writer, architecture);
-            try writer.print(".{d}", .{byte_offset});
-        },
+        .virtual => |virtual| try writeVirtualRegisterRef(program, writer, virtual),
+        .physical_grf => |physical| try writer.print("r{d}", .{physical.number}),
+        .architecture => |architecture| try writeArchitectureRegister(writer, architecture),
         .immediate => |immediate| try writeImmediate(writer, immediate),
         .null => try writer.writeAll("null"),
     }
@@ -290,7 +280,10 @@ fn writeFlagRef(program: *const program_ir.Program, writer: *std.Io.Writer, flag
 }
 
 fn writeRegisterSpan(program: *const program_ir.Program, writer: *std.Io.Writer, span: operand.RegisterSpan) !void {
-    try writeRegisterAtOffset(program, writer, span.base, 0);
+    try writeRegister(program, writer, span.base);
+    const byte_offset = registerByteOffset(span.base);
+    if (byte_offset != 0)
+        try writer.print("[byte={d}]", .{byte_offset});
     try writer.print("[{d}]", .{span.register_count});
 }
 
@@ -334,11 +327,6 @@ fn writeVirtualFlagRef(program: *const program_ir.Program, writer: *std.Io.Write
 fn writeBlockRef(program: *const program_ir.Program, writer: *std.Io.Writer, block_id: ids.BlockId) !void {
     const block = program.blocks.get(block_id);
     try writeNamedRef(writer, if (block) |value| value.name else null, "b", block_id.index(), '.');
-}
-
-fn writeFunctionRef(program: *const program_ir.Program, writer: *std.Io.Writer, function_id: ids.FunctionId) !void {
-    const function = program.functions.get(function_id);
-    try writeNamedRef(writer, if (function) |value| value.name else null, "fn", function_id.index(), '@');
 }
 
 fn writeNamedRef(writer: *std.Io.Writer, name: ?[]const u8, fallback: []const u8, index: usize, prefix: u8) !void {

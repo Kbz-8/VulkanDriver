@@ -10,23 +10,23 @@ const ast = @import("ast.zig");
 const lowerer = @import("lower.zig");
 
 pub const Error = error{
-    UnexpectedToken,
+    DuplicateName,
+    DuplicateValue,
+    InvalidCompositeIndex,
     InvalidNumber,
+    InvalidOpcode,
+    InvalidResult,
+    InvalidSemantic,
     InvalidStage,
     InvalidType,
-    InvalidOpcode,
-    InvalidSemantic,
-    DuplicateValue,
-    DuplicateName,
-    UnknownValue,
-    UnknownConstant,
-    UnknownInterface,
-    UnknownFunction,
-    UnknownBlock,
-    MissingTerminator,
     MissingResultType,
-    InvalidResult,
-    InvalidCompositeIndex,
+    MissingTerminator,
+    UnexpectedToken,
+    UnknownBlock,
+    UnknownConstant,
+    UnknownFunction,
+    UnknownInterface,
+    UnknownValue,
 };
 
 pub const max_file_size = 64 * 1024 * 1024;
@@ -59,7 +59,7 @@ const Parser = struct {
         try self.expectDiscard(.equal);
 
         const direction_token = try self.expect(.identifier);
-        const direction = std.meta.stringToEnum(module_ir.InterfaceDirection, direction_token.text) orelse return error.InvalidSemantic;
+        const direction = std.meta.stringToEnum(module_ir.InterfaceDirection, direction_token.text) orelse return Error.InvalidSemantic;
         try self.expectDiscard(.left_square);
 
         const semantic_name = (try self.expect(.identifier)).text;
@@ -92,9 +92,9 @@ const Parser = struct {
             const builtin_name = (try self.expect(.identifier)).text;
             try self.expectDiscard(.right_paren);
 
-            const builtin = std.meta.stringToEnum(module_ir.Builtin, builtin_name) orelse return error.InvalidSemantic;
+            const builtin = std.meta.stringToEnum(module_ir.Builtin, builtin_name) orelse return Error.InvalidSemantic;
             break :blk .{ .builtin = builtin };
-        } else return error.InvalidSemantic;
+        } else return Error.InvalidSemantic;
 
         try self.expectDiscard(.right_square);
 
@@ -137,7 +137,7 @@ const Parser = struct {
                     const bits = try self.parseUnsigned(u64, .number);
                     try self.expectDiscard(.right_paren);
 
-                    const ir_type = self.module.?.types.get(ty) orelse return error.InvalidType;
+                    const ir_type = self.module.?.types.get(ty) orelse return Error.InvalidType;
 
                     break :blk switch (ir_type.*) {
                         .integer => .{
@@ -146,16 +146,16 @@ const Parser = struct {
                         .floating => .{
                             .float_bits = bits,
                         },
-                        else => return error.InvalidType,
+                        else => return Error.InvalidType,
                     };
                 }
-                return error.UnexpectedToken;
+                return Error.UnexpectedToken;
             },
             .left_square => .{
                 .composite = try self.parseConstantList(),
             },
             .number => try self.parseDirectConstant(ty),
-            else => return error.UnexpectedToken,
+            else => return Error.UnexpectedToken,
         };
 
         return .{
@@ -167,12 +167,12 @@ const Parser = struct {
 
     fn parseDirectConstant(self: *Parser, ty: ids.TypeId) !ParsedConstantValue {
         const text = (try self.expect(.number)).text;
-        const ir_type = self.module.?.types.get(ty) orelse return error.InvalidType;
+        const ir_type = self.module.?.types.get(ty) orelse return Error.InvalidType;
 
         return switch (ir_type.*) {
             .integer => |integer| .{ .integer_bits = try parseIntegerLiteral(integer, text) },
             .floating => |float| .{ .float_bits = try parseFloatLiteral(float.bits, text) },
-            else => error.InvalidType,
+            else => Error.InvalidType,
         };
     }
 
@@ -210,7 +210,7 @@ const Parser = struct {
 
         while ((try self.peek()).tag != .right_brace) {
             if ((try self.peek()).tag != .dot_name)
-                return error.UnexpectedToken;
+                return Error.UnexpectedToken;
             try function.blocks.append(self.allocator, try self.parseBlock());
         }
 
@@ -246,7 +246,7 @@ const Parser = struct {
             const token = try self.peek();
 
             if (token.tag == .right_brace or token.tag == .dot_name)
-                return error.MissingTerminator;
+                return Error.MissingTerminator;
 
             if (token.tag == .value_ref) {
                 try block.instructions.append(self.allocator, try self.parseInstruction(true));
@@ -254,7 +254,7 @@ const Parser = struct {
             }
 
             if (token.tag != .identifier)
-                return error.UnexpectedToken;
+                return Error.UnexpectedToken;
 
             if (isTerminatorName(token.text)) {
                 block.terminator = try self.parseTerminator();
@@ -285,7 +285,7 @@ const Parser = struct {
 
         if (std.mem.startsWith(u8, name, "cmp_")) {
             const opcode_name = name["cmp_".len..];
-            const opcode = std.meta.stringToEnum(inst_ir.CompareOpcode, opcode_name) orelse return error.InvalidOpcode;
+            const opcode = std.meta.stringToEnum(inst_ir.CompareOpcode, opcode_name) orelse return Error.InvalidOpcode;
             const lhs = try self.parseValueRef();
 
             try self.expectDiscard(.comma);
@@ -337,7 +337,7 @@ const Parser = struct {
             }
 
             if (indices.items.len == 0)
-                return error.InvalidCompositeIndex;
+                return Error.InvalidCompositeIndex;
             return .{
                 .composite_extract = .{
                     .composite = composite,
@@ -377,7 +377,7 @@ const Parser = struct {
             };
         }
 
-        return error.InvalidOpcode;
+        return Error.InvalidOpcode;
     }
 
     fn parseTerminator(self: *Parser) !ParsedTerminator {
@@ -414,7 +414,7 @@ const Parser = struct {
         if (std.mem.eql(u8, name, "unreachable"))
             return .unreachable_value;
 
-        return error.UnexpectedToken;
+        return Error.UnexpectedToken;
     }
 
     fn parseEdge(self: *Parser) !ParsedEdge {
@@ -441,7 +441,7 @@ const Parser = struct {
             return module.internType(.boolean);
 
         if (std.mem.startsWith(u8, token.text, "vec")) {
-            const length = parseTextUnsigned(u8, token.text[3..]) catch return error.InvalidType;
+            const length = parseTextUnsigned(u8, token.text[3..]) catch return Error.InvalidType;
             try self.expectDiscard(.left_square);
 
             const element_type = try self.parseType();
@@ -497,7 +497,7 @@ const Parser = struct {
             try self.expectDiscard(.left_square);
 
             const address_name = (try self.expect(.identifier)).text;
-            const address_space = std.meta.stringToEnum(type_ir.AddressSpace, address_name) orelse return error.InvalidType;
+            const address_space = std.meta.stringToEnum(type_ir.AddressSpace, address_name) orelse return Error.InvalidType;
             try self.expectDiscard(.comma);
 
             const pointee_type = try self.parseType();
@@ -515,7 +515,7 @@ const Parser = struct {
             try self.expectDiscard(.left_square);
 
             const kind_name = (try self.expect(.identifier)).text;
-            const kind = std.meta.stringToEnum(type_ir.ResourceKind, kind_name) orelse return error.InvalidType;
+            const kind = std.meta.stringToEnum(type_ir.ResourceKind, kind_name) orelse return Error.InvalidType;
 
             try self.expectDiscard(.right_square);
 
@@ -527,7 +527,7 @@ const Parser = struct {
         }
 
         if (token.text.len > 1 and (token.text[0] == 'i' or token.text[0] == 'u')) {
-            const bits = parseTextUnsigned(u16, token.text[1..]) catch return error.InvalidType;
+            const bits = parseTextUnsigned(u16, token.text[1..]) catch return Error.InvalidType;
             return module.internType(.{ .integer = .{
                 .bits = bits,
                 .signedness = if (token.text[0] == 'i') .signed else .unsigned,
@@ -535,14 +535,14 @@ const Parser = struct {
         }
 
         if (token.text.len > 1 and token.text[0] == 'f') {
-            const bits = parseTextUnsigned(u16, token.text[1..]) catch return error.InvalidType;
+            const bits = parseTextUnsigned(u16, token.text[1..]) catch return Error.InvalidType;
             return module.internType(.{
                 .floating = .{
                     .bits = bits,
                 },
             });
         }
-        return error.InvalidType;
+        return Error.InvalidType;
     }
 
     fn parseConstantList(self: *Parser) ![]const u32 {
@@ -595,13 +595,13 @@ const Parser = struct {
 
     fn parseUnsigned(self: *Parser, comptime T: type, tag: TokenTag) !T {
         const token = try self.expect(tag);
-        return parseTextUnsigned(T, token.text) catch error.InvalidNumber;
+        return parseTextUnsigned(T, token.text) catch Error.InvalidNumber;
     }
 
     fn expectIdentifier(self: *Parser, expected: []const u8) !void {
         const token = try self.expect(.identifier);
         if (!std.mem.eql(u8, token.text, expected))
-            return error.UnexpectedToken;
+            return Error.UnexpectedToken;
     }
 
     fn expectDiscard(self: *Parser, tag: TokenTag) !void {
@@ -611,7 +611,7 @@ const Parser = struct {
     fn expect(self: *Parser, tag: TokenTag) !Token {
         const token = try self.take();
         if (token.tag != tag)
-            return error.UnexpectedToken;
+            return Error.UnexpectedToken;
         return token;
     }
 
@@ -629,7 +629,7 @@ const Parser = struct {
     fn take(self: *Parser) !Token {
         const token = self.lexer.take();
         if (token.tag == .invalid)
-            return error.UnexpectedToken;
+            return Error.UnexpectedToken;
         return token;
     }
 };
@@ -644,25 +644,25 @@ fn isTerminatorName(name: []const u8) bool {
 
 fn parseIntegerLiteral(integer: type_ir.IntegerType, text: []const u8) !u64 {
     if (integer.bits == 0 or integer.bits > 64)
-        return error.InvalidType;
+        return Error.InvalidType;
 
     if (integer.signedness == .unsigned) {
-        const value = std.fmt.parseInt(u64, text, 10) catch return error.InvalidNumber;
+        const value = std.fmt.parseInt(u64, text, 10) catch return Error.InvalidNumber;
         if (integer.bits < 64) {
             const shift: u6 = @intCast(integer.bits);
             const maximum = (@as(u64, 1) << shift) - 1;
             if (value > maximum)
-                return error.InvalidNumber;
+                return Error.InvalidNumber;
         }
         return value;
     }
 
-    const value = std.fmt.parseInt(i64, text, 10) catch return error.InvalidNumber;
+    const value = std.fmt.parseInt(i64, text, 10) catch return Error.InvalidNumber;
     if (integer.bits < 64) {
         const sign_shift: u6 = @intCast(integer.bits - 1);
         const magnitude = @as(i64, 1) << sign_shift;
         if (value < -magnitude or value > magnitude - 1)
-            return error.InvalidNumber;
+            return Error.InvalidNumber;
 
         const width: u6 = @intCast(integer.bits);
         const mask = (@as(u64, 1) << width) - 1;
@@ -675,18 +675,18 @@ fn parseIntegerLiteral(integer: type_ir.IntegerType, text: []const u8) !u64 {
 fn parseFloatLiteral(bits: u16, text: []const u8) !u64 {
     return switch (bits) {
         16 => blk: {
-            const value = std.fmt.parseFloat(f16, text) catch return error.InvalidNumber;
+            const value = std.fmt.parseFloat(f16, text) catch return Error.InvalidNumber;
             break :blk @as(u16, @bitCast(value));
         },
         32 => blk: {
-            const value = std.fmt.parseFloat(f32, text) catch return error.InvalidNumber;
+            const value = std.fmt.parseFloat(f32, text) catch return Error.InvalidNumber;
             break :blk @as(u32, @bitCast(value));
         },
         64 => blk: {
-            const value = std.fmt.parseFloat(f64, text) catch return error.InvalidNumber;
+            const value = std.fmt.parseFloat(f64, text) catch return Error.InvalidNumber;
             break :blk @as(u64, @bitCast(value));
         },
-        else => error.InvalidType,
+        else => Error.InvalidType,
     };
 }
 
@@ -695,7 +695,7 @@ fn parseTextUnsigned(comptime T: type, text: []const u8) !T {
     const digits = if (base == 16) text[2..] else text;
 
     if (digits.len == 0)
-        return error.InvalidNumber;
+        return Error.InvalidNumber;
 
     return std.fmt.parseInt(T, digits, base);
 }
@@ -712,7 +712,7 @@ pub fn parseString(backing_allocator: std.mem.Allocator, source: []const u8) !mo
 
     try parser.expectIdentifier("shader");
     const stage_token = try parser.expect(.identifier);
-    const stage = std.meta.stringToEnum(module_ir.Stage, stage_token.text) orelse return error.InvalidStage;
+    const stage = std.meta.stringToEnum(module_ir.Stage, stage_token.text) orelse return Error.InvalidStage;
 
     var module = module_ir.Module.init(backing_allocator, stage);
     errdefer module.deinit();
@@ -735,10 +735,10 @@ pub fn parseString(backing_allocator: std.mem.Allocator, source: []const u8) !mo
                 if (std.mem.eql(u8, token.text, "fn")) {
                     try parsed.functions.append(temporary_allocator, try parser.parseFunction());
                 } else {
-                    return error.UnexpectedToken;
+                    return Error.UnexpectedToken;
                 }
             },
-            else => return error.UnexpectedToken,
+            else => return Error.UnexpectedToken,
         }
     }
     try parser.expectDiscard(.right_brace);
@@ -764,4 +764,195 @@ pub fn parseFileInDir(backing_allocator: std.mem.Allocator, io: std.Io, director
     defer backing_allocator.free(source);
 
     return parseString(backing_allocator, source);
+}
+
+test "Parser: interface" {
+    const printer = @import("../printer.zig");
+
+    const source =
+        \\ shader vertex @main
+        \\ {
+        \\     @in_color: vec4[f32] = input[location(0), component(0), index(0)]
+        \\     @out_color: vec4[f32] = output[location(0), component(0), index(0)]
+        \\     @position: vec4[f32] = output[builtin(position)]
+        \\
+        \\     fn @main() -> void
+        \\     {
+        \\         .entry():
+        \\             return
+        \\     }
+        \\ }
+    ;
+
+    var module = try parseString(std.testing.allocator, source);
+    defer module.deinit();
+    const printed = try printer.allocPrint(std.testing.allocator, &module);
+    defer std.testing.allocator.free(printed);
+
+    try std.testing.expect(std.mem.indexOf(u8, printed, "@in_color: vec4[f32] = input[location(0), component(0), index(0)]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "@out_color: vec4[f32] = output[location(0), component(0), index(0)]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "@position: vec4[f32] = output[builtin(position)]") != null);
+}
+
+test "Parser: types, operations, calls, terminators" {
+    const printer = @import("../printer.zig");
+
+    const source =
+        \\ shader fragment @main
+        \\ {
+        \\     %0: constant bool = true
+        \\     %1: constant u32 = bits(0x1)
+        \\     %2: constant u32 = bits(0x2)
+        \\     %3: constant f32 = bits(0x3f800000)
+        \\     %4: constant array[u32, 2] = [#1, #2]
+        \\     %5: constant struct[u32, u32] = [#1, #2]
+        \\     %6: constant ptr[private, u32] = null
+        \\     %7: constant resourceHandle[sampler] = null
+        \\
+        \\     fn @main() -> void
+        \\     {
+        \\         .entry():
+        \\             %9: u32 = bitwise_not %1
+        \\             %10: u32 = integer_add %9, %2
+        \\             %11: bool = cmp_equal %1, %2
+        \\             %12: u32 = select %11, %1, %2
+        \\             %13: u32 = bitcast %12
+        \\             %14: vec2[u32] = composite_construct %1, %2
+        \\             %15: u32 = composite_extract %14[0]
+        \\             %16: f32 = negate %3
+        \\             %17: f32 = float_add %3, %16
+        \\             %18: u32 = call @helper(%15)
+        \\             return
+        \\     }
+        \\
+        \\     fn @helper(%8: u32) -> u32
+        \\     {
+        \\         .entry():
+        \\             return %8
+        \\     }
+        \\
+        \\     fn @discarder() -> void
+        \\     {
+        \\         .entry():
+        \\             discard
+        \\     }
+        \\
+        \\     fn @dead() -> void
+        \\     {
+        \\         .entry():
+        \\             unreachable
+        \\     }
+        \\ }
+    ;
+
+    var module = try parseString(std.testing.allocator, source);
+    defer module.deinit();
+    const printed = try printer.allocPrint(std.testing.allocator, &module);
+    defer std.testing.allocator.free(printed);
+
+    var reparsed = try parseString(std.testing.allocator, printed);
+    defer reparsed.deinit();
+    const printed_again = try printer.allocPrint(std.testing.allocator, &reparsed);
+    defer std.testing.allocator.free(printed_again);
+    try std.testing.expectEqualStrings(printed, printed_again);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "cmp_equal %1, %2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "cmp.") == null);
+}
+
+test "Parser: named value IDs" {
+    const printer = @import("../printer.zig");
+
+    const source =
+        \\ shader compute @main
+        \\ {
+        \\     %one_value: constant u32 = bits(0x1)
+        \\
+        \\     fn @main() -> void
+        \\     {
+        \\         .entry():
+        \\             %sum_value: u32 = integer_add %one_value, %one_value
+        \\             branch .merge(%sum_value)
+        \\
+        \\         .merge(%merged_value: u32):
+        \\             %product_value: u32 = integer_multiply %merged_value, %one_value
+        \\             return
+        \\     }
+        \\ }
+    ;
+
+    var module = try parseString(std.testing.allocator, source);
+    defer module.deinit();
+    const printed = try printer.allocPrint(std.testing.allocator, &module);
+    defer std.testing.allocator.free(printed);
+
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%one_value: constant u32 = bits(0x1)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%sum_value: u32 = integer_add %one_value, %one_value") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "branch .merge(%sum_value)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, ".merge(%merged_value: u32)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%product_value: u32 = integer_multiply %merged_value, %one_value") != null);
+
+    var reparsed = try parseString(std.testing.allocator, printed);
+    defer reparsed.deinit();
+    const printed_again = try printer.allocPrint(std.testing.allocator, &reparsed);
+    defer std.testing.allocator.free(printed_again);
+    try std.testing.expectEqualStrings(printed, printed_again);
+}
+
+test "Parser: numeric constants" {
+    const printer = @import("../printer.zig");
+
+    const source =
+        \\ shader compute @main
+        \\ {
+        \\     %0: constant u8 = 255
+        \\     %1: constant i8 = -1
+        \\     %2: constant f16 = 1.5
+        \\     %3: constant f32 = -0.0
+        \\     %4: constant f64 = 2.5e0
+        \\
+        \\     fn @main() -> void
+        \\     {
+        \\         .entry():
+        \\             return
+        \\     }
+        \\ }
+    ;
+
+    var module = try parseString(std.testing.allocator, source);
+    defer module.deinit();
+    const printed = try printer.allocPrint(std.testing.allocator, &module);
+    defer std.testing.allocator.free(printed);
+
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%0: constant u8 = bits(0xff)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%1: constant i8 = bits(0xff)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%2: constant f16 = bits(0x3e00)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%3: constant f32 = bits(0x80000000)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%4: constant f64 = bits(0x4004000000000000)") != null);
+
+    const out_of_range =
+        \\ shader compute @main
+        \\ {
+        \\     %0: constant u8 = 256
+        \\     fn @main() -> void
+        \\     {
+        \\         .entry():
+        \\             return
+        \\     }
+        \\ }
+    ;
+    try std.testing.expectError(Error.InvalidNumber, parseString(std.testing.allocator, out_of_range));
+}
+
+test "Parser: Error unknown value" {
+    const source =
+        \\ shader compute @main
+        \\ {
+        \\     fn @main() -> void
+        \\     {
+        \\         .entry():
+        \\             return %99
+        \\     }
+        \\ }
+    ;
+    try std.testing.expectError(Error.UnknownValue, parseString(std.testing.allocator, source));
 }

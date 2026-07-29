@@ -9,12 +9,8 @@ pub const Error = error{
     UnsupportedDispatchWidth,
     UnsupportedExecutionSize,
     UnsupportedDataType,
-    MissingEntryFunction,
-    InvalidFunction,
     MissingEntryBlock,
     InvalidBlock,
-    WrongParentFunction,
-    CrossFunctionBranch,
     MissingTerminator,
     InvalidInstruction,
     InvalidVirtualRegister,
@@ -28,10 +24,6 @@ pub const Error = error{
     InvalidDestination,
     InvalidImmediateType,
     InvalidRegisterSpan,
-    WrongArgumentCount,
-    WrongArgumentType,
-    WrongReturnType,
-    InvalidEntryTerminator,
 };
 
 pub fn validate(program: *const program_ir.Program) Error!void {
@@ -42,35 +34,9 @@ pub fn validate(program: *const program_ir.Program) Error!void {
     if (program.dispatch_width != .simd8 or !program.device_info.supportsDispatch(.simd8))
         return error.UnsupportedDispatchWidth;
 
-    const entry_function_id = program.entry_function orelse return error.MissingEntryFunction;
-    const entry_function = program.functions.get(entry_function_id) orelse return error.InvalidFunction;
-    const entry_block = entry_function.entry_block orelse return error.MissingEntryBlock;
-    const entry_block_data = program.blocks.get(entry_block) orelse return error.InvalidBlock;
-    if (entry_block_data.parent_function != entry_function_id)
-        return error.WrongParentFunction;
-
-    for (program.functions.entries.items, 0..) |entry, function_index| {
-        const function = entry orelse continue;
-        const function_id = ids.FunctionId.fromIndex(function_index);
-
-        if (function.return_type) |return_type|
-            try validateType(return_type);
-        const function_entry = function.entry_block orelse return error.MissingEntryBlock;
-        const function_entry_data = program.blocks.get(function_entry) orelse return error.InvalidBlock;
-        if (function_entry_data.parent_function != function_id)
-            return error.WrongParentFunction;
-
-        for (function.parameters.items) |parameter| {
-            if (!program.virtual_registers.isLive(parameter))
-                return error.InvalidVirtualRegister;
-        }
-
-        for (function.blocks.items) |block_id| {
-            const block = program.blocks.get(block_id) orelse return error.InvalidBlock;
-            if (block.parent_function != function_id)
-                return error.WrongParentFunction;
-        }
-    }
+    const entry_block = program.entry_block orelse return error.MissingEntryBlock;
+    if (!program.blocks.isLive(entry_block))
+        return error.InvalidBlock;
 
     for (program.virtual_registers.entries.items) |entry| {
         const register = entry orelse continue;
@@ -86,8 +52,6 @@ pub fn validate(program: *const program_ir.Program) Error!void {
 
     for (program.blocks.entries.items, 0..) |entry, block_index| {
         const block = entry orelse continue;
-        if (!program.functions.isLive(block.parent_function) or !functionContainsBlock(program, block.parent_function, ids.BlockId.fromIndex(block_index)))
-            return error.WrongParentFunction;
         if (block.terminator == null)
             return error.MissingTerminator;
 
@@ -99,8 +63,8 @@ pub fn validate(program: *const program_ir.Program) Error!void {
             try validateInstruction(program, inst.*);
         }
 
-        try validateStructuredControl(program, block.parent_function, block.structured_control);
-        try validateTerminator(program, block.parent_function, block.terminator.?);
+        try validateStructuredControl(program, block.structured_control);
+        try validateTerminator(program, block.terminator.?);
     }
 }
 
@@ -130,34 +94,11 @@ fn validateInstruction(program: *const program_ir.Program, inst: instruction.Ins
             try validateSource(program, op.lhs);
             try validateSource(program, op.rhs);
         },
-        .call => |op| try validateCall(program, op),
         .send => |op| {
             try validateSpan(program, op.payload);
             if (op.response) |response|
                 try validateSpan(program, response);
         },
-    }
-}
-
-fn validateCall(program: *const program_ir.Program, call: instruction.Call) Error!void {
-    const function = program.functions.get(call.function) orelse return error.InvalidFunction;
-    if (call.arguments.len != function.parameters.items.len)
-        return error.WrongArgumentCount;
-
-    for (call.arguments, function.parameters.items) |argument, parameter_id| {
-        try validateSource(program, argument);
-        const parameter = program.virtual_registers.get(parameter_id) orelse return error.InvalidVirtualRegister;
-        if (argument.type != parameter.element_type)
-            return error.WrongArgumentType;
-    }
-
-    if (function.return_type) |return_type| {
-        const destination = call.destination orelse return error.WrongReturnType;
-        try validateDestination(program, destination);
-        if (destination.type != return_type)
-            return error.WrongReturnType;
-    } else if (call.destination != null) {
-        return error.WrongReturnType;
     }
 }
 
@@ -224,59 +165,30 @@ fn validateSpan(program: *const program_ir.Program, span: operand.RegisterSpan) 
     }
 }
 
-fn validateTerminator(
-    program: *const program_ir.Program,
-    function_id: ids.FunctionId,
-    terminator: instruction.Terminator,
-) Error!void {
-    const function = program.functions.get(function_id) orelse return error.InvalidFunction;
+fn validateTerminator(program: *const program_ir.Program, terminator: instruction.Terminator) Error!void {
     switch (terminator) {
-        .jump => |target| try validateBlockTarget(program, function_id, target),
+        .jump => |target| try validateBlockTarget(program, target),
         .conditional_branch => |branch| {
             try validateFlag(program, branch.predicate.flag);
-            try validateBlockTarget(program, function_id, branch.true_block);
-            try validateBlockTarget(program, function_id, branch.false_block);
+            try validateBlockTarget(program, branch.true_block);
+            try validateBlockTarget(program, branch.false_block);
         },
-        .return_void => if (function.return_type != null)
-            return error.WrongReturnType,
-        .return_value => |value| {
-            const return_type = function.return_type orelse return error.WrongReturnType;
-            try validateSource(program, value);
-            if (value.type != return_type)
-                return error.WrongReturnType;
-        },
-        .end_thread => if (program.entry_function != function_id)
-            return error.InvalidEntryTerminator,
-        .@"unreachable" => {},
+        .end_thread, .@"unreachable" => {},
     }
 }
 
-fn validateStructuredControl(
-    program: *const program_ir.Program,
-    function_id: ids.FunctionId,
-    control: instruction.StructuredControl,
-) Error!void {
+fn validateStructuredControl(program: *const program_ir.Program, control: instruction.StructuredControl) Error!void {
     switch (control) {
         .none => {},
-        .selection => |selection| try validateBlockTarget(program, function_id, selection.merge_block),
+        .selection => |selection| try validateBlockTarget(program, selection.merge_block),
         .loop => |loop| {
-            try validateBlockTarget(program, function_id, loop.merge_block);
-            try validateBlockTarget(program, function_id, loop.continue_block);
+            try validateBlockTarget(program, loop.merge_block);
+            try validateBlockTarget(program, loop.continue_block);
         },
     }
 }
 
-fn validateBlockTarget(program: *const program_ir.Program, function_id: ids.FunctionId, block_id: ids.BlockId) Error!void {
-    const block = program.blocks.get(block_id) orelse return error.InvalidBlock;
-    if (block.parent_function != function_id)
-        return error.CrossFunctionBranch;
-}
-
-fn functionContainsBlock(program: *const program_ir.Program, function_id: ids.FunctionId, block_id: ids.BlockId) bool {
-    const function = program.functions.get(function_id) orelse return false;
-    for (function.blocks.items) |candidate| {
-        if (candidate == block_id)
-            return true;
-    }
-    return false;
+fn validateBlockTarget(program: *const program_ir.Program, block_id: ids.BlockId) Error!void {
+    if (!program.blocks.isLive(block_id))
+        return error.InvalidBlock;
 }

@@ -233,3 +233,13 @@ fn replaceOne(operand: *ids.ValueId, old: ids.ValueId, replacement: ids.ValueId,
     operand.* = replacement;
     count.* += 1;
 }
+
+test "Module: central store IDs graveyard" {
+    var module = Module.init(std.testing.allocator, .fragment);
+    defer module.deinit();
+    const first = try module.internType(.boolean);
+    try std.testing.expect(module.types.remove(first));
+    const second = try module.internType(.boolean);
+    try std.testing.expect(first.index() != second.index());
+    try std.testing.expect(module.types.get(first) == null);
+}

@@ -19,8 +19,8 @@ reachable: []bool,
 dominators: []bool,
 
 pub fn init(allocator: std.mem.Allocator, module: *const module_ir.Module, function_id: ids.FunctionId) Error!Self {
-    const function = module.functions.get(function_id) orelse return error.InvalidFunction;
-    const entry = function.entry_block orelse return error.MissingEntryBlock;
+    const function = module.functions.get(function_id) orelse return Error.InvalidFunction;
+    const entry = function.entry_block orelse return Error.MissingEntryBlock;
     const blocks = try allocator.dupe(ids.BlockId, function.blocks.items);
     errdefer allocator.free(blocks);
 
@@ -84,8 +84,8 @@ pub fn dominates(self: *const Self, dominator: ids.BlockId, block: ids.BlockId) 
 
 fn buildPredecessors(self: *Self, module: *const module_ir.Module) Error!void {
     for (self.blocks) |source| {
-        const block = module.blocks.get(source) orelse return error.InvalidBlock;
-        const terminator = block.terminator orelse return error.MissingTerminator;
+        const block = module.blocks.get(source) orelse return Error.InvalidBlock;
+        const terminator = block.terminator orelse return Error.MissingTerminator;
         switch (terminator) {
             .branch => |edge| try self.addPredecessor(edge.target, source),
             .conditional_branch => |branch| {
@@ -101,12 +101,12 @@ fn buildReachability(self: *Self, module: *const module_ir.Module, entry: ids.Bl
     var queue: std.ArrayList(ids.BlockId) = .empty;
     defer queue.deinit(self.allocator);
     try queue.append(self.allocator, entry);
-    self.reachable[self.indexOf(entry) orelse return error.InvalidBlock] = true;
+    self.reachable[self.indexOf(entry) orelse return Error.InvalidBlock] = true;
 
     var cursor: usize = 0;
     while (cursor < queue.items.len) : (cursor += 1) {
-        const block = module.blocks.get(queue.items[cursor]) orelse return error.InvalidBlock;
-        const terminator = block.terminator orelse return error.MissingTerminator;
+        const block = module.blocks.get(queue.items[cursor]) orelse return Error.InvalidBlock;
+        const terminator = block.terminator orelse return Error.MissingTerminator;
         switch (terminator) {
             .branch => |edge| try self.markReachable(&queue, edge.target),
             .conditional_branch => |branch| {
@@ -168,12 +168,12 @@ fn buildDominators(self: *Self, entry: ids.BlockId) void {
 }
 
 fn addPredecessor(self: *Self, target: ids.BlockId, source: ids.BlockId) Error!void {
-    const target_index = self.indexOf(target) orelse return error.CrossFunctionEdge;
+    const target_index = self.indexOf(target) orelse return Error.CrossFunctionEdge;
     try self.predecessors_by_block[target_index].append(self.allocator, source);
 }
 
 fn markReachable(self: *Self, queue: *std.ArrayList(ids.BlockId), target: ids.BlockId) Error!void {
-    const target_index = self.indexOf(target) orelse return error.CrossFunctionEdge;
+    const target_index = self.indexOf(target) orelse return Error.CrossFunctionEdge;
 
     if (self.reachable[target_index])
         return;

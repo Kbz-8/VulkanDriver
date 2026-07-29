@@ -1,3 +1,4 @@
+const std = @import("std");
 const spirv = @import("spirv.zig");
 
 const Self = @This();
@@ -152,4 +153,31 @@ pub fn copyLiteralString(allocator: anytype, words: []const u32) ![]u8 {
         }
     }
     return result;
+}
+
+test "SPIR-V: parser error zero-word instruction" {
+    const words = [_]u32{
+        spirv.magic_number,
+        0x0001_0000,
+        0,
+        2,
+        0,
+        instructionWord(.nop, 0),
+    };
+    try std.testing.expectError(error.ZeroWordInstruction, Self.init(&words));
+
+    const truncated = [_]u32{
+        spirv.magic_number,
+        0x0001_0000,
+        0,
+        2,
+        0,
+        instructionWord(.i_add, 5),
+        1,
+    };
+    try std.testing.expectError(error.TruncatedInstruction, Self.init(&truncated));
+}
+
+fn instructionWord(opcode: spirv.Opcode, word_count: u16) u32 {
+    return (@as(u32, word_count) << 16) | @intFromEnum(opcode);
 }

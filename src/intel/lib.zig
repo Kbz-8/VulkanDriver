@@ -2,14 +2,11 @@ const std = @import("std");
 const vk = @import("vulkan");
 pub const base = @import("base");
 
+pub const kmd = @import("kmd.zig");
+pub const compiler = @import("compiler/compiler.zig");
+
 pub const c = @import("intel_c");
 pub const config = base.config;
-
-pub const FlintInstance = @import("FlintInstance.zig");
-pub const FlintDevice = @import("FlintDevice.zig");
-pub const FlintPhysicalDevice = @import("FlintPhysicalDevice.zig");
-pub const FlintQueue = @import("FlintQueue.zig");
-pub const kmd = @import("kmd.zig");
 
 pub const FlintBinarySemaphore = @import("FlintBinarySemaphore.zig");
 pub const FlintBuffer = @import("FlintBuffer.zig");
@@ -19,20 +16,23 @@ pub const FlintCommandPool = @import("FlintCommandPool.zig");
 pub const FlintDescriptorPool = @import("FlintDescriptorPool.zig");
 pub const FlintDescriptorSet = @import("FlintDescriptorSet.zig");
 pub const FlintDescriptorSetLayout = @import("FlintDescriptorSetLayout.zig");
+pub const FlintDevice = @import("FlintDevice.zig");
 pub const FlintDeviceMemory = @import("FlintDeviceMemory.zig");
 pub const FlintEvent = @import("FlintEvent.zig");
 pub const FlintFence = @import("FlintFence.zig");
 pub const FlintFramebuffer = @import("FlintFramebuffer.zig");
 pub const FlintImage = @import("FlintImage.zig");
 pub const FlintImageView = @import("FlintImageView.zig");
+pub const FlintInstance = @import("FlintInstance.zig");
+pub const FlintPhysicalDevice = @import("FlintPhysicalDevice.zig");
 pub const FlintPipeline = @import("FlintPipeline.zig");
 pub const FlintPipelineCache = @import("FlintPipelineCache.zig");
 pub const FlintPipelineLayout = @import("FlintPipelineLayout.zig");
 pub const FlintQueryPool = @import("FlintQueryPool.zig");
+pub const FlintQueue = @import("FlintQueue.zig");
 pub const FlintRenderPass = @import("FlintRenderPass.zig");
 pub const FlintSampler = @import("FlintSampler.zig");
 pub const FlintShaderModule = @import("FlintShaderModule.zig");
-pub const compiler = @import("compiler/root.zig");
 
 pub const Instance = FlintInstance;
 

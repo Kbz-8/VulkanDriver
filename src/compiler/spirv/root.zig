@@ -14,3 +14,8 @@
 pub const Parser = @import("Parser.zig");
 pub const translator = @import("translator.zig");
 pub const spec = @import("spirv.zig");
+
+test {
+    _ = Parser;
+    _ = translator;
+}

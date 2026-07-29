@@ -1,4 +1,4 @@
-const device = @import("device.zig");
+const device = @import("../device.zig");
 const ids = @import("id.zig");
 
 pub const DataType = enum {
