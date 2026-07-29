@@ -3,7 +3,7 @@ const ids = @import("../id.zig");
 const type_ir = @import("../type.zig");
 const inst_ir = @import("../instruction.zig");
 const module_ir = @import("../module.zig");
-const Builder = @import("../Builder.zig");
+
 const dominance = @import("dominance.zig");
 
 pub const ValidationError = error{
@@ -467,107 +467,517 @@ fn targetsBlock(terminator: module_ir.Terminator, target: ids.BlockId) bool {
     };
 }
 
-test "Validator: Error wrong block argument count" {
-    // shader compute @main
-    // {
-    //     fn @main() -> void
-    //     {
-    //         .entry():
-    //             branch .merge()
-    //
-    //         .merge(%0: u32):
-    //             return
-    //     }
-    // }
-
-    var module = module_ir.Module.init(std.testing.allocator, .compute);
-    defer module.deinit();
-    var builder = Builder.init(&module);
-
-    const void_type = try builder.internType(.void);
-    const u32_type = try builder.internType(.{ .integer = .{ .bits = 32, .signedness = .unsigned } });
-    const main = try builder.addFunction(void_type, "main");
-    builder.setEntryPoint(main);
-    const entry = try builder.addBlock(main, "entry");
-    const merge = try builder.addBlock(main, "merge");
-    _ = try builder.addBlockParameter(merge, u32_type, null);
-    try builder.setTerminator(entry, .{ .branch = try builder.edge(merge, &.{}) });
-    try builder.setTerminator(merge, .return_void);
-
-    try std.testing.expectError(Error.WrongBranchArgumentCount, validate(&module));
+fn expectValidationError(expected: Error, source: []const u8) !void {
+    const parser = @import("../parser/parser.zig");
+    try std.testing.expectError(expected, parser.parseString(std.testing.allocator, source));
 }
 
-test "Validator: Error SSA definition does not dominate its use" {
-    // shader compute @main
-    // {
-    //     %0: constant bool = true
-    //     %1: constant u32 = bits(0x1)
-    //
-    //     fn @main() -> void
-    //     {
-    //         .entry():
-    //             conditional_branch %0, .left(), .right()
-    //
-    //         .left():
-    //             %2: u32 = integer_add %1, %1
-    //             branch .merge()
-    //
-    //         .right():
-    //             branch .merge()
-    //
-    //         .merge():
-    //             %3: u32 = integer_multiply %2, %1
-    //             return
-    //     }
-    // }
+test "Validator: well-typed control flow and operations" {
+    const parser = @import("../parser/parser.zig");
 
-    var module = module_ir.Module.init(std.testing.allocator, .compute);
+    var module = try parser.parseString(std.testing.allocator,
+        \\shader vertex @main
+        \\{
+        \\    @input: u32 = input[location(0), component(0), index(0)]
+        \\    @output: u32 = output[location(0), component(0), index(0)]
+        \\    %condition: constant bool = true
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %loaded: u32 = load_interface @input
+        \\            conditional_branch %condition, .left(%loaded), .right(%one)
+        \\        .left(%left_value: u32):
+        \\            %left_result: u32 = integer_add %left_value, %one
+        \\            branch .merge(%left_result)
+        \\        .right(%right_value: u32):
+        \\            %right_result: u32 = call @identity(%right_value)
+        \\            branch .merge(%right_result)
+        \\        .merge(%result: u32):
+        \\            store_interface @output, %result
+        \\            return
+        \\    }
+        \\    fn @identity(%value: u32) -> u32
+        \\    {
+        \\        .entry():
+        \\            return %value
+        \\    }
+        \\}
+    );
     defer module.deinit();
-    var builder = Builder.init(&module);
 
-    const void_type = try builder.internType(.void);
-    const bool_type = try builder.internType(.boolean);
-    const u32_type = try builder.internType(.{ .integer = .{ .bits = 32, .signedness = .unsigned } });
-    const condition = try builder.internConstant(bool_type, .{ .boolean = true });
-    const one = try builder.internConstant(u32_type, .{ .integer_bits = 1 });
-    const main = try builder.addFunction(void_type, "main");
-    builder.setEntryPoint(main);
-    const entry = try builder.addBlock(main, "entry");
-    const left = try builder.addBlock(main, "left");
-    const right = try builder.addBlock(main, "right");
-    const merge = try builder.addBlock(main, "merge");
+    try validate(&module);
+}
 
-    try builder.setTerminator(
-        entry,
-        .{
-            .conditional_branch = .{
-                .condition = condition,
-                .true_edge = try builder.edge(left, &.{}),
-                .false_edge = try builder.edge(right, &.{}),
-            },
-        },
+test "Validator: required entry point" {
+    try expectValidationError(Error.MissingEntryPoint,
+        \\shader compute
+        \\{
+        \\    fn @helper() -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Validator: required function entry block" {
+    try expectValidationError(Error.MissingFunctionEntryBlock,
+        \\shader compute @main
+        \\{
+        \\    fn @main() -> void
+        \\    {
+        \\    }
+        \\}
+    );
+}
+
+test "Validator: reject invalid aggregate types" {
+    try expectValidationError(Error.InvalidType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%value: vec1[u32]) -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\}
     );
 
-    const left_value = (try builder.appendInstruction(left, u32_type, .{
-        .binary = .{
-            .opcode = .integer_add,
-            .lhs = one,
-            .rhs = one,
-        },
-    }, null)).?;
+    try expectValidationError(Error.InvalidType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%value: array[u32, 0]) -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\}
+    );
+}
 
-    try builder.setTerminator(left, .{ .branch = try builder.edge(merge, &.{}) });
-    try builder.setTerminator(right, .{ .branch = try builder.edge(merge, &.{}) });
+test "Validator: reject predecessor of the entry block" {
+    try expectValidationError(Error.EntryBlockHasPredecessor,
+        \\shader compute @main
+        \\{
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\        .back_edge():
+        \\            branch .entry()
+        \\    }
+        \\}
+    );
+}
 
-    _ = try builder.appendInstruction(merge, u32_type, .{
-        .binary = .{
-            .opcode = .integer_multiply,
-            .lhs = left_value,
-            .rhs = one,
-        },
-    }, null);
+test "Validator: check branch arguments" {
+    try expectValidationError(Error.WrongBranchArgumentCount,
+        \\shader compute @main
+        \\{
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            branch .merge()
+        \\        .merge(%value: u32):
+        \\            return
+        \\    }
+        \\}
+    );
 
-    try builder.setTerminator(merge, .return_void);
+    try expectValidationError(Error.WrongBranchArgumentType,
+        \\shader compute @main
+        \\{
+        \\    %condition: constant bool = true
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            branch .merge(%condition)
+        \\        .merge(%value: u32):
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Validator: check terminator operand and return types" {
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            conditional_branch %one, .left(), .right()
+        \\        .left():
+        \\            return
+        \\        .right():
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongReturnType,
+        \\shader compute @main
+        \\{
+        \\    fn @main() -> u32
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongReturnType,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            return %one
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongReturnType,
+        \\shader compute @main
+        \\{
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            discard
+        \\    }
+        \\}
+    );
+}
+
+test "Validator: check unary, binary, compare, and select types" {
+    try expectValidationError(Error.WrongResultType,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: bool = bitwise_not %one
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    %float: constant f32 = 1.0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: u32 = integer_add %one, %float
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultType,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: u32 = cmp_equal %one, %one
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: u32 = select %one, %one, %one
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    %condition: constant bool = true
+        \\    %one: constant u32 = 1
+        \\    %float: constant f32 = 1.0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: u32 = select %condition, %one, %float
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Validator: check composite operations" {
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec2[u32] = composite_construct %one
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultType,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %vector: vec2[u32] = composite_construct %one, %one
+        \\            %result: bool = composite_extract %vector[0]
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Validator: check interface direction and value types" {
+    try expectValidationError(Error.WrongInterfaceDirection,
+        \\shader vertex @main
+        \\{
+        \\    @output: u32 = output[location(0), component(0), index(0)]
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %value: u32 = load_interface @output
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongInterfaceDirection,
+        \\shader vertex @main
+        \\{
+        \\    @input: u32 = input[location(0), component(0), index(0)]
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            store_interface @input, %one
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader vertex @main
+        \\{
+        \\    @output: u32 = output[location(0), component(0), index(0)]
+        \\    %value: constant f32 = 1.0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            store_interface @output, %value
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultPresence,
+        \\shader vertex @main
+        \\{
+        \\    @output: u32 = output[location(0), component(0), index(0)]
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: bool = store_interface @output, %one
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Validator: check function calls" {
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: u32 = call @identity()
+        \\            return
+        \\    }
+        \\    fn @identity(%value: u32) -> u32
+        \\    {
+        \\        .entry():
+        \\            return %value
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    %condition: constant bool = true
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: u32 = call @identity(%condition)
+        \\            return
+        \\    }
+        \\    fn @identity(%value: u32) -> u32
+        \\    {
+        \\        .entry():
+        \\            return %value
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultType,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: f32 = call @identity(%one)
+        \\            return
+        \\    }
+        \\    fn @identity(%value: u32) -> u32
+        \\    {
+        \\        .entry():
+        \\            return %value
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultPresence,
+        \\shader compute @main
+        \\{
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: u32 = call @helper()
+        \\            return
+        \\    }
+        \\    fn @helper() -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Validator: reject cross-function value references" {
+    try expectValidationError(Error.CrossFunctionReference,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %main_value: u32 = integer_add %one, %one
+        \\            return
+        \\    }
+        \\    fn @helper() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: u32 = integer_add %main_value, %one
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Validator: reject an SSA definition that does not dominate its use" {
+    try expectValidationError(Error.DefinitionDoesNotDominateUse,
+        \\shader compute @main
+        \\{
+        \\    %condition: constant bool = true
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            conditional_branch %condition, .left(), .right()
+        \\        .left():
+        \\            %left_value: u32 = integer_add %one, %one
+        \\            branch .merge()
+        \\        .right():
+        \\            branch .merge()
+        \\        .merge():
+        \\            %result: u32 = integer_multiply %left_value, %one
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Validator: reject a same-block use before its definition" {
+    const parser = @import("../parser/parser.zig");
+
+    var module = try parser.parseString(std.testing.allocator,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %first: u32 = integer_add %one, %one
+        \\            %second: u32 = integer_multiply %first, %one
+        \\            return
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+
+    const function = module.functions.get(module.entry_point.?).?;
+    const block = module.blocks.get(function.entry_block.?).?;
+    const first_instruction = block.instructions.items[0];
+    const second_instruction = block.instructions.items[1];
+    const later_result = module.instructions.get(second_instruction).?.result.?;
+    module.instructions.getMut(first_instruction).?.operation.binary.lhs = later_result;
 
     try std.testing.expectError(Error.DefinitionDoesNotDominateUse, validate(&module));
+}
+
+test "Validator: reject a structured-control target in another function" {
+    const parser = @import("../parser/parser.zig");
+
+    var module = try parser.parseString(std.testing.allocator,
+        \\shader compute @main
+        \\{
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\    fn @helper() -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+
+    const main = module.functions.get(module.entry_point.?).?;
+    const helper = module.functions.get(ids.FunctionId.fromIndex(1)).?;
+    module.blocks.getMut(main.entry_block.?).?.structured_control = .{
+        .selection = .{ .merge_block = helper.entry_block.? },
+    };
+
+    try std.testing.expectError(Error.InvalidStructuredControl, validate(&module));
 }

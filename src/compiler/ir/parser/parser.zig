@@ -943,7 +943,7 @@ test "Parser: numeric constants" {
     try std.testing.expectError(Error.InvalidNumber, parseString(std.testing.allocator, out_of_range));
 }
 
-test "Parser: Error unknown value" {
+test "Parser: error unknown value" {
     const source =
         \\ shader compute @main
         \\ {
@@ -955,4 +955,373 @@ test "Parser: Error unknown value" {
         \\ }
     ;
     try std.testing.expectError(Error.UnknownValue, parseString(std.testing.allocator, source));
+}
+
+fn expectParseError(expected: Error, source: []const u8) !void {
+    try std.testing.expectError(expected, parseString(std.testing.allocator, source));
+}
+
+test "Parser: infer instruction result types and reorders module declarations" {
+    const printer = @import("../printer.zig");
+
+    var module = try parseString(std.testing.allocator,
+        \\shader compute @main
+        \\{
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %sum = integer_add %late, %late
+        \\            %equal = cmp_equal %sum, %late
+        \\            return
+        \\    }
+        \\    %late: constant u32 = 1
+        \\}
+    );
+    defer module.deinit();
+
+    const text = try printer.allocPrint(std.testing.allocator, &module);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "%sum: u32 = integer_add %late, %late") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "%equal: bool = cmp_equal %sum, %late") != null);
+}
+
+test "Parser: check instruction result presence during lowering" {
+    try expectParseError(Error.InvalidResult,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            integer_add %one, %one
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectParseError(Error.MissingResultType,
+        \\shader compute @main
+        \\{
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %bad = call @sink()
+        \\            return
+        \\    }
+        \\    fn @sink() -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectParseError(Error.InvalidResult,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            call @identity(%one)
+        \\            return
+        \\    }
+        \\    fn @identity(%value: u32) -> u32
+        \\    {
+        \\        .entry():
+        \\            return %value
+        \\    }
+        \\}
+    );
+}
+
+test "Parser: report unresolved reference namespaces" {
+    try expectParseError(Error.UnknownFunction,
+        \\shader compute @missing
+        \\{
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectParseError(Error.UnknownFunction,
+        \\shader compute @main
+        \\{
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            call @missing()
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectParseError(Error.UnknownInterface,
+        \\shader compute @main
+        \\{
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %value = load_interface @missing
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectParseError(Error.UnknownBlock,
+        \\shader compute @main
+        \\{
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            branch .missing()
+        \\    }
+        \\}
+    );
+
+    try expectParseError(Error.UnknownConstant,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    %pair: constant vec2[u32] = [#0, #9]
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectParseError(Error.UnknownValue,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %first = integer_add %later, %one
+        \\            %later = integer_add %one, %one
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Parser: reject duplicate names and values" {
+    try expectParseError(Error.DuplicateName,
+        \\shader vertex @main
+        \\{
+        \\    @color: u32 = input[location(0), component(0), index(0)]
+        \\    @color: u32 = output[location(0), component(0), index(0)]
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectParseError(Error.DuplicateName,
+        \\shader compute @main
+        \\{
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectParseError(Error.DuplicateName,
+        \\shader compute @main
+        \\{
+        \\    fn @main() -> void
+        \\    {
+        \\        .same():
+        \\            return
+        \\        .same():
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectParseError(Error.DuplicateValue,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result = integer_add %one, %one
+        \\            %result = integer_multiply %one, %one
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Parser: reject malformed block structure and opcodes" {
+    try expectParseError(Error.MissingTerminator,
+        \\shader compute @main
+        \\{
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\    }
+        \\}
+    );
+
+    try expectParseError(Error.UnexpectedToken,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\            %late = integer_add %one, %one
+        \\    }
+        \\}
+    );
+
+    try expectParseError(Error.UnexpectedToken,
+        \\shader compute @main
+        \\{
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\}
+        \\trailing
+    );
+
+    try expectParseError(Error.InvalidOpcode,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %bad = cmp_unknown %one, %one
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Parser: nested composite extraction and index errors" {
+    const printer = @import("../printer.zig");
+
+    var module = try parseString(std.testing.allocator,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %inner = composite_construct %one, %one
+        \\            %outer = composite_construct %inner, %inner
+        \\            %element = composite_extract %outer[1][0]
+        \\            return
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+
+    const text = try printer.allocPrint(std.testing.allocator, &module);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "%element: u32 = composite_extract %outer[1][0]") != null);
+
+    try expectParseError(Error.InvalidCompositeIndex,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %vector = composite_construct %one, %one
+        \\            %element = composite_extract %vector
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectParseError(Error.InvalidCompositeIndex,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %vector = composite_construct %one, %one
+        \\            %element = composite_extract %vector[2]
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectParseError(Error.InvalidCompositeIndex,
+        \\shader compute @main
+        \\{
+        \\    %one: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %element = composite_extract %one[0]
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Parser: report invalid stage, semantics, and types" {
+    try expectParseError(Error.InvalidStage,
+        \\shader geometry
+        \\{
+        \\}
+    );
+
+    try expectParseError(Error.InvalidSemantic,
+        \\shader vertex @main
+        \\{
+        \\    @value: u32 = varying[location(0), component(0), index(0)]
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectParseError(Error.InvalidSemantic,
+        \\shader vertex @main
+        \\{
+        \\    @value: u32 = input[builtin(not_a_builtin)]
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectParseError(Error.InvalidType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%value: ptr[unknown, u32]) -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\}
+    );
 }

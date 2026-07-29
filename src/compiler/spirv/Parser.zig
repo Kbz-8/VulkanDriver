@@ -155,7 +155,108 @@ pub fn copyLiteralString(allocator: anytype, words: []const u32) ![]u8 {
     return result;
 }
 
-test "SPIR-V: parser error zero-word instruction" {
+test "SPIR-V: parser validates module headers" {
+    const short = [_]u32{ spirv.magic_number, 0x0001_0000, 0, 1 };
+    try std.testing.expectError(error.HeaderTooShort, Self.init(&short));
+
+    var invalid_magic = validHeader(0x0001_0000);
+    invalid_magic[0] = 0x1234_5678;
+    try std.testing.expectError(error.InvalidMagic, Self.init(&invalid_magic));
+
+    var byte_swapped = validHeader(0x0001_0000);
+    byte_swapped[0] = spirv.byte_swapped_magic_number;
+    try std.testing.expectError(error.ByteSwappedModule, Self.init(&byte_swapped));
+
+    var invalid_major = validHeader(0x0002_0000);
+    try std.testing.expectError(error.InvalidVersion, Self.init(&invalid_major));
+
+    var invalid_minor = validHeader(0x0001_0700);
+    try std.testing.expectError(error.InvalidVersion, Self.init(&invalid_minor));
+
+    var invalid_reserved_bits = validHeader(0x0101_0001);
+    try std.testing.expectError(error.InvalidVersion, Self.init(&invalid_reserved_bits));
+
+    var zero_bound = validHeader(0x0001_0000);
+    zero_bound[3] = 0;
+    try std.testing.expectError(error.InvalidIdBound, Self.init(&zero_bound));
+
+    var nonzero_schema = validHeader(0x0001_0000);
+    nonzero_schema[4] = 1;
+    try std.testing.expectError(error.InvalidSchema, Self.init(&nonzero_schema));
+
+    var version_1_6 = validHeader(0x0001_0600);
+    version_1_6[2] = 0xfeed_beef;
+    version_1_6[3] = 42;
+    const parser = try Self.init(&version_1_6);
+    try std.testing.expectEqual(@as(u8, 1), parser.header.major());
+    try std.testing.expectEqual(@as(u8, 6), parser.header.minor());
+    try std.testing.expectEqual(@as(u32, 0xfeed_beef), parser.header.generator);
+    try std.testing.expectEqual(@as(u32, 42), parser.header.bound);
+
+    var instruction_iterator = parser.iterator();
+    try std.testing.expectEqual(@as(?Instruction, null), try instruction_iterator.next());
+}
+
+test "SPIR-V: parser iterates instructions and operands" {
+    const words = [_]u32{
+        spirv.magic_number,
+        0x0001_0000,
+        0,
+        8,
+        0,
+        instructionWord(.nop, 1),
+        instructionWord(.i_add, 5),
+        1,
+        2,
+        3,
+        4,
+    };
+    const parser = try Self.init(&words);
+    var instruction_iterator = parser.iterator();
+
+    const nop = (try instruction_iterator.next()).?;
+    try std.testing.expectEqual(spirv.Opcode.nop, nop.opcode);
+    try std.testing.expectEqual(@as(usize, spirv.header_word_count), nop.word_offset);
+    try std.testing.expectEqual(@as(usize, 0), nop.operands.len);
+    try std.testing.expectEqual(@as(?u32, null), nop.operand(0));
+
+    const add = (try instruction_iterator.next()).?;
+    try std.testing.expectEqual(spirv.Opcode.i_add, add.opcode);
+    try std.testing.expectEqual(@as(usize, spirv.header_word_count + 1), add.word_offset);
+    try std.testing.expectEqualSlices(u32, &.{ 1, 2, 3, 4 }, add.operands);
+    try std.testing.expectEqual(@as(?u32, 1), add.operand(0));
+    try std.testing.expectEqual(@as(?u32, 4), add.operand(3));
+    try std.testing.expectEqual(@as(?u32, null), add.operand(4));
+    try std.testing.expectEqual(@as(?Instruction, null), try instruction_iterator.next());
+}
+
+test "SPIR-V: parser literal string helpers" {
+    const empty = [_]u32{0};
+    try std.testing.expectEqual(@as(usize, 1), try literalStringWordCount(&empty));
+    try std.testing.expect(try literalStringEquals(&empty, ""));
+
+    const abc = [_]u32{0x0063_6261};
+    try std.testing.expectEqual(@as(usize, 1), try literalStringWordCount(&abc));
+    try std.testing.expect(try literalStringEquals(&abc, "abc"));
+    try std.testing.expect(!try literalStringEquals(&abc, "ab"));
+    try std.testing.expect(!try literalStringEquals(&abc, "abcd"));
+
+    const main = [_]u32{ 0x6e69_616d, 0 };
+    try std.testing.expectEqual(@as(usize, 2), try literalStringWordCount(&main));
+    try std.testing.expect(try literalStringEquals(&main, "main"));
+    try std.testing.expect(!try literalStringEquals(&main, "Main"));
+
+    const copy = try copyLiteralString(std.testing.allocator, &main);
+    defer std.testing.allocator.free(copy);
+    try std.testing.expectEqualStrings("main", copy);
+
+    const unterminated = [_]u32{0x6463_6261};
+    try std.testing.expectError(error.UnterminatedString, literalStringWordCount(&unterminated));
+    try std.testing.expectError(error.UnterminatedString, literalStringEquals(&unterminated, "abcd"));
+    try std.testing.expectError(error.UnterminatedString, copyLiteralString(std.testing.allocator, &unterminated));
+}
+
+test "SPIR-V: parser rejects malformed instruction framing" {
     const words = [_]u32{
         spirv.magic_number,
         0x0001_0000,
@@ -176,6 +277,10 @@ test "SPIR-V: parser error zero-word instruction" {
         1,
     };
     try std.testing.expectError(error.TruncatedInstruction, Self.init(&truncated));
+}
+
+fn validHeader(version: u32) [spirv.header_word_count]u32 {
+    return .{ spirv.magic_number, version, 0, 1, 0 };
 }
 
 fn instructionWord(opcode: spirv.Opcode, word_count: u16) u32 {

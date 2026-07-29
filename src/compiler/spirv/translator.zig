@@ -1195,6 +1195,286 @@ test "SPIR-V: decorated vertex interfaces and load-store operations" {
     try std.testing.expect(std.mem.indexOf(u8, text, "store_interface @out_color") != null);
 }
 
+test "SPIR-V: fragment execution modes and translated properties" {
+    const assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint Fragment %main "main"
+        \\OpExecutionMode %main OriginUpperLeft
+        \\OpExecutionMode %main EarlyFragmentTests
+        \\%void = OpTypeVoid
+        \\%fn_void = OpTypeFunction %void
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+
+    try std.testing.expectEqual(ir.module.Stage.fragment, module.stage);
+    try std.testing.expect(module.execution_modes.early_fragment_tests);
+    try std.testing.expectEqual(@as(?[3]u32, null), module.execution_modes.workgroup_size);
+    try std.testing.expect(module.properties.valid_cfg);
+    try std.testing.expect(module.properties.valid_ssa);
+    try std.testing.expect(module.properties.structured_control_flow);
+    try std.testing.expect(module.properties.no_function_calls);
+
+    const function = module.functions.get(module.entry_point.?).?;
+    try std.testing.expectEqualStrings("main", function.name.?);
+    try std.testing.expectEqual(@as(usize, 1), function.blocks.items.len);
+    const entry = module.blocks.get(function.entry_block.?).?;
+    try std.testing.expect(entry.terminator.? == .return_void);
+}
+
+test "SPIR-V: entry point lookup errors" {
+    const single_entry_assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint GLCompute %main "main"
+        \\OpExecutionMode %main LocalSize 1 1 1
+        \\%void = OpTypeVoid
+        \\%fn_void = OpTypeFunction %void
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const single_entry_words = try assembleSpirv(std.testing.allocator, single_entry_assembly);
+    defer std.testing.allocator.free(single_entry_words);
+    try std.testing.expectError(error.EntryPointNotFound, translate(std.testing.allocator, single_entry_words, .{ .entry_point = "missing" }));
+
+    const ambiguous_assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint GLCompute %first "main"
+        \\OpEntryPoint GLCompute %second "main"
+        \\%void = OpTypeVoid
+        \\%fn_void = OpTypeFunction %void
+        \\%first = OpFunction %void None %fn_void
+        \\    %first_entry = OpLabel
+        \\    OpReturn
+        \\OpFunctionEnd
+        \\%second = OpFunction %void None %fn_void
+        \\    %second_entry = OpLabel
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const ambiguous_words = try assembleSpirv(std.testing.allocator, ambiguous_assembly);
+    defer std.testing.allocator.free(ambiguous_words);
+    try std.testing.expectError(error.AmbiguousEntryPoint, translate(std.testing.allocator, ambiguous_words, .{ .entry_point = "main" }));
+
+    const unsupported_assembly =
+        \\OpCapability Shader
+        \\OpCapability Geometry
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint Geometry %main "main"
+        \\%void = OpTypeVoid
+        \\%fn_void = OpTypeFunction %void
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const unsupported_words = try assembleSpirv(std.testing.allocator, unsupported_assembly);
+    defer std.testing.allocator.free(unsupported_words);
+    try std.testing.expectError(error.UnsupportedExecutionModel, translate(std.testing.allocator, unsupported_words, .{ .entry_point = "main" }));
+}
+
+test "SPIR-V: operation mappings to backend-agnostic IR" {
+    const assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint GLCompute %main "main"
+        \\OpExecutionMode %main LocalSize 1 1 1
+        \\%void = OpTypeVoid
+        \\%bool = OpTypeBool
+        \\%uint = OpTypeInt 32 0
+        \\%float = OpTypeFloat 32
+        \\%vec2 = OpTypeVector %uint 2
+        \\%fn_void = OpTypeFunction %void
+        \\%true = OpConstantTrue %bool
+        \\%one = OpConstant %uint 1
+        \\%two = OpConstant %uint 2
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    %not = OpLogicalNot %bool %true
+        \\    %sum = OpIAdd %uint %one %two
+        \\    %less = OpULessThan %bool %one %two
+        \\    %selected = OpSelect %uint %less %one %two
+        \\    %cast = OpBitcast %float %one
+        \\    %vector = OpCompositeConstruct %vec2 %one %two
+        \\    %element = OpCompositeExtract %uint %vector 1
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+
+    const function = module.functions.get(module.entry_point.?).?;
+    const block = module.blocks.get(function.entry_block.?).?;
+    try std.testing.expectEqual(@as(usize, 7), block.instructions.items.len);
+
+    const logical_not = module.instructions.get(block.instructions.items[0]).?;
+    try std.testing.expectEqual(ir.instruction.UnaryOpcode.logical_not, logical_not.operation.unary.opcode);
+
+    const add = module.instructions.get(block.instructions.items[1]).?;
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.integer_add, add.operation.binary.opcode);
+
+    const less = module.instructions.get(block.instructions.items[2]).?;
+    try std.testing.expectEqual(ir.instruction.CompareOpcode.unsigned_less, less.operation.compare.opcode);
+
+    const select = module.instructions.get(block.instructions.items[3]).?;
+    try std.testing.expect(select.operation == .select);
+
+    const bitcast = module.instructions.get(block.instructions.items[4]).?;
+    try std.testing.expect(bitcast.operation == .bitcast);
+
+    const construct = module.instructions.get(block.instructions.items[5]).?;
+    try std.testing.expectEqual(@as(usize, 2), construct.operation.composite_construct.elements.len);
+
+    const extract = module.instructions.get(block.instructions.items[6]).?;
+    try std.testing.expectEqualSlices(u32, &.{1}, extract.operation.composite_extract.indices);
+}
+
+test "SPIR-V: structured loop and OpPhi back edge" {
+    const assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint GLCompute %main "main"
+        \\OpExecutionMode %main LocalSize 1 1 1
+        \\OpName %entry "entry"
+        \\OpName %header "header"
+        \\OpName %body "body"
+        \\OpName %continue "continue"
+        \\OpName %merge "merge"
+        \\%void = OpTypeVoid
+        \\%bool = OpTypeBool
+        \\%uint = OpTypeInt 32 0
+        \\%fn_void = OpTypeFunction %void
+        \\%true = OpConstantTrue %bool
+        \\%zero = OpConstant %uint 0
+        \\%one = OpConstant %uint 1
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    OpBranch %header
+        \\    %header = OpLabel
+        \\    %index = OpPhi %uint %zero %entry %next %continue
+        \\    OpLoopMerge %merge %continue None
+        \\    OpBranchConditional %true %body %merge
+        \\    %body = OpLabel
+        \\    OpBranch %continue
+        \\    %continue = OpLabel
+        \\    %next = OpIAdd %uint %index %one
+        \\    OpBranch %header
+        \\    %merge = OpLabel
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+
+    const function = module.functions.get(module.entry_point.?).?;
+    try std.testing.expectEqual(@as(usize, 5), function.blocks.items.len);
+    const entry_id = function.blocks.items[0];
+    const header_id = function.blocks.items[1];
+    const continue_id = function.blocks.items[3];
+    const merge_id = function.blocks.items[4];
+
+    const entry = module.blocks.get(entry_id).?;
+    try std.testing.expectEqual(@as(usize, 1), entry.terminator.?.branch.arguments.len);
+
+    const header = module.blocks.get(header_id).?;
+    try std.testing.expectEqual(@as(usize, 1), header.parameters.items.len);
+    try std.testing.expect(header.structured_control == .loop);
+    try std.testing.expectEqual(merge_id, header.structured_control.loop.merge_block);
+    try std.testing.expectEqual(continue_id, header.structured_control.loop.continue_block);
+
+    const continue_block = module.blocks.get(continue_id).?;
+    try std.testing.expectEqual(header_id, continue_block.terminator.?.branch.target);
+    try std.testing.expectEqual(@as(usize, 1), continue_block.terminator.?.branch.arguments.len);
+}
+
+test "SPIR-V: rejects a missing OpPhi incoming value" {
+    const assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint GLCompute %main "main"
+        \\OpExecutionMode %main LocalSize 1 1 1
+        \\%void = OpTypeVoid
+        \\%bool = OpTypeBool
+        \\%uint = OpTypeInt 32 0
+        \\%fn_void = OpTypeFunction %void
+        \\%true = OpConstantTrue %bool
+        \\%one = OpConstant %uint 1
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    OpBranchConditional %true %left %right
+        \\    %left = OpLabel
+        \\    OpBranch %merge
+        \\    %right = OpLabel
+        \\    OpBranch %merge
+        \\    %merge = OpLabel
+        \\    %value = OpPhi %uint %one %left
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    try std.testing.expectError(error.MissingPhiIncomingValue, translate(std.testing.allocator, words, .{ .entry_point = "main" }));
+}
+
+test "SPIR-V: preserves location components and builtin interfaces" {
+    const assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint Vertex %main "main" %input_value %position
+        \\OpDecorate %input_value Location 3
+        \\OpDecorate %input_value Component 2
+        \\OpDecorate %input_value Index 1
+        \\OpDecorate %position BuiltIn Position
+        \\%void = OpTypeVoid
+        \\%float = OpTypeFloat 32
+        \\%vec4 = OpTypeVector %float 4
+        \\%input_vec4 = OpTypePointer Input %vec4
+        \\%output_vec4 = OpTypePointer Output %vec4
+        \\%fn_void = OpTypeFunction %void
+        \\%input_value = OpVariable %input_vec4 Input
+        \\%position = OpVariable %output_vec4 Output
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+
+    const input = module.interface_variables.get(ir.id.InterfaceVariableId.fromIndex(0)).?;
+    try std.testing.expectEqual(ir.module.InterfaceDirection.input, input.direction);
+    try std.testing.expect(input.semantic == .location);
+    try std.testing.expectEqual(@as(u32, 3), input.semantic.location.location);
+    try std.testing.expectEqual(@as(u8, 2), input.semantic.location.component);
+    try std.testing.expectEqual(@as(u8, 1), input.semantic.location.index);
+
+    const position = module.interface_variables.get(ir.id.InterfaceVariableId.fromIndex(1)).?;
+    try std.testing.expectEqual(ir.module.InterfaceDirection.output, position.direction);
+    try std.testing.expect(position.semantic == .builtin);
+    try std.testing.expectEqual(ir.module.Builtin.position, position.semantic.builtin);
+}
+
 fn assembleSpirv(allocator: std.mem.Allocator, assembly: []const u8) ![]u32 {
     var io_backend: std.Io.Threaded = .init(allocator, .{});
     defer io_backend.deinit();
