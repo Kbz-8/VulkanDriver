@@ -128,6 +128,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 
     self.* = .{
         .interface = interface,
+        // SAFETY: the command allocator is initialized after the object is constructed
         .command_allocator = undefined,
         .commands = .empty,
     };

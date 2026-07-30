@@ -23,6 +23,7 @@ const F32x4 = zm.F32x4;
 const Self = @This();
 
 const @"1GiB" = 1_073_741_824;
+const draw_allocator_limit: usize = @intCast(@min(@as(u64, 4) * @"1GiB", @as(u64, std.math.maxInt(usize))));
 
 pub const VertexBuffer = struct {
     buffer: *const SoftBuffer,
@@ -196,12 +197,12 @@ pub fn resetInputAttachmentSnapshots(self: *Self) void {
 }
 
 pub fn draw(self: *Self, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize) VkError!void {
-    var bounded_allocator: BoundedAllocator = .init(self.device.interface.device_allocator.allocator(), 4 * @"1GiB");
+    var bounded_allocator: BoundedAllocator = .init(self.device.interface.device_allocator.allocator(), draw_allocator_limit);
     try self.drawCall(&bounded_allocator, vertex_count, instance_count, first_vertex, first_instance, null, null);
 }
 
 pub fn drawIndexed(self: *Self, index_count: usize, instance_count: usize, first_index: usize, first_instance: usize, vertex_offset: i32) VkError!void {
-    var bounded_allocator: BoundedAllocator = .init(self.device.interface.device_allocator.allocator(), 4 * @"1GiB");
+    var bounded_allocator: BoundedAllocator = .init(self.device.interface.device_allocator.allocator(), draw_allocator_limit);
     const allocator = bounded_allocator.allocator();
 
     const indexed_draw = try self.readIndexBuffer(allocator, index_count, first_index, vertex_offset);

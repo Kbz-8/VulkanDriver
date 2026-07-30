@@ -14,8 +14,51 @@ queries: []Query,
 
 vtable: *const VTable,
 
+/// 32 bits platforms only supportss atomics up to 32 bits,
+/// so serialize 64-bit query access with a 32-bit lock.
+const LockedU64 = struct {
+    mutex: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+    raw: u64,
+
+    fn init(value: u64) LockedU64 {
+        return .{ .raw = value };
+    }
+
+    fn lock(self: *LockedU64) void {
+        while (self.mutex.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) {
+            std.atomic.spinLoopHint();
+        }
+    }
+
+    fn unlock(self: *LockedU64) void {
+        self.mutex.store(0, .release);
+    }
+
+    fn load(self: *LockedU64, comptime _: std.builtin.AtomicOrder) u64 {
+        self.lock();
+        defer self.unlock();
+        return self.raw;
+    }
+
+    fn store(self: *LockedU64, value: u64, comptime _: std.builtin.AtomicOrder) void {
+        self.lock();
+        defer self.unlock();
+        self.raw = value;
+    }
+
+    fn fetchAdd(self: *LockedU64, value: u64, comptime _: std.builtin.AtomicOrder) u64 {
+        self.lock();
+        defer self.unlock();
+        const previous = self.raw;
+        self.raw +%= value;
+        return previous;
+    }
+};
+
+const QueryValue = if (@bitSizeOf(usize) >= 64) std.atomic.Value(u64) else LockedU64;
+
 const Query = struct {
-    value: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    value: QueryValue = QueryValue.init(0),
     available: bool = false,
     active: bool = false,
 };

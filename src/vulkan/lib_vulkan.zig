@@ -1860,7 +1860,8 @@ pub export fn apeCmdBindIndexBuffer(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
     const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
-    cmd.bindIndexBuffer(buffer, offset, index_type) catch |err| return errorLogger(err);
+    const host_offset = std.math.cast(usize, offset) orelse return errorLogger(VkError.ValidationFailed);
+    cmd.bindIndexBuffer(buffer, host_offset, index_type) catch |err| return errorLogger(err);
 }
 
 pub export fn apeCmdBindPipeline(p_cmd: vk.CommandBuffer, bind_point: vk.PipelineBindPoint, p_pipeline: vk.Pipeline) callconv(vk.vulkan_call_conv) void {
@@ -1879,7 +1880,8 @@ pub export fn apeCmdBindVertexBuffers(p_cmd: vk.CommandBuffer, first: u32, count
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
     for (p_buffers, offsets, 0..count) |p_buffer, offset, i| {
         const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
-        cmd.bindVertexBuffer(first + i, buffer, offset) catch |err| return errorLogger(err);
+        const host_offset = std.math.cast(usize, offset) orelse return errorLogger(VkError.ValidationFailed);
+        cmd.bindVertexBuffer(first + i, buffer, host_offset) catch |err| return errorLogger(err);
     }
 }
 
@@ -2035,7 +2037,8 @@ pub export fn apeCmdDrawIndexedIndirect(p_cmd: vk.CommandBuffer, p_buffer: vk.Bu
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
     const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
-    cmd.drawIndexedIndirect(buffer, offset, count, stride) catch |err| return errorLogger(err);
+    const host_offset = std.math.cast(usize, offset) orelse return errorLogger(VkError.ValidationFailed);
+    cmd.drawIndexedIndirect(buffer, host_offset, count, stride) catch |err| return errorLogger(err);
 }
 
 pub export fn apeCmdDrawIndirect(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer, offset: vk.DeviceSize, count: u32, stride: u32) callconv(vk.vulkan_call_conv) void {
@@ -2044,7 +2047,8 @@ pub export fn apeCmdDrawIndirect(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer, o
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
     const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
-    cmd.drawIndirect(buffer, offset, count, stride) catch |err| return errorLogger(err);
+    const host_offset = std.math.cast(usize, offset) orelse return errorLogger(VkError.ValidationFailed);
+    cmd.drawIndirect(buffer, host_offset, count, stride) catch |err| return errorLogger(err);
 }
 
 pub export fn apeCmdEndQuery(p_cmd: vk.CommandBuffer, p_pool: vk.QueryPool, query: u32) callconv(vk.vulkan_call_conv) void {
@@ -2265,8 +2269,9 @@ pub export fn apeCmdUpdateBuffer(p_cmd: vk.CommandBuffer, p_buffer: vk.Buffer, o
 
     const cmd = Dispatchable(CommandBuffer).fromHandleObject(p_cmd) catch |err| return errorLogger(err);
     const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
+    const data_size = std.math.cast(usize, size) orelse return errorLogger(VkError.ValidationFailed);
     const data_bytes: [*]const u8 = @ptrCast(data);
-    cmd.updateBuffer(buffer, offset, data_bytes[0..size]) catch |err| return errorLogger(err);
+    cmd.updateBuffer(buffer, offset, data_bytes[0..data_size]) catch |err| return errorLogger(err);
 }
 
 pub export fn apeCmdWaitEvents(

@@ -25,9 +25,10 @@ pub fn create(device: *SoftDevice, allocator: std.mem.Allocator, size: vk.Device
         .invalidateRange = invalidateRange,
     };
 
+    const allocation_size = std.math.cast(usize, size) orelse return VkError.OutOfDeviceMemory;
     self.* = .{
         .interface = interface,
-        .data = device.interface.device_allocator.allocator().alloc(u8, size) catch return VkError.OutOfDeviceMemory,
+        .data = device.interface.device_allocator.allocator().alloc(u8, allocation_size) catch return VkError.OutOfDeviceMemory,
     };
     return self;
 }
@@ -54,10 +55,18 @@ pub fn invalidateRange(interface: *Interface, offset: vk.DeviceSize, size: vk.De
 
 pub fn map(interface: *Interface, offset: vk.DeviceSize, size: vk.DeviceSize) VkError![]u8 {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    if (offset >= self.data.len or (size != vk.WHOLE_SIZE and offset + size > self.data.len)) {
+    const map_offset = std.math.cast(usize, offset) orelse return VkError.MemoryMapFailed;
+    if (map_offset >= self.data.len) {
         return VkError.MemoryMapFailed;
     }
-    return if (size == vk.WHOLE_SIZE) self.data[offset..] else self.data[offset..(offset + size)];
+    const map_size = if (size == vk.WHOLE_SIZE)
+        self.data.len - map_offset
+    else
+        std.math.cast(usize, size) orelse return VkError.MemoryMapFailed;
+    if (map_size > self.data.len - map_offset) {
+        return VkError.MemoryMapFailed;
+    }
+    return self.data[map_offset..][0..map_size];
 }
 
 pub fn unmap(_: *Interface) void {

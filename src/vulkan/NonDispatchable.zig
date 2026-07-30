@@ -44,7 +44,8 @@ pub fn NonDispatchable(comptime T: type) type {
             if (handle == 0) {
                 return VkError.InvalidHandleDrv;
             }
-            const non_dispatchable: *Self = @ptrFromInt(handle);
+            const address = std.math.cast(usize, handle) orelse return VkError.InvalidHandleDrv;
+            const non_dispatchable: *Self = @ptrFromInt(address);
             if (non_dispatchable.object_type != T.ObjectType) {
                 return VkError.InvalidHandleDrv;
             }
