@@ -4,6 +4,7 @@ const ids = @import("id.zig");
 const inst_ir = @import("instruction.zig");
 const operand = @import("operand.zig");
 const program_ir = @import("program.zig");
+const pseudo = @import("pseudo.zig");
 
 const indent = "    ";
 
@@ -40,6 +41,15 @@ pub fn write(program: *const program_ir.Program, writer: *std.Io.Writer) std.Io.
         const block_id = ids.BlockId.fromIndex(block_index);
 
         try writeBlockRef(program, writer, block_id);
+        if (block.parameters.items.len != 0) {
+            try writer.writeByte('(');
+            for (block.parameters.items, 0..) |parameter, index| {
+                if (index != 0)
+                    try writer.writeAll(", ");
+                try writeBlockParameter(program, writer, parameter);
+            }
+            try writer.writeByte(')');
+        }
         try writer.writeAll(":\n");
 
         switch (block.structured_control) {
@@ -127,6 +137,7 @@ fn writeOperation(program: *const program_ir.Program, writer: *std.Io.Writer, ex
             try writer.writeAll(", ");
             try writeSource(program, writer, execution_size, op.rhs);
         },
+        .parallel_copy => |op| try writeParallelCopy(program, writer, execution_size, op),
         .send => |op| {
             try writer.writeAll("send ");
             if (op.response) |response| {
@@ -141,23 +152,79 @@ fn writeOperation(program: *const program_ir.Program, writer: *std.Io.Writer, ex
     }
 }
 
+fn writeParallelCopy(program: *const program_ir.Program, writer: *std.Io.Writer, execution_size: device.ExecutionSize, copy: pseudo.ParallelCopy) !void {
+    try writer.writeAll("parallel_copy [");
+    var needs_separator = false;
+
+    for (copy.register_copies) |item| {
+        if (needs_separator)
+            try writer.writeAll(", ");
+        try writeDestination(program, writer, execution_size, item.destination);
+        try writer.writeAll(" <- ");
+        try writeSource(program, writer, execution_size, item.source);
+        needs_separator = true;
+    }
+
+    for (copy.flag_copies) |item| {
+        if (needs_separator)
+            try writer.writeAll(", ");
+        try writeVirtualFlagRef(program, writer, item.destination);
+        try writer.writeAll(" <- ");
+        switch (item.source) {
+            .constant => |value| try writer.writeAll(if (value) "true" else "false"),
+            .dynamic => |predicate| try writePredicate(program, writer, predicate),
+        }
+        needs_separator = true;
+    }
+
+    try writer.writeByte(']');
+}
+
 fn writeTerminator(program: *const program_ir.Program, writer: *std.Io.Writer, terminator: inst_ir.Terminator) !void {
     switch (terminator) {
-        .jump => |target| {
+        .jump => |edge| {
             try writer.writeAll("jump ");
-            try writeBlockRef(program, writer, target);
+            try writeEdge(program, writer, edge);
         },
         .conditional_branch => |branch| {
             try writer.writeAll("conditional_branch ");
             try writePredicate(program, writer, branch.predicate);
             try writer.writeAll(", ");
-            try writeBlockRef(program, writer, branch.true_block);
+            try writeEdge(program, writer, branch.true_edge);
             try writer.writeAll(", ");
-            try writeBlockRef(program, writer, branch.false_block);
+            try writeEdge(program, writer, branch.false_edge);
         },
         .end_thread => try writer.writeAll("end_thread"),
         .@"unreachable" => try writer.writeAll("unreachable"),
     }
+}
+
+fn writeBlockParameter(program: *const program_ir.Program, writer: *std.Io.Writer, parameter: pseudo.BlockParameter) !void {
+    switch (parameter) {
+        .register => |register_id| try writeVirtualRegisterRef(program, writer, register_id),
+        .flag => |flag_id| try writeVirtualFlagRef(program, writer, flag_id),
+    }
+}
+
+fn writeEdge(program: *const program_ir.Program, writer: *std.Io.Writer, edge: inst_ir.Edge) !void {
+    try writeBlockRef(program, writer, edge.target);
+    if (edge.arguments.len == 0)
+        return;
+
+    const execution_size: device.ExecutionSize = @enumFromInt(@intFromEnum(program.dispatch_width));
+    try writer.writeByte('(');
+    for (edge.arguments, 0..) |argument, index| {
+        if (index != 0)
+            try writer.writeAll(", ");
+        switch (argument) {
+            .source => |source| try writeSource(program, writer, execution_size, source),
+            .predicate => |predicate_value| switch (predicate_value) {
+                .constant => |value| try writer.writeAll(if (value) "true" else "false"),
+                .dynamic => |predicate| try writePredicate(program, writer, predicate),
+            },
+        }
+    }
+    try writer.writeByte(')');
 }
 
 fn writeSource(program: *const program_ir.Program, writer: *std.Io.Writer, execution_size: device.ExecutionSize, source: operand.Source) !void {

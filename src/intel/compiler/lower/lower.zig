@@ -1,12 +1,16 @@
 const std = @import("std");
 const shader_ir = @import("shader_ir").ir;
 const device = @import("../device.zig");
+const Builder = @import("../ir/Builder.zig");
 const ids = @import("../ir/id.zig");
 const instruction = @import("../ir/instruction.zig");
 const operand = @import("../ir/operand.zig");
 const printer = @import("../ir/printer.zig");
+const pseudo = @import("../ir/pseudo.zig");
 const program_ir = @import("../ir/program.zig");
 const validator = @import("../ir/validator.zig");
+
+pub const block_arguments = @import("block_arguments.zig");
 
 pub const Options = struct {
     dispatch_width: device.DispatchWidth = .simd8,
@@ -27,10 +31,7 @@ pub const Error = std.mem.Allocator.Error || error{
     UnsupportedTerminator,
 };
 
-const PredicateValue = union(enum) {
-    constant: bool,
-    dynamic: operand.Predicate,
-};
+const PredicateValue = pseudo.PredicateValue;
 
 const ValueLocation = union(enum) {
     source: operand.Source,
@@ -39,7 +40,7 @@ const ValueLocation = union(enum) {
 
 const LoweringState = struct {
     lowerer: *Lowerer,
-    program: *program_ir.Program,
+    builder: Builder,
     block_map: []?ids.BlockId,
     value_locations: []?ValueLocation,
 
@@ -77,7 +78,7 @@ const LoweringState = struct {
     }
 
     fn addRegister(self: *LoweringState, data_type: operand.DataType, class: operand.RegisterClass, name: ?[]const u8) Error!ids.VirtualRegisterId {
-        return self.program.addVirtualRegister(.{
+        return self.builder.addVirtualRegister(.{
             .size_bytes = @as(u32, data_type.sizeBytes()) * @intFromEnum(self.lowerer.options.dispatch_width),
             .alignment_bytes = self.lowerer.device_info.grf_size_bytes,
             .element_type = data_type,
@@ -195,7 +196,7 @@ const LoweringState = struct {
     }
 
     fn appendInstruction(self: *LoweringState, block_id: ids.BlockId, predicate_value: ?operand.Predicate, operation: instruction.Operation) Error!void {
-        _ = self.program.appendInstruction(block_id, .simd8, predicate_value, operation) catch |err|
+        _ = self.builder.appendInstruction(block_id, .simd8, predicate_value, operation) catch |err|
             return mapProgramError(err);
     }
 
@@ -224,7 +225,7 @@ const LoweringState = struct {
             const source_block = self.lowerer.module.blocks.get(source_block_id) orelse return Error.InvalidModule;
             if (source_block.parent_function != source_function_id)
                 return Error.InvalidModule;
-            const target_block_id = self.program.addBlock(source_block.name) catch |err|
+            const target_block_id = self.builder.addBlock(source_block.name) catch |err|
                 return mapProgramError(err);
             if (source_block_id.index() >= self.block_map.len or self.block_map[source_block_id.index()] != null)
                 return Error.InvalidModule;
@@ -232,14 +233,36 @@ const LoweringState = struct {
         }
 
         const source_entry = function.entry_block orelse return Error.InvalidModule;
-        self.program.setEntryBlock(try self.mappedBlock(source_entry)) catch |err| return mapProgramError(err);
+        self.builder.setEntryBlock(try self.mappedBlock(source_entry)) catch |err| return mapProgramError(err);
     }
 
     fn lowerParameters(self: *LoweringState) Error!void {
-        for (self.lowerer.module.blocks.entries.items) |entry| {
-            const block = entry orelse continue;
-            for (block.parameters.items) |parameter_id|
-                _ = try self.addRegisterLocation(parameter_id, .temporary);
+        const source_entry = try self.sourceEntryFunction();
+        const function = source_entry[1];
+
+        for (function.blocks.items) |source_block_id| {
+            const source_block = self.lowerer.module.blocks.get(source_block_id) orelse return Error.InvalidModule;
+            const target_block_id = try self.mappedBlock(source_block_id);
+
+            for (source_block.parameters.items) |parameter_id| {
+                const value = self.lowerer.module.values.get(parameter_id) orelse return Error.InvalidModule;
+                if (try self.isBoolean(value.type)) {
+                    const flag_id = self.builder.addVirtualFlag(.{ .name = value.name }) catch |err|
+                        return mapProgramError(err);
+                    const predicate_value: operand.Predicate = .{ .flag = .{ .virtual = flag_id } };
+                    try self.putLocation(parameter_id, .{ .predicate = .{ .dynamic = predicate_value } });
+                    self.builder.addBlockParameter(target_block_id, .{ .flag = flag_id }) catch |err|
+                        return mapProgramError(err);
+                } else {
+                    const parameter_source = try self.addRegisterLocation(parameter_id, .temporary);
+                    const register_id = switch (parameter_source.register) {
+                        .virtual => |id| id,
+                        else => return Error.InvalidLoweredProgram,
+                    };
+                    self.builder.addBlockParameter(target_block_id, .{ .register = register_id }) catch |err|
+                        return mapProgramError(err);
+                }
+            }
         }
     }
 
@@ -437,7 +460,7 @@ const LoweringState = struct {
             => return Error.UnsupportedOperation,
         };
 
-        const flag_id = self.program.addVirtualFlag(.{ .name = result_value.name }) catch |err|
+        const flag_id = self.builder.addVirtualFlag(.{ .name = result_value.name }) catch |err|
             return mapProgramError(err);
 
         const predicate_value: operand.Predicate = .{ .flag = .{ .virtual = flag_id } };
@@ -551,8 +574,7 @@ const LoweringState = struct {
         for (function.blocks.items) |source_block_id| {
             const source_block = self.lowerer.module.blocks.get(source_block_id) orelse return Error.InvalidModule;
             const target_block_id = try self.mappedBlock(source_block_id);
-            const target_block = self.program.blocks.getMut(target_block_id) orelse return Error.InvalidLoweredProgram;
-            target_block.structured_control = switch (source_block.structured_control) {
+            const structured_control: instruction.StructuredControl = switch (source_block.structured_control) {
                 .none => .none,
                 .selection => |selection| .{ .selection = .{
                     .merge_block = try self.mappedBlock(selection.merge_block),
@@ -562,30 +584,26 @@ const LoweringState = struct {
                     .continue_block = try self.mappedBlock(loop.continue_block),
                 } },
             };
+            self.builder.setStructuredControl(target_block_id, structured_control) catch |err|
+                return mapProgramError(err);
 
             const source_terminator = source_block.terminator orelse return Error.InvalidModule;
             const target_terminator: instruction.Terminator = switch (source_terminator) {
-                .branch => |edge| branch: {
-                    try self.lowerEdgeCopies(allocator, target_block_id, edge, null);
-                    break :branch .{ .jump = try self.mappedBlock(edge.target) };
-                },
+                .branch => |edge| .{ .jump = try self.lowerEdge(allocator, edge) },
                 .conditional_branch => |branch| conditional: {
                     switch (try self.predicate(branch.condition)) {
                         .constant => |condition| {
                             const edge = if (condition) branch.true_edge else branch.false_edge;
-                            try self.lowerEdgeCopies(allocator, target_block_id, edge, null);
-                            break :conditional .{ .jump = try self.mappedBlock(edge.target) };
+                            break :conditional .{ .jump = try self.lowerEdge(allocator, edge) };
                         },
                         .dynamic => |condition| {
-                            try self.lowerEdgeCopies(allocator, target_block_id, branch.true_edge, condition);
-                            try self.lowerEdgeCopies(allocator, target_block_id, branch.false_edge, .{
-                                .flag = condition.flag,
-                                .inverse = !condition.inverse,
-                            });
+                            const true_edge = try self.lowerEdge(allocator, branch.true_edge);
+                            errdefer allocator.free(true_edge.arguments);
+                            const false_edge = try self.lowerEdge(allocator, branch.false_edge);
                             break :conditional .{ .conditional_branch = .{
                                 .predicate = condition,
-                                .true_block = try self.mappedBlock(branch.true_edge.target),
-                                .false_block = try self.mappedBlock(branch.false_edge.target),
+                                .true_edge = true_edge,
+                                .false_edge = false_edge,
                             } };
                         },
                     }
@@ -595,47 +613,43 @@ const LoweringState = struct {
                 .discard => return Error.UnsupportedTerminator,
                 .@"unreachable" => .@"unreachable",
             };
-            self.program.setTerminator(target_block_id, target_terminator) catch |err|
+            defer freeTerminatorArguments(allocator, target_terminator);
+            self.builder.setTerminator(target_block_id, target_terminator) catch |err|
                 return mapProgramError(err);
         }
     }
 
-    fn lowerEdgeCopies(
-        self: *LoweringState,
-        allocator: std.mem.Allocator,
-        source_block: ids.BlockId,
-        edge: shader_ir.module.Edge,
-        predicate_value: ?operand.Predicate,
-    ) Error!void {
+    fn lowerEdge(self: *LoweringState, allocator: std.mem.Allocator, edge: shader_ir.module.Edge) Error!instruction.Edge {
         const target_source_block = self.lowerer.module.blocks.get(edge.target) orelse return Error.InvalidModule;
-
         if (edge.arguments.len != target_source_block.parameters.items.len)
             return Error.InvalidModule;
 
-        if (edge.arguments.len == 0)
-            return;
-
-        const temporaries = try allocator.alloc(ids.VirtualRegisterId, edge.arguments.len);
-        defer allocator.free(temporaries);
-
-        // Capture every source before writing any destination so loop backedges and
-        // swaps retain the parallel-copy semantics of shared-IR block arguments.
-        for (edge.arguments, 0..) |argument_id, index| {
-            const argument = try self.source(argument_id);
-            const temporary = try self.addRegister(argument.type, .temporary, null);
-            temporaries[index] = temporary;
-            try self.appendMove(source_block, predicate_value, .{
-                .register = .{ .virtual = temporary },
-                .type = argument.type,
-            }, argument);
+        const arguments = try allocator.alloc(pseudo.EdgeArgument, edge.arguments.len);
+        errdefer allocator.free(arguments);
+        for (edge.arguments, arguments) |argument_id, *argument| {
+            argument.* = switch (try self.location(argument_id)) {
+                .source => |source_value| .{ .source = source_value },
+                .predicate => |predicate_value| .{ .predicate = predicate_value },
+            };
         }
 
-        for (target_source_block.parameters.items, temporaries) |parameter_id, temporary| {
-            const destination_value = try self.destination(parameter_id);
-            try self.appendMove(source_block, predicate_value, destination_value, self.registerSource(temporary, destination_value.type));
-        }
+        return .{
+            .target = try self.mappedBlock(edge.target),
+            .arguments = arguments,
+        };
     }
 };
+
+fn freeTerminatorArguments(allocator: std.mem.Allocator, terminator: instruction.Terminator) void {
+    switch (terminator) {
+        .jump => |edge| allocator.free(edge.arguments),
+        .conditional_branch => |branch| {
+            allocator.free(branch.true_edge.arguments);
+            allocator.free(branch.false_edge.arguments);
+        },
+        else => {},
+    }
+}
 
 pub const Lowerer = struct {
     module: *shader_ir.module.Module,
@@ -690,7 +704,7 @@ pub const Lowerer = struct {
 
         var state: LoweringState = .{
             .lowerer = self,
-            .program = &program,
+            .builder = Builder.init(&program),
             .block_map = block_map,
             .value_locations = value_locations,
         };
@@ -701,7 +715,12 @@ pub const Lowerer = struct {
         try state.lowerControlAndTerminators(allocator);
 
         program.properties.instructions_selected = true;
-        program.properties.block_parameters_lowered = true;
+        validator.validate(&program) catch return Error.InvalidLoweredProgram;
+
+        block_arguments.run(allocator, &program) catch |err| return switch (err) {
+            error.OutOfMemory => Error.OutOfMemory,
+            else => Error.InvalidLoweredProgram,
+        };
         validator.validate(&program) catch return Error.InvalidLoweredProgram;
         return program;
     }
@@ -805,7 +824,7 @@ fn expectLoweringError(source: []const u8, expected: Error) !void {
     return error.TestExpectedError;
 }
 
-test "Lower: basic shader" {
+test "[ir] Lower: basic shader" {
     const source =
         \\shader vertex @main
         \\{
@@ -838,8 +857,6 @@ test "Lower: basic shader" {
         \\
         \\%value: vgrf u32[8], class(temporary), size(32), alignment(32), spillable
         \\%sum: vgrf u32[8], class(temporary), size(32), alignment(32), spillable
-        \\%v2: vgrf u32[8], class(temporary), size(32), alignment(32), spillable
-        \\%v3: vgrf u32[8], class(temporary), size(32), alignment(32), spillable
         \\%condition: vflag
         \\
         \\.entry:
@@ -848,18 +865,22 @@ test "Lower: basic shader" {
         \\    conditional_branch (+%condition), .left, .right
         \\
         \\.left:
-        \\    [simd8] mov %v2:u32, %sum:u32
-        \\    [simd8] mov %value:u32, %v2:u32
-        \\    jump .merge
+        \\    jump .b4
         \\
         \\.right:
-        \\    [simd8] mov %v3:u32, 2:u32
-        \\    [simd8] mov %value:u32, %v3:u32
-        \\    jump .merge
+        \\    jump .b5
         \\
         \\.merge:
         \\    [simd8] store_output location(0), component(0), %value:u32
         \\    end_thread
+        \\
+        \\.b4:
+        \\    [simd8] parallel_copy [%value:u32 <- %sum:u32]
+        \\    jump .merge
+        \\
+        \\.b5:
+        \\    [simd8] parallel_copy [%value:u32 <- 2:u32]
+        \\    jump .merge
         \\
         \\
     ;
@@ -867,7 +888,7 @@ test "Lower: basic shader" {
     try expectLowered(source, expected);
 }
 
-test "Lower: control flow" {
+test "[ir] Lower: control flow" {
     const source =
         \\shader vertex @main
         \\{
@@ -913,7 +934,7 @@ test "Lower: control flow" {
     try expectLowered(source, expected);
 }
 
-test "Lower: function call" {
+test "[ir] Lower: function call" {
     const source =
         \\shader vertex @main
         \\{
@@ -940,7 +961,6 @@ test "Lower: function call" {
         \\;   .dispatch_width: simd8
         \\
         \\%result: vgrf u32[8], class(temporary), size(32), alignment(32), spillable
-        \\%v1: vgrf u32[8], class(temporary), size(32), alignment(32), spillable
         \\
         \\.entry:
         \\    jump .b2
@@ -949,8 +969,10 @@ test "Lower: function call" {
         \\    end_thread
         \\
         \\.b2:
-        \\    [simd8] mov %v1:u32, 1:u32
-        \\    [simd8] mov %result:u32, %v1:u32
+        \\    jump .b3
+        \\
+        \\.b3:
+        \\    [simd8] parallel_copy [%result:u32 <- 1:u32]
         \\    jump .b1
         \\
         \\
@@ -959,7 +981,7 @@ test "Lower: function call" {
     try expectLowered(source, expected);
 }
 
-test "Lower: unary/binary operations" {
+test "[ir] Lower: unary/binary operations" {
     const source =
         \\shader vertex @main
         \\{
@@ -1008,7 +1030,7 @@ test "Lower: unary/binary operations" {
     }, &.{});
 }
 
-test "Lower: selects and bitcasts" {
+test "[ir] Lower: selects and bitcasts" {
     const source =
         \\shader vertex @main
         \\{
@@ -1050,7 +1072,7 @@ test "Lower: selects and bitcasts" {
     });
 }
 
-test "Lower: vertex interfaces" {
+test "[ir] Lower: vertex interfaces" {
     const source =
         \\shader vertex @main
         \\{
@@ -1079,7 +1101,7 @@ test "Lower: vertex interfaces" {
     }, &.{});
 }
 
-test "Lower: constant conditional branch" {
+test "[ir] Lower: constant conditional branch" {
     const source =
         \\shader vertex @main
         \\{
@@ -1106,7 +1128,42 @@ test "Lower: constant conditional branch" {
     });
 }
 
-test "Lower: unsupported operations" {
+test "[ir] Lower: boolean block parameter" {
+    const source =
+        \\shader vertex @main
+        \\{
+        \\    %one: constant u32 = bits(0x1)
+        \\    %two: constant u32 = bits(0x2)
+        \\    %never: constant bool = false
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %condition: bool = cmp_unsigned_less %one, %two
+        \\            conditional_branch %condition, .left(), .right()
+        \\        .left():
+        \\            branch .merge(%condition)
+        \\        .right():
+        \\            branch .merge(%never)
+        \\        .merge(%merged: bool):
+        \\            conditional_branch %merged, .taken(), .not_taken()
+        \\        .taken():
+        \\            return
+        \\        .not_taken():
+        \\            return
+        \\    }
+        \\}
+    ;
+
+    try expectLoweredFragments(source, &.{
+        "%condition: vflag",
+        "%merged: vflag",
+        "parallel_copy [%merged <- (+%condition)]",
+        "parallel_copy [%merged <- false]",
+        ".merge:\n    conditional_branch (+%merged), .taken, .not_taken",
+    }, &.{});
+}
+
+test "[ir] Lower: unsupported operations" {
     try expectLoweringError(
         \\shader vertex @main
         \\{
@@ -1149,7 +1206,7 @@ test "Lower: unsupported operations" {
     , Error.UnsupportedType);
 }
 
-test "Lower: unreachable terminator" {
+test "[ir] Lower: unreachable terminator" {
     const source =
         \\shader vertex @main
         \\{
@@ -1166,7 +1223,7 @@ test "Lower: unreachable terminator" {
     }, &.{});
 }
 
-test "Lower: unsupported target configuration" {
+test "[ir] Lower: unsupported target configuration" {
     var module = try shader_ir.parser.parseString(std.testing.allocator,
         \\shader vertex @main
         \\{

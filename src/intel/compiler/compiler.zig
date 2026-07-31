@@ -5,11 +5,13 @@ pub const device = @import("device.zig");
 pub const ir = @import("ir/ir.zig");
 pub const lower = @import("lower/lower.zig");
 
+pub const Builder = ir.Builder;
 pub const id = ir.id;
 pub const instruction = ir.instruction;
 pub const operand = ir.operand;
 pub const printer = ir.printer;
 pub const program = ir.program;
+pub const pseudo = ir.pseudo;
 pub const validator = ir.validator;
 
 pub const Program = ir.Program;
@@ -17,7 +19,7 @@ pub const Stage = ir.Stage;
 
 const std = @import("std");
 
-test "Flint IR foundation" {
+test "[ir] basic shader" {
     // ; Flint program:
     // ;   .stage: vertex
     // ;   .generation: gen9
@@ -44,8 +46,9 @@ test "Flint IR foundation" {
 
     var shader = Program.init(std.testing.allocator, .vertex, device_info, .simd8);
     defer shader.deinit();
+    var builder = Builder.init(&shader);
 
-    const position = try shader.addVirtualRegister(.{
+    const position = try builder.addVirtualRegister(.{
         .size_bytes = 32,
         .alignment_bytes = 32,
         .element_type = .f32,
@@ -53,7 +56,7 @@ test "Flint IR foundation" {
         .class = .varying,
         .name = "position",
     });
-    const urb_payload = try shader.addVirtualRegister(.{
+    const urb_payload = try builder.addVirtualRegister(.{
         .size_bytes = 64,
         .alignment_bytes = 32,
         .element_type = .u32,
@@ -62,10 +65,10 @@ test "Flint IR foundation" {
         .spillable = false,
         .name = "urb_payload",
     });
-    const entry = try shader.addBlock("entry");
-    try shader.setEntryBlock(entry);
+    const entry = try builder.addBlock("entry");
+    try builder.setEntryBlock(entry);
 
-    _ = try shader.appendInstruction(entry, .simd8, null, .{
+    _ = try builder.appendInstruction(entry, .simd8, null, .{
         .load_input = .{
             .destination = .{
                 .register = .{ .virtual = position },
@@ -78,7 +81,7 @@ test "Flint IR foundation" {
             },
         },
     });
-    _ = try shader.appendInstruction(entry, .simd8, null, .{
+    _ = try builder.appendInstruction(entry, .simd8, null, .{
         .binary = .{
             .opcode = .multiply,
             .destination = .{
@@ -99,7 +102,7 @@ test "Flint IR foundation" {
             },
         },
     });
-    _ = try shader.appendInstruction(entry, .simd8, null, .{
+    _ = try builder.appendInstruction(entry, .simd8, null, .{
         .move = .{
             .destination = .{
                 .register = .{ .virtual = position },
@@ -117,7 +120,7 @@ test "Flint IR foundation" {
             },
         },
     });
-    _ = try shader.appendInstruction(entry, .simd8, null, .{
+    _ = try builder.appendInstruction(entry, .simd8, null, .{
         .store_output = .{
             .semantic = .{
                 .builtin = .{ .builtin = .position },
@@ -129,7 +132,7 @@ test "Flint IR foundation" {
             },
         },
     });
-    _ = try shader.appendInstruction(entry, .simd8, null, .{
+    _ = try builder.appendInstruction(entry, .simd8, null, .{
         .send = .{
             .message = .{
                 .urb_write = .{
@@ -143,7 +146,7 @@ test "Flint IR foundation" {
             },
         },
     });
-    try shader.setTerminator(entry, .end_thread);
+    try builder.setTerminator(entry, .end_thread);
 
     shader.properties.instructions_selected = true;
     try validator.validate(&shader);
@@ -165,7 +168,7 @@ test "Flint IR foundation" {
     try std.testing.expect(std.mem.indexOf(u8, text, "send urb_write[offset(0), channels(xyzw), end_of_thread], payload(%urb_payload[2])") != null);
 }
 
-test "ID stability after removal" {
+test "[ir] ID stability after removal" {
     var store: id.Store(id.VirtualFlagId, operand.VirtualFlag) = .{};
     defer store.entries.deinit(std.testing.allocator);
 

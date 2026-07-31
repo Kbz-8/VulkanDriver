@@ -10,6 +10,7 @@ pub const Stage = shared_ir.Stage;
 pub const Properties = packed struct {
     instructions_selected: bool = false,
     block_parameters_lowered: bool = false,
+    parallel_copies_lowered: bool = false,
 
     stage_io_lowered: bool = false,
     resources_lowered: bool = false,
@@ -23,7 +24,7 @@ pub const Properties = packed struct {
     flags_allocated: bool = false,
     branches_resolved: bool = false,
 
-    _padding: u21 = 0,
+    _padding: u20 = 0,
 };
 
 pub const VertexPayload = struct {
@@ -116,12 +117,15 @@ pub const Program = struct {
     pub fn appendInstruction(self: *Program, block_id: ids.BlockId, execution_size: device.ExecutionSize, predicate: ?operand.Predicate, operation: instructions.Operation) !ids.InstructionId {
         const block = self.blocks.getMut(block_id) orelse return error.InvalidBlock;
 
+        const owned_operation = try instructions.cloneOperation(self.allocator(), operation);
         const instruction_id = try self.instructions.add(self.allocator(), .{
             .parent_block = block_id,
             .execution_size = execution_size,
             .predicate = predicate,
-            .operation = operation,
+            .operation = owned_operation,
         });
+        errdefer std.debug.assert(self.instructions.remove(instruction_id));
+
         try block.instructions.append(self.allocator(), instruction_id);
         return instruction_id;
     }
@@ -130,6 +134,6 @@ pub const Program = struct {
         const block = self.blocks.getMut(block_id) orelse return error.InvalidBlock;
         if (block.terminator != null)
             return error.TerminatorAlreadySet;
-        block.terminator = terminator;
+        block.terminator = try instructions.cloneTerminator(self.allocator(), terminator);
     }
 };

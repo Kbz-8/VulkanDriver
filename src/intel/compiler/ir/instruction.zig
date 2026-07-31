@@ -2,6 +2,7 @@ const std = @import("std");
 const device = @import("../device.zig");
 const ids = @import("id.zig");
 const operand = @import("operand.zig");
+const pseudo = @import("pseudo.zig");
 
 pub const Builtin = enum {
     position,
@@ -98,7 +99,20 @@ pub const Operation = union(enum) {
     binary: Binary,
     compare: Compare,
     send: Send,
+    parallel_copy: pseudo.ParallelCopy,
 };
+
+pub fn cloneOperation(allocator: std.mem.Allocator, operation: Operation) std.mem.Allocator.Error!Operation {
+    return switch (operation) {
+        .parallel_copy => |copy| .{
+            .parallel_copy = .{
+                .register_copies = try allocator.dupe(pseudo.RegisterCopy, copy.register_copies),
+                .flag_copies = try allocator.dupe(pseudo.FlagCopy, copy.flag_copies),
+            },
+        },
+        else => operation,
+    };
+}
 
 pub const Instruction = struct {
     parent_block: ids.BlockId,
@@ -107,16 +121,42 @@ pub const Instruction = struct {
     operation: Operation,
 };
 
+pub const Edge = struct {
+    target: ids.BlockId,
+    arguments: []const pseudo.EdgeArgument,
+};
+
 pub const Terminator = union(enum) {
-    jump: ids.BlockId,
+    jump: Edge,
     conditional_branch: struct {
         predicate: operand.Predicate,
-        true_block: ids.BlockId,
-        false_block: ids.BlockId,
+        true_edge: Edge,
+        false_edge: Edge,
     },
     end_thread,
     @"unreachable",
 };
+
+pub fn cloneEdge(allocator: std.mem.Allocator, edge: Edge) std.mem.Allocator.Error!Edge {
+    return .{
+        .target = edge.target,
+        .arguments = try allocator.dupe(pseudo.EdgeArgument, edge.arguments),
+    };
+}
+
+pub fn cloneTerminator(allocator: std.mem.Allocator, terminator: Terminator) std.mem.Allocator.Error!Terminator {
+    return switch (terminator) {
+        .jump => |edge| .{ .jump = try cloneEdge(allocator, edge) },
+        .conditional_branch => |branch| .{
+            .conditional_branch = .{
+                .predicate = branch.predicate,
+                .true_edge = try cloneEdge(allocator, branch.true_edge),
+                .false_edge = try cloneEdge(allocator, branch.false_edge),
+            },
+        },
+        else => terminator,
+    };
+}
 
 pub const StructuredControl = union(enum) {
     none,
@@ -130,6 +170,7 @@ pub const StructuredControl = union(enum) {
 };
 
 pub const Block = struct {
+    parameters: std.ArrayList(pseudo.BlockParameter) = .empty,
     instructions: std.ArrayList(ids.InstructionId) = .empty,
     terminator: ?Terminator = null,
     structured_control: StructuredControl = .none,

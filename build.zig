@@ -614,12 +614,7 @@ fn optionsPhi(b: *std.Build, options: *Step.Options) !void {
     options.addOption([]const u8, "phi_daemon_host_prefix", daemon_host_prefix);
 }
 
-fn addPhiCardDaemon(
-    b: *std.Build,
-    optimize: std.builtin.OptimizeMode,
-    cc: []const u8,
-    sysroot: ?[]const u8,
-) !std.Build.LazyPath {
+fn addPhiCardDaemon(b: *std.Build, optimize: std.builtin.OptimizeMode, cc: []const u8, sysroot: ?[]const u8) !std.Build.LazyPath {
     const cmd = b.addSystemCommand(&.{cc});
 
     cmd.addArgs(&.{
