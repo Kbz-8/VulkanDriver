@@ -513,7 +513,7 @@ fn customPhi(
     const host_emulation = b.option(
         bool,
         "phi-host-emulation",
-        "Run the Phi device daemon on the host over a loopback TCP socket",
+        "Run the Phi device daemon on the host over a loopback TCP socket (/!\\ Intended for development use only /!\\)",
     ) orelse false;
     const emulation_port = b.option(
         u16,
