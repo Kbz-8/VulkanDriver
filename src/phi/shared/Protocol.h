@@ -8,6 +8,10 @@
 #define PHI_PROTOCOL_VERSION 1u
 #define PHI_SCIF_PORT 43616u
 
+#ifndef PHI_TRANSPORT_PORT
+#define PHI_TRANSPORT_PORT PHI_SCIF_PORT
+#endif
+
 typedef enum PhiPacketType
 {
 	PHI_PACKET_HELLO = 1,

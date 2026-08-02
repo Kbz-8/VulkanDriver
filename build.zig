@@ -11,6 +11,7 @@ const ImplementationDesc = struct {
     vulkan_version: std.SemanticVersion,
     custom: ?*const fn (
         *std.Build,
+        *Step.Options,
         *Step.Compile,
         *std.Build.Module,
         *std.Build.Module,
@@ -20,37 +21,32 @@ const ImplementationDesc = struct {
         std.builtin.OptimizeMode,
         bool,
     ) anyerror!void = null,
-    options: ?*const fn (*std.Build, *Step.Options) anyerror!void = null,
 };
 
 const implementations = [_]ImplementationDesc{
-    .{
-        .name = "ape",
-        .icd_name = "ape",
-        .root_source_file = "src/ape/lib.zig",
-        .vulkan_version = .{ .major = 1, .minor = 0, .patch = 0 },
-        .custom = customApe,
-    },
     .{
         .name = "soft",
         .root_source_file = "src/software/lib.zig",
         .vulkan_version = .{ .major = 1, .minor = 0, .patch = 0 },
         .custom = customSoft,
-        .options = optionsSoft,
     },
     .{
         .name = "flint",
         .root_source_file = "src/intel/lib.zig",
         .vulkan_version = .{ .major = 1, .minor = 0, .patch = 0 },
         .custom = customFlint,
-        .options = optionsFlint,
     },
     .{
         .name = "phi",
         .root_source_file = "src/phi/lib.zig",
         .vulkan_version = .{ .major = 1, .minor = 0, .patch = 0 },
         .custom = customPhi,
-        .options = optionsPhi,
+    },
+    .{
+        .name = "ape",
+        .icd_name = "ape",
+        .root_source_file = "src/ape/lib.zig",
+        .vulkan_version = .{ .major = 1, .minor = 0, .patch = 0 },
     },
 };
 
@@ -149,7 +145,8 @@ pub fn build(b: *std.Build) !void {
 
     const use_llvm = b.option(bool, "use-llvm", "LLVM build") orelse (b.release_mode != .off);
 
-    for (implementations) |impl| {
+    var implementation_modules: [implementations.len]*std.Build.Module = undefined;
+    for (implementations, 0..) |impl, impl_index| {
         const lib_mod = b.createModule(.{
             .root_source_file = b.path(impl.root_source_file),
             .target = target,
@@ -161,6 +158,7 @@ pub fn build(b: *std.Build) !void {
             },
         });
 
+        implementation_modules[impl_index] = lib_mod;
         lib_mod.addSystemIncludePath(vulkan_headers.path("include"));
 
         const lib = b.addLibrary(.{
@@ -172,12 +170,11 @@ pub fn build(b: *std.Build) !void {
 
         options.addOption(std.SemanticVersion, b.fmt("{s}_vulkan_version", .{impl.name}), impl.vulkan_version);
 
-        if (impl.custom) |func| {
-            func(b, lib, lib_mod, base_mod, vulkan, base_c_mod, target, optimize, use_llvm) catch continue;
-        }
-
-        if (impl.options) |func| {
-            func(b, options) catch continue;
+        if (std.mem.eql(u8, impl.name, "ape")) {
+            for (implementations[0..impl_index], implementation_modules[0..impl_index]) |child_impl, child_mod|
+                lib_mod.addImport(child_impl.name, child_mod);
+        } else if (impl.custom) |func| {
+            func(b, options, lib, lib_mod, base_mod, vulkan, base_c_mod, target, optimize, use_llvm) catch continue;
         }
 
         const icd_file = b.addWriteFile(
@@ -426,45 +423,11 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
     return &run.step;
 }
 
-// Ape specialized functions
-
-fn customApe(
-    b: *std.Build,
-    lib: *Step.Compile,
-    lib_mod: *std.Build.Module,
-    base_mod: *std.Build.Module,
-    vulkan: *std.Build.Module,
-    base_c_mod: *std.Build.Module,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    use_llvm: bool,
-) !void {
-    for (implementations) |impl| {
-        if (std.mem.eql(u8, impl.name, "ape"))
-            continue;
-
-        const mod = b.createModule(.{
-            .root_source_file = b.path(impl.root_source_file),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "base", .module = base_mod },
-                .{ .name = "vulkan", .module = vulkan },
-            },
-        });
-
-        if (impl.custom) |func| {
-            func(b, lib, mod, base_mod, vulkan, base_c_mod, target, optimize, use_llvm) catch continue;
-        }
-
-        lib_mod.addImport(impl.name, mod);
-    }
-}
-
 // Soft specialized functions
 
 fn customSoft(
     b: *std.Build,
+    options: *Step.Options,
     _: *Step.Compile,
     lib_mod: *std.Build.Module,
     _: *std.Build.Module,
@@ -482,9 +445,7 @@ fn customSoft(
 
     lib_mod.addImport("soft_c", base_c_mod);
     lib_mod.addImport("spv", spv.module("spv"));
-}
 
-fn optionsSoft(b: *std.Build, options: *Step.Options) !void {
     const single_threaded_option = b.option(bool, "soft-single-threaded", "Single threaded runtime mode") orelse false;
     const shaders_simd_option = b.option(bool, "soft-shader-simd", "Shaders SIMD acceleration") orelse true;
     const compute_dump_early_results_table_option = b.option(u32, "soft-compute-dump-early-results-table", "Dump compute shaders results table before invocation");
@@ -502,6 +463,7 @@ fn optionsSoft(b: *std.Build, options: *Step.Options) !void {
 
 fn customFlint(
     b: *std.Build,
+    _: *Step.Options,
     _: *Step.Compile,
     lib_mod: *std.Build.Module,
     _: *std.Build.Module,
@@ -519,15 +481,11 @@ fn customFlint(
     }));
 }
 
-fn optionsFlint(b: *std.Build, options: *Step.Options) !void {
-    _ = b;
-    _ = options;
-}
-
 // Phi specialized functions
 
 fn customPhi(
     b: *std.Build,
+    options: *Step.Options,
     lib: *Step.Compile,
     lib_mod: *std.Build.Module,
     _: *std.Build.Module,
@@ -537,15 +495,52 @@ fn customPhi(
     optimize: std.builtin.OptimizeMode,
     use_llvm: bool,
 ) !void {
+    const daemon_remote_path = b.option(
+        []const u8,
+        "phi-daemon-remote-path",
+        "Path where the Xeon Phi daemon is copied on the card",
+    ) orelse "/tmp/phi_device.mic";
+
+    const daemon_host_prefix = b.option(
+        []const u8,
+        "phi-daemon-host-prefix",
+        "Host prefix used to reach cards over ssh/scp; card N uses <prefix>N",
+    ) orelse "mic";
+
+    options.addOption([]const u8, "phi_daemon_remote_path", daemon_remote_path);
+    options.addOption([]const u8, "phi_daemon_host_prefix", daemon_host_prefix);
+
+    const host_emulation = b.option(
+        bool,
+        "phi-host-emulation",
+        "Run the Phi device daemon on the host over a loopback TCP socket",
+    ) orelse false;
+    const emulation_port = b.option(
+        u16,
+        "phi-emulation-port",
+        "Loopback TCP port used by Phi host emulation",
+    ) orelse 43616;
+
+    options.addOption(bool, "phi_host_emulation", host_emulation);
+    options.addOption(u16, "phi_emulation_port", emulation_port);
+
     lib_mod.addImport("phi_c", base_c_mod);
 
-    const miclib = b.lazyDependency("miclib", .{
-        .target = target,
-        .optimize = optimize,
-        .@"use-llvm" = use_llvm,
-    }) orelse return error.UnresolvedDependency;
+    if (host_emulation) {
+        lib_mod.addImport("miclib", b.createModule(.{
+            .root_source_file = b.path("src/phi/mic_stub.zig"),
+            .target = target,
+            .optimize = optimize,
+        }));
+    } else {
+        const miclib = b.lazyDependency("miclib", .{
+            .target = target,
+            .optimize = optimize,
+            .@"use-llvm" = use_llvm,
+        }) orelse return error.UnresolvedDependency;
 
-    lib_mod.addImport("miclib", miclib.module("miclib"));
+        lib_mod.addImport("miclib", miclib.module("miclib"));
+    }
 
     const phi_protocol_c = b.addTranslateC(.{
         .root_source_file = b.path("src/phi/shared/Protocol.h"),
@@ -556,20 +551,10 @@ fn customPhi(
 
     lib_mod.addImport("phi_protocol_c", phi_protocol_c.createModule());
 
-    // To avoid duplicated options due to Ape's custom function
-    if (!std.mem.eql(u8, lib.name, "vulkan_phi")) {
-        const daemon = try addPhiCardDaemon(b, optimize, "k1om-mpss-linux-gcc", null);
-        const embedded_daemon = addEmbeddedPhiDaemon(b, daemon);
-        lib_mod.addAnonymousImport("phi_daemon", .{
-            .root_source_file = embedded_daemon,
-        });
-        return;
-    }
-
     const build_card = b.option(
         bool,
         "phi-build-daemon",
-        "Build Xeon Phi card daemon",
+        "Build the Phi device daemon",
     ) orelse true;
 
     if (!build_card)
@@ -587,8 +572,11 @@ fn customPhi(
         "MPSS sysroot path",
     );
 
-    const daemon = try addPhiCardDaemon(b, optimize, cc, sysroot);
-    const install_daemon = b.addInstallFile(daemon, "lib/phi_device.mic");
+    const daemon = try addPhiDaemon(b, optimize, host_emulation, emulation_port, cc, sysroot);
+    const install_daemon = b.addInstallFile(
+        daemon,
+        if (host_emulation) "bin/phi_device-host" else "lib/phi_device.mic",
+    );
     lib.step.dependOn(&install_daemon.step);
 
     const embedded_daemon = addEmbeddedPhiDaemon(b, daemon);
@@ -597,24 +585,17 @@ fn customPhi(
     });
 }
 
-fn optionsPhi(b: *std.Build, options: *Step.Options) !void {
-    const daemon_remote_path = b.option(
-        []const u8,
-        "phi-daemon-remote-path",
-        "Path where the Xeon Phi daemon is copied on the card",
-    ) orelse "/tmp/phi_device.mic";
+fn addPhiDaemon(
+    b: *std.Build,
+    optimize: std.builtin.OptimizeMode,
+    host_emulation: bool,
+    emulation_port: u16,
+    cc: []const u8,
+    sysroot: ?[]const u8,
+) !std.Build.LazyPath {
+    if (host_emulation)
+        return addPhiHostDaemon(b, optimize, emulation_port);
 
-    const daemon_host_prefix = b.option(
-        []const u8,
-        "phi-daemon-host-prefix",
-        "Host prefix used to reach cards over ssh/scp; card N uses <prefix>N",
-    ) orelse "mic";
-
-    options.addOption([]const u8, "phi_daemon_remote_path", daemon_remote_path);
-    options.addOption([]const u8, "phi_daemon_host_prefix", daemon_host_prefix);
-}
-
-fn addPhiCardDaemon(b: *std.Build, optimize: std.builtin.OptimizeMode, cc: []const u8, sysroot: ?[]const u8) !std.Build.LazyPath {
     const cmd = b.addSystemCommand(&.{cc});
 
     cmd.addArgs(&.{
@@ -649,6 +630,7 @@ fn addPhiCardDaemon(b: *std.Build, optimize: std.builtin.OptimizeMode, cc: []con
         "src/phi/mic/Daemon.c",
         "src/phi/mic/Logger.c",
         "src/phi/mic/Memory.c",
+        "src/phi/mic/Transport.c",
         // Add new files here
     };
 
@@ -656,12 +638,44 @@ fn addPhiCardDaemon(b: *std.Build, optimize: std.builtin.OptimizeMode, cc: []con
         cmd.addFileArg(b.path(source));
     }
 
-    cmd.addArgs(&.{
-        "-lscif",
-        "-o",
-    });
-
+    cmd.addArgs(&.{ "-lscif", "-o" });
     return cmd.addOutputFileArg("phi_device.mic");
+}
+
+fn addPhiHostDaemon(b: *std.Build, optimize: std.builtin.OptimizeMode, emulation_port: u16) std.Build.LazyPath {
+    const daemon_mod = b.createModule(.{
+        .target = b.graph.host,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    daemon_mod.addIncludePath(b.path("src/phi/mic"));
+    daemon_mod.addIncludePath(b.path("src/phi/shared"));
+    daemon_mod.addCMacro("PHI_HOST_EMULATION", "1");
+    daemon_mod.addCMacro("PHI_TRANSPORT_PORT", b.fmt("{d}", .{emulation_port}));
+    daemon_mod.addCSourceFiles(.{
+        .files = &.{
+            "src/phi/mic/main.c",
+            "src/phi/mic/Buffer.c",
+            "src/phi/mic/CommandBuffer.c",
+            "src/phi/mic/Daemon.c",
+            "src/phi/mic/Logger.c",
+            "src/phi/mic/Memory.c",
+            "src/phi/mic/Transport.c",
+        },
+        .flags = &.{
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+            "-Wno-unused-parameter",
+        },
+    });
+    daemon_mod.linkSystemLibrary("pthread", .{});
+
+    const daemon = b.addExecutable(.{
+        .name = "phi_device-host",
+        .root_module = daemon_mod,
+    });
+    return daemon.getEmittedBin();
 }
 
 fn addEmbeddedPhiDaemon(b: *std.Build, daemon: std.Build.LazyPath) std.Build.LazyPath {

@@ -84,6 +84,7 @@ void PhiLog(PhiLogLevel level, const char* fmt, const char* file, const char* fu
 	va_end(argptr);
 
 	fputc('\n', out);
+	fflush(out);
 
 	if(level == PHI_LOG_LEVEL_FATAL)
 	{

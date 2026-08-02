@@ -34,6 +34,21 @@ scif_node_id: u16,
 mic_device_num: u32,
 
 pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, mic_device: mic.Device, mic_device_num: u32) VkError!*Self {
+    if (comptime lib.config.phi_host_emulation) {
+        return VkError.InitializationFailed;
+    } else {
+        return createInternal(allocator, instance, mic_device, mic_device_num);
+    }
+}
+
+pub fn createEmulated(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*Self {
+    if (comptime lib.config.phi_host_emulation)
+        return createInternal(allocator, instance, null, 0)
+    else
+        return VkError.InitializationFailed;
+}
+
+fn createInternal(allocator: std.mem.Allocator, instance: *base.Instance, mic_device: ?mic.Device, mic_device_num: u32) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
 
@@ -61,29 +76,37 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, mic_device
 
     @memset(interface.props.device_name[0..], 0);
 
-    if (mic_device.pciConfig()) |pci_value| {
-        var pci = pci_value;
-        defer pci.deinit();
+    if (comptime lib.config.phi_host_emulation) {
+        interface.props.vendor_id = 0x8086;
+        interface.props.device_id = 0x2250;
+        const name = "Intel(R) Xeon Phi(TM) Coprocessor Host Emulation [Phi ApeDriver]";
+        @memcpy(interface.props.device_name[0..name.len], name);
+    } else {
+        const device = mic_device.?;
+        if (device.pciConfig()) |pci_value| {
+            var pci = pci_value;
+            defer pci.deinit();
 
-        interface.props.vendor_id = pci.vendorId() catch 0;
-        interface.props.device_id = pci.deviceId() catch 0;
+            interface.props.vendor_id = pci.vendorId() catch 0;
+            interface.props.device_id = pci.deviceId() catch 0;
 
-        for (pci_ids[0..]) |pci_info| {
-            if (pci_info.id != pci.deviceId() catch 0)
-                continue;
+            for (pci_ids[0..]) |pci_info| {
+                if (pci_info.id != pci.deviceId() catch 0)
+                    continue;
 
-            const len = @min(vk.MAX_PHYSICAL_DEVICE_NAME_SIZE, pci_info.name.len);
-            @memcpy(interface.props.device_name[0..len], pci_info.name[0..len]);
+                const len = @min(vk.MAX_PHYSICAL_DEVICE_NAME_SIZE, pci_info.name.len);
+                @memcpy(interface.props.device_name[0..len], pci_info.name[0..len]);
 
-            const driver_mark = " [Phi ApeDriver]";
+                const driver_mark = " [Phi ApeDriver]";
 
-            @memcpy(interface.props.device_name[len .. len + driver_mark.len], driver_mark);
+                @memcpy(interface.props.device_name[len .. len + driver_mark.len], driver_mark);
 
-            break;
+                break;
+            }
+        } else |err| {
+            std.log.scoped(.MIC).err("Failed to fetch device PCI config: {s}", .{@errorName(err)});
+            return VkError.InitializationFailed;
         }
-    } else |err| {
-        std.log.scoped(.MIC).err("Failed to fetch device PCI config: {s}", .{@errorName(err)});
-        return VkError.InitializationFailed;
     }
 
     interface.props.pipeline_cache_uuid = @splat(0);
@@ -224,24 +247,31 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, mic_device
         };
     }
 
-    if (mic_device.memoryInfo()) |memory_value| {
-        var memory = memory_value;
-        defer memory.deinit();
-
-        interface.mem_props.memory_heap_count = 2;
-
+    interface.mem_props.memory_heap_count = 2;
+    if (comptime lib.config.phi_host_emulation) {
         interface.mem_props.memory_heaps[0] = .{
-            .size = memory.size() catch 0,
+            .size = std.process.totalSystemMemory() catch 0,
             .flags = .{ .device_local_bit = true },
         };
-        interface.mem_props.memory_heaps[1] = .{
-            .size = std.process.totalSystemMemory() catch 0,
-            .flags = .{},
-        };
-    } else |err| {
-        std.log.scoped(.MIC).err("Failed to fetch device memory infos: {s}", .{@errorName(err)});
-        return VkError.InitializationFailed;
+    } else {
+        const device = mic_device.?;
+        if (device.memoryInfo()) |memory_value| {
+            var memory = memory_value;
+            defer memory.deinit();
+
+            interface.mem_props.memory_heaps[0] = .{
+                .size = memory.size() catch 0,
+                .flags = .{ .device_local_bit = true },
+            };
+        } else |err| {
+            std.log.scoped(.MIC).err("Failed to fetch device memory infos: {s}", .{@errorName(err)});
+            return VkError.InitializationFailed;
+        }
     }
+    interface.mem_props.memory_heaps[1] = .{
+        .size = std.process.totalSystemMemory() catch 0,
+        .flags = .{},
+    };
 
     interface.features = .{
         .shader_float_64 = .true,

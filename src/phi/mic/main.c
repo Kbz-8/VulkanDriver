@@ -2,24 +2,37 @@
 #include <pthread.h>
 #include <stdint.h>
 
+#ifdef PHI_HOST_EMULATION
+#include <string.h>
+#include <unistd.h>
+#endif
+
 #include <Daemon.h>
 #include <Logger.h>
 
 static void* HandleClient(void* const argument)
 {
-	scif_epd_t client = (scif_epd_t)(intptr_t)argument;
+	PhiEndpoint client = (PhiEndpoint)(intptr_t)argument;
 
 	(void)HandlePacket(client);
-	scif_close(client);
+	PhiTransportClose(client);
 	return NULL;
 }
 
-int main(void)
+int main(int argc, char** argv)
 {
-	scif_epd_t endpoint = StartDaemon();
+#ifdef PHI_HOST_EMULATION
+	if(argc == 2 && strcmp(argv[1], "--unlink-on-start") == 0)
+		(void)unlink(argv[0]);
+#else
+	(void)argc;
+	(void)argv;
+#endif
+
+	PhiEndpoint endpoint = StartDaemon();
 	pthread_attr_t client_thread_attributes;
 
-	if(endpoint == 0)
+	if(endpoint == PHI_ENDPOINT_INVALID)
 		return 1;
 
 	if(pthread_attr_init(&client_thread_attributes) != 0 ||
@@ -32,22 +45,23 @@ int main(void)
 
 	for(;;)
 	{
-		struct scif_portID peer;
-		scif_epd_t client;
+		PhiEndpoint client = PhiTransportAccept(endpoint);
 
-		if(scif_accept(endpoint, &peer, &client, SCIF_ACCEPT_SYNC) < 0)
+		if(client == PHI_ENDPOINT_INVALID)
 		{
 			if(errno == EINTR)
 				continue;
-			PhiLogError("Could not accept SCIF connection");
+			PhiLogError("Could not accept transport connection");
 			break;
 		}
+
+		PhiLogInfo("Host connected to the daemon");
 
 		pthread_t client_thread;
 		if(pthread_create(&client_thread, &client_thread_attributes, HandleClient, (void*)(intptr_t)client) != 0)
 		{
-			PhiLogError("Could not create SCIF client thread");
-			scif_close(client);
+			PhiLogError("Could not create transport client thread");
+			PhiTransportClose(client);
 		}
 	}
 

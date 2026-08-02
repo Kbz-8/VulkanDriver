@@ -3,7 +3,7 @@
 #include <Logger.h>
 #include <Memory.h>
 
-static int HandleHello(scif_epd_t endpoint, const PhiMessageHeader* header)
+static int HandleHello(PhiEndpoint endpoint, const PhiMessageHeader* header)
 {
 	PhiHelloRequest request;
 	PhiHelloReply reply = {
@@ -32,41 +32,25 @@ static int HandleHello(scif_epd_t endpoint, const PhiMessageHeader* header)
 	return SendReply(endpoint, header, &reply, sizeof(reply));
 }
 
-scif_epd_t StartDaemon()
+PhiEndpoint StartDaemon(void)
 {
 	PhiLogInfo("Starting the daemon...");
 
-	scif_epd_t endpoint = scif_open();
-	if(endpoint < 0)
-	{
-		PhiLogError("Failed to create SCIF endpoint");
-		return 0;
-	}
+	PhiEndpoint endpoint = PhiTransportListen(PHI_TRANSPORT_PORT);
+	if(endpoint == PHI_ENDPOINT_INVALID)
+		PhiLogError("Could not listen on the Phi transport");
 
-	if(scif_bind(endpoint, PHI_SCIF_PORT) < 0)
-	{
-		PhiLogError("Failed to bind SCIF port");
-		scif_close(endpoint);
-		return 0;
-	}
-
-	if(scif_listen(endpoint, 16) < 0)
-	{
-		PhiLogError("Could not listen to SCIF port");
-		scif_close(endpoint);
-		return 0;
-	}
-
+	PhiLogInfo("Daemon started");
 	return endpoint;
 }
 
-void ShutdownDaemon(scif_epd_t endpoint)
+void ShutdownDaemon(PhiEndpoint endpoint)
 {
-	PhiLogInfo("Shuting down the daemon...");
-	scif_close(endpoint);
+	PhiLogInfo("Shutting down the daemon...");
+	PhiTransportClose(endpoint);
 }
 
-int HandlePacket(scif_epd_t endpoint)
+int HandlePacket(PhiEndpoint endpoint)
 {
 	for(;;)
 	{
@@ -123,14 +107,14 @@ int HandlePacket(scif_epd_t endpoint)
 	}
 }
 
-int ReadAll(scif_epd_t endpoint, void* data, size_t size)
+int ReadAll(PhiEndpoint endpoint, void* data, size_t size)
 {
 	uint8_t* bytes = data;
 	size_t offset = 0;
 
 	while(offset < size)
 	{
-		int got = scif_recv(endpoint, bytes + offset, size - offset, SCIF_RECV_BLOCK);
+		ssize_t got = PhiTransportReceive(endpoint, bytes + offset, size - offset);
 		if(got <= 0)
 			return -1;
 		offset += (size_t)got;
@@ -139,14 +123,14 @@ int ReadAll(scif_epd_t endpoint, void* data, size_t size)
 	return 0;
 }
 
-int WriteAll(scif_epd_t endpoint, const void* data, size_t size)
+int WriteAll(PhiEndpoint endpoint, const void* data, size_t size)
 {
 	const uint8_t* bytes = data;
 	size_t offset = 0;
 
 	while(offset < size)
 	{
-		int sent = scif_send(endpoint, (void*)(bytes + offset), size - offset, SCIF_SEND_BLOCK);
+		ssize_t sent = PhiTransportSend(endpoint, bytes + offset, size - offset);
 		if(sent <= 0)
 			return -1;
 		offset += (size_t)sent;
@@ -155,7 +139,7 @@ int WriteAll(scif_epd_t endpoint, const void* data, size_t size)
 	return 0;
 }
 
-int SendReply(scif_epd_t endpoint, const PhiMessageHeader* request, const void* payload, uint64_t payload_size)
+int SendReply(PhiEndpoint endpoint, const PhiMessageHeader* request, const void* payload, uint64_t payload_size)
 {
 	PhiMessageHeader reply = {
 		.magic = PHI_PROTOCOL_MAGIC,
@@ -171,7 +155,7 @@ int SendReply(scif_epd_t endpoint, const PhiMessageHeader* request, const void* 
 	return WriteAll(endpoint, payload, (size_t)payload_size);
 }
 
-int SendStatus(scif_epd_t endpoint, const PhiMessageHeader* request, PhiStatus status)
+int SendStatus(PhiEndpoint endpoint, const PhiMessageHeader* request, PhiStatus status)
 {
 	PhiFreeMemoryReply reply = {
 		.result = {
@@ -183,7 +167,7 @@ int SendStatus(scif_epd_t endpoint, const PhiMessageHeader* request, PhiStatus s
 	return SendReply(endpoint, request, &reply, sizeof(reply));
 }
 
-int DrainPayload(scif_epd_t endpoint, uint64_t size)
+int DrainPayload(PhiEndpoint endpoint, uint64_t size)
 {
 	uint8_t buffer[256];
 

@@ -235,6 +235,28 @@ To bring forth the driver:
 zig build phi --release=[fast|safe|small]
 ```
 
+To build Phi without a Xeon Phi card, enable host emulation:
+
+```
+zig build phi -Dphi-host-emulation=true --release=[fast|safe|small]
+```
+
+In this mode the daemon is compiled natively through Zig's `std.Build` C compilation support and installed as `zig-out/bin/phi_device-host`. The driver exposes one synthetic Phi physical device and communicates with the daemon over an IPv4 TCP socket bound only to `127.0.0.1`. The client socket is implemented directly with Zig's `std.Io.net` API; it does not reuse daemon C transport functions or load `libmicmgmt` or `libscif`.
+
+The driver first connects to an already-running daemon. If none is listening, it launches its embedded daemon locally and retries the connection. The temporary embedded executable removes its own filesystem entry after launch. The daemon may also be started manually:
+
+```
+./zig-out/bin/phi_device-host
+```
+
+The loopback port defaults to `43616` and may be selected at build time for both the driver and daemon:
+
+```
+zig build phi -Dphi-host-emulation=true -Dphi-emulation-port=43617
+```
+
+Builds without `-Dphi-host-emulation=true` retain the real Xeon Phi path: the daemon is cross-compiled with the configured `k1om-mpss-linux-gcc`, deployed over SSH/SCP, and communicates through SCIF.
+
 And for those who seek another manner of building:
 
 ```

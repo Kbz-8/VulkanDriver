@@ -44,7 +44,7 @@ static PhiStatus ExecuteCommand(PhiCommandReader* reader, const PhiCmdHeader* co
 	return PHI_STATUS_BAD_MESSAGE;
 }
 
-int HandleWorkExecution(scif_epd_t endpoint, const PhiMessageHeader* header)
+int HandleWorkExecution(PhiEndpoint endpoint, const PhiMessageHeader* header)
 {
 	PhiWorkExecutionRequest request;
 	PhiWorkExecutionReply reply = {

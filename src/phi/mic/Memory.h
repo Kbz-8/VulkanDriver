@@ -3,7 +3,7 @@
 
 #include <Daemon.h>
 
-int HandleAllocMemory(scif_epd_t endpoint, const PhiMessageHeader* header);
-int HandleFreeMemory(scif_epd_t endpoint, const PhiMessageHeader* header);
+int HandleAllocMemory(PhiEndpoint endpoint, const PhiMessageHeader* header);
+int HandleFreeMemory(PhiEndpoint endpoint, const PhiMessageHeader* header);
 
 #endif

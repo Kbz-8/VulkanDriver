@@ -81,8 +81,11 @@ pub fn create(instance: *base.Instance, physical_device: *base.PhysicalDevice, a
     const phi_physical_device: *PhiPhysicalDevice = @alignCast(@fieldParentPtr("interface", physical_device));
 
     const transport = PhiTransport.init(instance, phi_physical_device.scif_node_id) catch blk: {
-        // If the first connection failed, upload and launch the daemon on the card.
-        try uploadAndLaunchDaemon(instance, allocator, phi_physical_device.mic_device_num);
+        // If the first connection failed, launch the daemon on the selected device.
+        if (comptime config.phi_host_emulation)
+            try launchHostDaemon(instance, allocator)
+        else
+            try uploadAndLaunchDaemon(instance, allocator, phi_physical_device.mic_device_num);
 
         const max_connect_attempts = 3;
         for (0..max_connect_attempts) |attempt| {
@@ -240,6 +243,37 @@ pub fn getDeviceGroupPresentCapabilitiesKHR(_: *Interface, capabilities: *vk.Dev
 
 pub fn getDeviceGroupSurfacePresentModesKHR(_: *Interface, _: *base.SurfaceKHR) VkError!vk.DeviceGroupPresentModeFlagsKHR {
     return .{ .local_bit_khr = true };
+}
+
+fn launchHostDaemon(instance: *base.Instance, allocator: std.mem.Allocator) VkError!void {
+    const io = instance.io();
+    const process_id = std.os.linux.getpid();
+    const thread_id = std.Thread.getCurrentId();
+
+    const local_path = std.fmt.allocPrint(allocator, "/tmp/ape_phi_device_{d}_{d}.host", .{ process_id, thread_id }) catch return VkError.OutOfHostMemory;
+    defer allocator.free(local_path);
+    errdefer std.Io.Dir.deleteFileAbsolute(io, local_path) catch {};
+
+    std.Io.Dir.writeFile(.cwd(), io, .{
+        .sub_path = local_path,
+        .data = daemon_binary,
+    }) catch |err| {
+        std.log.scoped(.PhiDevice).err("Failed to write embedded Phi host daemon: {s}", .{@errorName(err)});
+        return VkError.InitializationFailed;
+    };
+
+    const launch_command = std.fmt.allocPrint(
+        allocator,
+        "chmod +x {s} && (nohup {s} --unlink-on-start >/tmp/phi_device_host.log 2>&1 </dev/null &)",
+        .{ local_path, local_path },
+    ) catch return VkError.OutOfHostMemory;
+    defer allocator.free(launch_command);
+
+    std.log.scoped(.PhiDevice).debug(
+        "Launching Phi host daemon on 127.0.0.1:{d}",
+        .{config.phi_emulation_port},
+    );
+    try runHostCommand(instance, allocator, &.{ "sh", "-c", launch_command });
 }
 
 fn uploadAndLaunchDaemon(instance: *base.Instance, allocator: std.mem.Allocator, mic_device_num: u32) VkError!void {

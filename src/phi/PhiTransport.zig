@@ -5,33 +5,54 @@ const scif = @import("scif.zig");
 
 const VkError = base.VkError;
 const proto = lib.proto;
+const Endpoint = if (lib.config.phi_host_emulation) std.Io.net.Stream else scif.epd_t;
 
 const Self = @This();
 
-epd: scif.epd_t,
+epd: Endpoint,
 sequence: u64 = 1,
 mutex: std.Io.Mutex = .init,
 instance: *base.Instance,
 
 pub fn init(instance: *base.Instance, node_id: u16) VkError!Self {
-    try scif.load();
-    errdefer scif.unload();
+    const epd = if (comptime lib.config.phi_host_emulation) blk: {
+        const address: std.Io.net.IpAddress = .{
+            .ip4 = .loopback(lib.config.phi_emulation_port),
+        };
+        const stream = address.connect(instance.io(), .{ .mode = .stream }) catch |err| {
+            std.log.scoped(.PhiTransport).err(
+                "TCP connection to 127.0.0.1:{d} failed: {s}",
+                .{ lib.config.phi_emulation_port, @errorName(err) },
+            );
+            return VkError.InitializationFailed;
+        };
+        break :blk stream;
+    } else blk: {
+        try scif.load();
+        errdefer scif.unload();
 
-    const epd = scif.open();
-    if (epd < 0) {
-        std.log.scoped(.PhiTransport).err("SCIF open failed", .{});
-        return VkError.InitializationFailed;
-    }
-    errdefer _ = scif.close(epd);
+        const endpoint = scif.open();
+        if (endpoint < 0) {
+            std.log.scoped(.PhiTransport).err("SCIF open failed", .{});
+            return VkError.InitializationFailed;
+        }
+        errdefer _ = scif.close(endpoint);
 
-    var dst: scif.PortId = .{
-        .node = node_id,
-        .port = @intCast(proto.PHI_SCIF_PORT),
+        var dst: scif.PortId = .{
+            .node = node_id,
+            .port = @intCast(proto.PHI_SCIF_PORT),
+        };
+
+        if (scif.connect(endpoint, &dst) < 0) {
+            std.log.scoped(.PhiTransport).err("SCIF connection to node {d} port {d} failed", .{ dst.node, dst.port });
+            return VkError.InitializationFailed;
+        }
+        break :blk endpoint;
     };
-
-    if (scif.connect(epd, &dst) < 0) {
-        std.log.scoped(.PhiTransport).err("SCIF connection to node {d} port {d} failed", .{ dst.node, dst.port });
-        return VkError.InitializationFailed;
+    errdefer {
+        closeEndpoint(epd, instance.io());
+        if (comptime !lib.config.phi_host_emulation)
+            scif.unload();
     }
 
     var self: Self = .{
@@ -50,8 +71,9 @@ pub fn deinit(self: *Self) void {
         std.log.scoped(.PhiTransport).warn("Failed to shut down remote session: {s}", .{@errorName(err)});
     };
 
-    _ = scif.close(self.epd);
-    scif.unload();
+    closeEndpoint(self.epd, self.instance.io());
+    if (comptime !lib.config.phi_host_emulation)
+        scif.unload();
     std.log.scoped(.PhiTransport).info("Closed connection", .{});
 }
 
@@ -99,6 +121,16 @@ pub fn statusToErr(status: c_int) VkError {
 }
 
 fn writeAll(self: *Self, bytes: []const u8) VkError!void {
+    if (comptime lib.config.phi_host_emulation) {
+        var buffer: [0]u8 = .{};
+        var writer = self.epd.writer(self.instance.io(), &buffer);
+        writer.interface.writeAll(bytes) catch |err| {
+            std.log.scoped(.PhiTransport).err("TCP send failed: {s}", .{@errorName(err)});
+            return VkError.InitializationFailed;
+        };
+        return;
+    }
+
     var offset: usize = 0;
     while (offset < bytes.len) {
         const written = scif.send(self.epd, bytes[offset..].ptr, bytes.len - offset, scif.send_block);
@@ -110,6 +142,16 @@ fn writeAll(self: *Self, bytes: []const u8) VkError!void {
 }
 
 fn readAll(self: *Self, bytes: []u8) VkError!void {
+    if (comptime lib.config.phi_host_emulation) {
+        var buffer: [0]u8 = .{};
+        var reader = self.epd.reader(self.instance.io(), &buffer);
+        reader.interface.readSliceAll(bytes) catch |err| {
+            std.log.scoped(.PhiTransport).err("TCP receive failed: {s}", .{@errorName(err)});
+            return VkError.InitializationFailed;
+        };
+        return;
+    }
+
     var offset: usize = 0;
     while (offset < bytes.len) {
         const read = scif.recv(self.epd, bytes[offset..].ptr, bytes.len - offset, scif.recv_block);
@@ -118,6 +160,13 @@ fn readAll(self: *Self, bytes: []u8) VkError!void {
         }
         offset += @intCast(read);
     }
+}
+
+fn closeEndpoint(endpoint: Endpoint, io: std.Io) void {
+    if (comptime lib.config.phi_host_emulation)
+        endpoint.close(io)
+    else
+        _ = scif.close(endpoint);
 }
 
 fn handshake(self: *Self) VkError!void {

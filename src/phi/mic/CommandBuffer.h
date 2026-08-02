@@ -5,11 +5,11 @@
 
 typedef struct PhiCommandReader
 {
-	scif_epd_t endpoint;
+	PhiEndpoint endpoint;
 	uint64_t remaining;
 } PhiCommandReader;
 
-int HandleWorkExecution(scif_epd_t endpoint, const PhiMessageHeader* header);
+int HandleWorkExecution(PhiEndpoint endpoint, const PhiMessageHeader* header);
 int PhiDrainCommandReader(PhiCommandReader* reader);
 PhiStatus PhiReadCommandData(PhiCommandReader* reader, void* data, uint64_t size);
 

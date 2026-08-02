@@ -3,7 +3,7 @@
 #include <Logger.h>
 #include <Memory.h>
 
-int HandleAllocMemory(scif_epd_t endpoint, const PhiMessageHeader* header)
+int HandleAllocMemory(PhiEndpoint endpoint, const PhiMessageHeader* header)
 {
 	PhiAllocMemoryRequest request;
 	PhiAllocMemoryReply reply = {
@@ -42,7 +42,7 @@ int HandleAllocMemory(scif_epd_t endpoint, const PhiMessageHeader* header)
 	return SendReply(endpoint, header, &reply, sizeof(reply));
 }
 
-int HandleFreeMemory(scif_epd_t endpoint, const PhiMessageHeader* header)
+int HandleFreeMemory(PhiEndpoint endpoint, const PhiMessageHeader* header)
 {
 	PhiFreeMemoryRequest request;
 	PhiFreeMemoryReply reply = {
