@@ -8,6 +8,7 @@ const operand = @import("operand.zig");
 pub const Stage = shared_ir.Stage;
 
 pub const Properties = packed struct {
+    common_ir_lowered: bool = false,
     instructions_selected: bool = false,
     block_parameters_lowered: bool = false,
     parallel_copies_lowered: bool = false,
@@ -24,7 +25,7 @@ pub const Properties = packed struct {
     flags_allocated: bool = false,
     branches_resolved: bool = false,
 
-    _padding: u20 = 0,
+    _padding: u19 = 0,
 };
 
 pub const VertexPayload = struct {

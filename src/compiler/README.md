@@ -573,14 +573,39 @@ final large-shader implementation.
 
 ## SPIR-V frontend
 
-The compiler currently provides a word parser and an initial translator in
-`spirv/`. The parser validates the header, word counts, truncation, and literal
-strings. The translator selects one entry point and lowers a defined subset:
+The compiler currently provides a word parser, an owned `SourceModule`, and an
+initial translator in `spirv/`. The parser validates the header, word counts,
+truncation, and literal strings. `SourceModule` copies and retains validated
+SPIR-V so API objects can instantiate multiple entry points without borrowing
+application memory.
+
+Use `translator.instantiate` when retaining a source module:
+
+```zig
+var source = try ir.spirv.SourceModule.init(allocator, words);
+defer source.deinit(allocator);
+
+var module = try ir.spirv.translator.instantiate(allocator, &source, .{
+    .entry_point = "main",
+    .stage = .compute,
+    .specializations = &.{.{
+        .constant_id = 7, // SPIR-V SpecId
+        .data = std.mem.asBytes(&workgroup_width),
+    }},
+});
+defer module.deinit();
+```
+
+`translator.translate` remains a convenience wrapper for borrowed words. Each
+translation selects one entry point and returns an independent mutable IR
+module. The translator lowers a defined subset:
 
 - Vertex, fragment, and compute stages.
 - Basic scalar, vector, array, structure, pointer, and function types.
-- Ordinary and composite constants; unapplied specialization constants are
-  refused.
+- Ordinary constants plus scalar boolean, integer, and floating-point
+  specialization constants selected through `SpecId`. Missing overrides use the
+  SPIR-V defaults, and specialization composites are rebuilt from their
+  specialized elements. `OpSpecConstantOp` is not evaluated yet.
 - Functions, blocks, branches, structured merge marks, and returns.
 - `OpPhi` into block parameters and edge arguments.
 - The arithmetic, comparison, select, bitcast, and composite operations named

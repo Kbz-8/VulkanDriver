@@ -15,6 +15,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
     errdefer allocator.destroy(self);
 
     var interface = try Interface.init(device, allocator, info);
+    errdefer interface.deinit();
     interface.vtable = &.{ .destroy = destroy };
 
     self.* = .{
@@ -30,6 +31,7 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 }
 
 pub fn drop(self: *Self, allocator: std.mem.Allocator) void {
+    self.interface.deinit();
     allocator.destroy(self);
 }
 
@@ -38,7 +40,6 @@ pub fn ref(self: *Self) void {
 }
 
 pub fn unref(self: *Self, allocator: std.mem.Allocator) void {
-    if (self.ref_count.fetchSub(1, .release) == 1) {
+    if (self.ref_count.fetchSub(1, .acq_rel) == 1)
         self.drop(allocator);
-    }
 }

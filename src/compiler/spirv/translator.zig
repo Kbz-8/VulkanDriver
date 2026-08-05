@@ -1,10 +1,19 @@
 const std = @import("std");
+const builtin_info = @import("builtin");
 const Parser = @import("Parser.zig");
+const SourceModule = @import("SourceModule.zig");
 const spirv = @import("spirv.zig");
 const ir = @import("../ir/ir.zig");
 
+pub const SpecializationValue = struct {
+    constant_id: u32,
+    data: []const u8,
+};
+
 pub const Options = struct {
     entry_point: []const u8,
+    stage: ?ir.module.Stage = null,
+    specializations: []const SpecializationValue = &.{},
 };
 
 pub const TranslationError = error{
@@ -24,6 +33,8 @@ pub const TranslationError = error{
     UnsupportedType,
     UnsupportedConstant,
     SpecializationConstantsNotApplied,
+    InvalidSpecialization,
+    DuplicateSpecializationConstant,
     UnsupportedOpcode,
 };
 
@@ -34,6 +45,7 @@ const EntryPoint = struct {
 };
 
 const Decorations = struct {
+    spec_id: ?u32 = null,
     location: ?u32 = null,
     component: u8 = 0,
     index: u8 = 0,
@@ -57,6 +69,7 @@ const Context = struct {
     variable_defs: []?Parser.Instruction,
     names: []?[]const u8,
     decorations: []Decorations,
+    specializations: []const SpecializationValue,
 
     types: []?ir.id.TypeId,
     values: []?ir.id.ValueId,
@@ -80,6 +93,17 @@ const Context = struct {
     fn nameOf(self: *const Context, id: u32) ?[]const u8 {
         const index = self.idIndex(id) catch return null;
         return self.names[index];
+    }
+
+    fn specializationData(self: *const Context, result_id: u32) TranslationError!?[]const u8 {
+        const index = try self.idIndex(result_id);
+        const spec_id = self.decorations[index].spec_id orelse return null;
+
+        for (self.specializations) |specialization| {
+            if (specialization.constant_id == spec_id)
+                return specialization.data;
+        }
+        return null;
     }
 
     fn translateType(self: *Context, spv_id: u32) anyerror!ir.id.TypeId {
@@ -232,7 +256,7 @@ const Context = struct {
                 try expectOperandCount(operands, 2);
                 break :blk try self.builder.internConstant(try self.translateType(operands[0]), .null);
             },
-            .constant_composite => blk: {
+            .constant_composite, .spec_constant_composite => blk: {
                 if (operands.len < 2)
                     return error.InvalidInstruction;
 
@@ -252,12 +276,45 @@ const Context = struct {
                     .{ .composite = elements },
                 );
             },
-            .spec_constant_true,
-            .spec_constant_false,
-            .spec_constant,
-            .spec_constant_composite,
-            .spec_constant_op,
-            => return error.SpecializationConstantsNotApplied,
+            .spec_constant_true, .spec_constant_false => blk: {
+                try expectOperandCount(operands, 2);
+                const ty = try self.translateType(operands[0]);
+                const type_data = self.module.types.get(ty) orelse return error.InvalidId;
+                if (type_data.* != .boolean)
+                    return error.UnsupportedConstant;
+
+                const value = if (try self.specializationData(spv_id)) |data|
+                    try specializationBoolean(data)
+                else
+                    instruction.opcode == .spec_constant_true;
+                break :blk try self.builder.internConstant(ty, .{ .boolean = value });
+            },
+            .spec_constant => blk: {
+                if (operands.len < 3 or operands.len > 4)
+                    return error.InvalidInstruction;
+
+                const ty = try self.translateType(operands[0]);
+                const type_data = self.module.types.get(ty) orelse return error.InvalidId;
+                const default_bits = try literalBits(operands[2..]);
+                const override = try self.specializationData(spv_id);
+
+                break :blk switch (type_data.*) {
+                    .integer => |integer| try self.builder.internConstant(ty, .{
+                        .integer_bits = if (override) |data|
+                            try specializationBits(data, integer.bits)
+                        else
+                            default_bits,
+                    }),
+                    .floating => |floating| try self.builder.internConstant(ty, .{
+                        .float_bits = if (override) |data|
+                            try specializationBits(data, floating.bits)
+                        else
+                            default_bits,
+                    }),
+                    else => return error.UnsupportedConstant,
+                };
+            },
+            .spec_constant_op => return error.SpecializationConstantsNotApplied,
 
             else => return error.MissingDefinition,
         };
@@ -290,9 +347,12 @@ const Context = struct {
     }
 };
 
-pub fn translate(allocator: std.mem.Allocator, words: []const u32, options: Options) !ir.module.Module {
-    const parser = try Parser.init(words);
-    const entry_point = try findEntryPoint(parser, options.entry_point);
+/// Translates one entry point from a retained SPIR-V source into an independent
+/// common IR module. The returned module does not borrow from `source`.
+pub fn instantiate(allocator: std.mem.Allocator, source: *const SourceModule, options: Options) !ir.module.Module {
+    try validateSpecializations(options.specializations);
+    const parser = source.parser();
+    const entry_point = try findEntryPoint(parser, options.entry_point, options.stage);
     const stage = try translateStage(entry_point.model);
 
     var module = ir.module.Module.init(allocator, stage);
@@ -314,6 +374,7 @@ pub fn translate(allocator: std.mem.Allocator, words: []const u32, options: Opti
         .variable_defs = try allocOptional(Parser.Instruction, scratch, bound),
         .names = try allocOptional([]const u8, scratch, bound),
         .decorations = try scratch.alloc(Decorations, bound),
+        .specializations = options.specializations,
         .types = try allocOptional(ir.id.TypeId, scratch, bound),
         .values = try allocOptional(ir.id.ValueId, scratch, bound),
         .blocks = try allocOptional(ir.id.BlockId, scratch, bound),
@@ -332,6 +393,13 @@ pub fn translate(allocator: std.mem.Allocator, words: []const u32, options: Opti
     module.properties.structured_control_flow = true;
     module.properties.no_function_calls = true;
     return module;
+}
+
+/// Convenience wrapper for callers that do not retain a source module.
+pub fn translate(allocator: std.mem.Allocator, words: []const u32, options: Options) !ir.module.Module {
+    var source = try SourceModule.init(allocator, words);
+    defer source.deinit(allocator);
+    return instantiate(allocator, &source, options);
 }
 
 fn collectDeclarations(context: *Context) !void {
@@ -378,6 +446,12 @@ fn collectDecoration(context: *Context, operands: []const u32) !void {
     const index = try context.idIndex(operands[0]);
     const decoration: spirv.Decoration = @enumFromInt(operands[1]);
     switch (decoration) {
+        .spec_id => {
+            try expectOperandCount(operands, 3);
+            if (context.decorations[index].spec_id != null)
+                return error.InvalidInstruction;
+            context.decorations[index].spec_id = operands[2];
+        },
         .built_in => {
             try expectOperandCount(operands, 3);
             context.decorations[index].builtin = operands[2];
@@ -455,7 +529,7 @@ fn translateInterfaces(context: *Context, interface_ids: []const u32) !void {
     }
 }
 
-fn findEntryPoint(parser: Parser, requested_name: []const u8) !EntryPoint {
+fn findEntryPoint(parser: Parser, requested_name: []const u8, requested_stage: ?ir.module.Stage) !EntryPoint {
     var found: ?EntryPoint = null;
     var iterator = parser.iterator();
     while (try iterator.next()) |instruction| {
@@ -473,11 +547,21 @@ fn findEntryPoint(parser: Parser, requested_name: []const u8) !EntryPoint {
         if (!try Parser.literalStringEquals(instruction.operands[2 .. 2 + string_words], requested_name))
             continue;
 
+        const model: spirv.ExecutionModel = @enumFromInt(instruction.operands[0]);
+        if (requested_stage) |stage| {
+            const candidate_stage = translateStage(model) catch |err| switch (err) {
+                error.UnsupportedExecutionModel => continue,
+                else => return err,
+            };
+            if (candidate_stage != stage)
+                continue;
+        }
+
         if (found != null)
             return error.AmbiguousEntryPoint;
 
         found = .{
-            .model = @enumFromInt(instruction.operands[0]),
+            .model = model,
             .function_id = instruction.operands[1],
             .interface_ids = instruction.operands[2 + string_words ..],
         };
@@ -1012,6 +1096,35 @@ fn translateCompareOpcode(opcode: spirv.Opcode) ir.instruction.CompareOpcode {
     };
 }
 
+fn validateSpecializations(specializations: []const SpecializationValue) TranslationError!void {
+    for (specializations, 0..) |specialization, index| {
+        for (specializations[0..index]) |previous| {
+            if (previous.constant_id == specialization.constant_id)
+                return error.DuplicateSpecializationConstant;
+        }
+    }
+}
+
+fn specializationBoolean(data: []const u8) TranslationError!bool {
+    if (data.len != @sizeOf(u32))
+        return error.InvalidSpecialization;
+    return std.mem.readInt(u32, data[0..4], builtin_info.target.cpu.arch.endian()) != 0;
+}
+
+fn specializationBits(data: []const u8, bit_width: u16) TranslationError!u64 {
+    const expected_size: usize = (@as(usize, bit_width) + 7) / 8;
+    if (data.len != expected_size)
+        return error.InvalidSpecialization;
+
+    return switch (expected_size) {
+        1 => data[0],
+        2 => std.mem.readInt(u16, data[0..2], builtin_info.target.cpu.arch.endian()),
+        4 => std.mem.readInt(u32, data[0..4], builtin_info.target.cpu.arch.endian()),
+        8 => std.mem.readInt(u64, data[0..8], builtin_info.target.cpu.arch.endian()),
+        else => error.InvalidSpecialization,
+    };
+}
+
 fn literalBits(words: []const u32) TranslationError!u64 {
     return switch (words.len) {
         1 => words[0],
@@ -1228,6 +1341,120 @@ test "SPIR-V: fragment execution modes and translated properties" {
     try std.testing.expectEqual(@as(usize, 1), function.blocks.items.len);
     const entry = module.blocks.get(function.entry_block.?).?;
     try std.testing.expect(entry.terminator.? == .return_void);
+}
+
+test "SPIR-V: retained source instantiates independent entry points" {
+    const assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint Vertex %vertex_main "main"
+        \\OpEntryPoint GLCompute %compute_main "main"
+        \\OpExecutionMode %compute_main LocalSize 2 1 1
+        \\%void = OpTypeVoid
+        \\%fn_void = OpTypeFunction %void
+        \\%vertex_main = OpFunction %void None %fn_void
+        \\    %vertex_entry = OpLabel
+        \\    OpReturn
+        \\OpFunctionEnd
+        \\%compute_main = OpFunction %void None %fn_void
+        \\    %compute_entry = OpLabel
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var source = try SourceModule.init(std.testing.allocator, words);
+    defer source.deinit(std.testing.allocator);
+
+    var vertex_module = try instantiate(std.testing.allocator, &source, .{
+        .entry_point = "main",
+        .stage = .vertex,
+    });
+    defer vertex_module.deinit();
+    var compute_module = try instantiate(std.testing.allocator, &source, .{
+        .entry_point = "main",
+        .stage = .compute,
+    });
+    defer compute_module.deinit();
+
+    try std.testing.expectEqual(ir.module.Stage.vertex, vertex_module.stage);
+    try std.testing.expectEqual(ir.module.Stage.compute, compute_module.stage);
+    try std.testing.expectEqual(@as(?[3]u32, .{ 2, 1, 1 }), compute_module.execution_modes.workgroup_size);
+    try std.testing.expect(vertex_module.entry_point != null);
+    try std.testing.expect(compute_module.entry_point != null);
+}
+
+test "SPIR-V: scalar specialization constants and defaults" {
+    const assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint GLCompute %main "main"
+        \\OpExecutionMode %main LocalSize 1 1 1
+        \\OpName %number "number"
+        \\OpName %enabled "enabled"
+        \\OpName %pair "pair"
+        \\OpDecorate %number SpecId 7
+        \\OpDecorate %enabled SpecId 8
+        \\%void = OpTypeVoid
+        \\%bool = OpTypeBool
+        \\%u32 = OpTypeInt 32 0
+        \\%vec2_u32 = OpTypeVector %u32 2
+        \\%fn_void = OpTypeFunction %void
+        \\%number = OpSpecConstant %u32 3
+        \\%enabled = OpSpecConstantFalse %bool
+        \\%pair = OpSpecConstantComposite %vec2_u32 %number %number
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    %sum = OpIAdd %u32 %number %number
+        \\    %selected = OpSelect %u32 %enabled %sum %number
+        \\    %first = OpCompositeExtract %u32 %pair 0
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var source = try SourceModule.init(std.testing.allocator, words);
+    defer source.deinit(std.testing.allocator);
+
+    var defaults = try instantiate(std.testing.allocator, &source, .{
+        .entry_point = "main",
+        .stage = .compute,
+    });
+    defer defaults.deinit();
+    try expectNamedIntegerConstant(&defaults, "number", 3);
+    try expectNamedBooleanConstant(&defaults, "enabled", false);
+
+    const number_override: u32 = 42;
+    const enabled_override: u32 = 1;
+    const specializations = [_]SpecializationValue{
+        .{ .constant_id = 7, .data = std.mem.asBytes(&number_override) },
+        .{ .constant_id = 8, .data = std.mem.asBytes(&enabled_override) },
+    };
+    var specialized = try instantiate(std.testing.allocator, &source, .{
+        .entry_point = "main",
+        .stage = .compute,
+        .specializations = &specializations,
+    });
+    defer specialized.deinit();
+    try expectNamedIntegerConstant(&specialized, "number", 42);
+    try expectNamedBooleanConstant(&specialized, "enabled", true);
+
+    const invalid_size: u16 = 9;
+    try std.testing.expectError(error.InvalidSpecialization, instantiate(std.testing.allocator, &source, .{
+        .entry_point = "main",
+        .stage = .compute,
+        .specializations = &.{.{ .constant_id = 7, .data = std.mem.asBytes(&invalid_size) }},
+    }));
+    try std.testing.expectError(error.DuplicateSpecializationConstant, instantiate(std.testing.allocator, &source, .{
+        .entry_point = "main",
+        .stage = .compute,
+        .specializations = &.{
+            .{ .constant_id = 7, .data = std.mem.asBytes(&number_override) },
+            .{ .constant_id = 7, .data = std.mem.asBytes(&number_override) },
+        },
+    }));
 }
 
 test "SPIR-V: entry point lookup errors" {
@@ -1473,6 +1700,29 @@ test "SPIR-V: preserves location components and builtin interfaces" {
     try std.testing.expectEqual(ir.module.InterfaceDirection.output, position.direction);
     try std.testing.expect(position.semantic == .builtin);
     try std.testing.expectEqual(ir.module.Builtin.position, position.semantic.builtin);
+}
+
+fn expectNamedIntegerConstant(module: *const ir.module.Module, name: []const u8, expected: u64) !void {
+    const value = findNamedConstant(module, name) orelse return error.MissingNamedConstant;
+    try std.testing.expect(value == .integer_bits);
+    try std.testing.expectEqual(expected, value.integer_bits);
+}
+
+fn expectNamedBooleanConstant(module: *const ir.module.Module, name: []const u8, expected: bool) !void {
+    const value = findNamedConstant(module, name) orelse return error.MissingNamedConstant;
+    try std.testing.expect(value == .boolean);
+    try std.testing.expectEqual(expected, value.boolean);
+}
+
+fn findNamedConstant(module: *const ir.module.Module, name: []const u8) ?ir.constant.ConstantValue {
+    for (module.values.entries.items) |entry| {
+        const value = entry orelse continue;
+        const value_name = value.name orelse continue;
+        if (!std.mem.eql(u8, value_name, name) or value.definition != .constant)
+            continue;
+        return module.constants.get(value.definition.constant).?.value;
+    }
+    return null;
 }
 
 fn assembleSpirv(allocator: std.mem.Allocator, assembly: []const u8) ![]u32 {

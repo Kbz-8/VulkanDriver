@@ -3,19 +3,21 @@
 //! This namespace contains the SPIR-V parser and translator used to import shader
 //! modules into the compiler IR.
 //!
-//! `Parser` validates the SPIR-V header and iterates over binary instructions.
-//! `spec` exposes a minimalistic SPIR-V header translation.
+//! `Parser` validates borrowed SPIR-V words, while `SourceModule` owns and
+//! structurally validates words that need to outlive an API call. `spec` exposes a
+//! minimalistic SPIR-V header translation.
 //!
-//! The main entry point is `translator.translate`, which finds the requested entry
-//! point, maps its execution model to an IR shader stage, lowers supported types,
-//! constants, interfaces, instructions, and structured control flow, then validates
-//! the generated IR module.
+//! Use `translator.instantiate` to lower one entry point from a retained source
+//! module. `translator.translate` remains as a convenience wrapper for borrowed
+//! words.
 
 pub const Parser = @import("Parser.zig");
+pub const SourceModule = @import("SourceModule.zig");
 pub const translator = @import("translator.zig");
 pub const spec = @import("spirv.zig");
 
 test {
     _ = Parser;
+    _ = SourceModule;
     _ = translator;
 }

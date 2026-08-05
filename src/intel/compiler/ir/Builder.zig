@@ -10,6 +10,7 @@ const Self = @This();
 
 pub const Error = std.mem.Allocator.Error || error{
     InvalidBlock,
+    InvalidInstruction,
     InvalidInsertionIndex,
     TerminatorAlreadySet,
 };
@@ -55,13 +56,7 @@ pub fn edge(self: *Self, target: ids.BlockId, arguments: []const pseudo.EdgeArgu
     };
 }
 
-pub fn appendInstruction(
-    self: *Self,
-    block_id: ids.BlockId,
-    execution_size: device.ExecutionSize,
-    predicate: ?operand.Predicate,
-    operation: instruction.Operation,
-) Error!ids.InstructionId {
+pub fn appendInstruction(self: *Self, block_id: ids.BlockId, execution_size: device.ExecutionSize, predicate: ?operand.Predicate, operation: instruction.Operation) Error!ids.InstructionId {
     const block = self.program.blocks.get(block_id) orelse return Error.InvalidBlock;
     return self.insertInstruction(block_id, block.instructions.items.len, execution_size, predicate, operation);
 }
@@ -89,6 +84,12 @@ pub fn insertInstruction(
 
     try block.instructions.insert(self.program.allocator(), index, instruction_id);
     return instruction_id;
+}
+
+pub fn replaceOperation(self: *Self, instruction_id: ids.InstructionId, operation: instruction.Operation) Error!void {
+    const inst = self.program.instructions.getMut(instruction_id) orelse return Error.InvalidInstruction;
+    const owned_operation = try instruction.cloneOperation(self.program.allocator(), operation);
+    inst.operation = owned_operation;
 }
 
 pub fn setStructuredControl(self: *Self, block_id: ids.BlockId, control: instruction.StructuredControl) Error!void {
@@ -161,6 +162,13 @@ test "[ir] Builder: construction and ordered insertion" {
     try std.testing.expectEqualSlices(ids.InstructionId, &.{ first, second }, entry_block.instructions.items);
     try std.testing.expectEqual(entry, program.instructions.get(first).?.parent_block);
     try std.testing.expectEqual(entry, program.instructions.get(second).?.parent_block);
+
+    try builder.replaceOperation(first, moveImmediate(register_id, 3));
+    const replaced = program.instructions.get(first).?;
+    try std.testing.expectEqual(entry, replaced.parent_block);
+    try std.testing.expectEqual(device.ExecutionSize.simd8, replaced.execution_size);
+    try std.testing.expectEqual(@as(u32, 3), replaced.operation.move.source.register.immediate.u32);
+    try std.testing.expectError(Error.InvalidInstruction, builder.replaceOperation(ids.InstructionId.fromIndex(999), moveImmediate(register_id, 4)));
 
     try builder.setStructuredControl(entry, .{ .selection = .{ .merge_block = exit } });
     try builder.setTerminator(entry, .{ .jump = try builder.edge(exit, &.{}) });

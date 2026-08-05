@@ -31,6 +31,10 @@ pub const Error = error{
     DuplicateParallelCopyDestination,
     PredicatedParallelCopy,
     UnloweredParallelCopy,
+    UnloweredStageIo,
+    UnloweredMessage,
+    InvalidInterfaceSemantic,
+    InvalidMessage,
     EntryBlockHasParameters,
     DuplicateBlockParameter,
     EdgeArgumentCountMismatch,
@@ -125,8 +129,18 @@ fn validateInstruction(program: *const program_ir.Program, inst: instruction.Ins
         try validateFlag(program, predicate.flag);
 
     switch (inst.operation) {
-        .load_input => |op| try validateDestination(program, op.destination),
-        .store_output => |op| try validateSource(program, op.source),
+        .load_input => |op| {
+            if (program.properties.stage_io_lowered)
+                return Error.UnloweredStageIo;
+            try validateDestination(program, op.destination);
+            try validateInterfaceSemantic(op.semantic, .input);
+        },
+        .store_output => |op| {
+            if (program.properties.stage_io_lowered)
+                return Error.UnloweredStageIo;
+            try validateSource(program, op.source);
+            try validateInterfaceSemantic(op.semantic, .output);
+        },
         .move => |op| {
             try validateDestination(program, op.destination);
             try validateSource(program, op.source);
@@ -142,9 +156,17 @@ fn validateInstruction(program: *const program_ir.Program, inst: instruction.Ins
             try validateSource(program, op.rhs);
         },
         .send => |op| {
+            if (program.properties.messages_lowered)
+                return Error.UnloweredMessage;
             try validateSpan(program, op.payload);
             if (op.response) |response|
                 try validateSpan(program, response);
+            switch (op.message) {
+                .urb_write => |urb_write| {
+                    if (op.response != null or (!urb_write.channels.x and !urb_write.channels.y and !urb_write.channels.z and !urb_write.channels.w))
+                        return Error.InvalidMessage;
+                },
+            }
         },
         .parallel_copy => |op| {
             if (program.properties.parallel_copies_lowered)
@@ -152,6 +174,29 @@ fn validateInstruction(program: *const program_ir.Program, inst: instruction.Ins
             if (inst.predicate != null)
                 return Error.PredicatedParallelCopy;
             try validateParallelCopy(program, op);
+        },
+    }
+}
+
+const InterfaceDirection = enum { input, output };
+
+fn validateInterfaceSemantic(semantic: instruction.InterfaceSemantic, direction: InterfaceDirection) Error!void {
+    switch (semantic) {
+        .location => |location| {
+            if (location.component > 3)
+                return Error.InvalidInterfaceSemantic;
+        },
+        .builtin => |builtin| switch (direction) {
+            .input => switch (builtin.builtin) {
+                .vertex_index, .instance_index => if (builtin.component != 0)
+                    return Error.InvalidInterfaceSemantic,
+                .position => return Error.InvalidInterfaceSemantic,
+            },
+            .output => switch (builtin.builtin) {
+                .position => if (builtin.component > 3)
+                    return Error.InvalidInterfaceSemantic,
+                .vertex_index, .instance_index => return Error.InvalidInterfaceSemantic,
+            },
         },
     }
 }
@@ -280,7 +325,18 @@ fn validateSpan(program: *const program_ir.Program, span: operand.RegisterSpan) 
     if (span.register_count == 0)
         return Error.InvalidRegisterSpan;
     switch (span.base) {
-        .virtual, .physical_grf => try validateRegisterRef(program, span.base),
+        .virtual => |register_id| {
+            try validateRegisterRef(program, span.base);
+            const register = program.virtual_registers.get(register_id) orelse return Error.InvalidVirtualRegister;
+            const required_size = @as(u32, span.register_count) * program.device_info.grf_size_bytes;
+            if (register.size_bytes < required_size)
+                return Error.InvalidRegisterSpan;
+        },
+        .physical_grf => |physical| {
+            try validateRegisterRef(program, span.base);
+            if (physical.byte_offset != 0 or @as(u32, physical.number) + span.register_count > program.device_info.grf_count)
+                return Error.InvalidRegisterSpan;
+        },
         else => return Error.InvalidRegisterSpan,
     }
 }

@@ -7,6 +7,7 @@ const lib = @import("lib.zig");
 const pci_ids = @import("pci_ids.zig").map;
 
 const FlintDevice = @import("FlintDevice.zig");
+const compiler_device = @import("compiler/device.zig");
 
 const VkError = base.VkError;
 const SurfaceKHR = base.SurfaceKHR;
@@ -29,6 +30,7 @@ pub const extensions = [_]vk.ExtensionProperties{
 
 interface: Interface,
 kmd_type: lib.KmdType,
+compiler_info: ?compiler_device.DeviceInfo,
 node_path: [base.drm.max_node_name:0]u8,
 
 pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, drm_device: *const base.drm.Device, kmd_type: lib.KmdType) VkError!*Self {
@@ -224,6 +226,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, drm_device
     self.* = .{
         .interface = interface,
         .kmd_type = kmd_type,
+        .compiler_info = compiler_device.DeviceInfo.fromPciDeviceId(interface.props.device_id),
         .node_path = @splat(0),
     };
     const node_path = drm_device.nodePath();

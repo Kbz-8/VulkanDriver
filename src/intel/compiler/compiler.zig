@@ -183,4 +183,5 @@ test "[ir] ID stability after removal" {
 
 test {
     _ = lower;
+    _ = lower.vertex_abi;
 }

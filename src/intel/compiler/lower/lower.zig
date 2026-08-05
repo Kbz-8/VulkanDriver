@@ -1,5 +1,6 @@
 const std = @import("std");
-const shader_ir = @import("shader_ir").ir;
+const shader_compiler = @import("shader_ir");
+const shader_ir = shader_compiler.ir;
 const device = @import("../device.zig");
 const Builder = @import("../ir/Builder.zig");
 const ids = @import("../ir/id.zig");
@@ -11,6 +12,7 @@ const program_ir = @import("../ir/program.zig");
 const validator = @import("../ir/validator.zig");
 
 pub const block_arguments = @import("block_arguments.zig");
+pub const vertex_abi = @import("vertex_abi.zig");
 
 pub const Options = struct {
     dispatch_width: device.DispatchWidth = .simd8,
@@ -33,21 +35,26 @@ pub const Error = std.mem.Allocator.Error || error{
 
 const PredicateValue = pseudo.PredicateValue;
 
+const LoweredType = struct {
+    element_type: operand.DataType,
+    component_count: usize,
+};
+
 const ValueLocation = union(enum) {
-    source: operand.Source,
+    components: []const operand.Source,
     predicate: PredicateValue,
 };
 
 const LoweringState = struct {
     lowerer: *Lowerer,
     builder: Builder,
+    storage: std.mem.Allocator,
     block_map: []?ids.BlockId,
     value_locations: []?ValueLocation,
 
-    fn lowerType(self: *const LoweringState, type_id: shader_ir.id.TypeId) Error!operand.DataType {
+    fn lowerScalarType(self: *const LoweringState, type_id: shader_ir.id.TypeId) Error!operand.DataType {
         const ty = self.lowerer.module.types.get(type_id) orelse return Error.InvalidModule;
         return switch (ty.*) {
-            .void => Error.UnsupportedType,
             .integer => |integer| if (integer.bits == 32)
                 switch (integer.signedness) {
                     .unsigned => .u32,
@@ -56,6 +63,24 @@ const LoweringState = struct {
             else
                 Error.UnsupportedType,
             .floating => |floating| if (floating.bits == 32) .f32 else Error.UnsupportedType,
+            else => Error.UnsupportedType,
+        };
+    }
+
+    fn lowerType(self: *const LoweringState, type_id: shader_ir.id.TypeId) Error!LoweredType {
+        const ty = self.lowerer.module.types.get(type_id) orelse return Error.InvalidModule;
+        return switch (ty.*) {
+            .integer, .floating => .{
+                .element_type = try self.lowerScalarType(type_id),
+                .component_count = 1,
+            },
+            .vector => |vector| if (vector.length >= 2 and vector.length <= 4)
+                .{
+                    .element_type = try self.lowerScalarType(vector.element_type),
+                    .component_count = vector.length,
+                }
+            else
+                Error.UnsupportedType,
             else => Error.UnsupportedType,
         };
     }
@@ -97,13 +122,28 @@ const LoweringState = struct {
         };
     }
 
-    fn addRegisterLocation(self: *LoweringState, value_id: shader_ir.id.ValueId, class: operand.RegisterClass) Error!operand.Source {
+    fn componentName(self: *LoweringState, name: ?[]const u8, component_index: usize, component_count: usize) Error!?[]const u8 {
+        if (name == null or component_count == 1)
+            return name;
+        const suffixes = "xyzw";
+        const formatted = try std.fmt.allocPrint(self.storage, "{s}_{c}", .{ name.?, suffixes[component_index] });
+        return @as([]const u8, formatted);
+    }
+
+    fn addRegisterLocation(self: *LoweringState, value_id: shader_ir.id.ValueId, class: operand.RegisterClass) Error![]const operand.Source {
         const value = self.lowerer.module.values.get(value_id) orelse return Error.InvalidModule;
-        const data_type = try self.lowerType(value.type);
-        const register_id = try self.addRegister(data_type, class, value.name);
-        const register_source = self.registerSource(register_id, data_type);
-        try self.putLocation(value_id, .{ .source = register_source });
-        return register_source;
+        const lowered_type = try self.lowerType(value.type);
+        const result = try self.storage.alloc(operand.Source, lowered_type.component_count);
+        for (result, 0..) |*component, component_index| {
+            const register_id = try self.addRegister(
+                lowered_type.element_type,
+                class,
+                try self.componentName(value.name, component_index, lowered_type.component_count),
+            );
+            component.* = self.registerSource(register_id, lowered_type.element_type);
+        }
+        try self.putLocation(value_id, .{ .components = result });
+        return result;
     }
 
     fn location(self: *LoweringState, value_id: shader_ir.id.ValueId) Error!ValueLocation {
@@ -117,7 +157,6 @@ const LoweringState = struct {
         switch (value.definition) {
             .constant => |constant_id| {
                 const constant = self.lowerer.module.constants.get(constant_id) orelse return Error.InvalidModule;
-
                 if (constant.type != value.type)
                     return Error.InvalidModule;
 
@@ -125,7 +164,7 @@ const LoweringState = struct {
                     .boolean => |boolean| .{ .predicate = .{ .constant = boolean } },
                     else => return Error.UnsupportedType,
                 } else .{
-                    .source = try self.constantSource(value.type, constant.value),
+                    .components = try self.constantComponents(value.type, constant.value),
                 };
                 self.value_locations[value_id.index()] = result;
                 return result;
@@ -140,23 +179,28 @@ const LoweringState = struct {
         }
     }
 
-    fn source(self: *LoweringState, value_id: shader_ir.id.ValueId) Error!operand.Source {
+    fn components(self: *LoweringState, value_id: shader_ir.id.ValueId) Error![]const operand.Source {
         return switch (try self.location(value_id)) {
-            .source => |value| value,
+            .components => |values| values,
             .predicate => Error.UnsupportedType,
         };
     }
 
+    fn source(self: *LoweringState, value_id: shader_ir.id.ValueId) Error!operand.Source {
+        const values = try self.components(value_id);
+        if (values.len != 1)
+            return Error.UnsupportedType;
+        return values[0];
+    }
+
     fn predicate(self: *LoweringState, value_id: shader_ir.id.ValueId) Error!PredicateValue {
         return switch (try self.location(value_id)) {
-            .source => Error.UnsupportedType,
+            .components => Error.UnsupportedType,
             .predicate => |value| value,
         };
     }
 
-    fn destination(self: *LoweringState, value_id: shader_ir.id.ValueId) Error!operand.Destination {
-        const source_value = try self.source(value_id);
-
+    fn destinationFromSource(source_value: operand.Source) Error!operand.Destination {
         if (source_value.negate or source_value.absolute)
             return Error.InvalidLoweredProgram;
 
@@ -170,8 +214,50 @@ const LoweringState = struct {
         };
     }
 
-    fn constantSource(self: *const LoweringState, type_id: shader_ir.id.TypeId, value: shader_ir.constant.ConstantValue) Error!operand.Source {
-        const data_type = try self.lowerType(type_id);
+    fn destination(self: *LoweringState, value_id: shader_ir.id.ValueId) Error!operand.Destination {
+        return destinationFromSource(try self.source(value_id));
+    }
+
+    fn constantComponents(self: *LoweringState, type_id: shader_ir.id.TypeId, value: shader_ir.constant.ConstantValue) Error![]const operand.Source {
+        const lowered_type = try self.lowerType(type_id);
+        const result = try self.storage.alloc(operand.Source, lowered_type.component_count);
+        if (lowered_type.component_count == 1) {
+            result[0] = try self.constantScalarSource(type_id, value);
+            return result;
+        }
+
+        const ty = self.lowerer.module.types.get(type_id) orelse return Error.InvalidModule;
+        const vector = switch (ty.*) {
+            .vector => |vector| vector,
+            else => return Error.InvalidModule,
+        };
+        switch (value) {
+            .composite => |elements| {
+                if (elements.len != lowered_type.component_count)
+                    return Error.InvalidModule;
+                for (elements, result) |constant_id, *component| {
+                    const element = self.lowerer.module.constants.get(constant_id) orelse return Error.InvalidModule;
+                    if (element.type != vector.element_type)
+                        return Error.InvalidModule;
+                    component.* = try self.constantScalarSource(element.type, element.value);
+                }
+            },
+            .null => {
+                const zero: shader_ir.constant.ConstantValue = switch (lowered_type.element_type) {
+                    .u32, .i32 => .{ .integer_bits = 0 },
+                    .f32 => .{ .float_bits = 0 },
+                    else => unreachable,
+                };
+                for (result) |*component|
+                    component.* = try self.constantScalarSource(vector.element_type, zero);
+            },
+            else => return Error.UnsupportedType,
+        }
+        return result;
+    }
+
+    fn constantScalarSource(self: *const LoweringState, type_id: shader_ir.id.TypeId, value: shader_ir.constant.ConstantValue) Error!operand.Source {
+        const data_type = try self.lowerScalarType(type_id);
         const immediate: operand.Immediate = switch (data_type) {
             .u32 => switch (value) {
                 .integer_bits => |bits| .{ .u32 = @truncate(bits) },
@@ -254,13 +340,15 @@ const LoweringState = struct {
                     self.builder.addBlockParameter(target_block_id, .{ .flag = flag_id }) catch |err|
                         return mapProgramError(err);
                 } else {
-                    const parameter_source = try self.addRegisterLocation(parameter_id, .temporary);
-                    const register_id = switch (parameter_source.register) {
-                        .virtual => |id| id,
-                        else => return Error.InvalidLoweredProgram,
-                    };
-                    self.builder.addBlockParameter(target_block_id, .{ .register = register_id }) catch |err|
-                        return mapProgramError(err);
+                    const parameter_components = try self.addRegisterLocation(parameter_id, .temporary);
+                    for (parameter_components) |parameter_source| {
+                        const register_id = switch (parameter_source.register) {
+                            .virtual => |id| id,
+                            else => return Error.InvalidLoweredProgram,
+                        };
+                        self.builder.addBlockParameter(target_block_id, .{ .register = register_id }) catch |err|
+                            return mapProgramError(err);
+                    }
                 }
             }
         }
@@ -315,10 +403,11 @@ const LoweringState = struct {
             .binary => |operation| try self.lowerBinary(block_id, source_instruction.result, operation),
             .compare => |operation| try self.lowerCompare(block_id, source_instruction.result, operation),
             .select => |operation| try self.lowerSelect(block_id, source_instruction.result, operation),
-            .bitcast => |value_id| try self.lowerBitcast(source_instruction.result, value_id),
+            .bitcast => |value_id| try self.lowerBitcast(block_id, source_instruction.result, value_id),
             .load_interface => |operation| try self.lowerLoadInterface(block_id, source_instruction.result, operation),
             .store_interface => |operation| try self.lowerStoreInterface(block_id, source_instruction.result, operation),
-            .composite_construct, .composite_extract => return Error.UnsupportedOperation,
+            .composite_construct => |operation| try self.lowerCompositeConstruct(source_instruction.result, operation),
+            .composite_extract => |operation| try self.lowerCompositeExtract(source_instruction.result, operation),
             .call => return Error.UnsanitizedModule,
         }
     }
@@ -334,85 +423,81 @@ const LoweringState = struct {
 
     fn lowerUnary(self: *LoweringState, block_id: ids.BlockId, result: ?shader_ir.id.ValueId, operation: shader_ir.instruction.Unary) Error!void {
         const result_id = try requireResult(result);
-        switch (operation.opcode) {
-            .logical_not => {
-                const source_predicate = try self.predicate(operation.operand);
-                const inverted: PredicateValue = switch (source_predicate) {
-                    .constant => |value| .{ .constant = !value },
-                    .dynamic => |value| .{ .dynamic = .{
-                        .flag = value.flag,
-                        .inverse = !value.inverse,
-                    } },
-                };
-                try self.putLocation(result_id, .{ .predicate = inverted });
-            },
-            .negate => {
-                const source_value = try self.source(operation.operand);
-                if (source_value.type != .i32 and source_value.type != .f32)
-                    return Error.UnsupportedOperation;
-                _ = try self.addRegisterLocation(result_id, .temporary);
-                var negated = source_value;
-                negated.negate = !negated.negate;
-                try self.appendMove(block_id, null, try self.destination(result_id), negated);
-            },
-            .bitwise_not => {
-                const source_value = try self.source(operation.operand);
-                if (source_value.type != .u32 and source_value.type != .i32)
-                    return Error.UnsupportedOperation;
-                _ = try self.addRegisterLocation(result_id, .temporary);
-                const all_ones: operand.Immediate = switch (source_value.type) {
-                    .u32 => .{ .u32 = std.math.maxInt(u32) },
-                    .i32 => .{ .i32 = -1 },
-                    else => unreachable,
-                };
-                try self.appendInstruction(block_id, null, .{
-                    .binary = .{
-                        .opcode = .bitwise_xor,
-                        .destination = try self.destination(result_id),
-                        .lhs = source_value,
-                        .rhs = .{
-                            .register = .{ .immediate = all_ones },
-                            .type = source_value.type,
-                            .region = operand.Region.broadcast(),
+        if (operation.opcode == .logical_not) {
+            const source_predicate = try self.predicate(operation.operand);
+            const inverted: PredicateValue = switch (source_predicate) {
+                .constant => |value| .{ .constant = !value },
+                .dynamic => |value| .{ .dynamic = .{
+                    .flag = value.flag,
+                    .inverse = !value.inverse,
+                } },
+            };
+            try self.putLocation(result_id, .{ .predicate = inverted });
+            return;
+        }
+
+        const source_components = try self.components(operation.operand);
+        const result_components = try self.addRegisterLocation(result_id, .temporary);
+        if (source_components.len != result_components.len)
+            return Error.InvalidModule;
+
+        for (source_components, result_components) |source_component, result_component| {
+            if (source_component.type != result_component.type)
+                return Error.InvalidModule;
+            switch (operation.opcode) {
+                .negate => {
+                    if (source_component.type != .i32 and source_component.type != .f32)
+                        return Error.UnsupportedOperation;
+                    var negated = source_component;
+                    negated.negate = !negated.negate;
+                    try self.appendMove(block_id, null, try destinationFromSource(result_component), negated);
+                },
+                .bitwise_not => {
+                    const all_ones: operand.Immediate = switch (source_component.type) {
+                        .u32 => .{ .u32 = std.math.maxInt(u32) },
+                        .i32 => .{ .i32 = -1 },
+                        else => return Error.UnsupportedOperation,
+                    };
+                    try self.appendInstruction(block_id, null, .{
+                        .binary = .{
+                            .opcode = .bitwise_xor,
+                            .destination = try destinationFromSource(result_component),
+                            .lhs = source_component,
+                            .rhs = .{
+                                .register = .{ .immediate = all_ones },
+                                .type = source_component.type,
+                                .region = operand.Region.broadcast(),
+                            },
                         },
-                    },
-                });
-            },
+                    });
+                },
+                .logical_not => unreachable,
+            }
         }
     }
 
     fn lowerBinary(self: *LoweringState, block_id: ids.BlockId, result: ?shader_ir.id.ValueId, operation: shader_ir.instruction.Binary) Error!void {
         const result_id = try requireResult(result);
-        const lhs = try self.source(operation.lhs);
-        var rhs = try self.source(operation.rhs);
-        _ = try self.addRegisterLocation(result_id, .temporary);
-        const destination_value = try self.destination(result_id);
-
-        if (lhs.type != destination_value.type or rhs.type != destination_value.type)
+        const lhs_components = try self.components(operation.lhs);
+        const rhs_components = try self.components(operation.rhs);
+        const result_components = try self.addRegisterLocation(result_id, .temporary);
+        if (lhs_components.len == 0 or lhs_components.len != rhs_components.len or lhs_components.len != result_components.len)
             return Error.InvalidModule;
 
+        const data_type = lhs_components[0].type;
         const opcode: instruction.BinaryOpcode = switch (operation.opcode) {
-            .integer_add => if (lhs.type == .u32 or lhs.type == .i32) .add else return Error.UnsupportedOperation,
-            .float_add => if (lhs.type == .f32) .add else return Error.UnsupportedOperation,
-
-            .integer_subtract => if (lhs.type == .u32 or lhs.type == .i32) subtract: {
-                rhs.negate = !rhs.negate;
-                break :subtract .add;
-            } else return Error.UnsupportedOperation,
-
-            .float_subtract => if (lhs.type == .f32) subtract: {
-                rhs.negate = !rhs.negate;
-                break :subtract .add;
-            } else return Error.UnsupportedOperation,
-
-            .integer_multiply => if (lhs.type == .u32 or lhs.type == .i32) .multiply else return Error.UnsupportedOperation,
-            .float_multiply => if (lhs.type == .f32) .multiply else return Error.UnsupportedOperation,
-            .shift_left => if (lhs.type == .u32 or lhs.type == .i32) .shift_left else return Error.UnsupportedOperation,
-            .logical_shift_right => if (lhs.type == .u32) .shift_right else return Error.UnsupportedOperation,
-            .arithmetic_shift_right => if (lhs.type == .i32) .shift_right else return Error.UnsupportedOperation,
-            .bitwise_and => if (lhs.type == .u32 or lhs.type == .i32) .bitwise_and else return Error.UnsupportedOperation,
-            .bitwise_or => if (lhs.type == .u32 or lhs.type == .i32) .bitwise_or else return Error.UnsupportedOperation,
-            .bitwise_xor => if (lhs.type == .u32 or lhs.type == .i32) .bitwise_xor else return Error.UnsupportedOperation,
+            .integer_add => if (data_type == .u32 or data_type == .i32) .add else return Error.UnsupportedOperation,
+            .float_add => if (data_type == .f32) .add else return Error.UnsupportedOperation,
+            .integer_subtract => if (data_type == .u32 or data_type == .i32) .add else return Error.UnsupportedOperation,
+            .float_subtract => if (data_type == .f32) .add else return Error.UnsupportedOperation,
+            .integer_multiply => if (data_type == .u32 or data_type == .i32) .multiply else return Error.UnsupportedOperation,
+            .float_multiply => if (data_type == .f32) .multiply else return Error.UnsupportedOperation,
+            .shift_left => if (data_type == .u32 or data_type == .i32) .shift_left else return Error.UnsupportedOperation,
+            .logical_shift_right => if (data_type == .u32) .shift_right else return Error.UnsupportedOperation,
+            .arithmetic_shift_right => if (data_type == .i32) .shift_right else return Error.UnsupportedOperation,
+            .bitwise_and => if (data_type == .u32 or data_type == .i32) .bitwise_and else return Error.UnsupportedOperation,
+            .bitwise_or => if (data_type == .u32 or data_type == .i32) .bitwise_or else return Error.UnsupportedOperation,
+            .bitwise_xor => if (data_type == .u32 or data_type == .i32) .bitwise_xor else return Error.UnsupportedOperation,
             .unsigned_divide,
             .signed_divide,
             .unsigned_modulo,
@@ -424,14 +509,21 @@ const LoweringState = struct {
             => return Error.UnsupportedOperation,
         };
 
-        try self.appendInstruction(block_id, null, .{
-            .binary = .{
-                .opcode = opcode,
-                .destination = destination_value,
-                .lhs = lhs,
-                .rhs = rhs,
-            },
-        });
+        for (lhs_components, rhs_components, result_components) |lhs, rhs_value, result_component| {
+            if (lhs.type != data_type or rhs_value.type != data_type or result_component.type != data_type)
+                return Error.InvalidModule;
+            var rhs = rhs_value;
+            if (operation.opcode == .integer_subtract or operation.opcode == .float_subtract)
+                rhs.negate = !rhs.negate;
+            try self.appendInstruction(block_id, null, .{
+                .binary = .{
+                    .opcode = opcode,
+                    .destination = try destinationFromSource(result_component),
+                    .lhs = lhs,
+                    .rhs = rhs,
+                },
+            });
+        }
     }
 
     fn lowerCompare(self: *LoweringState, block_id: ids.BlockId, result: ?shader_ir.id.ValueId, operation: shader_ir.instruction.Compare) Error!void {
@@ -441,8 +533,12 @@ const LoweringState = struct {
         if (!try self.isBoolean(result_value.type))
             return Error.InvalidModule;
 
-        const lhs = try self.source(operation.lhs);
-        const rhs = try self.source(operation.rhs);
+        const lhs_components = try self.components(operation.lhs);
+        const rhs_components = try self.components(operation.rhs);
+        if (lhs_components.len != 1 or rhs_components.len != 1)
+            return Error.UnsupportedOperation;
+        const lhs = lhs_components[0];
+        const rhs = rhs_components[0];
         if (lhs.type != rhs.type)
             return Error.InvalidModule;
 
@@ -477,44 +573,89 @@ const LoweringState = struct {
 
     fn lowerSelect(self: *LoweringState, block_id: ids.BlockId, result: ?shader_ir.id.ValueId, operation: shader_ir.instruction.Select) Error!void {
         const result_id = try requireResult(result);
-        const true_value = try self.source(operation.true_value);
-        const false_value = try self.source(operation.false_value);
-        _ = try self.addRegisterLocation(result_id, .temporary);
-        const destination_value = try self.destination(result_id);
-
-        if (true_value.type != destination_value.type or false_value.type != destination_value.type)
+        const true_components = try self.components(operation.true_value);
+        const false_components = try self.components(operation.false_value);
+        const result_components = try self.addRegisterLocation(result_id, .temporary);
+        if (true_components.len != false_components.len or true_components.len != result_components.len)
             return Error.InvalidModule;
 
-        switch (try self.predicate(operation.condition)) {
-            .constant => |condition| try self.appendMove(
-                block_id,
-                null,
-                destination_value,
-                if (condition) true_value else false_value,
-            ),
-            .dynamic => |condition| {
-                try self.appendMove(block_id, .{
-                    .flag = condition.flag,
-                    .inverse = !condition.inverse,
-                }, destination_value, false_value);
-                try self.appendMove(block_id, condition, destination_value, true_value);
-            },
+        const condition = try self.predicate(operation.condition);
+        for (true_components, false_components, result_components) |true_value, false_value, result_component| {
+            const destination_value = try destinationFromSource(result_component);
+            if (true_value.type != destination_value.type or false_value.type != destination_value.type)
+                return Error.InvalidModule;
+
+            switch (condition) {
+                .constant => |constant| try self.appendMove(
+                    block_id,
+                    null,
+                    destination_value,
+                    if (constant) true_value else false_value,
+                ),
+                .dynamic => |dynamic| {
+                    try self.appendMove(block_id, .{
+                        .flag = dynamic.flag,
+                        .inverse = !dynamic.inverse,
+                    }, destination_value, false_value);
+                    try self.appendMove(block_id, dynamic, destination_value, true_value);
+                },
+            }
         }
     }
 
-    fn lowerBitcast(self: *LoweringState, result: ?shader_ir.id.ValueId, source_id: shader_ir.id.ValueId) Error!void {
+    fn lowerBitcast(self: *LoweringState, block_id: ids.BlockId, result: ?shader_ir.id.ValueId, source_id: shader_ir.id.ValueId) Error!void {
         const result_id = try requireResult(result);
         const result_value = self.lowerer.module.values.get(result_id) orelse return Error.InvalidModule;
         const target_type = try self.lowerType(result_value.type);
-        var source_value = try self.source(source_id);
+        const source_components = try self.components(source_id);
+        const result_components = try self.addRegisterLocation(result_id, .temporary);
+        if (source_components.len != target_type.component_count or source_components.len != result_components.len)
+            return Error.UnsupportedOperation;
 
-        source_value.register = switch (source_value.register) {
-            .immediate => |immediate| .{ .immediate = bitcastImmediate(immediate, target_type) },
-            else => source_value.register,
-        };
+        for (source_components, result_components) |source_component, result_component| {
+            // The source operand type selects the reinterpretation used by the
+            // move; the target-typed register materializes it before any CFG edge.
+            var cast_source = source_component;
+            cast_source.register = switch (cast_source.register) {
+                .immediate => |immediate| .{ .immediate = bitcastImmediate(immediate, target_type.element_type) },
+                else => cast_source.register,
+            };
+            cast_source.type = target_type.element_type;
+            try self.appendMove(block_id, null, try destinationFromSource(result_component), cast_source);
+        }
+    }
 
-        source_value.type = target_type;
-        try self.putLocation(result_id, .{ .source = source_value });
+    fn lowerCompositeConstruct(self: *LoweringState, result: ?shader_ir.id.ValueId, operation: shader_ir.instruction.CompositeConstruct) Error!void {
+        const result_id = try requireResult(result);
+        const result_value = self.lowerer.module.values.get(result_id) orelse return Error.InvalidModule;
+        const result_type = try self.lowerType(result_value.type);
+        if (result_type.component_count < 2 or operation.elements.len != result_type.component_count)
+            return Error.UnsupportedOperation;
+
+        const result_components = try self.storage.alloc(operand.Source, result_type.component_count);
+        for (operation.elements, result_components) |element_id, *component| {
+            const element_components = try self.components(element_id);
+            if (element_components.len != 1 or element_components[0].type != result_type.element_type)
+                return Error.InvalidModule;
+            component.* = element_components[0];
+        }
+        try self.putLocation(result_id, .{ .components = result_components });
+    }
+
+    fn lowerCompositeExtract(self: *LoweringState, result: ?shader_ir.id.ValueId, operation: shader_ir.instruction.CompositeExtract) Error!void {
+        const result_id = try requireResult(result);
+        if (operation.indices.len != 1)
+            return Error.UnsupportedOperation;
+        const source_components = try self.components(operation.composite);
+        const component_index: usize = operation.indices[0];
+        if (component_index >= source_components.len)
+            return Error.InvalidModule;
+
+        const result_value = self.lowerer.module.values.get(result_id) orelse return Error.InvalidModule;
+        const result_type = try self.lowerType(result_value.type);
+        if (result_type.component_count != 1 or result_type.element_type != source_components[component_index].type)
+            return Error.InvalidModule;
+        try self.putLocation(result_id, .{ .components = source_components[component_index .. component_index + 1] });
     }
 
     fn lowerLoadInterface(self: *LoweringState, block_id: ids.BlockId, result: ?shader_ir.id.ValueId, operation: shader_ir.instruction.LoadInterface) Error!void {
@@ -533,13 +674,15 @@ const LoweringState = struct {
         if (result_value.type != variable.type)
             return Error.InvalidModule;
 
-        _ = try self.addRegisterLocation(result_id, .varying);
-        try self.appendInstruction(block_id, null, .{
-            .load_input = .{
-                .destination = try self.destination(result_id),
-                .semantic = try lowerInterfaceSemantic(variable.semantic),
-            },
-        });
+        const result_components = try self.addRegisterLocation(result_id, .varying);
+        for (result_components, 0..) |result_component, component_index| {
+            try self.appendInstruction(block_id, null, .{
+                .load_input = .{
+                    .destination = try destinationFromSource(result_component),
+                    .semantic = try lowerInterfaceSemantic(variable.semantic, @intCast(component_index)),
+                },
+            });
+        }
     }
 
     fn lowerStoreInterface(self: *LoweringState, block_id: ids.BlockId, result: ?shader_ir.id.ValueId, operation: shader_ir.instruction.StoreInterface) Error!void {
@@ -553,18 +696,20 @@ const LoweringState = struct {
         if (variable.direction != .output)
             return Error.InvalidModule;
 
-        const source_value = try self.source(operation.value);
+        const source_components = try self.components(operation.value);
         const value = self.lowerer.module.values.get(operation.value) orelse return Error.InvalidModule;
 
         if (value.type != variable.type)
             return Error.InvalidModule;
 
-        try self.appendInstruction(block_id, null, .{
-            .store_output = .{
-                .semantic = try lowerInterfaceSemantic(variable.semantic),
-                .source = source_value,
-            },
-        });
+        for (source_components, 0..) |source_component, component_index| {
+            try self.appendInstruction(block_id, null, .{
+                .store_output = .{
+                    .semantic = try lowerInterfaceSemantic(variable.semantic, @intCast(component_index)),
+                    .source = source_component,
+                },
+            });
+        }
     }
 
     fn lowerControlAndTerminators(self: *LoweringState, allocator: std.mem.Allocator) Error!void {
@@ -624,18 +769,19 @@ const LoweringState = struct {
         if (edge.arguments.len != target_source_block.parameters.items.len)
             return Error.InvalidModule;
 
-        const arguments = try allocator.alloc(pseudo.EdgeArgument, edge.arguments.len);
-        errdefer allocator.free(arguments);
-        for (edge.arguments, arguments) |argument_id, *argument| {
-            argument.* = switch (try self.location(argument_id)) {
-                .source => |source_value| .{ .source = source_value },
-                .predicate => |predicate_value| .{ .predicate = predicate_value },
-            };
+        var arguments: std.ArrayList(pseudo.EdgeArgument) = .empty;
+        defer arguments.deinit(allocator);
+        for (edge.arguments) |argument_id| {
+            switch (try self.location(argument_id)) {
+                .components => |bundle| for (bundle) |component|
+                    try arguments.append(allocator, .{ .source = component }),
+                .predicate => |predicate_value| try arguments.append(allocator, .{ .predicate = predicate_value }),
+            }
         }
 
         return .{
             .target = try self.mappedBlock(edge.target),
-            .arguments = arguments,
+            .arguments = try arguments.toOwnedSlice(allocator),
         };
     }
 };
@@ -668,6 +814,8 @@ pub const Lowerer = struct {
         // Only supports gen9 for now as it is the only gen I have access to
         if (self.device_info.generation != .gen9)
             return Error.UnsupportedGeneration;
+        if (self.module.stage != .vertex)
+            return Error.UnsupportedStage;
 
         if (self.options.dispatch_width != .simd8 or !self.device_info.supportsDispatch(self.options.dispatch_width))
             return Error.UnsupportedDispatchWidth;
@@ -705,6 +853,7 @@ pub const Lowerer = struct {
         var state: LoweringState = .{
             .lowerer = self,
             .builder = Builder.init(&program),
+            .storage = program.allocator(),
             .block_map = block_map,
             .value_locations = value_locations,
         };
@@ -714,7 +863,7 @@ pub const Lowerer = struct {
         try state.lowerInstructions(allocator);
         try state.lowerControlAndTerminators(allocator);
 
-        program.properties.instructions_selected = true;
+        program.properties.common_ir_lowered = true;
         validator.validate(&program) catch return Error.InvalidLoweredProgram;
 
         block_arguments.run(allocator, &program) catch |err| return switch (err) {
@@ -726,25 +875,30 @@ pub const Lowerer = struct {
     }
 };
 
-fn lowerInterfaceSemantic(semantic: shader_ir.module.InterfaceSemantic) Error!instruction.InterfaceSemantic {
+fn lowerInterfaceSemantic(semantic: shader_ir.module.InterfaceSemantic, component_offset: u8) Error!instruction.InterfaceSemantic {
     return switch (semantic) {
-        .location => |location| if (location.index == 0)
-            .{
+        .location => |location| location: {
+            if (location.index != 0)
+                return Error.UnsupportedOperation;
+            const component = std.math.add(u8, location.component, component_offset) catch return Error.UnsupportedOperation;
+            if (component > 3)
+                return Error.UnsupportedOperation;
+            break :location .{
                 .location = .{
                     .location = location.location,
-                    .component = location.component,
+                    .component = component,
                 },
-            }
-        else
-            Error.UnsupportedOperation,
+            };
+        },
         .builtin => |builtin| .{
             .builtin = .{
                 .builtin = switch (builtin) {
                     .position => .position,
-                    .vertex_index => .vertex_index,
-                    .instance_index => .instance_index,
+                    .vertex_index => if (component_offset == 0) .vertex_index else return Error.UnsupportedOperation,
+                    .instance_index => if (component_offset == 0) .instance_index else return Error.UnsupportedOperation,
                     .frag_coord, .frag_depth, .global_invocation_id => return Error.UnsupportedOperation,
                 },
+                .component = component_offset,
             },
         },
     };
@@ -790,6 +944,8 @@ fn expectLowered(source: []const u8, expected: []const u8) !void {
 
     var program = try lower(std.testing.allocator, &module, test_device, .{});
     defer program.deinit();
+    try std.testing.expect(program.properties.common_ir_lowered);
+    try std.testing.expect(!program.properties.instructions_selected);
 
     const actual = try printer.allocPrint(std.testing.allocator, &program);
     defer std.testing.allocator.free(actual);
@@ -802,6 +958,8 @@ fn expectLoweredFragments(source: []const u8, expected: []const []const u8, unex
 
     var program = try lower(std.testing.allocator, &module, test_device, .{});
     defer program.deinit();
+    try std.testing.expect(program.properties.common_ir_lowered);
+    try std.testing.expect(!program.properties.instructions_selected);
 
     const actual = try printer.allocPrint(std.testing.allocator, &program);
     defer std.testing.allocator.free(actual);
@@ -1063,13 +1221,12 @@ test "[ir] Lower: selects and bitcasts" {
         "[simd8] (+%condition) mov %inverted_choice:u32, 2:u32",
         "[simd8] (-%condition) mov %inverted_choice:u32, 1:u32",
         "[simd8] mov %constant_choice:u32, 1:u32",
-        "[simd8] add %constant_sum:u32, 1065353216:u32, 1:u32",
+        "[simd8] mov %one_bits:u32, 1065353216:u32",
+        "[simd8] add %constant_sum:u32, %one_bits:u32, 1:u32",
         "[simd8] mov %negative:f32, -1:f32",
-        "[simd8] add %register_sum:u32, %negative:u32, 1:u32",
-    }, &.{
-        "%one_bits: vgrf",
-        "%negative_bits: vgrf",
-    });
+        "[simd8] mov %negative_bits:u32, %negative:u32",
+        "[simd8] add %register_sum:u32, %negative_bits:u32, 1:u32",
+    }, &.{});
 }
 
 test "[ir] Lower: vertex interfaces" {
@@ -1099,6 +1256,139 @@ test "[ir] Lower: vertex interfaces" {
         "[simd8] add %value:u32, %attribute:u32, %vertex_id:u32",
         "[simd8] store_output location(3), component(2), %value:u32",
     }, &.{});
+}
+
+test "[ir] Lower: vector operations, composites, and interfaces" {
+    const source =
+        \\shader vertex @main
+        \\{
+        \\    @attribute_in: vec4[f32] = input[location(0), component(0), index(0)]
+        \\    @position_out: vec4[f32] = output[builtin(position)]
+        \\    %one_u32: constant u32 = bits(0x1)
+        \\    %two_u32: constant u32 = bits(0x2)
+        \\    %two_f32: constant f32 = bits(0x40000000)
+        \\    %scale_constant: constant vec4[f32] = [#2, #2, #2, #2]
+        \\    %zero_constant: constant vec4[f32] = null
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %attribute: vec4[f32] = load_interface @attribute_in
+        \\            %scaled: vec4[f32] = float_multiply %attribute, %scale_constant
+        \\            %with_zero: vec4[f32] = float_add %scaled, %zero_constant
+        \\            %first: f32 = composite_extract %with_zero[0]
+        \\            %rebuilt: vec4[f32] = composite_construct %first, %first, %first, %first
+        \\            %condition: bool = cmp_unsigned_less %one_u32, %two_u32
+        \\            %selected: vec4[f32] = select %condition, %with_zero, %rebuilt
+        \\            %selected_bits: vec4[u32] = bitcast %selected
+        \\            %restored: vec4[f32] = bitcast %selected_bits
+        \\            store_interface @position_out, %restored
+        \\            return
+        \\    }
+        \\}
+    ;
+
+    try expectLoweredFragments(source, &.{
+        "%attribute_x: vgrf f32[8], class(varying)",
+        "%attribute_w: vgrf f32[8], class(varying)",
+        "[simd8] load_input %attribute_x:f32, location(0), component(0)",
+        "[simd8] load_input %attribute_w:f32, location(0), component(3)",
+        "[simd8] multiply %scaled_x:f32, %attribute_x:f32, 2:f32",
+        "[simd8] multiply %scaled_w:f32, %attribute_w:f32, 2:f32",
+        "[simd8] add %with_zero_x:f32, %scaled_x:f32, 0:f32",
+        "[simd8] (+%condition) mov %selected_x:f32, %with_zero_x:f32",
+        "[simd8] mov %selected_bits_x:u32, %selected_x:u32",
+        "[simd8] mov %restored_w:f32, %selected_bits_w:f32",
+        "[simd8] store_output builtin(position), component(0), %restored_x:f32",
+        "[simd8] store_output builtin(position), component(3), %restored_w:f32",
+    }, &.{
+        "%scale_constant_",
+        "%zero_constant_",
+        "%rebuilt_",
+    });
+}
+
+test "[ir] Lower: SPIR-V vec4 end-to-end" {
+    // Assembled from a vertex shader that loads a vec4 input, multiplies it by
+    // vec4(2.0), and stores the result to Position.
+    const words = [_]u32{
+        119734787,  65536,   458752,     15,         0,          131089,     1,          196622,
+        0,          1,       458767,     0,          1,          1852399981, 0,          2,
+        3,          262149,  1,          1852399981, 0,          327685,     2,          1885302377,
+        1953067887, 7237481, 393221,     3,          1601467759, 1769172848, 1852795252, 0,
+        327685,     4,       1769172848, 1852795252, 0,          262149,     5,          1818321779,
+        25701,      262215,  2,          30,         0,          262215,     3,          11,
+        0,          131091,  6,          196630,     7,          32,         262167,     8,
+        7,          4,       262176,     9,          1,          8,          262176,     10,
+        3,          8,       196641,     11,         6,          262187,     7,          12,
+        1073741824, 458796,  8,          13,         12,         12,         12,         12,
+        262203,     9,       2,          1,          262203,     10,         3,          3,
+        327734,     6,       1,          0,          11,         131320,     14,         262205,
+        8,          4,       2,          327813,     8,          5,          4,          13,
+        196670,     3,       5,          65789,      65592,
+    };
+
+    var module = try shader_compiler.spirv.translator.translate(std.testing.allocator, &words, .{
+        .entry_point = "main",
+        .stage = .vertex,
+    });
+    defer module.deinit();
+
+    var program = try lower(std.testing.allocator, &module, test_device, .{});
+    defer program.deinit();
+    const text = try printer.allocPrint(std.testing.allocator, &program);
+    defer std.testing.allocator.free(text);
+
+    for ([_][]const u8{
+        "[simd8] load_input %position_x:f32, location(0), component(0)",
+        "[simd8] load_input %position_w:f32, location(0), component(3)",
+        "[simd8] multiply %scaled_x:f32, %position_x:f32, 2:f32",
+        "[simd8] multiply %scaled_w:f32, %position_w:f32, 2:f32",
+        "[simd8] store_output builtin(position), component(0), %scaled_x:f32",
+        "[simd8] store_output builtin(position), component(3), %scaled_w:f32",
+    }) |fragment|
+        try std.testing.expect(std.mem.indexOf(u8, text, fragment) != null);
+}
+
+test "[ir] Lower: vector block parameter" {
+    const source =
+        \\shader vertex @main
+        \\{
+        \\    %one: constant u32 = bits(0x1)
+        \\    %two: constant u32 = bits(0x2)
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %pair: vec2[u32] = composite_construct %one, %two
+        \\            branch .merge(%pair)
+        \\        .merge(%merged: vec2[u32]):
+        \\            %first: u32 = composite_extract %merged[0]
+        \\            return
+        \\    }
+        \\}
+    ;
+
+    try expectLoweredFragments(source, &.{
+        "%merged_x: vgrf u32[8]",
+        "%merged_y: vgrf u32[8]",
+        "parallel_copy [%merged_x:u32 <- 1:u32, %merged_y:u32 <- 2:u32]",
+    }, &.{
+        ".merge(",
+    });
+}
+
+test "[ir] Lower: reject vector interface component overflow" {
+    try expectLoweringError(
+        \\shader vertex @main
+        \\{
+        \\    @attribute_in: vec2[f32] = input[location(0), component(3), index(0)]
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %attribute: vec2[f32] = load_interface @attribute_in
+        \\            return
+        \\    }
+        \\}
+    , Error.UnsupportedOperation);
 }
 
 test "[ir] Lower: constant conditional branch" {
@@ -1186,11 +1476,11 @@ test "[ir] Lower: unsupported operations" {
         \\    fn @main() -> void
         \\    {
         \\        .entry():
-        \\            %pair: vec2[u32] = composite_construct %one, %two
+        \\            %wide: vec5[u32] = composite_construct %one, %two, %one, %two, %one
         \\            return
         \\    }
         \\}
-    , Error.UnsupportedOperation);
+    , Error.UnsupportedType);
 
     try expectLoweringError(
         \\shader vertex @main
@@ -1239,5 +1529,10 @@ test "[ir] Lower: unsupported target configuration" {
     var gen10 = test_device;
     gen10.generation = .gen10;
     try std.testing.expectError(Error.UnsupportedGeneration, lower(std.testing.allocator, &module, gen10, .{}));
+
+    module.stage = .fragment;
+    try std.testing.expectError(Error.UnsupportedStage, lower(std.testing.allocator, &module, test_device, .{}));
+    module.stage = .vertex;
+
     try std.testing.expectError(Error.UnsupportedDispatchWidth, lower(std.testing.allocator, &module, test_device, .{ .dispatch_width = .simd16 }));
 }

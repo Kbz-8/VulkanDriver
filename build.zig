@@ -17,6 +17,7 @@ const ImplementationDesc = struct {
         *std.Build.Module,
         *std.Build.Module,
         *std.Build.Module,
+        *std.Build.Module,
         std.Build.ResolvedTarget,
         std.builtin.OptimizeMode,
         bool,
@@ -125,6 +126,7 @@ pub fn build(b: *std.Build) !void {
     base_mod.addImport("vulkan", vulkan);
     base_mod.addImport("zmath", zmath);
     base_mod.addImport("drm", drm);
+    base_mod.addImport("shader_ir", ir_mod);
 
     const base_c_includes = b.addTranslateC(.{
         .root_source_file = b.path("src/vulkan/c_includes.h"),
@@ -174,7 +176,7 @@ pub fn build(b: *std.Build) !void {
             for (implementations[0..impl_index], implementation_modules[0..impl_index]) |child_impl, child_mod|
                 lib_mod.addImport(child_impl.name, child_mod);
         } else if (impl.custom) |func| {
-            func(b, options, lib, lib_mod, base_mod, vulkan, base_c_mod, target, optimize, use_llvm) catch continue;
+            func(b, options, lib, lib_mod, base_mod, vulkan, base_c_mod, ir_mod, target, optimize, use_llvm) catch continue;
         }
 
         const icd_file = b.addWriteFile(
@@ -433,6 +435,7 @@ fn customSoft(
     _: *std.Build.Module,
     _: *std.Build.Module,
     base_c_mod: *std.Build.Module,
+    _: *std.Build.Module,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     use_llvm: bool,
@@ -462,23 +465,20 @@ fn customSoft(
 // Flint specialized functions
 
 fn customFlint(
-    b: *std.Build,
+    _: *std.Build,
     _: *Step.Options,
     _: *Step.Compile,
     lib_mod: *std.Build.Module,
     _: *std.Build.Module,
     _: *std.Build.Module,
     base_c_mod: *std.Build.Module,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    shader_ir_mod: *std.Build.Module,
+    _: std.Build.ResolvedTarget,
+    _: std.builtin.OptimizeMode,
     _: bool,
 ) !void {
     lib_mod.addImport("intel_c", base_c_mod);
-    lib_mod.addImport("shader_ir", b.createModule(.{
-        .root_source_file = b.path("src/compiler/root.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
+    lib_mod.addImport("shader_ir", shader_ir_mod);
 }
 
 // Phi specialized functions
@@ -491,6 +491,7 @@ fn customPhi(
     _: *std.Build.Module,
     _: *std.Build.Module,
     base_c_mod: *std.Build.Module,
+    _: *std.Build.Module,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     use_llvm: bool,

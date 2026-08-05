@@ -161,6 +161,7 @@ pub const ExecutionMode = enum(u32) {
 };
 
 pub const Decoration = enum(u32) {
+    spec_id = 1,
     built_in = 11,
     location = 30,
     component = 31,
