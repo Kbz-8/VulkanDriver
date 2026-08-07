@@ -435,7 +435,7 @@ fn customSoft(
     _: *std.Build.Module,
     _: *std.Build.Module,
     base_c_mod: *std.Build.Module,
-    _: *std.Build.Module,
+    shader_ir_mod: *std.Build.Module,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     use_llvm: bool,
@@ -448,14 +448,17 @@ fn customSoft(
 
     lib_mod.addImport("soft_c", base_c_mod);
     lib_mod.addImport("spv", spv.module("spv"));
+    lib_mod.addImport("shader_ir", shader_ir_mod);
 
     const single_threaded_option = b.option(bool, "soft-single-threaded", "Single threaded runtime mode") orelse false;
+    const ir_interpreter_option = b.option(bool, "soft-ir-interpreter", "Enable the experimental backend-agnostic IR interpreter") orelse false;
     const shaders_simd_option = b.option(bool, "soft-shader-simd", "Shaders SIMD acceleration") orelse true;
     const compute_dump_early_results_table_option = b.option(u32, "soft-compute-dump-early-results-table", "Dump compute shaders results table before invocation");
     const compute_dump_final_results_table_option = b.option(u32, "soft-compute-dump-final-results-table", "Dump compute shaders results table after invocation");
     const approxiamte_rgb_option = b.option(bool, "soft-approximates-rgb", "Approximate sRGB <-> RGB conversions") orelse true;
 
     options.addOption(bool, "soft_single_threaded", single_threaded_option);
+    options.addOption(bool, "soft_ir_interpreter", ir_interpreter_option);
     options.addOption(bool, "soft_shaders_simd", shaders_simd_option);
     options.addOption(?u32, "soft_compute_dump_early_results_table", compute_dump_early_results_table_option);
     options.addOption(?u32, "soft_compute_dump_final_results_table", compute_dump_final_results_table_option);

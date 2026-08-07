@@ -10,6 +10,7 @@ const SpvRuntimeError = spv.Runtime.RuntimeError;
 const Renderer = @import("Renderer.zig");
 const SoftPipeline = @import("../SoftPipeline.zig");
 const blitter = @import("blitter.zig");
+const ir_vertex = @import("../interpreter/vertex.zig");
 
 const VkError = base.VkError;
 const interface_blob_padding = @sizeOf(F32x4);
@@ -41,6 +42,28 @@ pub fn runWrapper(data: RunData) void {
 
 inline fn run(data: RunData) !void {
     const shader = data.pipeline.stages.getPtrAssertContains(.vertex);
+    if (comptime base.config.soft_ir_interpreter) {
+        // Interpolation decorations are not represented in the common IR yet,
+        // so fragment-linked graphics pipelines retain the SPIR-V path.
+        if (data.pipeline.stages.getPtr(.fragment) == null) {
+            if (shader.interpreter) |*interpreter_shader| {
+                return ir_vertex.run(
+                    data.allocator,
+                    data.pipeline,
+                    interpreter_shader,
+                    data.batch_id,
+                    data.batch_size,
+                    data.vertex_count,
+                    data.first_vertex,
+                    data.first_instance,
+                    data.indices,
+                    data.primitive_restart,
+                    data.instance_index,
+                    data.draw_call,
+                );
+            }
+        }
+    }
     const runtime = &shader.runtimes[data.batch_id];
     const mutex = &runtime.mutex;
     const rt = &runtime.rt;

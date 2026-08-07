@@ -7,6 +7,7 @@ const PipelineState = ExecutionDevice.PipelineState;
 
 const SoftDevice = @import("../SoftDevice.zig");
 const SoftPipeline = @import("../SoftPipeline.zig");
+const ir_compute = @import("../interpreter/compute.zig");
 
 const VkError = base.VkError;
 const SpvRuntimeError = spv.Runtime.RuntimeError;
@@ -70,6 +71,10 @@ pub fn dispatchBase(self: *Self, base_group_x: u32, base_group_y: u32, base_grou
 
     const pipeline = self.state.pipeline orelse return VkError.InvalidPipelineDrv;
     const shader = pipeline.stages.getPtr(.compute) orelse return VkError.InvalidPipelineDrv;
+    if (comptime base.config.soft_ir_interpreter) {
+        if (shader.interpreter) |*interpreter_shader|
+            return ir_compute.dispatch(interpreter_shader, base_group_x, base_group_y, base_group_z, group_count_x, group_count_y, group_count_z);
+    }
     const spv_module = &shader.module.module;
     self.batch_size = if (spv_module.reflection_infos.has_atomics) 1 else shader.runtimes.len;
 

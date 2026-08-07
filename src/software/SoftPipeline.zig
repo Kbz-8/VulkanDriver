@@ -38,6 +38,7 @@ const SoftInstance = @import("SoftInstance.zig");
 const SoftSampler = @import("SoftSampler.zig");
 const SoftShaderModule = @import("SoftShaderModule.zig");
 const SoftPipelineCache = @import("SoftPipelineCache.zig");
+const InterpreterShader = @import("interpreter/Shader.zig");
 
 const Self = @This();
 pub const Interface = base.Pipeline;
@@ -51,6 +52,7 @@ const Shader = struct {
     module: *SoftShaderModule,
     runtimes: []Runtime,
     entry: []const u8,
+    interpreter: ?InterpreterShader,
 };
 
 const Stages = enum {
@@ -185,6 +187,8 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 
     var it = self.stages.iterator();
     while (it.next()) |entry| {
+        if (entry.value.interpreter) |*interpreter|
+            interpreter.deinit();
         entry.value.module.unref(allocator);
         for (entry.value.runtimes) |*runtime| {
             runtime.rt.function_stack.clearAndFree(device_allocator); // Hacky to avoid leaks
@@ -255,11 +259,15 @@ fn createShader(
         }
     }
 
-    return .{
+    var shader: Shader = .{
         .module = module,
         .runtimes = runtimes,
         .entry = runtimes_allocator.dupe(u8, entry) catch return VkError.OutOfDeviceMemory,
+        .interpreter = null,
     };
+    if (comptime base.config.soft_ir_interpreter)
+        shader.interpreter = try InterpreterShader.compile(runtimes_allocator, module, stage, runtimes_count);
+    return shader;
 }
 
 fn initRuntime(allocator: std.mem.Allocator, module: *SoftShaderModule, stage: *const vk.PipelineShaderStageCreateInfo, image_api: spv.Runtime.ImageAPI) VkError!spv.Runtime {

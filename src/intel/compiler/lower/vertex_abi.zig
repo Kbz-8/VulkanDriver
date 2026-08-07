@@ -64,24 +64,28 @@ pub fn run(allocator: std.mem.Allocator, program: *program_ir.Program, layout: L
         for (block.instructions.items) |instruction_id| {
             const inst = program.instructions.get(instruction_id) orelse return Error.InvalidProgram;
             const replacement: ?instruction.Operation = switch (inst.operation) {
-                .load_input => |load| .{ .move = .{
-                    .destination = load.destination,
-                    .source = .{
-                        .register = .{ .physical_grf = try inputPhysicalGrf(program, vertex_payload, layout, load.semantic) },
-                        .type = load.destination.type,
-                        .region = operand.Region.contiguous(.simd8),
+                .load_input => |load| .{
+                    .move = .{
+                        .destination = load.destination,
+                        .source = .{
+                            .register = .{ .physical_grf = try inputPhysicalGrf(program, vertex_payload, layout, load.semantic) },
+                            .type = load.destination.type,
+                            .region = operand.Region.contiguous(.simd8),
+                        },
                     },
-                } },
+                },
                 .store_output => |store| blk: {
                     const component = try positionComponent(store.semantic);
-                    break :blk .{ .move = .{
-                        .destination = .{
-                            .register = .{ .virtual = position_payload },
-                            .type = .f32,
-                            .region = .{ .byte_offset = @as(u16, component) * program.device_info.grf_size_bytes },
+                    break :blk .{
+                        .move = .{
+                            .destination = .{
+                                .register = .{ .virtual = position_payload },
+                                .type = .f32,
+                                .region = .{ .byte_offset = @as(u16, component) * program.device_info.grf_size_bytes },
+                            },
+                            .source = store.source,
                         },
-                        .source = store.source,
-                    } };
+                    };
                 },
                 else => null,
             };
@@ -96,11 +100,13 @@ pub fn run(allocator: std.mem.Allocator, program: *program_ir.Program, layout: L
             continue;
         _ = builder.appendInstruction(ids.BlockId.fromIndex(block_index), .simd8, null, .{
             .send = .{
-                .message = .{ .urb_write = .{
-                    .offset = layout.position_urb_offset,
-                    .channels = .{},
-                    .end_of_thread = true,
-                } },
+                .message = .{
+                    .urb_write = .{
+                        .offset = layout.position_urb_offset,
+                        .channels = .{},
+                        .end_of_thread = true,
+                    },
+                },
                 .payload = .{
                     .base = .{ .virtual = position_payload },
                     .register_count = 4,

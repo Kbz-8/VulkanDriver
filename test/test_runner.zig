@@ -43,17 +43,7 @@ pub fn main() !void {
         var status = Status.pass;
         slowest.startTiming();
 
-        const friendly_name = blk: {
-            const name = t.name;
-            var it = std.mem.splitScalar(u8, name, '.');
-            while (it.next()) |value| {
-                if (std.mem.eql(u8, value, "test")) {
-                    const rest = it.rest();
-                    break :blk if (rest.len > 0) rest else name;
-                }
-            }
-            break :blk name;
-        };
+        const friendly_name = friendlyName(t.name);
 
         current_test = friendly_name;
         std.testing.allocator_instance = .{};
@@ -219,6 +209,13 @@ pub const panic = std.debug.FullPanic(struct {
         std.debug.defaultPanic(msg, first_trace_addr);
     }
 }.panicFn);
+
+fn friendlyName(name: []const u8) []const u8 {
+    const marker = ".test.";
+    const index = std.mem.lastIndexOf(u8, name, marker) orelse return name;
+    const suffix = name[index + marker.len ..];
+    return if (suffix.len > 0) suffix else name;
+}
 
 fn isUnnamed(t: std.builtin.TestFn) bool {
     const marker = ".test_";
