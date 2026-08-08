@@ -246,13 +246,15 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
     };
 
     const pipeline = self.state.pipeline orelse return VkError.InvalidPipelineDrv;
-    const vertex_shader = pipeline.stages.getPtrAssertContains(.vertex);
-    for (vertex_shader.runtimes[0..]) |*runtime| {
-        ExecutionDevice.writeDescriptorSets(self.state, &runtime.rt) catch return VkError.Unknown;
-    }
-    if (pipeline.stages.getPtr(.fragment)) |fragment_shader| {
-        for (fragment_shader.runtimes[0..]) |*runtime| {
+    if (comptime !base.config.soft_ir_interpreter) {
+        const vertex_shader = pipeline.stages.getPtrAssertContains(.vertex);
+        for (vertex_shader.runtimes) |*runtime| {
             ExecutionDevice.writeDescriptorSets(self.state, &runtime.rt) catch return VkError.Unknown;
+        }
+        if (pipeline.stages.getPtr(.fragment)) |fragment_shader| {
+            for (fragment_shader.runtimes) |*runtime| {
+                ExecutionDevice.writeDescriptorSets(self.state, &runtime.rt) catch return VkError.Unknown;
+            }
         }
     }
 

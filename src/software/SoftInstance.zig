@@ -49,6 +49,7 @@ pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo)
         .requestPhysicalDevices = requestPhysicalDevices,
         .releasePhysicalDevices = releasePhysicalDevices,
         .io = io,
+        .enumerate_drm_devices = false,
     };
     return &self.interface;
 }

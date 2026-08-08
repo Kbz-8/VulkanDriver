@@ -252,7 +252,9 @@ fn launchHostDaemon(instance: *base.Instance, allocator: std.mem.Allocator) VkEr
 
     const local_path = std.fmt.allocPrint(allocator, "/tmp/ape_phi_device_{d}_{d}.host", .{ process_id, thread_id }) catch return VkError.OutOfHostMemory;
     defer allocator.free(local_path);
-    errdefer std.Io.Dir.deleteFileAbsolute(io, local_path) catch {};
+    errdefer std.Io.Dir.deleteFileAbsolute(io, local_path) catch |err| {
+        std.log.scoped(.PhiDevice).warn("Failed to remove Phi host daemon after launch error: {s}", .{@errorName(err)});
+    };
 
     std.Io.Dir.writeFile(.cwd(), io, .{
         .sub_path = local_path,

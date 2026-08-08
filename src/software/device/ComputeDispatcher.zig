@@ -71,48 +71,49 @@ pub fn dispatchBase(self: *Self, base_group_x: u32, base_group_y: u32, base_grou
 
     const pipeline = self.state.pipeline orelse return VkError.InvalidPipelineDrv;
     const shader = pipeline.stages.getPtr(.compute) orelse return VkError.InvalidPipelineDrv;
-    if (comptime base.config.soft_ir_interpreter) {
-        if (shader.interpreter) |*interpreter_shader|
-            return ir_compute.dispatch(interpreter_shader, base_group_x, base_group_y, base_group_z, group_count_x, group_count_y, group_count_z);
-    }
-    const spv_module = &shader.module.module;
-    self.batch_size = if (spv_module.reflection_infos.has_atomics) 1 else shader.runtimes.len;
-
-    const allocator = self.device.interface.device_allocator.allocator();
-    const local_size = try getLocalSize(&shader.runtimes[0].rt, allocator, spv_module);
-    const local_size_xy = std.math.mul(usize, local_size[0], local_size[1]) catch return VkError.ValidationFailed;
-    const invocations_per_workgroup = std.math.mul(usize, local_size_xy, local_size[2]) catch return VkError.ValidationFailed;
-
-    self.invocation_index.store(0, .monotonic);
 
     const io = self.device.interface.io();
     const timer = std.Io.Timestamp.now(io, .real);
     defer if (comptime base.config.logs != .none) {
         const duration = timer.untilNow(io, .real);
         const ms: f32 = @floatFromInt(duration.toMicroseconds());
-        std.log.scoped(.ComputeDispatcher).debug("Compute dispatch took {}ms", .{ms / 1000});
+        std.log.scoped(.ComputeDispatcher).debug("Compute dispatch took {}ms using {s} interpreter", .{ ms / 1000, if (comptime base.config.soft_ir_interpreter) "IR" else "SPIR-V" });
     };
 
-    var wg: std.Io.Group = .init;
-    for (0..@min(self.batch_size, group_count)) |batch_id| {
-        const run_data: RunData = .{
-            .self = self,
-            .batch_id = batch_id,
-            .group_count = group_count,
-            .base_group_x = @as(usize, @intCast(base_group_x)),
-            .base_group_y = @as(usize, @intCast(base_group_y)),
-            .base_group_z = @as(usize, @intCast(base_group_z)),
-            .group_count_x = @as(usize, @intCast(group_count_x)),
-            .group_count_y = @as(usize, @intCast(group_count_y)),
-            .group_count_z = @as(usize, @intCast(group_count_z)),
-            .invocations_per_workgroup = invocations_per_workgroup,
-            .local_size = local_size,
-            .pipeline = pipeline,
-        };
+    if (comptime base.config.soft_ir_interpreter) {
+        return ir_compute.dispatch(shader, base_group_x, base_group_y, base_group_z, group_count_x, group_count_y, group_count_z);
+    } else {
+        const spv_module = &shader.module.module;
+        self.batch_size = if (spv_module.reflection_infos.has_atomics) 1 else shader.runtimes.len;
 
-        wg.async(self.device.interface.io(), runWrapper, .{run_data});
+        const allocator = self.device.interface.device_allocator.allocator();
+        const local_size = try getLocalSize(&shader.runtimes[0].rt, allocator, spv_module);
+        const local_size_xy = std.math.mul(usize, local_size[0], local_size[1]) catch return VkError.ValidationFailed;
+        const invocations_per_workgroup = std.math.mul(usize, local_size_xy, local_size[2]) catch return VkError.ValidationFailed;
+
+        self.invocation_index.store(0, .monotonic);
+
+        var wg: std.Io.Group = .init;
+        for (0..@min(self.batch_size, group_count)) |batch_id| {
+            const run_data: RunData = .{
+                .self = self,
+                .batch_id = batch_id,
+                .group_count = group_count,
+                .base_group_x = @as(usize, @intCast(base_group_x)),
+                .base_group_y = @as(usize, @intCast(base_group_y)),
+                .base_group_z = @as(usize, @intCast(base_group_z)),
+                .group_count_x = @as(usize, @intCast(group_count_x)),
+                .group_count_y = @as(usize, @intCast(group_count_y)),
+                .group_count_z = @as(usize, @intCast(group_count_z)),
+                .invocations_per_workgroup = invocations_per_workgroup,
+                .local_size = local_size,
+                .pipeline = pipeline,
+            };
+
+            wg.async(self.device.interface.io(), runWrapper, .{run_data});
+        }
+        wg.await(self.device.interface.io()) catch return VkError.DeviceLost;
     }
-    wg.await(self.device.interface.io()) catch return VkError.DeviceLost;
 }
 
 fn runWrapper(data: RunData) void {
@@ -138,22 +139,27 @@ inline fn run(data: RunData) !void {
 
     var barrier_runtimes: []spv.Runtime = &.{};
     var barrier_statuses: []spv.Runtime.EntryPointStatus = &.{};
-    if (uses_control_barrier) {
-        barrier_runtimes = try allocator.alloc(spv.Runtime, data.invocations_per_workgroup);
-        barrier_statuses = try allocator.alloc(spv.Runtime.EntryPointStatus, data.invocations_per_workgroup);
-        for (barrier_runtimes) |*barrier_rt| {
-            barrier_rt.* = try spv.Runtime.init(allocator, rt.mod, rt.image_api);
-            try barrier_rt.copySpecializationConstantsFrom(allocator, rt);
-        }
-    }
-
+    var initialized_barrier_runtimes: usize = 0;
     defer {
-        for (barrier_runtimes) |*barrier_rt| {
+        for (barrier_runtimes[0..initialized_barrier_runtimes]) |*barrier_rt| {
             barrier_rt.resetInvocation(allocator);
             barrier_rt.deinit(allocator);
         }
         allocator.free(barrier_runtimes);
         allocator.free(barrier_statuses);
+    }
+
+    if (uses_control_barrier) {
+        barrier_runtimes = try allocator.alloc(spv.Runtime, data.invocations_per_workgroup);
+        barrier_statuses = try allocator.alloc(spv.Runtime.EntryPointStatus, data.invocations_per_workgroup);
+        for (barrier_runtimes) |*barrier_rt| {
+            barrier_rt.* = try spv.Runtime.init(allocator, rt.mod, rt.image_api);
+            initialized_barrier_runtimes += 1;
+            try barrier_rt.copySpecializationConstantsFrom(allocator, rt);
+            try prepareRuntime(data.self, barrier_rt);
+        }
+    } else {
+        try prepareRuntime(data.self, rt);
     }
 
     var group_index: usize = data.batch_id;
@@ -188,10 +194,6 @@ inline fn run(data: RunData) !void {
         defer rt.destroyWorkgroupMemory(allocator, workgroup_memory);
 
         rt.resetInvocation(allocator);
-        if (rt.specialization_constants.count() != 0)
-            try rt.applySpecializationInvocationLayout(allocator);
-        try ExecutionDevice.writeDescriptorSets(data.self.state, rt);
-        try rt.populatePushConstants(data.self.state.push_constant_blob[0..]);
         try rt.bindWorkgroupMemory(workgroup_memory);
         try setupWorkgroupBuiltins(data.self, rt, data.local_size, group_count_vec, group_id_vec);
 
@@ -228,6 +230,16 @@ inline fn run(data: RunData) !void {
     }
 }
 
+fn prepareRuntime(self: *Self, rt: *spv.Runtime) !void {
+    const allocator = self.device.interface.device_allocator.allocator();
+
+    rt.resetInvocation(allocator);
+    if (rt.specialization_constants.count() != 0)
+        try rt.applySpecializationInvocationLayout(allocator);
+    try ExecutionDevice.writeDescriptorSets(self.state, rt);
+    try rt.populatePushConstants(self.state.push_constant_blob[0..]);
+}
+
 fn runBarrierWorkgroup(
     data: RunData,
     runtimes: []spv.Runtime,
@@ -242,10 +254,6 @@ fn runBarrierWorkgroup(
     defer runtimes[0].destroyWorkgroupMemory(allocator, workgroup_memory);
     for (runtimes, 0..) |*rt, i| {
         rt.resetInvocation(allocator);
-        if (rt.specialization_constants.count() != 0)
-            try rt.applySpecializationInvocationLayout(allocator);
-        try ExecutionDevice.writeDescriptorSets(data.self.state, rt);
-        try rt.populatePushConstants(data.self.state.push_constant_blob[0..]);
         try rt.bindWorkgroupMemory(workgroup_memory);
         try setupWorkgroupBuiltins(data.self, rt, data.local_size, group_count, group_id);
         try setupSubgroupBuiltins(data.self, rt, data.local_size, group_id, i);

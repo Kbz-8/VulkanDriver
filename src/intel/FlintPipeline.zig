@@ -103,7 +103,7 @@ fn compileStage(allocator: std.mem.Allocator, info: *const vk.PipelineShaderStag
         .graphics => if (expected_stage == .compute) return VkError.ValidationFailed,
     }
 
-    const shader_module = base.NonDispatchable(base.ShaderModule).fromHandleObject(info.module) catch |err| return err;
+    const shader_module = try base.NonDispatchable(base.ShaderModule).fromHandleObject(info.module);
     var module = shader_module.instantiateIr(allocator, .{
         .entry_point = std.mem.span(info.p_name),
         .stage = expected_stage,

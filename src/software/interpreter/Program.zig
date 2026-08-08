@@ -47,24 +47,25 @@ interfaces: []const ?InterfaceBinding,
 pub fn compile(backing_allocator: std.mem.Allocator, module: *const module_ir.Module) !Self {
     try ir.validator.validate(module);
 
-    var result: Self = undefined;
-    result.arena = std.heap.ArenaAllocator.init(backing_allocator);
-    errdefer result.arena.deinit();
+    var arena = std.heap.ArenaAllocator.init(backing_allocator);
+    errdefer arena.deinit();
 
-    var lowerer = try Lowerer.init(result.arena.allocator(), module);
+    var lowerer = try Lowerer.init(arena.allocator(), module);
     try lowerer.lower();
 
-    result.stage = module.stage;
-    result.entry_pc = lowerer.entry_pc;
-    result.register_count = lowerer.register_count;
-    result.scratch_count = lowerer.scratch_count;
-    result.code = lowerer.code.items;
-    result.edges = lowerer.edges.items;
-    result.copies = lowerer.copies.items;
-    result.branches = lowerer.branches.items;
-    result.initializers = lowerer.initializers.items;
-    result.interfaces = lowerer.interfaces;
-    return result;
+    return .{
+        .arena = arena,
+        .stage = module.stage,
+        .entry_pc = lowerer.entry_pc,
+        .register_count = lowerer.register_count,
+        .scratch_count = lowerer.scratch_count,
+        .code = lowerer.code.items,
+        .edges = lowerer.edges.items,
+        .copies = lowerer.copies.items,
+        .branches = lowerer.branches.items,
+        .initializers = lowerer.initializers.items,
+        .interfaces = lowerer.interfaces,
+    };
 }
 
 pub fn deinit(self: *Self) void {
@@ -158,41 +159,32 @@ const Lowerer = struct {
 
     fn allocate(self: *Lowerer, type_id: ids.TypeId) !bc.Span {
         const ty = self.module.types.get(type_id) orelse return CompileError.UnsupportedType;
-        var kind: bc.ValueKind = undefined;
         var components: u8 = 1;
-
-        switch (ty.*) {
-            .boolean => kind = .boolean,
-            .integer => |integer| {
-                if (integer.bits != 32)
-                    return CompileError.UnsupportedType;
-
-                kind = if (integer.signedness == .signed) .signed_integer else .unsigned_integer;
-            },
-            .floating => |floating| {
-                if (floating.bits != 32)
-                    return CompileError.UnsupportedType;
-
-                kind = .floating;
-            },
-            .vector => |vector| {
+        const kind: bc.ValueKind = switch (ty.*) {
+            .boolean => .boolean,
+            .integer => |integer| if (integer.bits == 32)
+                if (integer.signedness == .signed) .signed_integer else .unsigned_integer
+            else
+                return CompileError.UnsupportedType,
+            .floating => |floating| if (floating.bits == 32)
+                .floating
+            else
+                return CompileError.UnsupportedType,
+            .vector => |vector| blk: {
                 const element = self.module.types.get(vector.element_type) orelse return CompileError.UnsupportedType;
                 components = vector.length;
-
-                kind = switch (element.*) {
+                break :blk switch (element.*) {
                     .boolean => .boolean,
-                    .integer => |integer| blk: {
-                        if (integer.bits != 32)
-                            return CompileError.UnsupportedType;
-
-                        break :blk if (integer.signedness == .signed) .signed_integer else .unsigned_integer;
-                    },
+                    .integer => |integer| if (integer.bits == 32)
+                        if (integer.signedness == .signed) .signed_integer else .unsigned_integer
+                    else
+                        return CompileError.UnsupportedType,
                     .floating => |floating| if (floating.bits == 32) .floating else return CompileError.UnsupportedType,
                     else => return CompileError.UnsupportedType,
                 };
             },
             else => return CompileError.UnsupportedType,
-        }
+        };
         const end = std.math.add(usize, self.register_count, components) catch return CompileError.TooManyRegisters;
 
         if (end > @as(usize, std.math.maxInt(bc.Register)) + 1)

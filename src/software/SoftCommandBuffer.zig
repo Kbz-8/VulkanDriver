@@ -132,7 +132,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .command_allocator = undefined,
         .commands = .empty,
     };
-    self.command_allocator = .init(interface.host_allocator.allocator());
+    self.command_allocator = .init(self.interface.host_allocator.allocator());
     return self;
 }
 

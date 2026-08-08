@@ -447,7 +447,7 @@ fn rasterizeTransformedPoint(
     const point_min_x = vertex.position[0] - (point_size / 2.0);
     const point_min_y = vertex.position[1] - (point_size / 2.0);
     const pipeline = draw_call.renderer.state.pipeline orelse return;
-    const has_fragment_shader = pipeline.stages.getPtr(.fragment) != null;
+    const has_fragment_shader = if (comptime base.config.soft_ir_interpreter) false else pipeline.stages.getPtr(.fragment) != null;
 
     var py = min_y;
     while (py <= max_y) : (py += 1) {

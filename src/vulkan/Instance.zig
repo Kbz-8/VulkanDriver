@@ -34,6 +34,7 @@ pub const VTable = struct {
     releasePhysicalDevices: *const fn (*Self, std.mem.Allocator) VkError!void,
     requestPhysicalDevices: *const fn (*Self, std.mem.Allocator, []lib.drm.Card) VkError!void,
     io: *const fn (*Self) std.Io,
+    enumerate_drm_devices: bool = true,
 };
 
 pub const DispatchTable = struct {
@@ -154,10 +155,13 @@ pub fn releasePhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError
 }
 
 pub fn requestPhysicalDevices(self: *Self, allocator: std.mem.Allocator) VkError!void {
-    const devices = try drm.enumerateDrmPhysicalDevices(allocator, self);
-    defer allocator.free(devices);
-
-    try self.vtable.requestPhysicalDevices(self, allocator, devices);
+    if (self.vtable.enumerate_drm_devices) {
+        const devices = try drm.enumerateDrmPhysicalDevices(allocator, self);
+        defer allocator.free(devices);
+        try self.vtable.requestPhysicalDevices(self, allocator, devices);
+    } else {
+        try self.vtable.requestPhysicalDevices(self, allocator, &.{});
+    }
 
     if (self.physical_devices.items.len == 0) {
         std.log.scoped(.vkCreateInstance).err("No VkPhysicalDevice found", .{});

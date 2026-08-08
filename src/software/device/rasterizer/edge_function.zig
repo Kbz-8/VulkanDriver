@@ -89,24 +89,37 @@ pub fn drawTriangle(
     }
 
     const fragment_stage = pipeline.stages.getPtr(.fragment);
-    const fragment_uses_derivatives = if (fragment_stage) |stage|
+    const fragment_uses_derivatives = if (comptime base.config.soft_ir_interpreter)
+        false
+    else if (fragment_stage) |stage|
         stage.module.module.reflection_infos.needs_derivatives
     else
         false;
-    const early_fragment_tests = if (fragment_stage) |stage|
+    const early_fragment_tests = if (comptime base.config.soft_ir_interpreter)
+        false
+    else if (fragment_stage) |stage|
         stage.module.module.reflection_infos.early_fragment_tests
     else
         false;
-    const fragment_uses_sample_id = if (fragment_stage) |stage|
+    const fragment_uses_sample_id = if (comptime base.config.soft_ir_interpreter)
+        false
+    else if (fragment_stage) |stage|
         stage.module.module.builtins.get(.SampleId) != null
     else
         false;
-    const fragment_uses_centroid = if (fragment_stage) |stage|
+    const fragment_uses_centroid = if (comptime base.config.soft_ir_interpreter)
+        false
+    else if (fragment_stage) |stage|
         fragmentStageUsesInputDecoration(stage, .Centroid)
     else
         false;
 
-    const runtimes_count = if (fragment_stage) |stage| stage.runtimes.len else 1;
+    const runtimes_count = if (comptime base.config.soft_ir_interpreter)
+        1
+    else if (fragment_stage) |stage|
+        stage.runtimes.len
+    else
+        1;
     if (runtimes_count == 0)
         return;
     const sample_count = pipeline_data.multisample.rasterization_samples.toInt();
@@ -173,7 +186,7 @@ pub fn drawTriangle(
                 .depth_attachment_access = depth_attachment_access,
                 .stencil_attachment_access = stencil_attachment_access,
                 .front_face = front_face,
-                .has_fragment_shader = fragment_stage != null,
+                .has_fragment_shader = if (comptime base.config.soft_ir_interpreter) false else fragment_stage != null,
                 .early_fragment_tests = early_fragment_tests,
                 .fragment_uses_derivatives = fragment_uses_derivatives,
                 .fragment_uses_sample_id = fragment_uses_sample_id,

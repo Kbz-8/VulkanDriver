@@ -48,12 +48,13 @@ const Runtime = struct {
     rt: spv.Runtime,
 };
 
-const Shader = struct {
+const SpvShader = struct {
     module: *SoftShaderModule,
     runtimes: []Runtime,
     entry: []const u8,
-    interpreter: ?InterpreterShader,
 };
+
+const Shader = if (base.config.soft_ir_interpreter) InterpreterShader else SpvShader;
 
 const Stages = enum {
     vertex,
@@ -107,7 +108,10 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
     };
 
     self.stages.put(.compute, try createShader(allocator, device_allocator, runtimes_allocator, soft_cache, soft_module, &info.stage, runtimes_count));
-    std.log.scoped(.ComputePipeline).debug("Created {d} runtimes for compute stage", .{runtimes_count});
+    std.log.scoped(.ComputePipeline).debug("Created {d} {s} runtimes for compute stage", .{
+        runtimes_count,
+        if (comptime base.config.soft_ir_interpreter) "IR" else "SPIR-V",
+    });
     return self;
 }
 
@@ -152,7 +156,10 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
             const soft_module: *SoftShaderModule = @alignCast(@fieldParentPtr("interface", module));
             const shader = try createShader(allocator, device_allocator, runtimes_allocator, soft_cache, soft_module, &stage, runtimes_count);
 
-            std.log.scoped(.GraphicsPipeline).debug("Created {d} runtimes for:", .{runtimes_count});
+            std.log.scoped(.GraphicsPipeline).debug("Created {d} {s} runtimes for:", .{
+                runtimes_count,
+                if (comptime base.config.soft_ir_interpreter) "IR" else "SPIR-V",
+            });
 
             if (stage.stage.contains(.{ .vertex_bit = true })) {
                 std.log.scoped(.GraphicsPipeline).debug(">   Vertex stage", .{});
@@ -183,15 +190,18 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    const device_allocator = interface.owner.device_allocator.allocator();
 
     var it = self.stages.iterator();
-    while (it.next()) |entry| {
-        if (entry.value.interpreter) |*interpreter|
-            interpreter.deinit();
-        entry.value.module.unref(allocator);
-        for (entry.value.runtimes) |*runtime| {
-            runtime.rt.function_stack.clearAndFree(device_allocator); // Hacky to avoid leaks
+    if (comptime base.config.soft_ir_interpreter) {
+        while (it.next()) |entry|
+            entry.value.deinit();
+    } else {
+        const device_allocator = interface.owner.device_allocator.allocator();
+        while (it.next()) |entry| {
+            entry.value.module.unref(allocator);
+            for (entry.value.runtimes) |*runtime| {
+                runtime.rt.function_stack.clearAndFree(device_allocator); // Hacky to avoid leaks
+            }
         }
     }
     self.runtimes_allocator.deinit();
@@ -207,6 +217,9 @@ fn createShader(
     stage: *const vk.PipelineShaderStageCreateInfo,
     runtimes_count: usize,
 ) VkError!Shader {
+    if (comptime base.config.soft_ir_interpreter)
+        return InterpreterShader.compile(runtimes_allocator, module, stage, runtimes_count);
+
     const entry = std.mem.span(stage.p_name);
     const execution_model = executionModelForStage(stage.stage) orelse return VkError.Unknown;
     const runtimes = runtimes_allocator.alloc(Runtime, runtimes_count) catch return VkError.OutOfDeviceMemory;
@@ -259,15 +272,11 @@ fn createShader(
         }
     }
 
-    var shader: Shader = .{
+    return .{
         .module = module,
         .runtimes = runtimes,
         .entry = runtimes_allocator.dupe(u8, entry) catch return VkError.OutOfDeviceMemory,
-        .interpreter = null,
     };
-    if (comptime base.config.soft_ir_interpreter)
-        shader.interpreter = try InterpreterShader.compile(runtimes_allocator, module, stage, runtimes_count);
-    return shader;
 }
 
 fn initRuntime(allocator: std.mem.Allocator, module: *SoftShaderModule, stage: *const vk.PipelineShaderStageCreateInfo, image_api: spv.Runtime.ImageAPI) VkError!spv.Runtime {

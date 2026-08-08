@@ -21,17 +21,15 @@ program: Program,
 runtimes: []RuntimeSlot,
 workgroup_size: ?[3]u32,
 
-/// Compiles a stage when the current interpreter can execute its complete
-/// interface. `null` deliberately selects the existing SPIR-V runtime.
-pub fn compile(
-    allocator: std.mem.Allocator,
-    module: *SoftShaderModule,
-    stage: *const vk.PipelineShaderStageCreateInfo,
-    runtime_count: usize,
-) VkError!?Self {
-    const expected_stage = commonStage(stage.stage) orelse return null;
-    if (expected_stage == .fragment)
-        return null;
+pub fn compile(allocator: std.mem.Allocator, module: *SoftShaderModule, stage: *const vk.PipelineShaderStageCreateInfo, runtime_count: usize) VkError!Self {
+    const expected_stage = commonStage(stage.stage) orelse {
+        std.log.scoped(.IrInterpreter).err("unsupported shader stage", .{});
+        return VkError.ValidationFailed;
+    };
+    if (expected_stage == .fragment) {
+        std.log.scoped(.IrInterpreter).err("fragment shaders are not supported", .{});
+        return VkError.ValidationFailed;
+    }
 
     const specializations = try specializationValues(allocator, stage.p_specialization_info);
     defer if (specializations.len != 0) allocator.free(specializations);
@@ -43,25 +41,24 @@ pub fn compile(
     }) catch |err| {
         if (err == error.OutOfMemory)
             return VkError.OutOfDeviceMemory;
-        std.log.scoped(.SoftIrInterpreter).debug("IR translation fallback: {s}", .{@errorName(err)});
-        return null;
+        std.log.scoped(.IrInterpreter).err("IR translation failed: {s}", .{@errorName(err)});
+        return VkError.ValidationFailed;
     };
     defer module_ir.deinit();
 
     var program = Program.compile(allocator, &module_ir) catch |err| {
         if (err == error.OutOfMemory)
             return VkError.OutOfDeviceMemory;
-        std.log.scoped(.SoftIrInterpreter).debug("bytecode lowering fallback: {s}", .{@errorName(err)});
-        return null;
+        std.log.scoped(.IrInterpreter).err("bytecode lowering failed: {s}", .{@errorName(err)});
+        return VkError.ValidationFailed;
     };
     errdefer program.deinit();
 
     if (!hasCompatibleInterface(&program, expected_stage) or
         (expected_stage == .compute and module_ir.execution_modes.workgroup_size == null))
     {
-        std.log.scoped(.SoftIrInterpreter).debug("stage interface or execution modes require the SPIR-V runtime", .{});
-        program.deinit();
-        return null;
+        std.log.scoped(.IrInterpreter).err("unsupported stage interface or execution modes", .{});
+        return VkError.ValidationFailed;
     }
 
     const runtimes = allocator.alloc(RuntimeSlot, runtime_count) catch return VkError.OutOfDeviceMemory;
@@ -76,7 +73,7 @@ pub fn compile(
         initialized += 1;
     }
 
-    std.log.scoped(.SoftIrInterpreter).debug("compiled {s} stage to {d} bytecode instructions", .{
+    std.log.scoped(.IrInterpreter).debug("compiled {s} stage to {d} bytecode instructions", .{
         @tagName(expected_stage),
         program.code.len,
     });

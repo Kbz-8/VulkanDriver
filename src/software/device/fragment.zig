@@ -36,6 +36,9 @@ pub fn shaderInvocation(
     inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation,
     derivative_inputs: ?DerivativeInputs,
 ) SpvRuntimeError!InvocationResult {
+    if (comptime base.config.soft_ir_interpreter)
+        return SpvRuntimeError.InvalidSpirV;
+
     var fragment_inputs = inputs;
     errdefer freeOwnedInputs(allocator, fragment_inputs);
 

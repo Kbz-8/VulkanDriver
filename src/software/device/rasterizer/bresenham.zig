@@ -134,7 +134,12 @@ fn drawLineBresenham(
 
     const pipeline = draw_call.renderer.state.pipeline orelse return;
     const fragment_stage = pipeline.stages.getPtr(.fragment);
-    const runtimes_count = if (fragment_stage) |stage| stage.runtimes.len else 1;
+    const runtimes_count = if (comptime base.config.soft_ir_interpreter)
+        1
+    else if (fragment_stage) |stage|
+        stage.runtimes.len
+    else
+        1;
     if (runtimes_count == 0)
         return;
 
@@ -170,7 +175,7 @@ fn drawLineBresenham(
             .color_attachment_access = color_attachment_access,
             .depth_attachment_access = depth_attachment_access,
             .stencil_attachment_access = stencil_attachment_access,
-            .has_fragment_shader = fragment_stage != null,
+            .has_fragment_shader = if (comptime base.config.soft_ir_interpreter) false else fragment_stage != null,
         };
 
         draw_call.rasterizer_wait_group.async(io, runWrapper, .{run_data});
@@ -191,7 +196,7 @@ fn drawLineDiamond(
 ) VkError!void {
     const pipeline = draw_call.renderer.state.pipeline orelse return;
     const fragment_stage = pipeline.stages.getPtr(.fragment);
-    const has_fragment_shader = fragment_stage != null;
+    const has_fragment_shader = if (comptime base.config.soft_ir_interpreter) false else fragment_stage != null;
     const batch_id: usize = 0;
 
     const min_x: i32 = @intFromFloat(@floor(@min(v0.position[0], v1.position[0]) - 1.0));

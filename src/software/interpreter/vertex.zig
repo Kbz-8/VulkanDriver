@@ -3,7 +3,6 @@ const vk = @import("vulkan");
 const base = @import("base");
 const shader_ir = @import("shader_ir");
 
-const bc = @import("bytecode.zig");
 const Shader = @import("Shader.zig");
 const SoftPipeline = @import("../SoftPipeline.zig");
 const Renderer = @import("../device/Renderer.zig");
@@ -58,14 +57,7 @@ pub fn run(
     }
 }
 
-fn populateInputs(
-    runtime: anytype,
-    program: *const @import("Program.zig"),
-    pipeline: *SoftPipeline,
-    draw_call: *Renderer.DrawCall,
-    vertex_index: u32,
-    instance_index: u32,
-) VkError!void {
+fn populateInputs(runtime: anytype, program: *const @import("Program.zig"), pipeline: *SoftPipeline, draw_call: *Renderer.DrawCall, vertex_index: u32, instance_index: u32) VkError!void {
     for (program.interfaces, 0..) |optional_binding, index| {
         const binding = optional_binding orelse continue;
         if (binding.direction != .input)
@@ -166,8 +158,4 @@ fn findBinding(bindings: []const vk.VertexInputBindingDescription, binding: u32)
     for (bindings) |description|
         if (description.binding == binding) return description;
     return null;
-}
-
-comptime {
-    _ = bc;
 }
