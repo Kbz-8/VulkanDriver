@@ -30,7 +30,7 @@ The printer uses these prefixes:
 | Prefix  | Meaning                                                          | Example               |
 | ------- | ---------------------------------------------------------------- | --------------------- |
 | `%id`   | An SSA value, whether constant, parameter, or instruction result | `%3`, `%merged_value` |
-| `@name` | A function or interface declaration                              | `@main`, `@out_color` |
+| `@name` | A function, interface, or resource declaration                   | `@main`, `@out_color` |
 | `.name` | A basic block                                                    | `.entry`, `.merge`    |
 | `#N`    | A constant-store identity used within composite constants        | `#2`                  |
 
@@ -55,6 +55,7 @@ The outer structure has this shape:
 shader <stage> @<entry-point>
 {
     <interface declarations>
+    <resource declarations>
     <constant declarations>
 
     fn @<name>(<parameters>) -> <type>
@@ -67,8 +68,8 @@ shader <stage> @<entry-point>
 }
 ```
 
-Execution modes, resources, source locations, and structured-control metadata
-exist in memory, but the printer does not display them yet.
+Execution modes, source locations, and structured-control metadata exist in
+memory, but the printer does not display them yet.
 
 ## Parsing
 
@@ -112,6 +113,25 @@ The current address spaces are `function`, `private`, `workgroup`,
 The current resource kinds are `uniform_buffer`, `storage_buffer`,
 `sampled_image`, `storage_image`, and `sampler`. A resource handle may also
 carry an optional data type in memory, although the printer omits that type.
+
+## Resources
+
+Resources are declared at module scope. Every `ResourceKind` uses the same
+`set` and `binding` syntax:
+
+```text
+@name: TYPE = storage_buffer[set(N), binding(N)]
+```
+
+The declaration `TYPE` is the storage buffer's block or payload aggregate type;
+it does not constrain the type of each byte-addressed access. Both operations
+accept storage buffers, and byte offsets must have a scalar unsigned integer
+type. Access values may be integer or floating-point scalars or vectors thereof.
+
+```text
+%value: TYPE = load_buffer @name, %offset
+store_buffer @name, %offset, %value
+```
 
 ## Constants
 
@@ -188,8 +208,8 @@ metadata. They are not terminators and do not create graph edges themselves.
 ## Common instruction rules
 
 An instruction belongs to one block, has zero or one result, and may carry a
-source location. Except for `store_interface` and `call`, current operations are
-treated as side-effect free by the rewriter. A block's terminator is stored
+source location. Except for `store_interface`, `store_buffer`, and `call`, current
+operations are treated as side-effect free by the rewriter. A block's terminator is stored
 separately from its ordinary instructions.
 
 Most arithmetic operations are intended for scalars or vectors of their named
@@ -378,6 +398,28 @@ store_interface @out_color, %1
 The stored value must equal the interface variable's type. As with
 `load_interface`, an optional unprinted `element_index` is reserved for later
 arrayed-interface work. This operation has side effects.
+
+### `load_buffer`
+
+Reads a numeric scalar or vector at an explicit byte offset. The resource must
+be a storage buffer, the byte offset must be a scalar unsigned integer, and the
+instruction must have a result. The result type is independent of the resource's
+block or payload aggregate type.
+
+```text
+%value: u32 = load_buffer @data, %offset
+```
+
+### `store_buffer`
+
+Writes a numeric scalar or vector to a storage buffer at an explicit byte
+offset. It produces no SSA result, and both the unsigned integer offset and
+stored value are ordinary value uses. The value type is independent of the
+resource's block or payload aggregate type. This operation has side effects.
+
+```text
+store_buffer @data, %offset, %value
+```
 
 ### `call`
 

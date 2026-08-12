@@ -22,6 +22,7 @@ pub fn lower(allocator: std.mem.Allocator, module: *module_ir.Module, parsed: *P
     var values: std.StringHashMapUnmanaged(ids.ValueId) = .empty;
     var constants: std.AutoHashMapUnmanaged(u32, ids.ConstantId) = .empty;
     var interfaces: std.StringHashMapUnmanaged(ids.InterfaceVariableId) = .empty;
+    var resources: std.StringHashMapUnmanaged(ids.ResourceId) = .empty;
     var functions: std.StringHashMapUnmanaged(ids.FunctionId) = .empty;
 
     for (parsed.interfaces.items) |interface| {
@@ -30,6 +31,14 @@ pub fn lower(allocator: std.mem.Allocator, module: *module_ir.Module, parsed: *P
 
         const id = try builder.addInterfaceVariable(interface.ty, interface.direction, interface.semantic, interface.name);
         try interfaces.put(allocator, interface.name, id);
+    }
+
+    for (parsed.resources.items) |resource| {
+        if (resources.contains(resource.name))
+            return error.DuplicateName;
+
+        const id = try builder.addResource(resource.ty, resource.kind, resource.set, resource.binding, resource.name);
+        try resources.put(allocator, resource.name, id);
     }
 
     for (parsed.constants.items, 0..) |constant, constant_index| {
@@ -94,7 +103,7 @@ pub fn lower(allocator: std.mem.Allocator, module: *module_ir.Module, parsed: *P
 
         for (function.blocks.items) |block| {
             for (block.instructions.items) |instruction| {
-                const lowered = try lowerOperation(allocator, module, &values, &interfaces, &functions, instruction.operation);
+                const lowered = try lowerOperation(allocator, module, &values, &interfaces, &resources, &functions, instruction.operation);
                 const result_type = instruction.result_type orelse lowered.inferred_type;
 
                 if (instruction.printed_result != null and result_type == null)
@@ -125,6 +134,7 @@ fn lowerOperation(
     module: *module_ir.Module,
     values: *const std.StringHashMapUnmanaged(ids.ValueId),
     interfaces: *const std.StringHashMapUnmanaged(ids.InterfaceVariableId),
+    resources: *const std.StringHashMapUnmanaged(ids.ResourceId),
     functions: *const std.StringHashMapUnmanaged(ids.FunctionId),
     parsed: ParsedOperation,
 ) !LoweredOperation {
@@ -246,6 +256,32 @@ fn lowerOperation(
                         .value = value,
                     },
                 },
+                .inferred_type = null,
+            };
+        },
+        .load_buffer => |op| blk: {
+            const resource_id = resources.get(op.resource_name) orelse return error.UnknownResource;
+            const byte_offset = resolveValue(values, op.byte_offset) orelse return error.UnknownValue;
+
+            break :blk .{
+                .operation = .{ .load_buffer = .{
+                    .resource = resource_id,
+                    .byte_offset = byte_offset,
+                } },
+                .inferred_type = null,
+            };
+        },
+        .store_buffer => |op| blk: {
+            const resource_id = resources.get(op.resource_name) orelse return error.UnknownResource;
+            const byte_offset = resolveValue(values, op.byte_offset) orelse return error.UnknownValue;
+            const value = resolveValue(values, op.value) orelse return error.UnknownValue;
+
+            break :blk .{
+                .operation = .{ .store_buffer = .{
+                    .resource = resource_id,
+                    .byte_offset = byte_offset,
+                    .value = value,
+                } },
                 .inferred_type = null,
             };
         },

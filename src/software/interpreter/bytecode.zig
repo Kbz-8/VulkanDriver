@@ -72,6 +72,8 @@ pub const Opcode = enum(u16) {
     compare_ordered_float_less,
     compare_unordered_float_less,
     select,
+    load_buffer,
+    store_buffer,
     jump_edge,
     branch,
     return_void,

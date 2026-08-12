@@ -408,6 +408,7 @@ const LoweringState = struct {
             .store_interface => |operation| try self.lowerStoreInterface(block_id, source_instruction.result, operation),
             .composite_construct => |operation| try self.lowerCompositeConstruct(source_instruction.result, operation),
             .composite_extract => |operation| try self.lowerCompositeExtract(source_instruction.result, operation),
+            .load_buffer, .store_buffer => return Error.UnsupportedOperation,
             .call => return Error.UnsanitizedModule,
         }
     }
@@ -1494,6 +1495,20 @@ test "[ir] Lower: unsupported operations" {
         \\    }
         \\}
     , Error.UnsupportedType);
+
+    try expectLoweringError(
+        \\shader vertex @main
+        \\{
+        \\    @storage: u32 = storage_buffer[set(0), binding(0)]
+        \\    %offset: constant u32 = 0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %value: u32 = load_buffer @storage, %offset
+        \\            return
+        \\    }
+        \\}
+    , Error.UnsupportedOperation);
 }
 
 test "[ir] Lower: unreachable terminator" {

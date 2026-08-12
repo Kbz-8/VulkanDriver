@@ -50,6 +50,28 @@ const Decorations = struct {
     component: u8 = 0,
     index: u8 = 0,
     builtin: ?u32 = null,
+    binding: ?u32 = null,
+    descriptor_set: ?u32 = null,
+    array_stride: ?u32 = null,
+    block: bool = false,
+    buffer_block: bool = false,
+};
+
+const MemberOffset = struct {
+    structure_id: u32,
+    member: u32,
+    offset: u32,
+};
+
+const BufferAddress = struct {
+    resource: ir.id.ResourceId,
+    byte_offset: ?ir.id.ValueId,
+    pointee_type: u32,
+};
+
+const LocalVariable = struct {
+    spv_id: u32,
+    type: ir.id.TypeId,
 };
 
 const PhiInfo = struct {
@@ -75,7 +97,17 @@ const Context = struct {
     values: []?ir.id.ValueId,
     blocks: []?ir.id.BlockId,
     interfaces: []?ir.id.InterfaceVariableId,
+    resources: []?ir.id.ResourceId,
+    buffer_addresses: []?BufferAddress,
+    member_offsets: std.ArrayList(MemberOffset) = .empty,
     phi_infos: std.ArrayList(PhiInfo) = .empty,
+
+    local_indices: []?usize,
+    locals: std.ArrayList(LocalVariable) = .empty,
+    block_local_inputs: []?ir.id.ValueId,
+    block_local_outputs: []?ir.id.ValueId,
+    current_locals: []?ir.id.ValueId,
+    entry_label: ?u32 = null,
 
     fn idIndex(self: *const Context, id: u32) TranslationError!usize {
         if (id == 0 or id >= self.bound)
@@ -345,6 +377,22 @@ const Context = struct {
         const index = try self.idIndex(spv_id);
         return self.interfaces[index] orelse error.UnsupportedOpcode;
     }
+
+    fn bufferAddress(self: *const Context, spv_id: u32) TranslationError!?BufferAddress {
+        const index = try self.idIndex(spv_id);
+        return self.buffer_addresses[index];
+    }
+
+    fn localIndex(self: *const Context, spv_id: u32) TranslationError!?usize {
+        const index = try self.idIndex(spv_id);
+        return self.local_indices[index];
+    }
+
+    fn blockLocalIndex(self: *const Context, label: u32, local_index: usize) TranslationError!usize {
+        const label_index = try self.idIndex(label);
+        const base = std.math.mul(usize, label_index, self.locals.items.len) catch return error.InvalidInstruction;
+        return std.math.add(usize, base, local_index) catch return error.InvalidInstruction;
+    }
 };
 
 /// Translates one entry point from a retained SPIR-V source into an independent
@@ -379,12 +427,21 @@ pub fn instantiate(allocator: std.mem.Allocator, source: *const SourceModule, op
         .values = try allocOptional(ir.id.ValueId, scratch, bound),
         .blocks = try allocOptional(ir.id.BlockId, scratch, bound),
         .interfaces = try allocOptional(ir.id.InterfaceVariableId, scratch, bound),
+        .resources = try allocOptional(ir.id.ResourceId, scratch, bound),
+        .buffer_addresses = try allocOptional(BufferAddress, scratch, bound),
+        .local_indices = try allocOptional(usize, scratch, bound),
+        .block_local_inputs = try allocOptional(ir.id.ValueId, scratch, 0),
+        .block_local_outputs = try allocOptional(ir.id.ValueId, scratch, 0),
+        .current_locals = try allocOptional(ir.id.ValueId, scratch, 0),
     };
     @memset(context.decorations, .{});
+    defer context.member_offsets.deinit(scratch);
     defer context.phi_infos.deinit(scratch);
+    defer context.locals.deinit(scratch);
 
     try collectDeclarations(&context);
     try translateInterfaces(&context, entry_point.interface_ids);
+    try translateResources(&context);
     try applyExecutionModes(&context, entry_point.function_id);
     try translateFunction(&context, entry_point.function_id, options.entry_point);
     try ir.validator.validate(&module);
@@ -437,6 +494,10 @@ fn collectDeclarations(context: *Context) !void {
         }
         if (instruction.opcode == .decorate) {
             try collectDecoration(context, operands);
+            continue;
+        }
+        if (instruction.opcode == .member_decorate) {
+            try collectMemberDecoration(context, operands);
         }
     }
 }
@@ -470,8 +531,45 @@ fn collectDecoration(context: *Context, operands: []const u32) !void {
             if (operands[2] > std.math.maxInt(u8)) return error.InvalidInstruction;
             context.decorations[index].index = @intCast(operands[2]);
         },
+        .binding => {
+            try expectOperandCount(operands, 3);
+            context.decorations[index].binding = operands[2];
+        },
+        .descriptor_set => {
+            try expectOperandCount(operands, 3);
+            context.decorations[index].descriptor_set = operands[2];
+        },
+        .array_stride => {
+            try expectOperandCount(operands, 3);
+            context.decorations[index].array_stride = operands[2];
+        },
+        .block => {
+            try expectOperandCount(operands, 2);
+            context.decorations[index].block = true;
+        },
+        .buffer_block => {
+            try expectOperandCount(operands, 2);
+            context.decorations[index].buffer_block = true;
+        },
         else => {},
     }
+}
+
+fn collectMemberDecoration(context: *Context, operands: []const u32) !void {
+    if (operands.len < 3)
+        return error.InvalidInstruction;
+
+    const decoration: spirv.Decoration = @enumFromInt(operands[2]);
+    if (decoration != .offset)
+        return;
+
+    try expectOperandCount(operands, 4);
+    _ = try context.idIndex(operands[0]);
+    try context.member_offsets.append(context.scratch, .{
+        .structure_id = operands[0],
+        .member = operands[1],
+        .offset = operands[3],
+    });
 }
 
 fn translateInterfaces(context: *Context, interface_ids: []const u32) !void {
@@ -527,6 +625,52 @@ fn translateInterfaces(context: *Context, interface_ids: []const u32) !void {
             context.nameOf(spv_id),
         );
     }
+}
+
+fn translateResources(context: *Context) !void {
+    for (context.variable_defs, 0..) |optional_variable, spv_index| {
+        const variable = optional_variable orelse continue;
+        if (variable.operands.len < 3 or variable.operands.len > 4)
+            return error.InvalidInstruction;
+
+        const storage_class: spirv.StorageClass = @enumFromInt(variable.operands[2]);
+        if (storage_class != .uniform and storage_class != .storage_buffer)
+            continue;
+
+        const pointer = context.type_defs[try context.idIndex(variable.operands[0])] orelse return error.MissingDefinition;
+        if (pointer.opcode != .type_pointer)
+            return error.InvalidInstruction;
+        try expectOperandCount(pointer.operands, 3);
+        if (pointer.operands[1] != variable.operands[2])
+            return error.InvalidInstruction;
+
+        const pointee_id = pointer.operands[2];
+        const pointee_decoration = context.decorations[try context.idIndex(pointee_id)];
+        const kind: ir.types.ResourceKind = if (storage_class == .storage_buffer or pointee_decoration.buffer_block)
+            .storage_buffer
+        else if (pointee_decoration.block)
+            .uniform_buffer
+        else
+            continue;
+
+        const variable_decoration = context.decorations[spv_index];
+        const resource = try context.builder.addResource(
+            try context.translateType(pointee_id),
+            kind,
+            variable_decoration.descriptor_set orelse return error.InvalidInstruction,
+            variable_decoration.binding orelse return error.InvalidInstruction,
+            context.nameOf(@intCast(spv_index)),
+        );
+        context.resources[spv_index] = resource;
+        context.buffer_addresses[spv_index] = .{
+            .resource = resource,
+            .byte_offset = null,
+            .pointee_type = pointee_id,
+        };
+    }
+
+    if (context.module.resources.entries.items.len != 0)
+        context.module.properties.explicit_resource_offsets = true;
 }
 
 fn findEntryPoint(parser: Parser, requested_name: []const u8, requested_stage: ?ir.module.Stage) !EntryPoint {
@@ -608,9 +752,56 @@ fn translateFunction(context: *Context, spv_function: u32, entry_name: []const u
     );
     context.builder.setEntryPoint(function);
 
+    try collectFunctionLocals(context, spv_function);
     try predeclareFunction(context, spv_function, function, function_type.operands[2..]);
     try translateFunctionInstructions(context, spv_function);
     try translateFunctionControlFlow(context, spv_function);
+}
+
+fn collectFunctionLocals(context: *Context, spv_function: u32) !void {
+    var active = false;
+    var iterator = context.parser.iterator();
+    while (try iterator.next()) |instruction| {
+        if (instruction.opcode == .function) {
+            active = instruction.operands.len >= 2 and instruction.operands[1] == spv_function;
+            continue;
+        }
+        if (!active)
+            continue;
+        if (instruction.opcode == .function_end)
+            break;
+        if (instruction.opcode != .variable)
+            continue;
+
+        try expectOperandCount(instruction.operands, 3);
+        const storage_class: spirv.StorageClass = @enumFromInt(instruction.operands[2]);
+        if (storage_class != .function)
+            return error.UnsupportedOpcode;
+
+        const pointer = context.type_defs[try context.idIndex(instruction.operands[0])] orelse return error.MissingDefinition;
+        if (pointer.opcode != .type_pointer)
+            return error.InvalidInstruction;
+        try expectOperandCount(pointer.operands, 3);
+        if (pointer.operands[1] != instruction.operands[2])
+            return error.InvalidInstruction;
+
+        const result_id = instruction.operands[1];
+        const result_index = try context.idIndex(result_id);
+        if (context.local_indices[result_index] != null)
+            return error.DuplicateId;
+
+        context.local_indices[result_index] = context.locals.items.len;
+        try context.locals.append(context.scratch, .{
+            .spv_id = result_id,
+            .type = try context.translateType(pointer.operands[2]),
+        });
+    }
+
+    const matrix_len = std.math.mul(usize, context.bound, context.locals.items.len) catch return error.InvalidInstruction;
+    context.block_local_inputs = try allocOptional(ir.id.ValueId, context.scratch, matrix_len);
+    context.block_local_outputs = try allocOptional(ir.id.ValueId, context.scratch, matrix_len);
+    context.current_locals = try allocOptional(ir.id.ValueId, context.scratch, context.locals.items.len);
+    context.module.properties.no_local_memory = true;
 }
 
 fn predeclareFunction(context: *Context, spv_function: u32, function: ir.id.FunctionId, parameter_types: []const u32) !void {
@@ -652,6 +843,18 @@ fn predeclareFunction(context: *Context, spv_function: u32, function: ir.id.Func
                     return error.DuplicateId;
 
                 context.blocks[index] = try context.builder.addBlock(function, context.nameOf(label_id));
+                if (context.entry_label == null) {
+                    context.entry_label = label_id;
+                } else {
+                    for (context.locals.items, 0..) |local, local_index| {
+                        const value = try context.builder.addBlockParameter(
+                            context.blocks[index].?,
+                            local.type,
+                            context.nameOf(local.spv_id),
+                        );
+                        context.block_local_inputs[try context.blockLocalIndex(label_id, local_index)] = value;
+                    }
+                }
                 current_label = label_id;
             },
             .phi => {
@@ -682,6 +885,7 @@ fn predeclareFunction(context: *Context, spv_function: u32, function: ir.id.Func
 
 fn translateFunctionInstructions(context: *Context, spv_function: u32) !void {
     var active = false;
+    var current_label: ?u32 = null;
     var current_block: ?ir.id.BlockId = null;
     var iterator = context.parser.iterator();
 
@@ -695,7 +899,21 @@ fn translateFunctionInstructions(context: *Context, spv_function: u32) !void {
             continue;
 
         switch (instruction.opcode) {
-            .label => current_block = try context.block(instruction.operands[0]),
+            .label => {
+                try expectOperandCount(instruction.operands, 1);
+                if (current_label) |label|
+                    try saveBlockLocals(context, label);
+
+                const label = instruction.operands[0];
+                current_label = label;
+                current_block = try context.block(label);
+                for (context.current_locals, 0..) |*current, local_index| {
+                    current.* = if (label == context.entry_label.?)
+                        null
+                    else
+                        context.block_local_inputs[try context.blockLocalIndex(label, local_index)];
+                }
+            },
 
             .function_parameter,
             .phi,
@@ -709,7 +927,13 @@ fn translateFunctionInstructions(context: *Context, spv_function: u32) !void {
             .@"unreachable",
             => {},
 
-            .function_end => break,
+            .function_end => {
+                if (current_label) |label|
+                    try saveBlockLocals(context, label);
+                break;
+            },
+
+            .variable => {},
 
             .nop,
             .line,
@@ -719,6 +943,11 @@ fn translateFunctionInstructions(context: *Context, spv_function: u32) !void {
             else => try translateInstruction(context, current_block orelse return error.InvalidBlock, instruction),
         }
     }
+}
+
+fn saveBlockLocals(context: *Context, label: u32) !void {
+    for (context.current_locals, 0..) |value, local_index|
+        context.block_local_outputs[try context.blockLocalIndex(label, local_index)] = value;
 }
 
 fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Parser.Instruction) !void {
@@ -741,24 +970,58 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             if (operands.len < 3)
                 return error.InvalidInstruction;
 
-            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
-                .load_interface = .{ .variable = try context.interfaceVariable(operands[2]) },
-            }, context.nameOf(operands[1]))).?;
-
-            try context.setValue(operands[1], result);
+            const result_type = try context.translateType(operands[0]);
+            if (try context.localIndex(operands[2])) |local_index| {
+                const value = context.current_locals[local_index] orelse return error.InvalidInstruction;
+                if (context.module.typeOf(value) != result_type)
+                    return error.InvalidInstruction;
+                try context.setValue(operands[1], value);
+            } else if (try context.bufferAddress(operands[2])) |address| {
+                const result = (try context.builder.appendInstruction(block, result_type, .{
+                    .load_buffer = .{
+                        .resource = address.resource,
+                        .byte_offset = try bufferByteOffset(context, address),
+                    },
+                }, context.nameOf(operands[1]))).?;
+                try context.setValue(operands[1], result);
+            } else {
+                const result = (try context.builder.appendInstruction(block, result_type, .{
+                    .load_interface = .{ .variable = try context.interfaceVariable(operands[2]) },
+                }, context.nameOf(operands[1]))).?;
+                try context.setValue(operands[1], result);
+            }
         },
         .store => {
             if (operands.len < 2)
                 return error.InvalidInstruction;
 
-            _ = try context.builder.appendInstruction(block, null, .{
-                .store_interface = .{
-                    .variable = try context.interfaceVariable(operands[0]),
-                    .value = try context.resolveValue(operands[1]),
-                },
-            }, null);
+            const value = try context.resolveValue(operands[1]);
+            if (try context.localIndex(operands[0])) |local_index| {
+                if (context.module.typeOf(value) != context.locals.items[local_index].type)
+                    return error.InvalidInstruction;
+                context.current_locals[local_index] = value;
+            } else if (try context.bufferAddress(operands[0])) |address| {
+                _ = try context.builder.appendInstruction(block, null, .{
+                    .store_buffer = .{
+                        .resource = address.resource,
+                        .byte_offset = try bufferByteOffset(context, address),
+                        .value = value,
+                    },
+                }, null);
+            } else {
+                _ = try context.builder.appendInstruction(block, null, .{
+                    .store_interface = .{
+                        .variable = try context.interfaceVariable(operands[0]),
+                        .value = value,
+                    },
+                }, null);
+            }
         },
-        .s_negate, .f_negate, .logical_not => {
+        .access_chain => try translateAccessChain(context, block, operands),
+        .s_negate,
+        .f_negate,
+        .logical_not,
+        => {
             try expectOperandCount(operands, 3);
 
             const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
@@ -882,8 +1145,133 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
         },
         .function_call => return error.UnsupportedOpcode,
 
-        else => return error.UnsupportedOpcode,
+        else => {
+            if (std.enums.tagName(spirv.Opcode, instruction.opcode)) |opcode| {
+                std.log.scoped(.spirv_translator).err("unsupported opcode {s}", .{opcode});
+            } else {
+                std.log.scoped(.spirv_translator).err("unsupported opcode {d}", .{instruction.opcode});
+            }
+            return error.UnsupportedOpcode;
+        },
     }
+}
+
+fn translateAccessChain(context: *Context, block: ir.id.BlockId, operands: []const u32) !void {
+    if (operands.len < 4)
+        return error.InvalidInstruction;
+
+    const base = (try context.bufferAddress(operands[2])) orelse return error.UnsupportedOpcode;
+    var current_type = base.pointee_type;
+    var byte_offset = base.byte_offset;
+
+    for (operands[3..]) |index_id| {
+        const type_definition = context.type_defs[try context.idIndex(current_type)] orelse return error.MissingDefinition;
+        switch (type_definition.opcode) {
+            .type_struct => {
+                const member = try constantIndex(context, index_id);
+                if (member + 1 >= type_definition.operands.len)
+                    return error.InvalidInstruction;
+
+                const member_offset = try findMemberOffset(context, current_type, member);
+                if (member_offset != 0) {
+                    const offset_value = try context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = member_offset });
+                    byte_offset = try addByteOffset(context, block, byte_offset, offset_value);
+                }
+                current_type = type_definition.operands[member + 1];
+            },
+            .type_array => {
+                try expectOperandCount(type_definition.operands, 3);
+                const stride = context.decorations[try context.idIndex(current_type)].array_stride orelse return error.InvalidInstruction;
+                const index = try unsignedOffsetValue(context, block, index_id);
+                const stride_value = try context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = stride });
+                const term = (try context.builder.appendInstruction(block, try unsigned32Type(context), .{
+                    .binary = .{
+                        .opcode = .integer_multiply,
+                        .lhs = index,
+                        .rhs = stride_value,
+                    },
+                }, null)).?;
+                byte_offset = try addByteOffset(context, block, byte_offset, term);
+                current_type = type_definition.operands[1];
+            },
+            else => return error.UnsupportedType,
+        }
+    }
+
+    const result_pointer = context.type_defs[try context.idIndex(operands[0])] orelse return error.MissingDefinition;
+    if (result_pointer.opcode != .type_pointer)
+        return error.InvalidInstruction;
+    try expectOperandCount(result_pointer.operands, 3);
+    if (result_pointer.operands[2] != current_type)
+        return error.InvalidInstruction;
+
+    const result_index = try context.idIndex(operands[1]);
+    if (context.buffer_addresses[result_index] != null)
+        return error.DuplicateId;
+    context.buffer_addresses[result_index] = .{
+        .resource = base.resource,
+        .byte_offset = byte_offset,
+        .pointee_type = current_type,
+    };
+}
+
+fn unsigned32Type(context: *Context) !ir.id.TypeId {
+    return context.builder.internType(.{ .integer = .{ .bits = 32, .signedness = .unsigned } });
+}
+
+fn unsignedOffsetValue(context: *Context, block: ir.id.BlockId, spv_id: u32) !ir.id.ValueId {
+    const value = try context.resolveValue(spv_id);
+    const type_id = context.module.typeOf(value) orelse return error.InvalidId;
+    const ty = context.module.types.get(type_id) orelse return error.InvalidId;
+    const integer = switch (ty.*) {
+        .integer => |integer| integer,
+        else => return error.UnsupportedType,
+    };
+    if (integer.bits != 32)
+        return error.UnsupportedType;
+    if (integer.signedness == .unsigned)
+        return value;
+
+    return (try context.builder.appendInstruction(block, try unsigned32Type(context), .{
+        .bitcast = value,
+    }, null)).?;
+}
+
+fn addByteOffset(context: *Context, block: ir.id.BlockId, current: ?ir.id.ValueId, term: ir.id.ValueId) !ir.id.ValueId {
+    const lhs = current orelse return term;
+    return (try context.builder.appendInstruction(block, try unsigned32Type(context), .{
+        .binary = .{
+            .opcode = .integer_add,
+            .lhs = lhs,
+            .rhs = term,
+        },
+    }, null)).?;
+}
+
+fn bufferByteOffset(context: *Context, address: BufferAddress) !ir.id.ValueId {
+    return address.byte_offset orelse context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = 0 });
+}
+
+fn constantIndex(context: *Context, spv_id: u32) !u32 {
+    const value = context.module.values.get(try context.resolveValue(spv_id)) orelse return error.InvalidId;
+    if (value.definition != .constant)
+        return error.InvalidInstruction;
+    const constant = context.module.constants.get(value.definition.constant) orelse return error.InvalidId;
+    if (constant.value != .integer_bits or constant.value.integer_bits > std.math.maxInt(u32))
+        return error.InvalidInstruction;
+    return @intCast(constant.value.integer_bits);
+}
+
+fn findMemberOffset(context: *const Context, structure_id: u32, member: u32) !u32 {
+    var found: ?u32 = null;
+    for (context.member_offsets.items) |entry| {
+        if (entry.structure_id != structure_id or entry.member != member)
+            continue;
+        if (found != null)
+            return error.InvalidInstruction;
+        found = entry.offset;
+    }
+    return found orelse error.InvalidInstruction;
 }
 
 fn translateFunctionControlFlow(context: *Context, spv_function: u32) !void {
@@ -970,6 +1358,13 @@ fn translateFunctionControlFlow(context: *Context, spv_function: u32) !void {
 fn makeEdge(context: *Context, predecessor_label: u32, target_label: u32) !ir.module.Edge {
     var arguments: std.ArrayList(ir.id.ValueId) = .empty;
     defer arguments.deinit(context.scratch);
+
+    if (target_label != context.entry_label.?) {
+        for (context.locals.items, 0..) |_, local_index| {
+            const value = context.block_local_outputs[try context.blockLocalIndex(predecessor_label, local_index)] orelse return error.InvalidInstruction;
+            try arguments.append(context.scratch, value);
+        }
+    }
 
     for (context.phi_infos.items) |phi| {
         if (phi.target_label != target_label)
@@ -1308,6 +1703,106 @@ test "SPIR-V: decorated vertex interfaces and load-store operations" {
     try std.testing.expect(std.mem.indexOf(u8, text, "store_interface @out_color") != null);
 }
 
+test "SPIR-V: storage buffers and promoted function locals" {
+    const assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint GLCompute %main "main"
+        \\OpExecutionMode %main LocalSize 1 1 1
+        \\OpName %index "index"
+        \\OpName %source "source"
+        \\OpName %destination "destination"
+        \\OpDecorate %source_array ArrayStride 16
+        \\OpDecorate %Source BufferBlock
+        \\OpMemberDecorate %Source 0 Offset 0
+        \\OpDecorate %source Binding 0
+        \\OpDecorate %source DescriptorSet 0
+        \\OpDecorate %destination_array ArrayStride 16
+        \\OpDecorate %Destination BufferBlock
+        \\OpMemberDecorate %Destination 0 Offset 0
+        \\OpDecorate %destination Binding 1
+        \\OpDecorate %destination DescriptorSet 0
+        \\%void = OpTypeVoid
+        \\%fn_void = OpTypeFunction %void
+        \\%int = OpTypeInt 32 1
+        \\%uint = OpTypeInt 32 0
+        \\%bool = OpTypeBool
+        \\%vec4 = OpTypeVector %uint 4
+        \\%uint_4 = OpConstant %uint 4
+        \\%source_array = OpTypeArray %vec4 %uint_4
+        \\%destination_array = OpTypeArray %vec4 %uint_4
+        \\%Source = OpTypeStruct %source_array
+        \\%Destination = OpTypeStruct %destination_array
+        \\%ptr_uniform_source = OpTypePointer Uniform %Source
+        \\%ptr_uniform_destination = OpTypePointer Uniform %Destination
+        \\%ptr_uniform_vec4 = OpTypePointer Uniform %vec4
+        \\%ptr_function_int = OpTypePointer Function %int
+        \\%int_0 = OpConstant %int 0
+        \\%int_1 = OpConstant %int 1
+        \\%int_4 = OpConstant %int 4
+        \\%source = OpVariable %ptr_uniform_source Uniform
+        \\%destination = OpVariable %ptr_uniform_destination Uniform
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    %index = OpVariable %ptr_function_int Function
+        \\    OpStore %index %int_0
+        \\    OpBranch %header
+        \\    %header = OpLabel
+        \\    OpLoopMerge %exit %continue None
+        \\    OpBranch %condition
+        \\    %condition = OpLabel
+        \\    %current = OpLoad %int %index
+        \\    %less = OpSLessThan %bool %current %int_4
+        \\    OpBranchConditional %less %body %exit
+        \\    %body = OpLabel
+        \\    %source_index = OpLoad %int %index
+        \\    %source_ptr = OpAccessChain %ptr_uniform_vec4 %source %int_0 %source_index
+        \\    %value = OpLoad %vec4 %source_ptr
+        \\    %destination_index = OpLoad %int %index
+        \\    %destination_ptr = OpAccessChain %ptr_uniform_vec4 %destination %int_0 %destination_index
+        \\    OpStore %destination_ptr %value
+        \\    OpBranch %continue
+        \\    %continue = OpLabel
+        \\    %old_index = OpLoad %int %index
+        \\    %next_index = OpIAdd %int %old_index %int_1
+        \\    OpStore %index %next_index
+        \\    OpBranch %header
+        \\    %exit = OpLabel
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), module.resources.entries.items.len);
+    try std.testing.expect(module.properties.explicit_resource_offsets);
+    try std.testing.expect(module.properties.no_local_memory);
+
+    const source = module.resources.get(ir.id.ResourceId.fromIndex(0)).?;
+    const destination = module.resources.get(ir.id.ResourceId.fromIndex(1)).?;
+    try std.testing.expectEqual(ir.types.ResourceKind.storage_buffer, source.kind);
+    try std.testing.expectEqual(@as(u32, 0), source.binding);
+    try std.testing.expectEqual(@as(u32, 1), destination.binding);
+
+    const function = module.functions.get(module.entry_point.?).?;
+    try std.testing.expectEqual(@as(usize, 6), function.blocks.items.len);
+    try std.testing.expectEqual(@as(usize, 0), module.blocks.get(function.blocks.items[0]).?.parameters.items.len);
+    for (function.blocks.items[1..]) |block_id|
+        try std.testing.expectEqual(@as(usize, 1), module.blocks.get(block_id).?.parameters.items.len);
+
+    const text = try ir.printer.allocPrint(std.testing.allocator, &module);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "@source: struct[array[vec4[u32], 4]] = storage_buffer[set(0), binding(0)]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "load_buffer @source") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "store_buffer @destination") != null);
+
+    var parsed = try ir.parser.parseString(std.testing.allocator, text);
+    defer parsed.deinit();
+}
+
 test "SPIR-V: fragment execution modes and translated properties" {
     const assembly =
         \\OpCapability Shader
@@ -1568,6 +2063,34 @@ test "SPIR-V: operation mappings to backend-agnostic IR" {
 
     const extract = module.instructions.get(block.instructions.items[6]).?;
     try std.testing.expectEqualSlices(u32, &.{1}, extract.operation.composite_extract.indices);
+}
+
+test "SPIR-V: unknown opcode reports an error without formatting the enum" {
+    const assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint GLCompute %main "main"
+        \\OpExecutionMode %main LocalSize 1 1 1
+        \\%void = OpTypeVoid
+        \\%fn_void = OpTypeFunction %void
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    OpNop
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    const nop_word: u32 = (@as(u32, 1) << 16) | @intFromEnum(spirv.Opcode.nop);
+    for (words[spirv.header_word_count..]) |*word| {
+        if (word.* != nop_word)
+            continue;
+        word.* = (@as(u32, 1) << 16) | 999;
+        break;
+    } else return error.MissingNop;
+
+    try std.testing.expectError(error.UnsupportedOpcode, translate(std.testing.allocator, words, .{ .entry_point = "main" }));
 }
 
 test "SPIR-V: structured loop and OpPhi back edge" {

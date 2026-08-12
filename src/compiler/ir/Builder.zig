@@ -169,6 +169,16 @@ pub fn addInterfaceVariable(
     });
 }
 
+pub fn addResource(self: *Self, ty: ids.TypeId, kind: type_ir.ResourceKind, set: u32, binding: u32, name: ?[]const u8) !ids.ResourceId {
+    return self.module.resources.add(self.module.allocator(), .{
+        .kind = kind,
+        .set = set,
+        .binding = binding,
+        .type = ty,
+        .name = try self.copyName(name),
+    });
+}
+
 pub fn edge(self: *Self, target: ids.BlockId, arguments: []const ids.ValueId) !module_ir.Edge {
     return .{
         .target = target,

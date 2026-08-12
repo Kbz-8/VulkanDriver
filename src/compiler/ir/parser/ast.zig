@@ -2,12 +2,14 @@ const std = @import("std");
 const ids = @import("../id.zig");
 const inst_ir = @import("../instruction.zig");
 const module_ir = @import("../module.zig");
+const type_ir = @import("../type.zig");
 
 pub const ValueRef = []const u8;
 
 pub const ParsedModule = struct {
     entry_point_name: ?[]const u8,
     interfaces: std.ArrayList(ParsedInterface) = .empty,
+    resources: std.ArrayList(ParsedResource) = .empty,
     constants: std.ArrayList(ParsedConstant) = .empty,
     functions: std.ArrayList(ParsedFunction) = .empty,
 };
@@ -17,6 +19,14 @@ pub const ParsedInterface = struct {
     name: []const u8,
     ty: ids.TypeId,
     semantic: module_ir.InterfaceSemantic,
+};
+
+pub const ParsedResource = struct {
+    kind: type_ir.ResourceKind,
+    name: []const u8,
+    ty: ids.TypeId,
+    set: u32,
+    binding: u32,
 };
 
 pub const ParsedConstantValue = union(enum) {
@@ -89,5 +99,7 @@ pub const ParsedOperation = union(enum) {
     composite_extract: struct { composite: ValueRef, indices: []const u32 },
     load_interface: []const u8,
     store_interface: struct { interface_name: []const u8, value: ValueRef },
+    load_buffer: struct { resource_name: []const u8, byte_offset: ValueRef },
+    store_buffer: struct { resource_name: []const u8, byte_offset: ValueRef, value: ValueRef },
     call: struct { function_name: []const u8, arguments: []const ValueRef },
 };

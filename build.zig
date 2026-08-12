@@ -218,8 +218,10 @@ pub fn build(b: *std.Build) !void {
         test_step.dependOn(&run_tests.step);
 
         inline for (std.enums.values(RunningMode)) |mode| {
-            (try addCTS(b, target, &impl, lib, mode)).dependOn(&lib_install.step);
-            (try addMultithreadedCTS(b, target, &impl, lib, mode)).dependOn(&lib_install.step);
+            if (addCTS(b, target, &impl, lib, mode) catch null) |step|
+                step.dependOn(&lib_install.step);
+            if (addMultithreadedCTS(b, target, &impl, lib, mode) catch null) |step|
+                step.dependOn(&lib_install.step);
         }
 
         const impl_autodoc_test = b.addObject(.{

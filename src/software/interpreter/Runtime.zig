@@ -6,10 +6,13 @@ const Program = @import("Program.zig");
 const ids = shader_ir.ir.id;
 
 pub const RuntimeError = error{
+    BufferOutOfBounds,
     DivisionByZero,
     IntegerOverflow,
     InvalidBytecode,
     InvalidInterface,
+    InvalidResource,
+    ResourceNotBound,
     ShiftOutOfRange,
     StepLimitExceeded,
     UnreachableExecuted,
@@ -24,6 +27,7 @@ pub const Outcome = enum {
 
 pub const RunOptions = struct {
     max_steps: usize = 1_000_000,
+    resource_buffers: []const ?[]u8 = &.{},
 };
 
 const Self = @This();
@@ -126,6 +130,8 @@ pub fn run(self: *Self, program: *const Program, options: RunOptions) RuntimeErr
             .compare_ordered_float_less => self.compareFloat(instruction, .ordered_less),
             .compare_unordered_float_less => self.compareFloat(instruction, .unordered_less),
             .select => self.select(instruction),
+            .load_buffer => try self.loadBuffer(program, options.resource_buffers, instruction),
+            .store_buffer => try self.storeBuffer(program, options.resource_buffers, instruction),
             .jump_edge => pc = try self.applyEdge(program, instruction.immediate),
             .branch => {
                 if (instruction.immediate >= program.branches.len)
@@ -276,6 +282,52 @@ fn select(self: *Self, instruction: bc.Instruction) void {
     const selected = if (self.registers[instruction.b] != 0) instruction.c else instruction.d;
     for (0..instruction.components) |component|
         self.registers[@as(usize, instruction.a) + component] = self.registers[@as(usize, selected) + component];
+}
+
+fn loadBuffer(self: *Self, program: *const Program, resource_buffers: []const ?[]u8, instruction: bc.Instruction) RuntimeError!void {
+    try self.validateRegisterSpan(instruction);
+    const buffer = try resourceBuffer(program, resource_buffers, instruction.immediate);
+    const bytes = try self.bufferRange(buffer, instruction);
+    for (0..instruction.components) |component| {
+        const offset = component * @sizeOf(u32);
+        self.registers[@as(usize, instruction.a) + component] = std.mem.readInt(u32, bytes[offset..][0..@sizeOf(u32)], .little);
+    }
+}
+
+fn storeBuffer(self: *const Self, program: *const Program, resource_buffers: []const ?[]u8, instruction: bc.Instruction) RuntimeError!void {
+    try self.validateRegisterSpan(instruction);
+    const buffer = try resourceBuffer(program, resource_buffers, instruction.immediate);
+    const bytes = try self.bufferRange(buffer, instruction);
+    for (0..instruction.components) |component| {
+        const offset = component * @sizeOf(u32);
+        std.mem.writeInt(u32, bytes[offset..][0..@sizeOf(u32)], self.registers[@as(usize, instruction.a) + component], .little);
+    }
+}
+
+fn validateRegisterSpan(self: *const Self, instruction: bc.Instruction) RuntimeError!void {
+    const register_end = std.math.add(usize, instruction.a, instruction.components) catch return RuntimeError.InvalidBytecode;
+    if (register_end > self.registers.len)
+        return RuntimeError.InvalidBytecode;
+}
+
+fn bufferRange(self: *const Self, buffer: []u8, instruction: bc.Instruction) RuntimeError![]u8 {
+    if (instruction.b >= self.registers.len)
+        return RuntimeError.InvalidBytecode;
+
+    const byte_offset: usize = self.registers[instruction.b];
+    const byte_count = std.math.mul(usize, instruction.components, @sizeOf(u32)) catch return RuntimeError.BufferOutOfBounds;
+    const end = std.math.add(usize, byte_offset, byte_count) catch return RuntimeError.BufferOutOfBounds;
+    if (end > buffer.len)
+        return RuntimeError.BufferOutOfBounds;
+    return buffer[byte_offset..end];
+}
+
+fn resourceBuffer(program: *const Program, resource_buffers: []const ?[]u8, resource_index: u32) RuntimeError![]u8 {
+    const resource = ids.ResourceId.fromIndex(resource_index);
+    _ = program.resourceBinding(resource) orelse return RuntimeError.InvalidResource;
+    if (resource.index() >= resource_buffers.len)
+        return RuntimeError.ResourceNotBound;
+    return resource_buffers[resource.index()] orelse RuntimeError.ResourceNotBound;
 }
 
 fn applyEdge(self: *Self, program: *const Program, edge_index: u32) RuntimeError!u32 {

@@ -4,11 +4,13 @@ const base = @import("base");
 const lib = @import("../lib.zig");
 const spv = @import("spv");
 
+const VkError = base.VkError;
+
 const SoftDescriptorSet = @import("../SoftDescriptorSet.zig");
 const SoftDevice = @import("../SoftDevice.zig");
 const SoftPipeline = @import("../SoftPipeline.zig");
 
-const ComputeDispatcher = @import("ComputeDispatcher.zig");
+const ComputeDispatcher = @import("compute/ComputeDispatcher.zig");
 const Renderer = @import("Renderer.zig");
 
 const Self = @This();
@@ -35,6 +37,46 @@ pub const PipelineState = struct {
         },
     },
 };
+
+pub fn mapStorageBuffer(state: *const PipelineState, set: u32, binding: u32) VkError!?[]u8 {
+    const set_index: usize = set;
+    if (set_index >= state.sets.len)
+        return null;
+    const descriptor_set = state.sets[set_index] orelse return null;
+
+    const binding_index: usize = binding;
+    if (binding_index >= descriptor_set.descriptors.len or binding_index >= descriptor_set.interface.layout.bindings.len)
+        return null;
+
+    const binding_layout = descriptor_set.interface.layout.bindings[binding_index];
+    const dynamic_offset: vk.DeviceSize = switch (binding_layout.descriptor_type) {
+        .storage_buffer_dynamic => blk: {
+            if (binding_layout.dynamic_index >= state.dynamic_offsets[set_index].len)
+                return VkError.ValidationFailed;
+            break :blk state.dynamic_offsets[set_index][binding_layout.dynamic_index];
+        },
+        .storage_buffer => 0,
+        else => return null,
+    };
+
+    const descriptors = switch (descriptor_set.descriptors[binding_index]) {
+        .buffer => |descriptors| descriptors,
+        else => return null,
+    };
+    if (descriptors.len == 0)
+        return null;
+
+    const descriptor = descriptors[0];
+    const buffer = descriptor.object orelse return null;
+    const effective_offset = std.math.add(vk.DeviceSize, descriptor.offset, dynamic_offset) catch return VkError.ValidationFailed;
+    if (effective_offset > buffer.interface.size)
+        return VkError.ValidationFailed;
+
+    const logical_remaining = buffer.interface.size - effective_offset;
+    if (descriptor.size > logical_remaining)
+        return VkError.ValidationFailed;
+    return try buffer.mapAsSliceWithAddedOffset(u8, effective_offset, descriptor.size);
+}
 
 compute: ComputeDispatcher,
 renderer: Renderer,

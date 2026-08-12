@@ -26,6 +26,7 @@ pub const Error = error{
     UnknownConstant,
     UnknownFunction,
     UnknownInterface,
+    UnknownResource,
     UnknownValue,
 };
 
@@ -34,6 +35,7 @@ pub const max_file_size = 64 * 1024 * 1024;
 const ValueRef = ast.ValueRef;
 const ParsedModule = ast.ParsedModule;
 const ParsedInterface = ast.ParsedInterface;
+const ParsedResource = ast.ParsedResource;
 const ParsedConstantValue = ast.ParsedConstantValue;
 const ParsedConstant = ast.ParsedConstant;
 const ParsedParameter = ast.ParsedParameter;
@@ -46,64 +48,91 @@ const ParsedOperation = ast.ParsedOperation;
 const Token = Lexer.Token;
 const TokenTag = Lexer.TokenTag;
 
+const ParsedDeclaration = union(enum) {
+    interface: ParsedInterface,
+    resource: ParsedResource,
+};
+
 const Parser = struct {
     lexer: Lexer,
     allocator: std.mem.Allocator,
     module: ?*module_ir.Module = null,
 
-    fn parseInterface(self: *Parser) !ParsedInterface {
+    fn parseDeclaration(self: *Parser) !ParsedDeclaration {
         const name = (try self.expect(.at_name)).text;
 
         try self.expectDiscard(.colon);
         const ty = try self.parseType();
         try self.expectDiscard(.equal);
 
-        const direction_token = try self.expect(.identifier);
-        const direction = std.meta.stringToEnum(module_ir.InterfaceDirection, direction_token.text) orelse return Error.InvalidSemantic;
+        const kind_token = try self.expect(.identifier);
         try self.expectDiscard(.left_square);
 
-        const semantic_name = (try self.expect(.identifier)).text;
-        const semantic: module_ir.InterfaceSemantic = if (std.mem.eql(u8, semantic_name, "location")) blk: {
-            try self.expectDiscard(.left_paren);
-            const location = try self.parseUnsigned(u32, .number);
-            try self.expectDiscard(.right_paren);
+        if (std.meta.stringToEnum(module_ir.InterfaceDirection, kind_token.text)) |direction| {
+            const semantic_name = (try self.expect(.identifier)).text;
+            const semantic: module_ir.InterfaceSemantic = if (std.mem.eql(u8, semantic_name, "location")) blk: {
+                try self.expectDiscard(.left_paren);
+                const location = try self.parseUnsigned(u32, .number);
+                try self.expectDiscard(.right_paren);
 
-            try self.expectDiscard(.comma);
-            try self.expectIdentifier("component");
-            try self.expectDiscard(.left_paren);
-            const component = try self.parseUnsigned(u8, .number);
-            try self.expectDiscard(.right_paren);
+                try self.expectDiscard(.comma);
+                try self.expectIdentifier("component");
+                try self.expectDiscard(.left_paren);
+                const component = try self.parseUnsigned(u8, .number);
+                try self.expectDiscard(.right_paren);
 
-            try self.expectDiscard(.comma);
-            try self.expectIdentifier("index");
-            try self.expectDiscard(.left_paren);
-            const index = try self.parseUnsigned(u8, .number);
-            try self.expectDiscard(.right_paren);
+                try self.expectDiscard(.comma);
+                try self.expectIdentifier("index");
+                try self.expectDiscard(.left_paren);
+                const index = try self.parseUnsigned(u8, .number);
+                try self.expectDiscard(.right_paren);
 
-            break :blk .{
-                .location = .{
-                    .location = location,
-                    .component = component,
-                    .index = index,
-                },
-            };
-        } else if (std.mem.eql(u8, semantic_name, "builtin")) blk: {
-            try self.expectDiscard(.left_paren);
-            const builtin_name = (try self.expect(.identifier)).text;
-            try self.expectDiscard(.right_paren);
+                break :blk .{
+                    .location = .{
+                        .location = location,
+                        .component = component,
+                        .index = index,
+                    },
+                };
+            } else if (std.mem.eql(u8, semantic_name, "builtin")) blk: {
+                try self.expectDiscard(.left_paren);
+                const builtin_name = (try self.expect(.identifier)).text;
+                try self.expectDiscard(.right_paren);
 
-            const builtin = std.meta.stringToEnum(module_ir.Builtin, builtin_name) orelse return Error.InvalidSemantic;
-            break :blk .{ .builtin = builtin };
-        } else return Error.InvalidSemantic;
+                const builtin = std.meta.stringToEnum(module_ir.Builtin, builtin_name) orelse return Error.InvalidSemantic;
+                break :blk .{ .builtin = builtin };
+            } else return Error.InvalidSemantic;
 
+            try self.expectDiscard(.right_square);
+
+            return .{ .interface = .{
+                .direction = direction,
+                .name = name,
+                .ty = ty,
+                .semantic = semantic,
+            } };
+        }
+
+        const kind = std.meta.stringToEnum(type_ir.ResourceKind, kind_token.text) orelse return Error.InvalidSemantic;
+        try self.expectIdentifier("set");
+        try self.expectDiscard(.left_paren);
+        const set = try self.parseUnsigned(u32, .number);
+        try self.expectDiscard(.right_paren);
+
+        try self.expectDiscard(.comma);
+        try self.expectIdentifier("binding");
+        try self.expectDiscard(.left_paren);
+        const binding = try self.parseUnsigned(u32, .number);
+        try self.expectDiscard(.right_paren);
         try self.expectDiscard(.right_square);
 
-        return .{
-            .direction = direction,
+        return .{ .resource = .{
+            .kind = kind,
             .name = name,
             .ty = ty,
-            .semantic = semantic,
-        };
+            .set = set,
+            .binding = binding,
+        } };
     }
 
     fn parseConstant(self: *Parser) !ParsedConstant {
@@ -360,6 +389,27 @@ const Parser = struct {
                     .value = try self.parseValueRef(),
                 },
             };
+        }
+
+        if (std.mem.eql(u8, name, "load_buffer")) {
+            const resource_name = (try self.expect(.at_name)).text;
+            try self.expectDiscard(.comma);
+            return .{ .load_buffer = .{
+                .resource_name = resource_name,
+                .byte_offset = try self.parseValueRef(),
+            } };
+        }
+
+        if (std.mem.eql(u8, name, "store_buffer")) {
+            const resource_name = (try self.expect(.at_name)).text;
+            try self.expectDiscard(.comma);
+            const byte_offset = try self.parseValueRef();
+            try self.expectDiscard(.comma);
+            return .{ .store_buffer = .{
+                .resource_name = resource_name,
+                .byte_offset = byte_offset,
+                .value = try self.parseValueRef(),
+            } };
         }
 
         if (std.mem.eql(u8, name, "call")) {
@@ -730,7 +780,10 @@ pub fn parseString(backing_allocator: std.mem.Allocator, source: []const u8) !mo
         const token = try parser.peek();
         switch (token.tag) {
             .value_ref => try parsed.constants.append(temporary_allocator, try parser.parseConstant()),
-            .at_name => try parsed.interfaces.append(temporary_allocator, try parser.parseInterface()),
+            .at_name => switch (try parser.parseDeclaration()) {
+                .interface => |interface| try parsed.interfaces.append(temporary_allocator, interface),
+                .resource => |resource| try parsed.resources.append(temporary_allocator, resource),
+            },
             .identifier => {
                 if (std.mem.eql(u8, token.text, "fn")) {
                     try parsed.functions.append(temporary_allocator, try parser.parseFunction());
@@ -792,6 +845,50 @@ test "Parser: interface" {
     try std.testing.expect(std.mem.indexOf(u8, printed, "@in_color: vec4[f32] = input[location(0), component(0), index(0)]") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "@out_color: vec4[f32] = output[location(0), component(0), index(0)]") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "@position: vec4[f32] = output[builtin(position)]") != null);
+}
+
+test "Parser: resources and buffer operations" {
+    const printer = @import("../printer.zig");
+
+    const source =
+        \\ shader compute @main
+        \\ {
+        \\     @uniforms: u32 = uniform_buffer[set(0), binding(1)]
+        \\     @storage: struct[u32, f32] = storage_buffer[set(2), binding(3)]
+        \\     @texture: vec4[f32] = sampled_image[set(4), binding(5)]
+        \\     @image: vec4[f32] = storage_image[set(6), binding(7)]
+        \\     @linear_sampler: resourceHandle[sampler] = sampler[set(8), binding(9)]
+        \\     %offset: constant u32 = 4
+        \\     %value: constant u32 = 7
+        \\
+        \\     fn @main() -> void
+        \\     {
+        \\         .entry():
+        \\             %storage_value: vec2[f32] = load_buffer @storage, %offset
+        \\             store_buffer @storage, %offset, %value
+        \\             return
+        \\     }
+        \\ }
+    ;
+
+    var module = try parseString(std.testing.allocator, source);
+    defer module.deinit();
+    const printed = try printer.allocPrint(std.testing.allocator, &module);
+    defer std.testing.allocator.free(printed);
+
+    try std.testing.expect(std.mem.indexOf(u8, printed, "@uniforms: u32 = uniform_buffer[set(0), binding(1)]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "@storage: struct[u32, f32] = storage_buffer[set(2), binding(3)]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "@texture: vec4[f32] = sampled_image[set(4), binding(5)]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "@image: vec4[f32] = storage_image[set(6), binding(7)]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "@linear_sampler: resourceHandle[sampler] = sampler[set(8), binding(9)]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%storage_value: vec2[f32] = load_buffer @storage, %offset") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "store_buffer @storage, %offset, %value") != null);
+
+    var reparsed = try parseString(std.testing.allocator, printed);
+    defer reparsed.deinit();
+    const printed_again = try printer.allocPrint(std.testing.allocator, &reparsed);
+    defer std.testing.allocator.free(printed_again);
+    try std.testing.expectEqualStrings(printed, printed_again);
 }
 
 test "Parser: types, operations, calls, terminators" {

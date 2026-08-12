@@ -381,6 +381,15 @@ fn remapOperation(
             .value = try mappedValue(module, value_map, op.value),
             .element_index = if (op.element_index) |index| try mappedValue(module, value_map, index) else null,
         } },
+        .load_buffer => |op| .{ .load_buffer = .{
+            .resource = op.resource,
+            .byte_offset = try mappedValue(module, value_map, op.byte_offset),
+        } },
+        .store_buffer => |op| .{ .store_buffer = .{
+            .resource = op.resource,
+            .byte_offset = try mappedValue(module, value_map, op.byte_offset),
+            .value = try mappedValue(module, value_map, op.value),
+        } },
         .call => Error.InvalidModule,
     };
 }

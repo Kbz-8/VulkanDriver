@@ -393,7 +393,9 @@ pub fn write(interface: *Interface, write_data: vk.WriteDescriptorSet) VkError!v
                     const buffer = try NonDispatchable(Buffer).fromHandleObject(buffer_info.buffer);
                     desc.object = @as(*SoftBuffer, @alignCast(@fieldParentPtr("interface", buffer)));
                     if (desc.size == vk.WHOLE_SIZE) {
-                        desc.size = if (buffer.memory) |memory| memory.size - desc.offset else return VkError.InvalidDeviceMemoryDrv;
+                        if (desc.offset > buffer.size)
+                            return VkError.ValidationFailed;
+                        desc.size = buffer.size - desc.offset;
                     }
                 }
             }

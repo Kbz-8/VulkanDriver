@@ -6,6 +6,7 @@ pub const ValueId = ids.ValueId;
 pub const BlockId = ids.BlockId;
 pub const FunctionId = ids.FunctionId;
 pub const InterfaceVariableId = ids.InterfaceVariableId;
+pub const ResourceId = ids.ResourceId;
 
 pub const SourceLocation = struct {
     file: ?[]const u8 = null,
@@ -98,6 +99,17 @@ pub const StoreInterface = struct {
     element_index: ?ValueId = null,
 };
 
+pub const LoadBuffer = struct {
+    resource: ResourceId,
+    byte_offset: ValueId,
+};
+
+pub const StoreBuffer = struct {
+    resource: ResourceId,
+    byte_offset: ValueId,
+    value: ValueId,
+};
+
 pub const Call = struct {
     function: FunctionId,
     arguments: []const ValueId,
@@ -113,6 +125,8 @@ pub const Operation = union(enum) {
     composite_extract: CompositeExtract,
     load_interface: LoadInterface,
     store_interface: StoreInterface,
+    load_buffer: LoadBuffer,
+    store_buffer: StoreBuffer,
     call: Call,
 
     pub fn visitValueUses(self: Operation, context: anytype, comptime visitor: anytype) void {
@@ -139,6 +153,11 @@ pub const Operation = union(enum) {
                 visitor(context, op.value);
                 if (op.element_index) |index|
                     visitor(context, index);
+            },
+            .load_buffer => |op| visitor(context, op.byte_offset),
+            .store_buffer => |op| {
+                visitor(context, op.byte_offset);
+                visitor(context, op.value);
             },
             .call => |op| {
                 for (op.arguments) |argument|
@@ -176,6 +195,11 @@ pub const Operation = union(enum) {
                 if (op.element_index) |*index|
                     replaceOne(index, old, replacement, &count);
             },
+            .load_buffer => |*op| replaceOne(&op.byte_offset, old, replacement, &count),
+            .store_buffer => |*op| {
+                replaceOne(&op.byte_offset, old, replacement, &count);
+                replaceOne(&op.value, old, replacement, &count);
+            },
             .call => |*op| op.arguments = try replaceSlice(allocator, op.arguments, old, replacement, &count),
         }
         return count;
@@ -183,7 +207,11 @@ pub const Operation = union(enum) {
 
     pub fn hasSideEffects(self: Operation) bool {
         return switch (self) {
-            .store_interface, .call => true,
+            .store_interface,
+            .store_buffer,
+            .call,
+            => true,
+
             else => false,
         };
     }

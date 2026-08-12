@@ -28,6 +28,7 @@ pub const ValidationError = error{
     WrongOperandType,
     WrongParameterIndex,
     WrongParent,
+    WrongResourceKind,
     WrongResultPresence,
     WrongResultType,
     WrongReturnType,
@@ -329,6 +330,32 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             if (op.element_index) |index|
                 _ = try operandType(module, function_id, index);
         },
+        .load_buffer => |op| {
+            const resource = module.resources.get(op.resource) orelse return ValidationError.InvalidValue;
+            if (resource.kind != .storage_buffer)
+                return ValidationError.WrongResourceKind;
+
+            if (!isUnsignedInteger(module, try operandType(module, function_id, op.byte_offset)))
+                return ValidationError.WrongOperandType;
+
+            const result = result_type orelse return ValidationError.WrongResultPresence;
+            if (!isBufferAccessibleType(module, result))
+                return ValidationError.WrongResultType;
+        },
+        .store_buffer => |op| {
+            if (result_type != null)
+                return ValidationError.WrongResultPresence;
+
+            const resource = module.resources.get(op.resource) orelse return ValidationError.InvalidValue;
+            if (resource.kind != .storage_buffer)
+                return ValidationError.WrongResourceKind;
+
+            if (!isUnsignedInteger(module, try operandType(module, function_id, op.byte_offset)))
+                return ValidationError.WrongOperandType;
+
+            if (!isBufferAccessibleType(module, try operandType(module, function_id, op.value)))
+                return ValidationError.WrongOperandType;
+        },
         .call => |op| {
             const callee = module.functions.get(op.function) orelse return ValidationError.InvalidFunction;
 
@@ -457,6 +484,26 @@ fn indexedType(module: *const module_ir.Module, root: ids.TypeId, indices: []con
 fn isBoolean(module: *const module_ir.Module, type_id: ids.TypeId) bool {
     const ty = module.types.get(type_id) orelse return false;
     return ty.* == .boolean;
+}
+
+fn isUnsignedInteger(module: *const module_ir.Module, type_id: ids.TypeId) bool {
+    const ty = module.types.get(type_id) orelse return false;
+    return switch (ty.*) {
+        .integer => |integer| integer.signedness == .unsigned,
+        else => false,
+    };
+}
+
+fn isBufferAccessibleType(module: *const module_ir.Module, type_id: ids.TypeId) bool {
+    const ty = module.types.get(type_id) orelse return false;
+    return switch (ty.*) {
+        .integer, .floating => true,
+        .vector => |vector| {
+            const element_type = module.types.get(vector.element_type) orelse return false;
+            return element_type.* == .integer or element_type.* == .floating;
+        },
+        else => false,
+    };
 }
 
 fn targetsBlock(terminator: module_ir.Terminator, target: ids.BlockId) bool {
@@ -803,6 +850,109 @@ test "Validator: check interface direction and value types" {
         \\    {
         \\        .entry():
         \\            %result: bool = store_interface @output, %one
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Validator: check buffer resources, offsets, and value types" {
+    try expectValidationError(Error.WrongResourceKind,
+        \\shader compute @main
+        \\{
+        \\    @uniforms: u32 = uniform_buffer[set(0), binding(0)]
+        \\    %offset: constant u32 = 0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %value: u32 = load_buffer @uniforms, %offset
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResourceKind,
+        \\shader compute @main
+        \\{
+        \\    @uniforms: u32 = uniform_buffer[set(0), binding(0)]
+        \\    %offset: constant u32 = 0
+        \\    %value: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            store_buffer @uniforms, %offset, %value
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    @storage: u32 = storage_buffer[set(0), binding(0)]
+        \\    %offset: constant i32 = 0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %value: u32 = load_buffer @storage, %offset
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultType,
+        \\shader compute @main
+        \\{
+        \\    @storage: struct[u32, f32] = storage_buffer[set(0), binding(0)]
+        \\    %offset: constant u32 = 0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %value: struct[u32, f32] = load_buffer @storage, %offset
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    @storage: struct[u32, f32] = storage_buffer[set(0), binding(0)]
+        \\    %offset: constant u32 = 0
+        \\    %value: constant ptr[private, u32] = null
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            store_buffer @storage, %offset, %value
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultPresence,
+        \\shader compute @main
+        \\{
+        \\    @storage: struct[u32, f32] = storage_buffer[set(0), binding(0)]
+        \\    %offset: constant u32 = 0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            load_buffer @storage, %offset
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultPresence,
+        \\shader compute @main
+        \\{
+        \\    @storage: u32 = storage_buffer[set(0), binding(0)]
+        \\    %offset: constant u32 = 0
+        \\    %value: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: u32 = store_buffer @storage, %offset, %value
         \\            return
         \\    }
         \\}

@@ -189,7 +189,7 @@ const SlowTracker = struct {
         var slowest = self.slowest;
         const count = slowest.count();
         Printer.fmt("Slowest {d} test{s}: \n", .{ count, if (count != 1) "s" else "" });
-        while (slowest.popMin()) |info| {
+        while (slowest.popMax()) |info| {
             const ms = @as(f64, @floatFromInt(info.ns)) / 1_000_000.0;
             Printer.fmt("  {d:.2}ms\t{s}\n", .{ ms, info.name });
         }

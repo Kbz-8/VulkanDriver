@@ -32,6 +32,16 @@ pub fn write(module: *const module_ir.Module, writer: *std.Io.Writer) std.Io.Wri
         try writer.writeAll("]\n");
     }
 
+    for (module.resources.entries.items, 0..) |entry, index| {
+        const resource = entry orelse continue;
+
+        try writer.writeAll(indent);
+        try writeNamedRef(writer, resource.name, "resource", index);
+        try writer.writeAll(": ");
+        try writeType(module, writer, resource.type);
+        try writer.print(" = {t}[set({d}), binding({d})]\n", .{ resource.kind, resource.set, resource.binding });
+    }
+
     for (module.constants.entries.items, 0..) |entry, constant_index| {
         const constant = entry orelse continue;
         const value_id = constantValueId(module, ids.ConstantId.fromIndex(constant_index)) orelse continue;
@@ -211,6 +221,22 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             try writer.writeAll("store_interface ");
             const variable = module.interface_variables.get(op.variable);
             try writeNamedRef(writer, if (variable) |v| v.name else null, "interface", op.variable.index());
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.value);
+        },
+        .load_buffer => |op| {
+            try writer.writeAll("load_buffer ");
+            const resource = module.resources.get(op.resource);
+            try writeNamedRef(writer, if (resource) |r| r.name else null, "resource", op.resource.index());
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.byte_offset);
+        },
+        .store_buffer => |op| {
+            try writer.writeAll("store_buffer ");
+            const resource = module.resources.get(op.resource);
+            try writeNamedRef(writer, if (resource) |r| r.name else null, "resource", op.resource.index());
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.byte_offset);
             try writer.writeAll(", ");
             try writeValueRef(module, writer, op.value);
         },

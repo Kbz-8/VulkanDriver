@@ -25,6 +25,12 @@ pub const InterfaceBinding = struct {
     span: bc.Span,
 };
 
+pub const ResourceBinding = struct {
+    kind: ir.types.ResourceKind,
+    set: u32,
+    binding: u32,
+};
+
 pub const RegisterInit = struct {
     register: bc.Register,
     value: u32,
@@ -43,6 +49,7 @@ copies: []const bc.Copy,
 branches: []const bc.Branch,
 initializers: []const RegisterInit,
 interfaces: []const ?InterfaceBinding,
+resources: []const ?ResourceBinding,
 
 pub fn compile(backing_allocator: std.mem.Allocator, module: *const module_ir.Module) !Self {
     try ir.validator.validate(module);
@@ -65,6 +72,7 @@ pub fn compile(backing_allocator: std.mem.Allocator, module: *const module_ir.Mo
         .branches = lowerer.branches.items,
         .initializers = lowerer.initializers.items,
         .interfaces = lowerer.interfaces,
+        .resources = lowerer.resources,
     };
 }
 
@@ -80,6 +88,13 @@ pub fn interfaceBinding(self: *const Self, variable: ids.InterfaceVariableId) ?I
     return self.interfaces[variable.index()];
 }
 
+pub fn resourceBinding(self: *const Self, resource: ids.ResourceId) ?ResourceBinding {
+    if (resource.index() >= self.resources.len)
+        return null;
+
+    return self.resources[resource.index()];
+}
+
 const Lowerer = struct {
     allocator: std.mem.Allocator,
     module: *const module_ir.Module,
@@ -87,6 +102,7 @@ const Lowerer = struct {
     entry_block: ids.BlockId,
     values: []?bc.Span,
     interfaces: []?InterfaceBinding,
+    resources: []?ResourceBinding,
     block_pcs: []?u32,
     register_count: usize = 0,
     scratch_count: usize = 0,
@@ -109,6 +125,14 @@ const Lowerer = struct {
         @memset(values, null);
         const interfaces = try allocator.alloc(?InterfaceBinding, module.interface_variables.entries.items.len);
         @memset(interfaces, null);
+        const resources = try allocator.alloc(?ResourceBinding, module.resources.entries.items.len);
+        for (module.resources.entries.items, resources) |entry, *binding| {
+            binding.* = if (entry) |resource| .{
+                .kind = resource.kind,
+                .set = resource.set,
+                .binding = resource.binding,
+            } else null;
+        }
         const block_pcs = try allocator.alloc(?u32, module.blocks.entries.items.len);
         @memset(block_pcs, null);
 
@@ -119,6 +143,7 @@ const Lowerer = struct {
             .entry_block = entry_block,
             .values = values,
             .interfaces = interfaces,
+            .resources = resources,
             .block_pcs = block_pcs,
         };
     }
@@ -347,8 +372,38 @@ const Lowerer = struct {
 
                 try self.emitCopy(binding.span, src);
             },
+            .load_buffer => |op| {
+                const dst = result orelse return CompileError.InvalidOperation;
+                const byte_offset = try self.bufferOffset(op.byte_offset);
+                _ = try self.storageBuffer(op.resource);
+                try self.emit(.load_buffer, dst.components, dst.base, byte_offset, bc.invalid_register, bc.invalid_register, @intFromEnum(op.resource));
+            },
+            .store_buffer => |op| {
+                if (result != null)
+                    return CompileError.InvalidOperation;
+                const src = try self.span(op.value);
+                const byte_offset = try self.bufferOffset(op.byte_offset);
+                _ = try self.storageBuffer(op.resource);
+                try self.emit(.store_buffer, src.components, src.base, byte_offset, bc.invalid_register, bc.invalid_register, @intFromEnum(op.resource));
+            },
             .call => return CompileError.UnsupportedOperation,
         }
+    }
+
+    fn bufferOffset(self: *const Lowerer, id: ids.ValueId) !bc.Register {
+        const byte_offset = try self.span(id);
+        if (byte_offset.components != 1 or byte_offset.kind != .unsigned_integer)
+            return CompileError.InvalidOperation;
+        return byte_offset.base;
+    }
+
+    fn storageBuffer(self: *const Lowerer, id: ids.ResourceId) !ResourceBinding {
+        if (id.index() >= self.resources.len)
+            return CompileError.InvalidOperation;
+        const resource = self.resources[id.index()] orelse return CompileError.InvalidOperation;
+        if (resource.kind != .storage_buffer)
+            return CompileError.InvalidOperation;
+        return resource;
     }
 
     fn lowerTerminator(self: *Lowerer, terminator: module_ir.Terminator) !void {
