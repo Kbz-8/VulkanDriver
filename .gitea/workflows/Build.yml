@@ -53,7 +53,9 @@ jobs:
           ls -la /opt/mpss/3.8.6/sysroots/k1om-mpss-linux/bin | head -50
 
       - name: ZLint pass
-        uses: DonIsaac/zlint-action@v0.0.1
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/DonIsaac/zlint/refs/heads/main/tasks/install.sh | bash
+          zlint
 
       - name: Building Ape
         run: zig build ape --release=safe
