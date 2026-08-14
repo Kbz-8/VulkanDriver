@@ -4,6 +4,7 @@
 pub const device = @import("device.zig");
 pub const ir = @import("ir/ir.zig");
 pub const lower = @import("lower/lower.zig");
+pub const targets = @import("targets/targets.zig");
 
 pub const Builder = ir.Builder;
 pub const id = ir.id;
@@ -15,28 +16,10 @@ pub const pseudo = ir.pseudo;
 pub const validator = ir.validator;
 
 pub const Program = ir.Program;
-pub const Stage = ir.Stage;
 
 const std = @import("std");
 
-test "[ir] basic shader" {
-    // ; Flint program:
-    // ;   .stage: vertex
-    // ;   .generation: gen9
-    // ;   .platform: skylake
-    // ;   .dispatch_width: simd8
-    //
-    // %position: vgrf f32[8] = class(varying), size(32), alignment(32), spillable
-    // %urb_payload: vgrf u32[16] = class(payload), size(64), alignment(32)
-    //
-    // .entry:
-    //     [simd8] load_input %position:f32, location(0), component(0)
-    //     [simd8] multiply %position:f32, %position:f32, 1:f32
-    //     [simd8] mov %position:f32, %position:f32[byte=4, broadcast]
-    //     [simd8] store_output builtin(position), component(0), %position:f32
-    //     [simd8] send urb_write[offset(0), channels(xyzw), end_of_thread], payload(%urb_payload[2])
-    //     end_thread
-
+test "[ir] basic compute shader" {
     const device_info: device.DeviceInfo = .{
         .generation = .gen9,
         .platform = .skylake,
@@ -44,128 +27,52 @@ test "[ir] basic shader" {
         .grf_count = 128,
     };
 
-    var shader = Program.init(std.testing.allocator, .vertex, device_info, .simd8);
+    var shader = Program.init(std.testing.allocator, .{ 1, 1, 1 }, device_info, .simd8);
     defer shader.deinit();
     var builder = Builder.init(&shader);
 
-    const position = try builder.addVirtualRegister(.{
+    const value = try builder.addVirtualRegister(.{
         .size_bytes = 32,
         .alignment_bytes = 32,
-        .element_type = .f32,
-        .lane_count = 8,
-        .class = .varying,
-        .name = "position",
-    });
-    const urb_payload = try builder.addVirtualRegister(.{
-        .size_bytes = 64,
-        .alignment_bytes = 32,
         .element_type = .u32,
-        .lane_count = 16,
-        .class = .payload,
-        .spillable = false,
-        .name = "urb_payload",
+        .lane_count = 8,
+        .class = .temporary,
+        .name = "value",
     });
+    const storage = try builder.addStorageBuffer(.{ .set = 0, .binding = 1, .name = "storage" });
     const entry = try builder.addBlock("entry");
     try builder.setEntryBlock(entry);
 
     _ = try builder.appendInstruction(entry, .simd8, null, .{
-        .load_input = .{
-            .destination = .{
-                .register = .{ .virtual = position },
-                .type = .f32,
-            },
-            .semantic = .{
-                .location = .{
-                    .location = 0,
-                },
-            },
+        .load_global_invocation_id = .{
+            .destination = .{ .register = .{ .virtual = value }, .type = .u32 },
+            .component = 0,
         },
     });
     _ = try builder.appendInstruction(entry, .simd8, null, .{
-        .binary = .{
-            .opcode = .multiply,
-            .destination = .{
-                .register = .{ .virtual = position },
-                .type = .f32,
-            },
-            .lhs = .{
-                .register = .{ .virtual = position },
-                .type = .f32,
-                .region = operand.Region.contiguous(.simd8),
-            },
-            .rhs = .{
-                .register = .{
-                    .immediate = .{ .f32 = 1.0 },
-                },
-                .type = .f32,
+        .store_buffer = .{
+            .buffer = storage,
+            .byte_offset = .{
+                .register = .{ .immediate = .{ .u32 = 0 } },
+                .type = .u32,
                 .region = operand.Region.broadcast(),
             },
-        },
-    });
-    _ = try builder.appendInstruction(entry, .simd8, null, .{
-        .move = .{
-            .destination = .{
-                .register = .{ .virtual = position },
-                .type = .f32,
-            },
             .source = .{
-                .register = .{ .virtual = position },
-                .type = .f32,
-                .region = .{
-                    .byte_offset = 4,
-                    .vertical_stride = 0,
-                    .width = 1,
-                    .horizontal_stride = 0,
-                },
-            },
-        },
-    });
-    _ = try builder.appendInstruction(entry, .simd8, null, .{
-        .store_output = .{
-            .semantic = .{
-                .builtin = .{ .builtin = .position },
-            },
-            .source = .{
-                .register = .{ .virtual = position },
-                .type = .f32,
+                .register = .{ .virtual = value },
+                .type = .u32,
                 .region = operand.Region.contiguous(.simd8),
-            },
-        },
-    });
-    _ = try builder.appendInstruction(entry, .simd8, null, .{
-        .send = .{
-            .message = .{
-                .urb_write = .{
-                    .offset = 0,
-                    .end_of_thread = true,
-                },
-            },
-            .payload = .{
-                .base = .{ .virtual = urb_payload },
-                .register_count = 2,
             },
         },
     });
     try builder.setTerminator(entry, .end_thread);
-
-    shader.properties.instructions_selected = true;
     try validator.validate(&shader);
-
-    try std.testing.expectEqual(entry, shader.entry_block.?);
-    try std.testing.expect(shader.properties.instructions_selected);
 
     const text = try printer.allocPrint(std.testing.allocator, &shader);
     defer std.testing.allocator.free(text);
-
-    try std.testing.expect(std.mem.indexOf(u8, text, "Flint program") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "vertex") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "gen9") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "skylake") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "simd8") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "%position: vgrf f32[8]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "[simd8] multiply %position:f32, %position:f32, 1:f32") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "[simd8] mov %position:f32, %position:f32[byte=4, broadcast]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "send urb_write[offset(0), channels(xyzw), end_of_thread], payload(%urb_payload[2])") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Flint compute program") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "@storage = storage_buffer[set(0), binding(1)]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "load_global_invocation_id %value:u32, component(0)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "store_buffer @storage, 0:u32, %value:u32") != null);
 }
 
 test "[ir] ID stability after removal" {
@@ -179,9 +86,4 @@ test "[ir] ID stability after removal" {
     try std.testing.expect(first != second);
     try std.testing.expect(store.get(first) == null);
     try std.testing.expectEqualStrings("second", store.get(second).?.name.?);
-}
-
-test {
-    _ = lower;
-    _ = lower.vertex_abi;
 }

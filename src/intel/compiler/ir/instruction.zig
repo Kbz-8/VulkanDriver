@@ -4,30 +4,22 @@ const ids = @import("id.zig");
 const operand = @import("operand.zig");
 const pseudo = @import("pseudo.zig");
 
-pub const Builtin = enum {
-    position,
-    vertex_index,
-    instance_index,
-};
-
-pub const InterfaceSemantic = union(enum) {
-    location: struct {
-        location: u32,
-        component: u8 = 0,
-    },
-    builtin: struct {
-        builtin: Builtin,
-        component: u8 = 0,
-    },
-};
-
-pub const LoadInput = struct {
+pub const LoadGlobalInvocationId = struct {
     destination: operand.Destination,
-    semantic: InterfaceSemantic,
+    component: u8,
 };
 
-pub const StoreOutput = struct {
-    semantic: InterfaceSemantic,
+pub const LoadBuffer = struct {
+    destination: operand.Destination,
+    buffer: ids.StorageBufferId,
+    byte_offset: operand.Source,
+    immediate_offset: u32 = 0,
+};
+
+pub const StoreBuffer = struct {
+    buffer: ids.StorageBufferId,
+    byte_offset: operand.Source,
+    immediate_offset: u32 = 0,
     source: operand.Source,
 };
 
@@ -69,36 +61,13 @@ pub const Compare = struct {
     rhs: operand.Source,
 };
 
-pub const ChannelMask = packed struct(u4) {
-    x: bool = true,
-    y: bool = true,
-    z: bool = true,
-    w: bool = true,
-};
-
-pub const UrbWrite = struct {
-    offset: u16,
-    channels: ChannelMask = .{},
-    end_of_thread: bool = false,
-};
-
-pub const Message = union(enum) {
-    urb_write: UrbWrite,
-};
-
-pub const Send = struct {
-    message: Message,
-    payload: operand.RegisterSpan,
-    response: ?operand.RegisterSpan = null,
-};
-
 pub const Operation = union(enum) {
-    load_input: LoadInput,
-    store_output: StoreOutput,
+    load_global_invocation_id: LoadGlobalInvocationId,
+    load_buffer: LoadBuffer,
+    store_buffer: StoreBuffer,
     move: Move,
     binary: Binary,
     compare: Compare,
-    send: Send,
     parallel_copy: pseudo.ParallelCopy,
 };
 

@@ -74,7 +74,12 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
     return self;
 }
 
-fn compileStages(allocator: std.mem.Allocator, infos: []const vk.PipelineShaderStageCreateInfo, pipeline_kind: PipelineKind, device_info: ?compiler.device.DeviceInfo) VkError![]CommonStage {
+fn compileStages(
+    allocator: std.mem.Allocator,
+    infos: []const vk.PipelineShaderStageCreateInfo,
+    pipeline_kind: PipelineKind,
+    device_info: ?compiler.device.DeviceInfo,
+) VkError![]CommonStage {
     if (infos.len == 0)
         return VkError.ValidationFailed;
 
@@ -93,7 +98,12 @@ fn compileStages(allocator: std.mem.Allocator, infos: []const vk.PipelineShaderS
     return stages;
 }
 
-fn compileStage(allocator: std.mem.Allocator, info: *const vk.PipelineShaderStageCreateInfo, pipeline_kind: PipelineKind, device_info: ?compiler.device.DeviceInfo) VkError!CommonStage {
+fn compileStage(
+    allocator: std.mem.Allocator,
+    info: *const vk.PipelineShaderStageCreateInfo,
+    pipeline_kind: PipelineKind,
+    device_info: ?compiler.device.DeviceInfo,
+) VkError!CommonStage {
     const specializations = try specializationValues(allocator, info.p_specialization_info);
     defer if (specializations.len != 0) allocator.free(specializations);
 
@@ -129,22 +139,30 @@ fn compileStage(allocator: std.mem.Allocator, info: *const vk.PipelineShaderStag
     };
 }
 
-fn lowerToFlint(allocator: std.mem.Allocator, module: *base.ShaderModule.IrModule, device_info: ?compiler.device.DeviceInfo) VkError!?compiler.Program {
+fn lowerToFlint(
+    allocator: std.mem.Allocator,
+    module: *base.ShaderModule.IrModule,
+    device_info: ?compiler.device.DeviceInfo,
+) VkError!?compiler.Program {
     const target = device_info orelse return null;
-    return compiler.lower.lower(allocator, module, target, .{}) catch |err| switch (err) {
-        error.OutOfMemory => VkError.OutOfHostMemory,
+    const program = compiler.targets.lower(allocator, module, target, .{}) catch |err| switch (err) {
+        error.OutOfMemory => return VkError.OutOfHostMemory,
         error.UnsupportedGeneration,
         error.UnsupportedStage,
         error.UnsupportedDispatchWidth,
+        error.UnsupportedGrfSize,
+        error.UnsupportedWorkgroupSize,
+        error.MissingWorkgroupSize,
         error.UnsupportedType,
         error.UnsupportedOperation,
         error.UnsupportedTerminator,
-        => null,
+        => return null,
         else => {
             std.log.scoped(.FlintPipeline).err("Flint shader lowering failed: {s}", .{@errorName(err)});
             return VkError.ValidationFailed;
         },
     };
+    return program;
 }
 
 fn compilerDeviceInfo(device: *const base.Device) ?compiler.device.DeviceInfo {
@@ -207,4 +225,54 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     deinitStages(self.artifact_allocator.allocator(), self.stages);
     allocator.destroy(self);
+}
+
+test "Flint pipeline: lower common compute IR" {
+    const device_info: compiler.device.DeviceInfo = .{
+        .generation = .gen9,
+        .platform = .skylake,
+        .pci_device_id = 0x1912,
+        .grf_count = 128,
+    };
+    var module = shader_ir.ir.module.Module.init(std.testing.allocator, .compute);
+    defer module.deinit();
+    module.execution_modes.workgroup_size = .{ 1, 1, 1 };
+    var builder = shader_ir.ir.Builder.init(&module);
+
+    const void_type = try builder.internType(.void);
+    const u32_type = try builder.internType(.{ .integer = .{ .bits = 32, .signedness = .unsigned } });
+    const vec3_type = try builder.internType(.{ .vector = .{ .element_type = u32_type, .length = 3 } });
+    const global_id = try builder.addInterfaceVariable(vec3_type, .input, .{ .builtin = .global_invocation_id }, "global_id");
+    const storage = try builder.addResource(u32_type, .storage_buffer, 0, 2, "storage");
+    const zero = try builder.internConstant(u32_type, .{ .integer_bits = 0 });
+    const main = try builder.addFunction(void_type, "main");
+    builder.setEntryPoint(main);
+    const entry = try builder.addBlock(main, "entry");
+    const id = (try builder.appendInstruction(entry, vec3_type, .{
+        .load_interface = .{ .variable = global_id },
+    }, "id")).?;
+    const x = (try builder.appendInstruction(entry, u32_type, .{
+        .composite_extract = .{ .composite = id, .indices = &.{0} },
+    }, "x")).?;
+    _ = try builder.appendInstruction(entry, null, .{
+        .store_buffer = .{ .resource = storage, .byte_offset = zero, .value = x },
+    }, null);
+    try builder.setTerminator(entry, .return_void);
+
+    var program = (try lowerToFlint(std.testing.allocator, &module, device_info)).?;
+    defer program.deinit();
+
+    try std.testing.expect(program.properties.common_ir_lowered);
+    try std.testing.expect(program.properties.block_parameters_lowered);
+    try std.testing.expect(!program.properties.system_values_lowered);
+    try std.testing.expect(!program.properties.resources_lowered);
+    try std.testing.expect(!program.properties.instructions_selected);
+    try std.testing.expectEqual([3]u32{ 1, 1, 1 }, program.workgroup_size);
+    try std.testing.expectEqual(@as(usize, 1), program.storage_buffers.entries.items.len);
+    try compiler.targets.validate(&program);
+
+    const text = try compiler.printer.allocPrint(std.testing.allocator, &program);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "load_global_invocation_id %id_x:u32, component(0)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "store_buffer @storage, 0:u32, %id_x:u32") != null);
 }

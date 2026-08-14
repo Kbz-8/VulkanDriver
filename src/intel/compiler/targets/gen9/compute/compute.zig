@@ -1,0 +1,20 @@
+const std = @import("std");
+
+pub const Error = error{UnsupportedWorkgroupSize};
+
+pub fn validateWorkgroupSize(size: [3]u32) Error!void {
+    if (size[0] == 0 or size[1] == 0 or size[2] == 0 or size[0] > 128 or size[1] > 128 or size[2] > 64)
+        return Error.UnsupportedWorkgroupSize;
+    const xy = std.math.mul(u32, size[0], size[1]) catch return Error.UnsupportedWorkgroupSize;
+    const invocations = std.math.mul(u32, xy, size[2]) catch return Error.UnsupportedWorkgroupSize;
+    if (invocations > 128)
+        return Error.UnsupportedWorkgroupSize;
+}
+
+test "[gen9] compute: validate workgroup limits" {
+    try validateWorkgroupSize(.{ 1, 1, 1 });
+    try validateWorkgroupSize(.{ 128, 1, 1 });
+    try std.testing.expectError(Error.UnsupportedWorkgroupSize, validateWorkgroupSize(.{ 0, 1, 1 }));
+    try std.testing.expectError(Error.UnsupportedWorkgroupSize, validateWorkgroupSize(.{ 129, 1, 1 }));
+    try std.testing.expectError(Error.UnsupportedWorkgroupSize, validateWorkgroupSize(.{ 64, 3, 1 }));
+}

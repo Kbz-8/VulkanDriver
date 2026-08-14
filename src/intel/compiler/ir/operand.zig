@@ -33,7 +33,6 @@ pub const DataType = enum {
 
 pub const RegisterClass = enum {
     uniform,
-    varying,
     payload,
     response,
     temporary,

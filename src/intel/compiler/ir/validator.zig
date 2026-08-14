@@ -5,11 +5,6 @@ const program_ir = @import("program.zig");
 const pseudo = @import("pseudo.zig");
 
 pub const Error = error{
-    UnsupportedGeneration,
-    UnsupportedStage,
-    UnsupportedDispatchWidth,
-    UnsupportedExecutionSize,
-    UnsupportedDataType,
     MissingEntryBlock,
     InvalidBlock,
     MissingTerminator,
@@ -17,24 +12,25 @@ pub const Error = error{
     InvalidVirtualRegister,
     InvalidVirtualFlag,
     InvalidPhysicalRegister,
-    InvalidPhysicalFlag,
     InvalidRegisterSize,
     InvalidRegisterAlignment,
     InvalidLaneCount,
     InvalidRegion,
     InvalidDestination,
     InvalidImmediateType,
-    InvalidRegisterSpan,
+    InvalidStorageBuffer,
+    InvalidGlobalInvocationId,
+    InvalidBufferAccess,
+    InvalidWorkgroupSize,
     EmptyParallelCopy,
     InvalidParallelCopyDestination,
     ParallelCopyTypeMismatch,
     DuplicateParallelCopyDestination,
     PredicatedParallelCopy,
     UnloweredParallelCopy,
-    UnloweredStageIo,
-    UnloweredMessage,
-    InvalidInterfaceSemantic,
-    InvalidMessage,
+    UnloweredSystemValue,
+    UnloweredResource,
+    InvalidPayloadLayout,
     EntryBlockHasParameters,
     DuplicateBlockParameter,
     EdgeArgumentCountMismatch,
@@ -44,16 +40,14 @@ pub const Error = error{
 };
 
 pub fn validate(program: *const program_ir.Program) Error!void {
-    if (program.device_info.generation != .gen9)
-        return Error.UnsupportedGeneration;
-    if (program.stage != .vertex)
-        return Error.UnsupportedStage;
-    if (program.dispatch_width != .simd8 or !program.device_info.supportsDispatch(.simd8))
-        return Error.UnsupportedDispatchWidth;
+    if (program.workgroup_size[0] == 0 or program.workgroup_size[1] == 0 or program.workgroup_size[2] == 0)
+        return Error.InvalidWorkgroupSize;
 
     const entry_block = program.entry_block orelse return Error.MissingEntryBlock;
     if (!program.blocks.isLive(entry_block))
         return Error.InvalidBlock;
+
+    try validatePayload(program);
 
     for (program.virtual_registers.entries.items) |entry| {
         const register = entry orelse continue;
@@ -64,7 +58,6 @@ pub fn validate(program: *const program_ir.Program) Error!void {
             return Error.InvalidRegisterAlignment;
         if (register.lane_count == 0)
             return Error.InvalidLaneCount;
-        try validateType(register.element_type);
     }
 
     for (program.blocks.entries.items, 0..) |entry, block_index| {
@@ -89,6 +82,17 @@ pub fn validate(program: *const program_ir.Program) Error!void {
 
         try validateStructuredControl(program, block.structured_control);
         try validateTerminator(program, block.terminator.?);
+    }
+}
+
+fn validatePayload(program: *const program_ir.Program) Error!void {
+    if (program.program_data.payload_grf_count > program.device_info.grf_count)
+        return Error.InvalidPayloadLayout;
+
+    if (program.payload.header_grf) |header| {
+        try validateRegisterRef(program, .{ .physical_grf = header });
+        if (header.byte_offset != 0)
+            return Error.InvalidPayloadLayout;
     }
 }
 
@@ -120,26 +124,36 @@ fn blockParametersEqual(a: pseudo.BlockParameter, b: pseudo.BlockParameter) bool
 }
 
 fn validateInstruction(program: *const program_ir.Program, inst: instruction.Instruction) Error!void {
-    switch (inst.execution_size) {
-        .simd1, .simd8 => {},
-        else => return Error.UnsupportedExecutionSize,
-    }
-
     if (inst.predicate) |predicate|
         try validateFlag(program, predicate.flag);
 
     switch (inst.operation) {
-        .load_input => |op| {
-            if (program.properties.stage_io_lowered)
-                return Error.UnloweredStageIo;
+        .load_global_invocation_id => |op| {
+            if (program.properties.system_values_lowered)
+                return Error.UnloweredSystemValue;
             try validateDestination(program, op.destination);
-            try validateInterfaceSemantic(op.semantic, .input);
+            if (op.component >= 3 or op.destination.type != .u32)
+                return Error.InvalidGlobalInvocationId;
         },
-        .store_output => |op| {
-            if (program.properties.stage_io_lowered)
-                return Error.UnloweredStageIo;
+        .load_buffer => |op| {
+            if (program.properties.resources_lowered)
+                return Error.UnloweredResource;
+            if (!program.storage_buffers.isLive(op.buffer))
+                return Error.InvalidStorageBuffer;
+            try validateDestination(program, op.destination);
+            try validateBufferOffset(program, op.byte_offset);
+            if (!op.destination.type.isInitialTargetType())
+                return Error.InvalidBufferAccess;
+        },
+        .store_buffer => |op| {
+            if (program.properties.resources_lowered)
+                return Error.UnloweredResource;
+            if (!program.storage_buffers.isLive(op.buffer))
+                return Error.InvalidStorageBuffer;
+            try validateBufferOffset(program, op.byte_offset);
             try validateSource(program, op.source);
-            try validateInterfaceSemantic(op.semantic, .output);
+            if (!op.source.type.isInitialTargetType())
+                return Error.InvalidBufferAccess;
         },
         .move => |op| {
             try validateDestination(program, op.destination);
@@ -155,19 +169,7 @@ fn validateInstruction(program: *const program_ir.Program, inst: instruction.Ins
             try validateSource(program, op.lhs);
             try validateSource(program, op.rhs);
         },
-        .send => |op| {
-            if (program.properties.messages_lowered)
-                return Error.UnloweredMessage;
-            try validateSpan(program, op.payload);
-            if (op.response) |response|
-                try validateSpan(program, response);
-            switch (op.message) {
-                .urb_write => |urb_write| {
-                    if (op.response != null or (!urb_write.channels.x and !urb_write.channels.y and !urb_write.channels.z and !urb_write.channels.w))
-                        return Error.InvalidMessage;
-                },
-            }
-        },
+
         .parallel_copy => |op| {
             if (program.properties.parallel_copies_lowered)
                 return Error.UnloweredParallelCopy;
@@ -178,27 +180,10 @@ fn validateInstruction(program: *const program_ir.Program, inst: instruction.Ins
     }
 }
 
-const InterfaceDirection = enum { input, output };
-
-fn validateInterfaceSemantic(semantic: instruction.InterfaceSemantic, direction: InterfaceDirection) Error!void {
-    switch (semantic) {
-        .location => |location| {
-            if (location.component > 3)
-                return Error.InvalidInterfaceSemantic;
-        },
-        .builtin => |builtin| switch (direction) {
-            .input => switch (builtin.builtin) {
-                .vertex_index, .instance_index => if (builtin.component != 0)
-                    return Error.InvalidInterfaceSemantic,
-                .position => return Error.InvalidInterfaceSemantic,
-            },
-            .output => switch (builtin.builtin) {
-                .position => if (builtin.component > 3)
-                    return Error.InvalidInterfaceSemantic,
-                .vertex_index, .instance_index => return Error.InvalidInterfaceSemantic,
-            },
-        },
-    }
+fn validateBufferOffset(program: *const program_ir.Program, source: operand.Source) Error!void {
+    try validateSource(program, source);
+    if (source.type != .u32)
+        return Error.InvalidBufferAccess;
 }
 
 fn validateParallelCopy(program: *const program_ir.Program, copy: pseudo.ParallelCopy) Error!void {
@@ -267,13 +252,7 @@ fn isBroadcast(region: operand.Region) bool {
     return region.vertical_stride == 0 and region.width == 1 and region.horizontal_stride == 0;
 }
 
-fn validateType(data_type: operand.DataType) Error!void {
-    if (!data_type.isInitialTargetType())
-        return Error.UnsupportedDataType;
-}
-
 fn validateSource(program: *const program_ir.Program, source: operand.Source) Error!void {
-    try validateType(source.type);
     if (source.region.width == 0)
         return Error.InvalidRegion;
     try validateRegisterRef(program, source.register);
@@ -290,7 +269,6 @@ fn validateSource(program: *const program_ir.Program, source: operand.Source) Er
 }
 
 fn validateDestination(program: *const program_ir.Program, destination: operand.Destination) Error!void {
-    try validateType(destination.type);
     if (destination.region.horizontal_stride == 0)
         return Error.InvalidRegion;
     switch (destination.register) {
@@ -316,28 +294,7 @@ fn validateFlag(program: *const program_ir.Program, flag: operand.FlagRef) Error
     switch (flag) {
         .virtual => |id| if (!program.virtual_flags.isLive(id))
             return Error.InvalidVirtualFlag,
-        .physical => |physical| if (physical.register != 0 or physical.subregister > 1)
-            return Error.InvalidPhysicalFlag,
-    }
-}
-
-fn validateSpan(program: *const program_ir.Program, span: operand.RegisterSpan) Error!void {
-    if (span.register_count == 0)
-        return Error.InvalidRegisterSpan;
-    switch (span.base) {
-        .virtual => |register_id| {
-            try validateRegisterRef(program, span.base);
-            const register = program.virtual_registers.get(register_id) orelse return Error.InvalidVirtualRegister;
-            const required_size = @as(u32, span.register_count) * program.device_info.grf_size_bytes;
-            if (register.size_bytes < required_size)
-                return Error.InvalidRegisterSpan;
-        },
-        .physical_grf => |physical| {
-            try validateRegisterRef(program, span.base);
-            if (physical.byte_offset != 0 or @as(u32, physical.number) + span.register_count > program.device_info.grf_count)
-                return Error.InvalidRegisterSpan;
-        },
-        else => return Error.InvalidRegisterSpan,
+        .physical => {},
     }
 }
 
@@ -416,4 +373,64 @@ fn validateStructuredControl(program: *const program_ir.Program, control: instru
 fn validateBlockTarget(program: *const program_ir.Program, block_id: ids.BlockId) Error!void {
     if (!program.blocks.isLive(block_id))
         return Error.InvalidBlock;
+}
+
+test "[ir] validator checks compute system values and resources" {
+    const std = @import("std");
+    const Builder = @import("Builder.zig");
+    const device = @import("../device.zig");
+
+    const device_info: device.DeviceInfo = .{
+        .generation = .gen9,
+        .platform = .skylake,
+        .pci_device_id = 0x1912,
+        .grf_count = 128,
+    };
+    var program = program_ir.Program.init(std.testing.allocator, .{ 1, 1, 1 }, device_info, .simd8);
+    defer program.deinit();
+    var builder = Builder.init(&program);
+
+    const register = try builder.addVirtualRegister(.{
+        .size_bytes = 32,
+        .alignment_bytes = 32,
+        .element_type = .u32,
+        .lane_count = 8,
+        .class = .temporary,
+    });
+    const buffer = try builder.addStorageBuffer(.{ .set = 0, .binding = 0 });
+    const entry = try builder.addBlock("entry");
+    const system_value_id = try builder.appendInstruction(entry, .simd8, null, .{
+        .load_global_invocation_id = .{
+            .destination = .{ .register = .{ .virtual = register }, .type = .u32 },
+            .component = 0,
+        },
+    });
+    const buffer_load_id = try builder.appendInstruction(entry, .simd8, null, .{
+        .load_buffer = .{
+            .destination = .{ .register = .{ .virtual = register }, .type = .u32 },
+            .buffer = buffer,
+            .byte_offset = .{
+                .register = .{ .immediate = .{ .u32 = 0 } },
+                .type = .u32,
+                .region = operand.Region.broadcast(),
+            },
+        },
+    });
+    try builder.setTerminator(entry, .end_thread);
+    try validate(&program);
+
+    program.instructions.getMut(system_value_id).?.operation.load_global_invocation_id.component = 3;
+    try std.testing.expectError(Error.InvalidGlobalInvocationId, validate(&program));
+    program.instructions.getMut(system_value_id).?.operation.load_global_invocation_id.component = 0;
+
+    program.properties.system_values_lowered = true;
+    try std.testing.expectError(Error.UnloweredSystemValue, validate(&program));
+    program.properties.system_values_lowered = false;
+
+    program.instructions.getMut(buffer_load_id).?.operation.load_buffer.buffer = ids.StorageBufferId.fromIndex(99);
+    try std.testing.expectError(Error.InvalidStorageBuffer, validate(&program));
+    program.instructions.getMut(buffer_load_id).?.operation.load_buffer.buffer = buffer;
+
+    program.properties.resources_lowered = true;
+    try std.testing.expectError(Error.UnloweredResource, validate(&program));
 }

@@ -150,7 +150,7 @@ test "[ir] block arguments: lower register and flag parameters" {
         .grf_count = 128,
     };
 
-    var program = program_ir.Program.init(std.testing.allocator, .vertex, device_info, .simd8);
+    var program = program_ir.Program.init(std.testing.allocator, .{ 1, 1, 1 }, device_info, .simd8);
     defer program.deinit();
     var builder = Builder.init(&program);
 
@@ -224,7 +224,7 @@ test "[ir] block arguments: split same-target conditional edges" {
         .grf_count = 128,
     };
 
-    var program = program_ir.Program.init(std.testing.allocator, .vertex, device_info, .simd8);
+    var program = program_ir.Program.init(std.testing.allocator, .{ 1, 1, 1 }, device_info, .simd8);
     defer program.deinit();
     var builder = Builder.init(&program);
 

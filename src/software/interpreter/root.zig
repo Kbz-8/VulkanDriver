@@ -1,7 +1,4 @@
 //! Software bytecode interpreter for the backend-agnostic shader IR.
-//!
-//! This first slice supports allocation-free scalar execution of 32-bit scalar
-//! and vector arithmetic, interface I/O, control flow, and block parameters.
 
 pub const bytecode = @import("bytecode.zig");
 pub const Program = @import("Program.zig");

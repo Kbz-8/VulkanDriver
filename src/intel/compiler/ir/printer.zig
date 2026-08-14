@@ -9,11 +9,19 @@ const pseudo = @import("pseudo.zig");
 const indent = "    ";
 
 pub fn write(program: *const program_ir.Program, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-    try writer.writeAll("; Flint program:\n");
-    try writer.print(";   .stage: {t}\n", .{program.stage});
+    try writer.writeAll("; Flint compute program:\n");
+    try writer.print(";   .workgroup_size: [{d}, {d}, {d}]\n", .{ program.workgroup_size[0], program.workgroup_size[1], program.workgroup_size[2] });
     try writer.print(";   .generation: {t}\n", .{program.device_info.generation});
     try writer.print(";   .platform: {t}\n", .{program.device_info.platform});
     try writer.print(";   .dispatch_width: {t}\n\n", .{program.dispatch_width});
+
+    for (program.storage_buffers.entries.items, 0..) |entry, index| {
+        const buffer = entry orelse continue;
+        try writeStorageBufferRef(program, writer, ids.StorageBufferId.fromIndex(index));
+        try writer.print(" = storage_buffer[set({d}), binding({d})]\n", .{ buffer.set, buffer.binding });
+    }
+    if (program.storage_buffers.entries.items.len != 0)
+        try writer.writeByte('\n');
 
     for (program.virtual_registers.entries.items, 0..) |entry, index| {
         const register = entry orelse continue;
@@ -103,15 +111,28 @@ fn writeInstruction(program: *const program_ir.Program, writer: *std.Io.Writer, 
 
 fn writeOperation(program: *const program_ir.Program, writer: *std.Io.Writer, execution_size: device.ExecutionSize, operation: inst_ir.Operation) !void {
     switch (operation) {
-        .load_input => |op| {
-            try writer.writeAll("load_input ");
+        .load_global_invocation_id => |op| {
+            try writer.writeAll("load_global_invocation_id ");
+            try writeDestination(program, writer, execution_size, op.destination);
+            try writer.print(", component({d})", .{op.component});
+        },
+        .load_buffer => |op| {
+            try writer.writeAll("load_buffer ");
             try writeDestination(program, writer, execution_size, op.destination);
             try writer.writeAll(", ");
-            try writeInterfaceSemantic(writer, op.semantic);
+            try writeStorageBufferRef(program, writer, op.buffer);
+            try writer.writeAll(", ");
+            try writeSource(program, writer, execution_size, op.byte_offset);
+            if (op.immediate_offset != 0)
+                try writer.print(", offset({d})", .{op.immediate_offset});
         },
-        .store_output => |op| {
-            try writer.writeAll("store_output ");
-            try writeInterfaceSemantic(writer, op.semantic);
+        .store_buffer => |op| {
+            try writer.writeAll("store_buffer ");
+            try writeStorageBufferRef(program, writer, op.buffer);
+            try writer.writeAll(", ");
+            try writeSource(program, writer, execution_size, op.byte_offset);
+            if (op.immediate_offset != 0)
+                try writer.print(", offset({d})", .{op.immediate_offset});
             try writer.writeAll(", ");
             try writeSource(program, writer, execution_size, op.source);
         },
@@ -138,17 +159,6 @@ fn writeOperation(program: *const program_ir.Program, writer: *std.Io.Writer, ex
             try writeSource(program, writer, execution_size, op.rhs);
         },
         .parallel_copy => |op| try writeParallelCopy(program, writer, execution_size, op),
-        .send => |op| {
-            try writer.writeAll("send ");
-            if (op.response) |response| {
-                try writeRegisterSpan(program, writer, response);
-                try writer.writeAll(", ");
-            }
-            try writeMessage(writer, op.message);
-            try writer.writeAll(", payload(");
-            try writeRegisterSpan(program, writer, op.payload);
-            try writer.writeByte(')');
-        },
     }
 }
 
@@ -346,39 +356,9 @@ fn writeFlagRef(program: *const program_ir.Program, writer: *std.Io.Writer, flag
     }
 }
 
-fn writeRegisterSpan(program: *const program_ir.Program, writer: *std.Io.Writer, span: operand.RegisterSpan) !void {
-    try writeRegister(program, writer, span.base);
-    const byte_offset = registerByteOffset(span.base);
-    if (byte_offset != 0)
-        try writer.print("[byte={d}]", .{byte_offset});
-    try writer.print("[{d}]", .{span.register_count});
-}
-
-fn writeInterfaceSemantic(writer: *std.Io.Writer, semantic: inst_ir.InterfaceSemantic) !void {
-    switch (semantic) {
-        .location => |location| try writer.print("location({d}), component({d})", .{ location.location, location.component }),
-        .builtin => |builtin| try writer.print("builtin({t}), component({d})", .{ builtin.builtin, builtin.component }),
-    }
-}
-
-fn writeMessage(writer: *std.Io.Writer, message: inst_ir.Message) !void {
-    switch (message) {
-        .urb_write => |urb| {
-            try writer.print("urb_write[offset({d}), channels(", .{urb.offset});
-            try writeChannelMask(writer, urb.channels);
-            try writer.writeByte(')');
-            if (urb.end_of_thread)
-                try writer.writeAll(", end_of_thread");
-            try writer.writeByte(']');
-        },
-    }
-}
-
-fn writeChannelMask(writer: *std.Io.Writer, mask: inst_ir.ChannelMask) !void {
-    if (mask.x) try writer.writeByte('x');
-    if (mask.y) try writer.writeByte('y');
-    if (mask.z) try writer.writeByte('z');
-    if (mask.w) try writer.writeByte('w');
+fn writeStorageBufferRef(program: *const program_ir.Program, writer: *std.Io.Writer, buffer_id: ids.StorageBufferId) !void {
+    const buffer = program.storage_buffers.get(buffer_id);
+    try writeNamedRef(writer, if (buffer) |value| value.name else null, "buffer", buffer_id.index(), '@');
 }
 
 fn writeVirtualRegisterRef(program: *const program_ir.Program, writer: *std.Io.Writer, register_id: ids.VirtualRegisterId) !void {

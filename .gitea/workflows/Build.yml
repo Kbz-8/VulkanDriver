@@ -55,7 +55,7 @@ jobs:
       - name: ZLint pass
         run: |
           curl -fsSL https://raw.githubusercontent.com/DonIsaac/zlint/refs/heads/main/tasks/install.sh | bash
-          zlint
+          zlint --deny-warnings
 
       - name: Building Ape
         run: zig build ape --release=safe

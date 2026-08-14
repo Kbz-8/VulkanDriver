@@ -8,4 +8,3 @@ pub const pseudo = @import("pseudo.zig");
 pub const validator = @import("validator.zig");
 
 pub const Program = program.Program;
-pub const Stage = program.Stage;

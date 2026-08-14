@@ -39,12 +39,16 @@ scratch: []u32,
 pub fn init(allocator: std.mem.Allocator, program: *const Program) !Self {
     const registers = try allocator.alloc(u32, program.register_count);
     errdefer allocator.free(registers);
+
     const scratch = try allocator.alloc(u32, program.scratch_count);
     errdefer allocator.free(scratch);
+
     @memset(registers, 0);
     @memset(scratch, 0);
+
     for (program.initializers) |initializer|
         registers[initializer.register] = initializer.value;
+
     return .{ .allocator = allocator, .registers = registers, .scratch = scratch };
 }
 

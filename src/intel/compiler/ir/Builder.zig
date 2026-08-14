@@ -29,6 +29,10 @@ pub fn addVirtualFlag(self: *Self, flag: operand.VirtualFlag) Error!ids.VirtualF
     return self.program.addVirtualFlag(flag);
 }
 
+pub fn addStorageBuffer(self: *Self, buffer: program_ir.StorageBuffer) Error!ids.StorageBufferId {
+    return self.program.addStorageBuffer(buffer);
+}
+
 pub fn addBlock(self: *Self, name: ?[]const u8) Error!ids.BlockId {
     return self.program.addBlock(name);
 }
@@ -132,7 +136,7 @@ test "[ir] Builder: construction and ordered insertion" {
         .grf_count = 128,
     };
 
-    var program = program_ir.Program.init(std.testing.allocator, .vertex, device_info, .simd8);
+    var program = program_ir.Program.init(std.testing.allocator, .{ 1, 1, 1 }, device_info, .simd8);
     defer program.deinit();
     var builder = Self.init(&program);
 

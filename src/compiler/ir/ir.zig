@@ -57,13 +57,3 @@ pub const types = @import("type.zig");
 pub const validator = @import("validator/validator.zig");
 pub const value = @import("value.zig");
 pub const visitor = @import("visitor.zig");
-
-test {
-    _ = Builder;
-    _ = Rewriter;
-    _ = inline_all_functions;
-    _ = module;
-    _ = parser;
-    _ = transformer_manager;
-    _ = validator;
-}

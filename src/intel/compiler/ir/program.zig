@@ -1,11 +1,9 @@
 const std = @import("std");
-const shared_ir = @import("shader_ir").ir.module;
+
 const device = @import("../device.zig");
 const ids = @import("id.zig");
 const instructions = @import("instruction.zig");
 const operand = @import("operand.zig");
-
-pub const Stage = shared_ir.Stage;
 
 pub const Properties = packed struct {
     common_ir_lowered: bool = false,
@@ -13,7 +11,7 @@ pub const Properties = packed struct {
     block_parameters_lowered: bool = false,
     parallel_copies_lowered: bool = false,
 
-    stage_io_lowered: bool = false,
+    system_values_lowered: bool = false,
     resources_lowered: bool = false,
     messages_lowered: bool = false,
     control_flow_lowered: bool = false,
@@ -28,14 +26,14 @@ pub const Properties = packed struct {
     _padding: u19 = 0,
 };
 
-pub const VertexPayload = struct {
-    first_attribute_grf: operand.PhysicalGrf,
-    attribute_grf_count: u16,
+pub const StorageBuffer = struct {
+    set: u32,
+    binding: u32,
+    name: ?[]const u8 = null,
 };
 
 pub const PayloadLayout = struct {
     header_grf: ?operand.PhysicalGrf = null,
-    vertex: ?VertexPayload = null,
 };
 
 pub const ProgramData = struct {
@@ -48,11 +46,12 @@ pub const BlockStore = ids.Store(ids.BlockId, instructions.Block);
 pub const InstructionStore = ids.Store(ids.InstructionId, instructions.Instruction);
 pub const VirtualRegisterStore = ids.Store(ids.VirtualRegisterId, operand.VirtualRegister);
 pub const VirtualFlagStore = ids.Store(ids.VirtualFlagId, operand.VirtualFlag);
+pub const StorageBufferStore = ids.Store(ids.StorageBufferId, StorageBuffer);
 
 pub const Program = struct {
     arena: std.heap.ArenaAllocator,
 
-    stage: Stage,
+    workgroup_size: [3]u32,
     device_info: device.DeviceInfo,
     dispatch_width: device.DispatchWidth,
 
@@ -62,15 +61,16 @@ pub const Program = struct {
     instructions: InstructionStore = .{},
     virtual_registers: VirtualRegisterStore = .{},
     virtual_flags: VirtualFlagStore = .{},
+    storage_buffers: StorageBufferStore = .{},
 
     payload: PayloadLayout = .{},
     program_data: ProgramData = .{},
     properties: Properties = .{},
 
-    pub fn init(backing_allocator: std.mem.Allocator, stage: Stage, device_info: device.DeviceInfo, dispatch_width: device.DispatchWidth) Program {
+    pub fn init(backing_allocator: std.mem.Allocator, workgroup_size: [3]u32, device_info: device.DeviceInfo, dispatch_width: device.DispatchWidth) Program {
         return .{
             .arena = std.heap.ArenaAllocator.init(backing_allocator),
-            .stage = stage,
+            .workgroup_size = workgroup_size,
             .device_info = device_info,
             .dispatch_width = dispatch_width,
         };
@@ -97,6 +97,13 @@ pub const Program = struct {
         if (flag.name) |name|
             owned.name = try self.allocator().dupe(u8, name);
         return self.virtual_flags.add(self.allocator(), owned);
+    }
+
+    pub fn addStorageBuffer(self: *Program, buffer: StorageBuffer) !ids.StorageBufferId {
+        var owned = buffer;
+        if (buffer.name) |name|
+            owned.name = try self.allocator().dupe(u8, name);
+        return self.storage_buffers.add(self.allocator(), owned);
     }
 
     pub fn addBlock(self: *Program, name: ?[]const u8) !ids.BlockId {
