@@ -15,14 +15,25 @@ const PipelineKind = enum {
     compute,
 };
 
+pub const ComputeArtifact = struct {
+    program: compiler.Program,
+    resources: compiler.targets.ComputeResourceLayout,
+
+    fn deinit(self: *ComputeArtifact, allocator: std.mem.Allocator) void {
+        self.resources.deinit(allocator);
+        self.program.deinit();
+        self.* = undefined;
+    }
+};
+
 const CommonStage = struct {
     stage: shader_ir.ir.module.Stage,
     module: base.ShaderModule.IrModule,
-    program: ?compiler.Program,
+    artifact: ?ComputeArtifact,
 
-    fn deinit(self: *CommonStage) void {
-        if (self.program) |*program|
-            program.deinit();
+    fn deinit(self: *CommonStage, allocator: std.mem.Allocator) void {
+        if (self.artifact) |*artifact|
+            artifact.deinit(allocator);
         self.module.deinit();
         self.* = undefined;
     }
@@ -48,6 +59,8 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
     initialized = true;
 
     self.stages = try compileStages(self.artifact_allocator.allocator(), &.{info.stage}, .compute, compilerDeviceInfo(device));
+    if (self.computeArtifact()) |artifact|
+        try validateComputePipelineLayout(self.interface.layout, &artifact.resources);
     return self;
 }
 
@@ -74,12 +87,7 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
     return self;
 }
 
-fn compileStages(
-    allocator: std.mem.Allocator,
-    infos: []const vk.PipelineShaderStageCreateInfo,
-    pipeline_kind: PipelineKind,
-    device_info: ?compiler.device.DeviceInfo,
-) VkError![]CommonStage {
+fn compileStages(allocator: std.mem.Allocator, infos: []const vk.PipelineShaderStageCreateInfo, pipeline_kind: PipelineKind, device_info: ?compiler.device.DeviceInfo) VkError![]CommonStage {
     if (infos.len == 0)
         return VkError.ValidationFailed;
 
@@ -87,7 +95,7 @@ fn compileStages(
     var initialized: usize = 0;
     errdefer {
         for (stages[0..initialized]) |*stage|
-            stage.deinit();
+            stage.deinit(allocator);
         allocator.free(stages);
     }
 
@@ -98,12 +106,7 @@ fn compileStages(
     return stages;
 }
 
-fn compileStage(
-    allocator: std.mem.Allocator,
-    info: *const vk.PipelineShaderStageCreateInfo,
-    pipeline_kind: PipelineKind,
-    device_info: ?compiler.device.DeviceInfo,
-) VkError!CommonStage {
+fn compileStage(allocator: std.mem.Allocator, info: *const vk.PipelineShaderStageCreateInfo, pipeline_kind: PipelineKind, device_info: ?compiler.device.DeviceInfo) VkError!CommonStage {
     const specializations = try specializationValues(allocator, info.p_specialization_info);
     defer if (specializations.len != 0) allocator.free(specializations);
 
@@ -129,24 +132,21 @@ fn compileStage(
 
     std.debug.assert(module.stage == expected_stage);
 
-    var program = try lowerToFlint(allocator, &module, device_info);
-    errdefer if (program) |*value| value.deinit();
+    var artifact = try lowerToFlint(allocator, &module, device_info);
+    errdefer if (artifact) |*value| value.deinit(allocator);
 
     return .{
         .stage = expected_stage,
         .module = module,
-        .program = program,
+        .artifact = artifact,
     };
 }
 
-fn lowerToFlint(
-    allocator: std.mem.Allocator,
-    module: *base.ShaderModule.IrModule,
-    device_info: ?compiler.device.DeviceInfo,
-) VkError!?compiler.Program {
+fn lowerToFlint(allocator: std.mem.Allocator, module: *base.ShaderModule.IrModule, device_info: ?compiler.device.DeviceInfo) VkError!?ComputeArtifact {
     const target = device_info orelse return null;
-    const program = compiler.targets.lower(allocator, module, target, .{}) catch |err| switch (err) {
+    var program = compiler.targets.lower(allocator, module, target, .{}) catch |err| switch (err) {
         error.OutOfMemory => return VkError.OutOfHostMemory,
+
         error.UnsupportedGeneration,
         error.UnsupportedStage,
         error.UnsupportedDispatchWidth,
@@ -157,12 +157,60 @@ fn lowerToFlint(
         error.UnsupportedOperation,
         error.UnsupportedTerminator,
         => return null,
+
         else => {
-            std.log.scoped(.FlintPipeline).err("Flint shader lowering failed: {s}", .{@errorName(err)});
+            std.log.scoped(.FlintPipeline).err("shader lowering failed: {s}", .{@errorName(err)});
             return VkError.ValidationFailed;
         },
     };
-    return program;
+    errdefer program.deinit();
+
+    var resources = compiler.targets.layoutComputeResources(allocator, &program) catch |err| switch (err) {
+        error.OutOfMemory => return VkError.OutOfHostMemory,
+        error.UnsupportedGeneration,
+        error.TooManyStorageBuffers,
+        => {
+            program.deinit();
+            return null;
+        },
+    };
+    errdefer resources.deinit(allocator);
+
+    compiler.targets.lowerComputeResources(&program, &resources) catch |err| switch (err) {
+        error.UnsupportedGeneration => {
+            resources.deinit(allocator);
+            program.deinit();
+            return null;
+        },
+        error.InvalidProgram,
+        error.InvalidResourceLayout,
+        => {
+            std.log.scoped(.FlintPipeline).err("Flint compute resource lowering failed: {s}", .{@errorName(err)});
+            return VkError.ValidationFailed;
+        },
+    };
+
+    return .{
+        .program = program,
+        .resources = resources,
+    };
+}
+
+fn validateComputePipelineLayout(layout: *const base.PipelineLayout, resources: *const compiler.targets.ComputeResourceLayout) VkError!void {
+    for (resources.bindings) |resource| {
+        if (resource.set >= layout.set_count)
+            return VkError.ValidationFailed;
+
+        const set_layout = layout.set_layouts[resource.set] orelse return VkError.ValidationFailed;
+
+        if (resource.binding >= set_layout.bindings.len)
+            return VkError.ValidationFailed;
+
+        const binding = set_layout.bindings[resource.binding];
+
+        if (binding.descriptor_type != .storage_buffer or binding.array_size == 0)
+            return VkError.ValidationFailed;
+    }
 }
 
 fn compilerDeviceInfo(device: *const base.Device) ?compiler.device.DeviceInfo {
@@ -216,9 +264,15 @@ fn commonStage(stage: vk.ShaderStageFlags) ?shader_ir.ir.module.Stage {
 
 fn deinitStages(allocator: std.mem.Allocator, stages: []CommonStage) void {
     for (stages) |*stage|
-        stage.deinit();
+        stage.deinit(allocator);
     if (stages.len != 0)
         allocator.free(stages);
+}
+
+pub fn computeArtifact(self: *const Self) ?*const ComputeArtifact {
+    if (self.interface.bind_point != .compute or self.stages.len != 1 or self.stages[0].stage != .compute)
+        return null;
+    return if (self.stages[0].artifact) |*artifact| artifact else null;
 }
 
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
@@ -259,20 +313,23 @@ test "Flint pipeline: lower common compute IR" {
     }, null);
     try builder.setTerminator(entry, .return_void);
 
-    var program = (try lowerToFlint(std.testing.allocator, &module, device_info)).?;
-    defer program.deinit();
+    var artifact = (try lowerToFlint(std.testing.allocator, &module, device_info)).?;
+    defer artifact.deinit(std.testing.allocator);
+    const program = &artifact.program;
 
     try std.testing.expect(program.properties.common_ir_lowered);
     try std.testing.expect(program.properties.block_parameters_lowered);
     try std.testing.expect(!program.properties.system_values_lowered);
-    try std.testing.expect(!program.properties.resources_lowered);
+    try std.testing.expect(program.properties.resources_lowered);
     try std.testing.expect(!program.properties.instructions_selected);
     try std.testing.expectEqual([3]u32{ 1, 1, 1 }, program.workgroup_size);
     try std.testing.expectEqual(@as(usize, 1), program.storage_buffers.entries.items.len);
-    try compiler.targets.validate(&program);
+    try std.testing.expectEqual(@as(usize, 1), artifact.resources.bindings.len);
+    try std.testing.expectEqual(@as(u8, 0), artifact.resources.bindings[0].binding_table_index);
+    try compiler.targets.validate(program);
 
-    const text = try compiler.printer.allocPrint(std.testing.allocator, &program);
+    const text = try compiler.printer.allocPrint(std.testing.allocator, program);
     defer std.testing.allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "load_global_invocation_id %id_x:u32, component(0)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "store_buffer @storage, 0:u32, %id_x:u32") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "store_buffer bti(0), 0:u32, %id_x:u32") != null);
 }

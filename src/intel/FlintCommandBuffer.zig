@@ -174,16 +174,24 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
 
 pub fn bindDescriptorSets(interface: *Interface, bind_point: vk.PipelineBindPoint, first_set: u32, sets: [base.vulkan_max_descriptor_sets]?*base.DescriptorSet, dynamic_offsets: []const u32) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    if (bind_point != .compute) return;
-    if (first_set >= base.vulkan_max_descriptor_sets) return VkError.ValidationFailed;
+    if (bind_point != .compute)
+        return;
+
+    if (dynamic_offsets.len != 0)
+        return VkError.FeatureNotPresent;
+
+    if (first_set >= base.vulkan_max_descriptor_sets)
+        return VkError.ValidationFailed;
 
     for (sets, 0..) |set, index| {
         const base_set = set orelse break;
         const destination = first_set + index;
-        if (destination >= base.vulkan_max_descriptor_sets) return VkError.ValidationFailed;
+
+        if (destination >= base.vulkan_max_descriptor_sets)
+            return VkError.ValidationFailed;
+
         self.bound_compute_descriptor_sets[destination] = @alignCast(@fieldParentPtr("interface", base_set));
     }
-    _ = dynamic_offsets;
 }
 
 pub fn bindPipeline(interface: *Interface, bind_point: vk.PipelineBindPoint, pipeline: *base.Pipeline) VkError!void {
@@ -289,13 +297,38 @@ pub fn dispatch(interface: *Interface, group_count_x: u32, group_count_y: u32, g
 }
 
 pub fn dispatchBase(interface: *Interface, base_group_x: u32, base_group_y: u32, base_group_z: u32, group_count_x: u32, group_count_y: u32, group_count_z: u32) VkError!void {
-    _ = interface;
-    _ = base_group_x;
-    _ = base_group_y;
-    _ = base_group_z;
-    _ = group_count_x;
-    _ = group_count_y;
-    _ = group_count_z;
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    if (group_count_x == 0 or group_count_y == 0 or group_count_z == 0)
+        return;
+
+    inline for ([_]struct { u32, u32 }{
+        .{ base_group_x, group_count_x },
+        .{ base_group_y, group_count_y },
+        .{ base_group_z, group_count_z },
+    }) |dimension| {
+        const group_end = std.math.add(u32, dimension[0], dimension[1]) catch return VkError.ValidationFailed;
+        if (group_end > 65535)
+            return VkError.ValidationFailed;
+    }
+
+    const pipeline = self.bound_compute_pipeline orelse return VkError.ValidationFailed;
+    const artifact = pipeline.computeArtifact() orelse return VkError.FeatureNotPresent;
+    for (artifact.resources.bindings) |resource| {
+        if (resource.set >= base.vulkan_max_descriptor_sets)
+            return VkError.ValidationFailed;
+
+        const descriptor_set = self.bound_compute_descriptor_sets[resource.set] orelse return VkError.ValidationFailed;
+        const expected_layout = pipeline.interface.layout.set_layouts[resource.set] orelse return VkError.ValidationFailed;
+
+        if (descriptor_set.interface.layout != expected_layout)
+            return VkError.ValidationFailed;
+
+        const descriptor = try descriptor_set.getBuffer(resource.binding, 0);
+        const buffer = descriptor.buffer orelse return VkError.ValidationFailed;
+
+        if (!buffer.usage.storage_buffer_bit or buffer.memory == null)
+            return VkError.ValidationFailed;
+    }
 }
 
 pub fn setDeviceMask(interface: *Interface, device_mask: u32) VkError!void {

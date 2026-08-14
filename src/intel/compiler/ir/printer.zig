@@ -120,7 +120,7 @@ fn writeOperation(program: *const program_ir.Program, writer: *std.Io.Writer, ex
             try writer.writeAll("load_buffer ");
             try writeDestination(program, writer, execution_size, op.destination);
             try writer.writeAll(", ");
-            try writeStorageBufferRef(program, writer, op.buffer);
+            try writeBufferReference(program, writer, op.buffer);
             try writer.writeAll(", ");
             try writeSource(program, writer, execution_size, op.byte_offset);
             if (op.immediate_offset != 0)
@@ -128,7 +128,7 @@ fn writeOperation(program: *const program_ir.Program, writer: *std.Io.Writer, ex
         },
         .store_buffer => |op| {
             try writer.writeAll("store_buffer ");
-            try writeStorageBufferRef(program, writer, op.buffer);
+            try writeBufferReference(program, writer, op.buffer);
             try writer.writeAll(", ");
             try writeSource(program, writer, execution_size, op.byte_offset);
             if (op.immediate_offset != 0)
@@ -353,6 +353,13 @@ fn writeFlagRef(program: *const program_ir.Program, writer: *std.Io.Writer, flag
     switch (flag) {
         .virtual => |virtual| try writeVirtualFlagRef(program, writer, virtual),
         .physical => |physical| try writer.print("f{d}.{d}", .{ physical.register, physical.subregister }),
+    }
+}
+
+fn writeBufferReference(program: *const program_ir.Program, writer: *std.Io.Writer, reference: inst_ir.BufferReference) !void {
+    switch (reference) {
+        .logical => |buffer| try writeStorageBufferRef(program, writer, buffer),
+        .binding_table => |index| try writer.print("bti({d})", .{index}),
     }
 }
 

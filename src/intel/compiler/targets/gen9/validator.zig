@@ -12,6 +12,7 @@ pub const Error = shared.Error || compute.Error || error{
     UnsupportedExecutionSize,
     UnsupportedDataType,
     InvalidPhysicalFlag,
+    InvalidBindingTableIndex,
     InvalidPayloadLayout,
 };
 
@@ -54,10 +55,12 @@ fn validateInstruction(inst: instruction.Instruction) Error!void {
     switch (inst.operation) {
         .load_global_invocation_id => |op| try validateDestination(op.destination),
         .load_buffer => |op| {
+            try validateBufferReference(op.buffer);
             try validateDestination(op.destination);
             try validateSource(op.byte_offset);
         },
         .store_buffer => |op| {
+            try validateBufferReference(op.buffer);
             try validateSource(op.byte_offset);
             try validateSource(op.source);
         },
@@ -85,6 +88,14 @@ fn validateInstruction(inst: instruction.Instruction) Error!void {
                 .dynamic => |predicate| try validateFlag(predicate.flag),
             };
         },
+    }
+}
+
+fn validateBufferReference(reference: instruction.BufferReference) Error!void {
+    switch (reference) {
+        .logical => {},
+        .binding_table => |index| if (index >= compute.resource_layout.max_storage_buffers)
+            return Error.InvalidBindingTableIndex,
     }
 }
 

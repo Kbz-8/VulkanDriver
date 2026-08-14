@@ -1,5 +1,9 @@
 const std = @import("std");
 
+pub const resource_layout = @import("resource_layout.zig");
+pub const resource_lowering = @import("resource_lowering.zig");
+pub const ResourceLayout = resource_layout.Layout;
+
 pub const Error = error{UnsupportedWorkgroupSize};
 
 pub fn validateWorkgroupSize(size: [3]u32) Error!void {

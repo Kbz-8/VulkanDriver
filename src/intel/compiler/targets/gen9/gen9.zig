@@ -8,6 +8,8 @@ pub const compute = @import("compute/compute.zig");
 pub const validator = @import("validator.zig");
 
 pub const Options = common_ir.Options;
+pub const ResourceLoweringError = compute.resource_lowering.Error;
+
 pub const Error = common_ir.Error || compute.Error || error{
     UnsupportedGeneration,
     UnsupportedStage,
@@ -36,6 +38,11 @@ pub fn lower(
     errdefer program.deinit();
     validator.validate(&program) catch return Error.InvalidLoweredProgram;
     return program;
+}
+
+pub fn lowerComputeResources(program: *program_ir.Program, layout: *const compute.ResourceLayout) ResourceLoweringError!void {
+    try compute.resource_lowering.run(program, layout);
+    validator.validate(program) catch return ResourceLoweringError.InvalidProgram;
 }
 
 test "[gen9] target: reject unsupported target configurations" {

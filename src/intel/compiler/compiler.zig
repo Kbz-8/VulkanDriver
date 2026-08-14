@@ -51,7 +51,7 @@ test "[ir] basic compute shader" {
     });
     _ = try builder.appendInstruction(entry, .simd8, null, .{
         .store_buffer = .{
-            .buffer = storage,
+            .buffer = .{ .logical = storage },
             .byte_offset = .{
                 .register = .{ .immediate = .{ .u32 = 0 } },
                 .type = .u32,

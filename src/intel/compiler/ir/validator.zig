@@ -19,6 +19,7 @@ pub const Error = error{
     InvalidDestination,
     InvalidImmediateType,
     InvalidStorageBuffer,
+    InvalidBufferReference,
     InvalidGlobalInvocationId,
     InvalidBufferAccess,
     InvalidWorkgroupSize,
@@ -136,20 +137,14 @@ fn validateInstruction(program: *const program_ir.Program, inst: instruction.Ins
                 return Error.InvalidGlobalInvocationId;
         },
         .load_buffer => |op| {
-            if (program.properties.resources_lowered)
-                return Error.UnloweredResource;
-            if (!program.storage_buffers.isLive(op.buffer))
-                return Error.InvalidStorageBuffer;
+            try validateBufferReference(program, op.buffer);
             try validateDestination(program, op.destination);
             try validateBufferOffset(program, op.byte_offset);
             if (!op.destination.type.isInitialTargetType())
                 return Error.InvalidBufferAccess;
         },
         .store_buffer => |op| {
-            if (program.properties.resources_lowered)
-                return Error.UnloweredResource;
-            if (!program.storage_buffers.isLive(op.buffer))
-                return Error.InvalidStorageBuffer;
+            try validateBufferReference(program, op.buffer);
             try validateBufferOffset(program, op.byte_offset);
             try validateSource(program, op.source);
             if (!op.source.type.isInitialTargetType())
@@ -177,6 +172,19 @@ fn validateInstruction(program: *const program_ir.Program, inst: instruction.Ins
                 return Error.PredicatedParallelCopy;
             try validateParallelCopy(program, op);
         },
+    }
+}
+
+fn validateBufferReference(program: *const program_ir.Program, reference: instruction.BufferReference) Error!void {
+    switch (reference) {
+        .logical => |buffer| {
+            if (program.properties.resources_lowered)
+                return Error.UnloweredResource;
+            if (!program.storage_buffers.isLive(buffer))
+                return Error.InvalidStorageBuffer;
+        },
+        .binding_table => if (!program.properties.resources_lowered)
+            return Error.InvalidBufferReference,
     }
 }
 
@@ -408,7 +416,7 @@ test "[ir] validator checks compute system values and resources" {
     const buffer_load_id = try builder.appendInstruction(entry, .simd8, null, .{
         .load_buffer = .{
             .destination = .{ .register = .{ .virtual = register }, .type = .u32 },
-            .buffer = buffer,
+            .buffer = .{ .logical = buffer },
             .byte_offset = .{
                 .register = .{ .immediate = .{ .u32 = 0 } },
                 .type = .u32,
@@ -427,10 +435,12 @@ test "[ir] validator checks compute system values and resources" {
     try std.testing.expectError(Error.UnloweredSystemValue, validate(&program));
     program.properties.system_values_lowered = false;
 
-    program.instructions.getMut(buffer_load_id).?.operation.load_buffer.buffer = ids.StorageBufferId.fromIndex(99);
+    program.instructions.getMut(buffer_load_id).?.operation.load_buffer.buffer = .{ .logical = ids.StorageBufferId.fromIndex(99) };
     try std.testing.expectError(Error.InvalidStorageBuffer, validate(&program));
-    program.instructions.getMut(buffer_load_id).?.operation.load_buffer.buffer = buffer;
+    program.instructions.getMut(buffer_load_id).?.operation.load_buffer.buffer = .{ .logical = buffer };
 
     program.properties.resources_lowered = true;
     try std.testing.expectError(Error.UnloweredResource, validate(&program));
+    program.instructions.getMut(buffer_load_id).?.operation.load_buffer.buffer = .{ .binding_table = 0 };
+    try validate(&program);
 }

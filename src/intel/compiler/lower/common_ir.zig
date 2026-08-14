@@ -731,7 +731,7 @@ const LoweringState = struct {
             try self.appendInstruction(block_id, null, .{
                 .load_buffer = .{
                     .destination = try destinationFromSource(result_component),
-                    .buffer = buffer,
+                    .buffer = .{ .logical = buffer },
                     .byte_offset = byte_offset,
                     .immediate_offset = @intCast(component_index * result_component.type.sizeBytes()),
                 },
@@ -749,7 +749,7 @@ const LoweringState = struct {
         for (source_components, 0..) |source_component, component_index| {
             try self.appendInstruction(block_id, null, .{
                 .store_buffer = .{
-                    .buffer = buffer,
+                    .buffer = .{ .logical = buffer },
                     .byte_offset = byte_offset,
                     .immediate_offset = @intCast(component_index * source_component.type.sizeBytes()),
                     .source = source_component,

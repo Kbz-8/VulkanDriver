@@ -9,15 +9,20 @@ pub const LoadGlobalInvocationId = struct {
     component: u8,
 };
 
+pub const BufferReference = union(enum) {
+    logical: ids.StorageBufferId,
+    binding_table: u8,
+};
+
 pub const LoadBuffer = struct {
     destination: operand.Destination,
-    buffer: ids.StorageBufferId,
+    buffer: BufferReference,
     byte_offset: operand.Source,
     immediate_offset: u32 = 0,
 };
 
 pub const StoreBuffer = struct {
-    buffer: ids.StorageBufferId,
+    buffer: BufferReference,
     byte_offset: operand.Source,
     immediate_offset: u32 = 0,
     source: operand.Source,
