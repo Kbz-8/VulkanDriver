@@ -2,7 +2,6 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 
-
 const VkError = base.VkError;
 
 const Self = @This();

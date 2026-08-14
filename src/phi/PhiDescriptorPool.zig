@@ -4,7 +4,6 @@ const base = @import("base");
 
 const VkError = base.VkError;
 
-
 const Self = @This();
 pub const Interface = base.DescriptorPool;
 

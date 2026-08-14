@@ -5,7 +5,6 @@ const base = @import("base");
 const VkError = base.VkError;
 const VulkanAllocator = base.VulkanAllocator;
 
-
 const SoftDescriptorSet = @import("SoftDescriptorSet.zig");
 
 const Self = @This();

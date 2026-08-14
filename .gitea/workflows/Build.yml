@@ -52,6 +52,9 @@ jobs:
           echo "$PATH"
           ls -la /opt/mpss/3.8.6/sysroots/k1om-mpss-linux/bin | head -50
 
+      - name: Check formatting
+        run: zig fmt --check src/
+
       - name: ZLint pass
         run: |
           curl -fsSL https://raw.githubusercontent.com/DonIsaac/zlint/refs/heads/main/tasks/install.sh | bash
