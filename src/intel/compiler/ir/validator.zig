@@ -11,6 +11,7 @@ pub const Error = error{
     InvalidInstruction,
     InvalidVirtualRegister,
     InvalidVirtualFlag,
+    UnallocatedVirtualFlag,
     InvalidPhysicalRegister,
     InvalidRegisterSize,
     InvalidRegisterAlignment,
@@ -300,8 +301,12 @@ fn validateRegisterRef(program: *const program_ir.Program, register: operand.Reg
 
 fn validateFlag(program: *const program_ir.Program, flag: operand.FlagRef) Error!void {
     switch (flag) {
-        .virtual => |id| if (!program.virtual_flags.isLive(id))
-            return Error.InvalidVirtualFlag,
+        .virtual => |id| {
+            if (program.properties.flags_allocated)
+                return Error.UnallocatedVirtualFlag;
+            if (!program.virtual_flags.isLive(id))
+                return Error.InvalidVirtualFlag;
+        },
         .physical => {},
     }
 }

@@ -6,12 +6,13 @@ const common_ir = @import("../../lower/common_ir.zig");
 const parallel_copies = @import("../../lower/parallel_copies.zig");
 
 pub const compute = @import("compute/compute.zig");
+pub const flag_allocation = @import("flag_allocation.zig");
 pub const validator = @import("validator.zig");
 
 pub const Options = common_ir.Options;
 pub const ResourceLoweringError = compute.resource_lowering.Error;
 
-pub const Error = common_ir.Error || compute.Error || error{
+pub const Error = common_ir.Error || compute.Error || flag_allocation.Error || error{
     UnsupportedGeneration,
     UnsupportedStage,
     UnsupportedDispatchWidth,
@@ -36,6 +37,7 @@ pub fn lower(allocator: std.mem.Allocator, module: *shader_ir.module.Module, dev
         error.OutOfMemory => Error.OutOfMemory,
         error.InvalidProgram => Error.InvalidLoweredProgram,
     };
+    try flag_allocation.run(allocator, &program);
     validator.validate(&program) catch return Error.InvalidLoweredProgram;
     return program;
 }
@@ -127,6 +129,7 @@ test "[gen9] target: lower 256 KiB SSBO copy loop" {
     try std.testing.expect(program.properties.common_ir_lowered);
     try std.testing.expect(program.properties.block_parameters_lowered);
     try std.testing.expect(program.properties.parallel_copies_lowered);
+    try std.testing.expect(program.properties.flags_allocated);
 
     var resources = try compute.ResourceLayout.init(std.testing.allocator, &program);
     defer resources.deinit(std.testing.allocator);
