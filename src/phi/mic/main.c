@@ -2,11 +2,6 @@
 #include <pthread.h>
 #include <stdint.h>
 
-#ifdef PHI_HOST_EMULATION
-#include <string.h>
-#include <unistd.h>
-#endif
-
 #include <Daemon.h>
 #include <Logger.h>
 
@@ -21,13 +16,8 @@ static void* HandleClient(void* const argument)
 
 int main(int argc, char** argv)
 {
-#ifdef PHI_HOST_EMULATION
-	if(argc == 2 && strcmp(argv[1], "--unlink-on-start") == 0)
-		(void)unlink(argv[0]);
-#else
 	(void)argc;
 	(void)argv;
-#endif
 
 	PhiEndpoint endpoint = StartDaemon();
 	pthread_attr_t client_thread_attributes;

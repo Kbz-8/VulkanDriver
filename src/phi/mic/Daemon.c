@@ -1,3 +1,4 @@
+#include "Protocol.h"
 #include <CommandBuffer.h>
 #include <Daemon.h>
 #include <Logger.h>
@@ -75,13 +76,14 @@ int HandlePacket(PhiEndpoint endpoint)
 					return -1;
 				break;
 
+			case PHI_PACKET_MAP_HOST_MEMORY:
 			case PHI_PACKET_ALLOC_MEMORY:
-				if(HandleAllocMemory(endpoint, &header) < 0)
+				if(HandleNewMemory(endpoint, &header) < 0)
 					return -1;
 				break;
 
-			case PHI_PACKET_FREE_MEMORY:
-				if(HandleFreeMemory(endpoint, &header) < 0)
+			case PHI_PACKET_DESTROY_MEMORY:
+				if(HandleDestroyMemory(endpoint, &header) < 0)
 					return -1;
 				break;
 
@@ -157,7 +159,7 @@ int SendReply(PhiEndpoint endpoint, const PhiMessageHeader* request, const void*
 
 int SendStatus(PhiEndpoint endpoint, const PhiMessageHeader* request, PhiStatus status)
 {
-	PhiFreeMemoryReply reply = {
+	PhiResultReply reply = {
 		.result = {
 			.status = status,
 			.reserved = 0,

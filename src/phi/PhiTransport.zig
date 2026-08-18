@@ -5,7 +5,7 @@ const scif = @import("scif.zig");
 
 const VkError = base.VkError;
 const proto = lib.proto;
-const Endpoint = if (lib.config.phi_host_emulation) std.Io.net.Stream else scif.epd_t;
+const Endpoint = scif.epd_t;
 
 const Self = @This();
 
@@ -15,19 +15,7 @@ mutex: std.Io.Mutex = .init,
 instance: *base.Instance,
 
 pub fn init(instance: *base.Instance, node_id: u16) VkError!Self {
-    const epd = if (comptime lib.config.phi_host_emulation) blk: {
-        const address: std.Io.net.IpAddress = .{
-            .ip4 = .loopback(lib.config.phi_emulation_port),
-        };
-        const stream = address.connect(instance.io(), .{ .mode = .stream }) catch |err| {
-            std.log.scoped(.PhiTransport).err(
-                "TCP connection to 127.0.0.1:{d} failed: {s}",
-                .{ lib.config.phi_emulation_port, @errorName(err) },
-            );
-            return VkError.InitializationFailed;
-        };
-        break :blk stream;
-    } else blk: {
+    const epd = blk: {
         try scif.load();
         errdefer scif.unload();
 
@@ -50,9 +38,8 @@ pub fn init(instance: *base.Instance, node_id: u16) VkError!Self {
         break :blk endpoint;
     };
     errdefer {
-        closeEndpoint(epd, instance.io());
-        if (comptime !lib.config.phi_host_emulation)
-            scif.unload();
+        closeEndpoint(epd);
+        scif.unload();
     }
 
     var self: Self = .{
@@ -71,9 +58,8 @@ pub fn deinit(self: *Self) void {
         std.log.scoped(.PhiTransport).warn("Failed to shut down remote session: {s}", .{@errorName(err)});
     };
 
-    closeEndpoint(self.epd, self.instance.io());
-    if (comptime !lib.config.phi_host_emulation)
-        scif.unload();
+    closeEndpoint(self.epd);
+    scif.unload();
     std.log.scoped(.PhiTransport).info("Closed connection", .{});
 }
 
@@ -116,21 +102,12 @@ pub fn statusToErr(status: c_int) VkError {
     return switch (status) {
         proto.PHI_STATUS_OUT_OF_MEMORY => VkError.OutOfDeviceMemory,
         proto.PHI_STATUS_UNSUPPORTED_VERSION => VkError.InitializationFailed,
+        proto.PHI_STATUS_INVALID_ARGUMENT => VkError.ValidationFailed,
         else => VkError.Unknown,
     };
 }
 
 fn writeAll(self: *Self, bytes: []const u8) VkError!void {
-    if (comptime lib.config.phi_host_emulation) {
-        var buffer: [0]u8 = .{};
-        var writer = self.epd.writer(self.instance.io(), &buffer);
-        writer.interface.writeAll(bytes) catch |err| {
-            std.log.scoped(.PhiTransport).err("TCP send failed: {s}", .{@errorName(err)});
-            return VkError.InitializationFailed;
-        };
-        return;
-    }
-
     var offset: usize = 0;
     while (offset < bytes.len) {
         const written = scif.send(self.epd, bytes[offset..].ptr, bytes.len - offset, scif.send_block);
@@ -142,16 +119,6 @@ fn writeAll(self: *Self, bytes: []const u8) VkError!void {
 }
 
 fn readAll(self: *Self, bytes: []u8) VkError!void {
-    if (comptime lib.config.phi_host_emulation) {
-        var buffer: [0]u8 = .{};
-        var reader = self.epd.reader(self.instance.io(), &buffer);
-        reader.interface.readSliceAll(bytes) catch |err| {
-            std.log.scoped(.PhiTransport).err("TCP receive failed: {s}", .{@errorName(err)});
-            return VkError.InitializationFailed;
-        };
-        return;
-    }
-
     var offset: usize = 0;
     while (offset < bytes.len) {
         const read = scif.recv(self.epd, bytes[offset..].ptr, bytes.len - offset, scif.recv_block);
@@ -162,11 +129,8 @@ fn readAll(self: *Self, bytes: []u8) VkError!void {
     }
 }
 
-fn closeEndpoint(endpoint: Endpoint, io: std.Io) void {
-    if (comptime lib.config.phi_host_emulation)
-        endpoint.close(io)
-    else
-        _ = scif.close(endpoint);
+fn closeEndpoint(endpoint: Endpoint) void {
+    _ = scif.close(endpoint);
 }
 
 fn handshake(self: *Self) VkError!void {
@@ -184,5 +148,26 @@ fn handshake(self: *Self) VkError!void {
     if (reply.device_protocol_version != proto.PHI_PROTOCOL_VERSION) {
         std.log.scoped(.PhiTransport).err("Unsupported Phi protocol version {d}", .{reply.device_protocol_version});
         return VkError.InitializationFailed;
+    }
+}
+
+pub fn registerHostMemory(self: *Self, memory: []u8) VkError!u64 {
+    const offset = scif.register(
+        self.epd,
+        memory.ptr,
+        memory.len,
+        0,
+        @intFromEnum(scif.Prot.read) | @intFromEnum(scif.Prot.write),
+        0,
+    );
+    if (offset < 0) {
+        return VkError.Unknown;
+    }
+    return @intCast(offset);
+}
+
+pub fn unregisterHostMemory(self: *Self, offset: u64, size: usize) VkError!void {
+    if (scif.unregister(self.epd, @intCast(offset), size) != 0) {
+        return VkError.Unknown;
     }
 }

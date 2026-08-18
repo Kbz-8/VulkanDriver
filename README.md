@@ -235,33 +235,7 @@ To bring forth the driver:
 zig build phi --release=[fast|safe|small]
 ```
 
-Shouldst thou endeavor to forge Phi in the absence of thy Xeon Phi card, thou must permit the emulation of the host:
-
-```
-zig build phi -Dphi-host-emulation=true --release=[fast|safe|small]
-```
-
-Take heed, for this path is forged solely for development; thou shalt find that even the execution of shaders may fail to manifest when thou requirest them most.
-
-Behold how this creation is wrought: In this state, the daemon is compiled natively by the power of Zig's `std.Build`, and set within `zig-out/bin/phi_device-host`.
-The driver revealeth but one synthetic Phi device, its voice reaching the daemon through an IPv4 TCP socket tethered only to `127.0.0.1`.
-For the client socket, thou shalt find it fashioned directly from the `std.Io.net` API; it escheweth the use of C transport functions and requireth no summoning of `libmicmgmt` or `libscif`.
-
-The driver first endeavoreth to bind itself to a daemon already manifest. If the void remaineth silent, it shall launch its embedded daemon from within, retrying the bond.
-This transient essence shall vanish from the filesystem once its task is begun. Yet, thou art not bound to this way; thou mayest also start the daemon by thine own hand:
-
-```
-./zig-out/bin/phi_device-host
-```
-
-The loopback port resideth by default at `43616`, yet thou mayest decree another during the hour of forging, for both driver and daemon alike:
-
-```
-zig build phi -Dphi-host-emulation=true -Dphi-emulation-port=43617
-```
-
-Shouldst thou forgo the `-Dphi-host-emulation=true` decree, the true path of the Xeon Phi remaineth.
-In this manner, the daemon is cross-compiled by way of `k1om-mpss-linux-gcc`, delivered unto its destination via SSH/SCP, and speaketh through the SCIF.\
+In this manner, the daemon is cross-compiled by way of `k1om-mpss-linux-gcc`, delivered unto its destination via SSH, and speaketh through the SCIF.
 
 For those who seek a different method of creation:
 

@@ -10,6 +10,11 @@ pub const PortId = extern struct {
     port: u16,
 };
 
+pub const Prot = enum(c_int) {
+    read = 1 << 0,
+    write = 1 << 1,
+};
+
 pub const send_block = 1;
 pub const recv_block = 1;
 
@@ -23,6 +28,10 @@ var scif_connect: *const fn (epd: epd_t, dst: *const PortId) callconv(.c) c_int 
 var scif_send: *const fn (epd: epd_t, msg: ?*const anyopaque, len: usize, flags: c_int) callconv(.c) isize = undefined;
 // SAFETY: load assigns every function pointer before the public wrappers can be used.
 var scif_recv: *const fn (epd: epd_t, msg: ?*anyopaque, len: usize, flags: c_int) callconv(.c) isize = undefined;
+// SAFETY: load assigns every function pointer before the public wrappers can be used.
+var scif_register: *const fn (epd: epd_t, addr: ?*anyopaque, len: usize, offset: i64, prot_flags: c_int, map_flags: c_int) callconv(.c) i64 = undefined;
+// SAFETY: load assigns every function pointer before the public wrappers can be used.
+var scif_unregister: *const fn (epd: epd_t, offset: i64, len: usize) callconv(.c) c_int = undefined;
 
 // SAFETY: load initializes the module before it can be closed or queried.
 var module: std.DynLib = undefined;
@@ -49,6 +58,8 @@ pub fn load() VkError!void {
     scif_connect = module.lookup(@TypeOf(scif_connect), "scif_connect") orelse return VkError.InitializationFailed;
     scif_send = module.lookup(@TypeOf(scif_send), "scif_send") orelse return VkError.InitializationFailed;
     scif_recv = module.lookup(@TypeOf(scif_recv), "scif_recv") orelse return VkError.InitializationFailed;
+    scif_register = module.lookup(@TypeOf(scif_register), "scif_register") orelse return VkError.InitializationFailed;
+    scif_unregister = module.lookup(@TypeOf(scif_unregister), "scif_unregister") orelse return VkError.InitializationFailed;
 
     _ = ref_count.fetchAdd(1, .monotonic);
 }
@@ -80,4 +91,12 @@ pub inline fn send(epd: epd_t, msg: ?*const anyopaque, len: usize, flags: c_int)
 
 pub inline fn recv(epd: epd_t, msg: ?*anyopaque, len: usize, flags: c_int) isize {
     return scif_recv(epd, msg, len, flags);
+}
+
+pub inline fn register(epd: epd_t, addr: ?*anyopaque, len: usize, offset: i64, prot_flags: c_int, map_flags: c_int) i64 {
+    return scif_register(epd, addr, len, offset, prot_flags, map_flags);
+}
+
+pub inline fn unregister(epd: epd_t, offset: i64, len: usize) c_int {
+    return scif_unregister(epd, offset, len);
 }

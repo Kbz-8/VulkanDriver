@@ -61,23 +61,11 @@ fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
     self.threaded.deinit();
     allocator.destroy(self);
 
-    if (comptime !lib.config.phi_host_emulation)
-        mic.unload();
+    mic.unload();
 }
 
 fn requestPhysicalDevices(interface: *Interface, allocator: std.mem.Allocator, _: []base.drm.Card) VkError!void {
     if (interface.physical_devices.items.len != 0) {
-        return;
-    }
-
-    if (comptime lib.config.phi_host_emulation) {
-        const physical_device = try PhiPhysicalDevice.createEmulated(allocator, interface);
-        errdefer physical_device.interface.release(allocator) catch @panic("Caught an error while handling an error");
-
-        const dispatchable = try Dispatchable(base.PhysicalDevice).wrap(allocator, &physical_device.interface);
-        errdefer dispatchable.destroy(allocator);
-
-        interface.physical_devices.append(allocator, dispatchable) catch return VkError.OutOfHostMemory;
         return;
     }
 

@@ -47,7 +47,7 @@ static PhiStatus ExecuteCommand(PhiCommandReader* reader, const PhiCmdHeader* co
 int HandleWorkExecution(PhiEndpoint endpoint, const PhiMessageHeader* header)
 {
 	PhiWorkExecutionRequest request;
-	PhiWorkExecutionReply reply = {
+	PhiResultReply reply = {
 		.result = {
 			.status = PHI_STATUS_OK,
 			.reserved = 0,

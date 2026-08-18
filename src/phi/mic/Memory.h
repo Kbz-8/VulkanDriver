@@ -3,7 +3,25 @@
 
 #include <Daemon.h>
 
-int HandleAllocMemory(PhiEndpoint endpoint, const PhiMessageHeader* header);
-int HandleFreeMemory(PhiEndpoint endpoint, const PhiMessageHeader* header);
+typedef enum MemoryType
+{
+	PHI_MEMORY_LOCAL,
+	PHI_MEMORY_HOST_MAPPED,
+} MemoryType;
+
+typedef struct Memory
+{
+	MemoryType type;
+
+	void* ptr;
+
+	uint64_t size;
+	uint64_t scif_size;
+
+	off_t scif_offset;
+} Memory;
+
+int HandleNewMemory(PhiEndpoint endpoint, const PhiMessageHeader* header);
+int HandleDestroyMemory(PhiEndpoint endpoint, const PhiMessageHeader* header);
 
 #endif

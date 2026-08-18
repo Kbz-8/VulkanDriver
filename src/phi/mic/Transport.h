@@ -5,12 +5,8 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#ifdef PHI_HOST_EMULATION
-typedef int PhiEndpoint;
-#else
 #include <scif.h>
 typedef scif_epd_t PhiEndpoint;
-#endif
 
 #define PHI_ENDPOINT_INVALID ((PhiEndpoint) - 1)
 

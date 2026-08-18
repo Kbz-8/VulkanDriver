@@ -120,9 +120,6 @@ fn appendCommand(self: *Self, comptime T: type, command_type: c_int, payload: T)
 fn remoteMemory(buffer: *base.Buffer) VkError!*PhiDeviceMemory {
     const memory = buffer.memory orelse return VkError.ValidationFailed;
     const phi_memory: *PhiDeviceMemory = @alignCast(@fieldParentPtr("interface", memory));
-    if (phi_memory.remote_handle == 0) {
-        return VkError.ValidationFailed;
-    }
     return phi_memory;
 }
 

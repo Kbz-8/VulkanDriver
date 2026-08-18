@@ -516,37 +516,15 @@ fn customPhi(
     options.addOption([]const u8, "phi_daemon_remote_path", daemon_remote_path);
     options.addOption([]const u8, "phi_daemon_host_prefix", daemon_host_prefix);
 
-    const host_emulation = b.option(
-        bool,
-        "phi-host-emulation",
-        "Run the Phi device daemon on the host over a loopback TCP socket (/!\\ Intended for development use only /!\\)",
-    ) orelse false;
-    const emulation_port = b.option(
-        u16,
-        "phi-emulation-port",
-        "Loopback TCP port used by Phi host emulation",
-    ) orelse 43616;
-
-    options.addOption(bool, "phi_host_emulation", host_emulation);
-    options.addOption(u16, "phi_emulation_port", emulation_port);
-
     lib_mod.addImport("phi_c", base_c_mod);
 
-    if (host_emulation) {
-        lib_mod.addImport("miclib", b.createModule(.{
-            .root_source_file = b.path("src/phi/mic_stub.zig"),
-            .target = target,
-            .optimize = optimize,
-        }));
-    } else {
-        const miclib = b.lazyDependency("miclib", .{
-            .target = target,
-            .optimize = optimize,
-            .@"use-llvm" = use_llvm,
-        }) orelse return error.UnresolvedDependency;
+    const miclib = b.lazyDependency("miclib", .{
+        .target = target,
+        .optimize = optimize,
+        .@"use-llvm" = use_llvm,
+    }) orelse return error.UnresolvedDependency;
 
-        lib_mod.addImport("miclib", miclib.module("miclib"));
-    }
+    lib_mod.addImport("miclib", miclib.module("miclib"));
 
     const phi_protocol_c = b.addTranslateC(.{
         .root_source_file = b.path("src/phi/shared/Protocol.h"),
@@ -578,11 +556,8 @@ fn customPhi(
         "MPSS sysroot path",
     );
 
-    const daemon = try addPhiDaemon(b, optimize, host_emulation, emulation_port, cc, sysroot);
-    const install_daemon = b.addInstallFile(
-        daemon,
-        if (host_emulation) "bin/phi_device-host" else "lib/phi_device.mic",
-    );
+    const daemon = try addPhiDaemon(b, optimize, cc, sysroot);
+    const install_daemon = b.addInstallFile(daemon, "lib/phi_device.mic");
     lib.step.dependOn(&install_daemon.step);
 
     const embedded_daemon = addEmbeddedPhiDaemon(b, daemon);
@@ -591,19 +566,12 @@ fn customPhi(
     });
 }
 
-fn addPhiDaemon(
+fn addPhiDaemonCompilerArgs(
+    cmd: *Step.Run,
     b: *std.Build,
     optimize: std.builtin.OptimizeMode,
-    host_emulation: bool,
-    emulation_port: u16,
-    cc: []const u8,
     sysroot: ?[]const u8,
-) !std.Build.LazyPath {
-    if (host_emulation)
-        return addPhiHostDaemon(b, optimize, emulation_port);
-
-    const cmd = b.addSystemCommand(&.{cc});
-
+) void {
     cmd.addArgs(&.{
         "-std=c11",
         "-Wall",
@@ -628,6 +596,11 @@ fn addPhiDaemon(
         .ReleaseFast => cmd.addArgs(&.{ "-O3", "-DNDEBUG" }),
         .ReleaseSmall => cmd.addArgs(&.{ "-Os", "-DNDEBUG" }),
     }
+}
+
+fn addPhiDaemon(b: *std.Build, optimize: std.builtin.OptimizeMode, cc: []const u8, sysroot: ?[]const u8) !std.Build.LazyPath {
+    const cmd = b.addSystemCommand(&.{cc});
+    addPhiDaemonCompilerArgs(cmd, b, optimize, sysroot);
 
     const sources = [_][]const u8{
         "src/phi/mic/main.c",
@@ -637,51 +610,39 @@ fn addPhiDaemon(
         "src/phi/mic/Logger.c",
         "src/phi/mic/Memory.c",
         "src/phi/mic/Transport.c",
-        // Add new files here
+        // Add non-AVX files here
     };
 
     for (sources) |source| {
         cmd.addFileArg(b.path(source));
     }
 
+    // Keep KNC AVX-512/IMCI code in separate translation units. This GCC
+    // port must not compile the daemon's scalar/control code with -mavx512f.
+    const avx_sources = [_][]const u8{
+        "src/phi/mic/avx/Copy.c",
+        "src/phi/mic/avx/Fill.c",
+        // Add AVX files here
+    };
+
+    for (avx_sources, 0..) |source, index| {
+        const avx_cmd = b.addSystemCommand(&.{cc});
+        addPhiDaemonCompilerArgs(avx_cmd, b, optimize, sysroot);
+
+        avx_cmd.addArg("-mavx512f");
+        avx_cmd.addArg("-c");
+        avx_cmd.addFileArg(b.path(source));
+        avx_cmd.addArg("-o");
+
+        const avx_object = avx_cmd.addOutputFileArg(
+            b.fmt("phi_avx_{d}.o", .{index}),
+        );
+
+        cmd.addFileArg(avx_object);
+    }
+
     cmd.addArgs(&.{ "-lscif", "-o" });
     return cmd.addOutputFileArg("phi_device.mic");
-}
-
-fn addPhiHostDaemon(b: *std.Build, optimize: std.builtin.OptimizeMode, emulation_port: u16) std.Build.LazyPath {
-    const daemon_mod = b.createModule(.{
-        .target = b.graph.host,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    daemon_mod.addIncludePath(b.path("src/phi/mic"));
-    daemon_mod.addIncludePath(b.path("src/phi/shared"));
-    daemon_mod.addCMacro("PHI_HOST_EMULATION", "1");
-    daemon_mod.addCMacro("PHI_TRANSPORT_PORT", b.fmt("{d}", .{emulation_port}));
-    daemon_mod.addCSourceFiles(.{
-        .files = &.{
-            "src/phi/mic/main.c",
-            "src/phi/mic/Buffer.c",
-            "src/phi/mic/CommandBuffer.c",
-            "src/phi/mic/Daemon.c",
-            "src/phi/mic/Logger.c",
-            "src/phi/mic/Memory.c",
-            "src/phi/mic/Transport.c",
-        },
-        .flags = &.{
-            "-std=c11",
-            "-Wall",
-            "-Wextra",
-            "-Wno-unused-parameter",
-        },
-    });
-    daemon_mod.linkSystemLibrary("pthread", .{});
-
-    const daemon = b.addExecutable(.{
-        .name = "phi_device-host",
-        .root_module = daemon_mod,
-    });
-    return daemon.getEmittedBin();
 }
 
 fn addEmbeddedPhiDaemon(b: *std.Build, daemon: std.Build.LazyPath) std.Build.LazyPath {

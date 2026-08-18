@@ -1,6 +1,7 @@
 #include <Buffer.h>
+#include <Memory.h>
 
-#include <string.h>
+#include <avx/Avx.h>
 
 int PhiIsBufferCommand(const PhiCmdHeader* header)
 {
@@ -25,10 +26,13 @@ static PhiStatus CopyBuffer(PhiCommandReader* reader)
 	if(command.src_memory == 0 || command.dst_memory == 0)
 		return PHI_STATUS_INVALID_HANDLE;
 
-	void* dst = (void*)((uintptr_t)command.dst_memory + (uintptr_t)command.dst_offset);
-	const void* src = (const void*)((uintptr_t)command.src_memory + (uintptr_t)command.src_offset);
+	Memory* dst_memory = (Memory*)command.dst_memory;
+	const Memory* src_memory = (const Memory*)command.src_memory;
 
-	memcpy(dst, src, (size_t)command.size);
+	uint8_t* dst = (uint8_t*)dst_memory->ptr + (size_t)command.dst_offset;
+	const uint8_t* src = (const uint8_t*)src_memory->ptr + (size_t)command.src_offset;
+
+	AvxCopy(dst, src, (size_t)command.size);
 
 	return PHI_STATUS_OK;
 }
@@ -36,17 +40,57 @@ static PhiStatus CopyBuffer(PhiCommandReader* reader)
 static PhiStatus FillBuffer(PhiCommandReader* reader)
 {
 	PhiCmdFillBuffer command;
+
 	PhiStatus status = PhiReadCommandData(reader, &command, sizeof(command));
+
 	if(status != PHI_STATUS_OK)
 		return status;
 
 	if(command.memory == 0)
 		return PHI_STATUS_INVALID_HANDLE;
 
-	uint32_t* dst = (uint32_t*)((uintptr_t)command.memory + (uintptr_t)command.offset);
+	Memory* memory = (Memory*)command.memory;
 
-	for(; command.size >= 4; command.size -= 4, dst++)
-		*dst = command.data;
+	uint8_t* dst = (uint8_t*)memory->ptr + (size_t)command.offset;
+
+	size_t size = (size_t)command.size;
+	const uint32_t value = command.data;
+
+	// Check if dst and size are 4-byte aligned
+	if((((uintptr_t)dst | size) & 3) != 0)
+		return PHI_STATUS_INVALID_ARGUMENT;
+
+	// Bring dst to a 64-byte cache-line boundary.
+	while(size >= 4 && ((uintptr_t)dst & 63) != 0)
+	{
+		*(uint32_t*)dst = value;
+
+		dst += 4;
+		size -= 4;
+	}
+
+	while(size >= 256)
+	{
+		AvxFill256(dst, value);
+
+		dst += 256;
+		size -= 256;
+	}
+
+	while(size >= 64)
+	{
+		AvxFill64(dst, value);
+
+		dst += 64;
+		size -= 64;
+	}
+
+	uint32_t* tail = (uint32_t*)dst;
+	while(size >= 4)
+	{
+		*tail++ = value;
+		size -= 4;
+	}
 
 	return PHI_STATUS_OK;
 }

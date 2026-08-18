@@ -4,6 +4,8 @@
 #include "Commands.h" // IWYU pragma: keep
 #include <stdint.h>
 
+#define PHI_MEMORY_ALIGNMENT 64
+
 #define PHI_PROTOCOL_MAGIC 0x50484941u
 #define PHI_PROTOCOL_VERSION 1u
 #define PHI_SCIF_PORT 43616u
@@ -16,11 +18,12 @@ typedef enum PhiPacketType
 {
 	PHI_PACKET_HELLO = 1,
 	PHI_PACKET_ALLOC_MEMORY = 2,
-	PHI_PACKET_FREE_MEMORY = 3,
+	PHI_PACKET_DESTROY_MEMORY = 3,
 	PHI_PACKET_UPLOAD = 4,
 	PHI_PACKET_DOWNLOAD = 5,
 	PHI_PACKET_WORK_EXECUTION = 6,
 	PHI_PACKET_SHUTDOWN = 7,
+	PHI_PACKET_MAP_HOST_MEMORY = 8,
 } PhiPacketType;
 
 typedef enum PhiStatus
@@ -31,6 +34,8 @@ typedef enum PhiStatus
 	PHI_STATUS_UNSUPPORTED_PACKET = 3,
 	PHI_STATUS_OUT_OF_MEMORY = 4,
 	PHI_STATUS_INVALID_HANDLE = 5,
+	PHI_STATUS_MAP_HOST_MEMORY_FAILED = 6,
+	PHI_STATUS_INVALID_ARGUMENT = 7,
 } PhiStatus;
 
 typedef struct PhiMessageHeader
@@ -47,6 +52,11 @@ typedef struct PhiResult
 	int32_t status;
 	uint32_t reserved;
 } PhiResult;
+
+typedef struct PhiResultReply
+{
+	PhiResult result;
+} PhiResultReply;
 
 typedef struct PhiHelloRequest
 {
@@ -68,32 +78,29 @@ typedef struct PhiAllocMemoryRequest
 	uint32_t flags;
 } PhiAllocMemoryRequest;
 
-typedef struct PhiAllocMemoryReply
+typedef struct PhiNewMemoryReply
 {
 	PhiResult result;
 	uint64_t remote_handle;
 	uint64_t size;
-} PhiAllocMemoryReply;
+} PhiNewMemoryReply;
 
-typedef struct PhiFreeMemoryRequest
+typedef struct PhiMapHostMemoryRequest
+{
+	uint64_t scif_offset;
+	uint64_t scif_size;
+	uint64_t size;
+} PhiMapHostMemoryRequest;
+
+typedef struct PhiDestroyMemoryRequest
 {
 	uint64_t remote_handle;
-} PhiFreeMemoryRequest;
-
-typedef struct PhiFreeMemoryReply
-{
-	PhiResult result;
-} PhiFreeMemoryReply;
+} PhiDestroyMemoryRequest;
 
 typedef struct PhiWorkExecutionRequest
 {
 	uint64_t cmd_count;
 	uint64_t command_buffer_size;
 } PhiWorkExecutionRequest;
-
-typedef struct PhiWorkExecutionReply
-{
-	PhiResult result;
-} PhiWorkExecutionReply;
 
 #endif

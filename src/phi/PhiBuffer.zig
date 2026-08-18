@@ -1,6 +1,7 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
+const proto = @import("lib.zig").proto;
 
 const VkError = base.VkError;
 
@@ -31,7 +32,6 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     allocator.destroy(self);
 }
 
-pub fn getMemoryRequirements(interface: *Interface, requirements: *vk.MemoryRequirements) void {
-    _ = interface;
-    _ = requirements;
+pub fn getMemoryRequirements(_: *Interface, requirements: *vk.MemoryRequirements) void {
+    requirements.alignment = proto.PHI_MEMORY_ALIGNMENT;
 }
