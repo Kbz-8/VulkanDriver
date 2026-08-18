@@ -248,7 +248,7 @@ static PhiStatus CopyImageRegion(const PhiCmdCopyImage* command)
 
 		if(!GetTightCopySize(command, &copy_size) || copy_size > SIZE_MAX)
 		{
-			LogErrorFmt("Invalid copy size: %lu", copy_size);
+			LogError("Invalid copy size");
 			return PHI_STATUS_INVALID_ARGUMENT;
 		}
 
@@ -264,7 +264,7 @@ static PhiStatus CopyImageRegion(const PhiCmdCopyImage* command)
 
 		if(!GetTightLayerSize(command, &layer_size) || layer_size > SIZE_MAX)
 		{
-			LogErrorFmt("Invalid layer size: %lu", layer_size);
+			LogError("Invalid layer size");
 			return PHI_STATUS_INVALID_ARGUMENT;
 		}
 
@@ -286,7 +286,7 @@ static PhiStatus CopyImageRegion(const PhiCmdCopyImage* command)
 
 		if(!GetTightSliceSize(command, &slice_size) || slice_size > SIZE_MAX)
 		{
-			LogErrorFmt("Invalid slice size: %lu", slice_size);
+			LogError("Invalid slice size");
 			return PHI_STATUS_INVALID_ARGUMENT;
 		}
 
