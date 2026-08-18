@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#define PHI_CACHE_LINE_SIZE 64
+#include <avx/Utils.h>
 
 void AvxCopy(uint8_t* dst, const uint8_t* src, size_t size)
 {
@@ -63,16 +63,14 @@ void AvxCopy(uint8_t* dst, const uint8_t* src, size_t size)
 			size -= 64;
 		}
 	}
-	else
+	else // Unaligned
 	{
-		// Source is only 4-byte aligned.
-		// KNC's loadunpack pair implements the conceptual unaligned 64-byte load.
 		while(size >= 256)
 		{
-			const __m512i v0 = _mm512_load_epi32((const void*)(src + 0));
-			const __m512i v1 = _mm512_load_epi32((const void*)(src + 64));
-			const __m512i v2 = _mm512_load_epi32((const void*)(src + 128));
-			const __m512i v3 = _mm512_load_epi32((const void*)(src + 192));
+			const __m512i v0 = Load512Unaligned(src + 0);
+			const __m512i v1 = Load512Unaligned(src + 64);
+			const __m512i v2 = Load512Unaligned(src + 128);
+			const __m512i v3 = Load512Unaligned(src + 192);
 
 			_mm512_store_epi32((void*)(dst + 0), v0);
 			_mm512_store_epi32((void*)(dst + 64), v1);
@@ -86,7 +84,7 @@ void AvxCopy(uint8_t* dst, const uint8_t* src, size_t size)
 
 		while(size >= 64)
 		{
-			const __m512i value = _mm512_load_epi32((const void*)src);
+			const __m512i value = Load512Unaligned(src);
 
 			_mm512_store_epi32((void*)dst, value);
 

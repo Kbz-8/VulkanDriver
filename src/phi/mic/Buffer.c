@@ -4,19 +4,6 @@
 
 #include <avx/Avx.h>
 
-int IsBufferCommand(const PhiCmdHeader* header)
-{
-	switch((PhiCmdType)header->type)
-	{
-		case PHI_CMD_COPY_BUFFER:
-		case PHI_CMD_FILL_BUFFER:
-			return 1;
-
-		default:
-			return 0;
-	}
-}
-
 static PhiStatus CopyBuffer(PhiCommandReader* reader)
 {
 	PhiCmdCopyBuffer command;
@@ -24,8 +11,16 @@ static PhiStatus CopyBuffer(PhiCommandReader* reader)
 	if(status != PHI_STATUS_OK)
 		return status;
 
-	if(command.src_memory == 0 || command.dst_memory == 0)
+	if(command.src_memory == 0)
+	{
+		LogError("Invalid src memory handle");
 		return PHI_STATUS_INVALID_HANDLE;
+	}
+	if(command.dst_memory == 0)
+	{
+		LogError("Invalid dst memory handle");
+		return PHI_STATUS_INVALID_HANDLE;
+	}
 
 	Memory* dst_memory = (Memory*)command.dst_memory;
 	const Memory* src_memory = (const Memory*)command.src_memory;
@@ -101,6 +96,19 @@ static PhiStatus FillBuffer(PhiCommandReader* reader)
 	}
 
 	return PHI_STATUS_OK;
+}
+
+int IsBufferCommand(const PhiCmdHeader* header)
+{
+	switch((PhiCmdType)header->type)
+	{
+		case PHI_CMD_COPY_BUFFER:
+		case PHI_CMD_FILL_BUFFER:
+			return 1;
+
+		default:
+			return 0;
+	}
 }
 
 PhiStatus ExecuteBufferCommand(PhiCommandReader* reader, const PhiCmdHeader* header)

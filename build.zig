@@ -609,6 +609,7 @@ fn addPhiDaemon(b: *std.Build, optimize: std.builtin.OptimizeMode, cc: []const u
         "src/phi/mic/Buffer.c",
         "src/phi/mic/CommandBuffer.c",
         "src/phi/mic/Daemon.c",
+        "src/phi/mic/Image.c",
         "src/phi/mic/Logger.c",
         "src/phi/mic/Memory.c",
         "src/phi/mic/Transport.c",
@@ -619,8 +620,8 @@ fn addPhiDaemon(b: *std.Build, optimize: std.builtin.OptimizeMode, cc: []const u
         cmd.addFileArg(b.path(source));
     }
 
-    // Keep KNC AVX-512/IMCI code in separate translation units. This GCC
-    // port must not compile the daemon's scalar/control code with -mavx512f.
+    // Keep KNC AVX-512/IMCI code in separate translation units. The GCC port
+    // in use must not compile the daemon's scalar/control code with -mavx512f
     const avx_sources = [_][]const u8{
         "src/phi/mic/avx/Copy.c",
         "src/phi/mic/avx/Fill.c",

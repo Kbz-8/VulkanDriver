@@ -2,6 +2,11 @@
 #include <Logger.h>
 
 #include <Buffer.h>
+#include <Image.h>
+
+static const char* CommandName[] = {
+	"CopyBuffer", "FillBuffer", "CopyBufferToImage", "CopyImageToBuffer", "CopyImage",
+};
 
 PhiStatus ReadCommandData(PhiCommandReader* reader, void* data, uint64_t size)
 {
@@ -42,13 +47,11 @@ static PhiStatus ExecuteCommand(PhiCommandReader* reader, const PhiCmdHeader* co
 	if(IsBufferCommand(command_header))
 		return ExecuteBufferCommand(reader, command_header);
 
+	if(IsImageCommand(command_header))
+		return ExecuteImageCommand(reader, command_header);
+
 	return PHI_STATUS_BAD_MESSAGE;
 }
-
-static const char* CommandName[] = {
-	"CopyBuffer",
-	"FillBuffer",
-};
 
 int HandleWorkExecution(PhiEndpoint endpoint, const PhiMessageHeader* header)
 {

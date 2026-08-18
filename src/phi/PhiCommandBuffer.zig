@@ -6,6 +6,7 @@ const proto = lib.proto;
 
 const VkError = base.VkError;
 const PhiDeviceMemory = @import("PhiDeviceMemory.zig");
+const copy = @import("copy_commands.zig");
 
 const Self = @This();
 pub const Interface = base.CommandBuffer;
@@ -105,7 +106,7 @@ pub fn reset(interface: *Interface, flags: vk.CommandBufferResetFlags) VkError!v
     _ = flags;
 }
 
-fn appendCommand(self: *Self, comptime T: type, command_type: c_int, payload: T) VkError!void {
+pub fn appendCommand(self: *Self, comptime T: type, command_type: c_int, payload: T) VkError!void {
     const allocator = self.interface.host_allocator.allocator();
     const header: proto.PhiCmdHeader = .{
         .magic = proto.PHI_COMMAND_MAGIC,
@@ -115,12 +116,6 @@ fn appendCommand(self: *Self, comptime T: type, command_type: c_int, payload: T)
     self.commands.appendSlice(allocator, std.mem.asBytes(&payload)) catch return VkError.OutOfHostMemory;
     self.cmd_count += 1;
     self.serialized_cmd_count += 1;
-}
-
-fn remoteMemory(buffer: *base.Buffer) VkError!*PhiDeviceMemory {
-    const memory = buffer.memory orelse return VkError.ValidationFailed;
-    const phi_memory: *PhiDeviceMemory = @alignCast(@fieldParentPtr("interface", memory));
-    return phi_memory;
 }
 
 pub fn beginQuery(interface: *Interface, pool: *base.QueryPool, query: u32, flags: vk.QueryControlFlags) VkError!void {
@@ -221,52 +216,32 @@ pub fn clearDepthStencilImage(interface: *Interface, image: *base.Image, layout:
 
 pub fn copyBuffer(interface: *Interface, src: *base.Buffer, dst: *base.Buffer, regions: []const vk.BufferCopy) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    const src_memory = try remoteMemory(src);
-    const dst_memory = try remoteMemory(dst);
-
-    for (regions) |region| {
-        const src_offset, const src_overflow = @addWithOverflow(src.offset, region.src_offset);
-        const dst_offset, const dst_overflow = @addWithOverflow(dst.offset, region.dst_offset);
-        if (src_overflow != 0 or dst_overflow != 0) {
-            return VkError.ValidationFailed;
-        }
-
-        try self.appendCommand(proto.PhiCmdCopyBuffer, proto.PHI_CMD_COPY_BUFFER, .{
-            .size = region.size,
-            .src_memory = @intCast(src_memory.remote_handle),
-            .dst_memory = @intCast(dst_memory.remote_handle),
-            .src_offset = src_offset,
-            .dst_offset = dst_offset,
-        });
-    }
+    try copy.copyBuffer(self, src, dst, regions);
 }
 
 pub fn copyBufferToImage(interface: *Interface, src: *base.Buffer, dst: *base.Image, dst_layout: vk.ImageLayout, regions: []const vk.BufferImageCopy) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    self.cmd_count += 1;
-    _ = src;
-    _ = dst;
     _ = dst_layout;
-    _ = regions;
+
+    for (regions) |region|
+        try copy.copyBufferImage(self, src, dst, region, true);
 }
 
 pub fn copyImage(interface: *Interface, src: *base.Image, src_layout: vk.ImageLayout, dst: *base.Image, dst_layout: vk.ImageLayout, regions: []const vk.ImageCopy) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    self.cmd_count += 1;
-    _ = src;
     _ = src_layout;
-    _ = dst;
     _ = dst_layout;
-    _ = regions;
+
+    for (regions) |region|
+        try copy.copyImage(self, src, dst, region);
 }
 
 pub fn copyImageToBuffer(interface: *Interface, src: *base.Image, src_layout: vk.ImageLayout, dst: *base.Buffer, regions: []const vk.BufferImageCopy) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
-    self.cmd_count += 1;
-    _ = src;
     _ = src_layout;
-    _ = dst;
-    _ = regions;
+
+    for (regions) |region|
+        try copy.copyBufferImage(self, dst, src, region, false);
 }
 
 pub fn copyQueryPoolResults(interface: *Interface, pool: *base.QueryPool, first: u32, count: u32, dst: *base.Buffer, offset: vk.DeviceSize, stride: vk.DeviceSize, flags: vk.QueryResultFlags) VkError!void {
@@ -365,19 +340,11 @@ pub fn fillBuffer(interface: *Interface, buffer: *base.Buffer, offset: vk.Device
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     self.cmd_count += 1;
 
-    const memory = try remoteMemory(buffer);
-
-    var fill_size = if (size == vk.WHOLE_SIZE)
-        buffer.size - offset
-    else
-        size;
-
-    // VK_WHOLE_SIZE fills only complete 4-byte words. Any trailing 1-3 bytes are untouched
-    if (size == vk.WHOLE_SIZE)
-        fill_size &= ~@as(vk.DeviceSize, 3);
+    const memory_interface = buffer.memory orelse return VkError.ValidationFailed;
+    const memory: *PhiDeviceMemory = @alignCast(@fieldParentPtr("interface", memory_interface));
 
     try self.appendCommand(proto.PhiCmdFillBuffer, proto.PHI_CMD_FILL_BUFFER, .{
-        .size = fill_size,
+        .size = if (size == vk.WHOLE_SIZE) buffer.size - offset else size,
         .memory = @intCast(memory.remote_handle),
         .offset = offset,
         .data = data,
