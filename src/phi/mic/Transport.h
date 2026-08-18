@@ -10,11 +10,11 @@ typedef scif_epd_t PhiEndpoint;
 
 #define PHI_ENDPOINT_INVALID ((PhiEndpoint) - 1)
 
-PhiEndpoint PhiTransportAccept(PhiEndpoint endpoint);
-int PhiTransportClose(PhiEndpoint endpoint);
+PhiEndpoint TransportAccept(PhiEndpoint endpoint);
+int TransportClose(PhiEndpoint endpoint);
 
-PhiEndpoint PhiTransportListen(uint16_t port);
-ssize_t PhiTransportReceive(PhiEndpoint endpoint, void* data, size_t size);
-ssize_t PhiTransportSend(PhiEndpoint endpoint, const void* data, size_t size);
+PhiEndpoint TransportListen(uint16_t port);
+ssize_t TransportReceive(PhiEndpoint endpoint, void* data, size_t size);
+ssize_t TransportSend(PhiEndpoint endpoint, const void* data, size_t size);
 
 #endif

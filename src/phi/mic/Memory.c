@@ -17,7 +17,7 @@ static Memory* MapHostMemory(PhiEndpoint epd, const PhiMapHostMemoryRequest* req
 
 	if(ptr == MAP_FAILED)
 	{
-		PhiLogErrorFmt("Failed to map host memory: %s", strerror(errno));
+		LogErrorFmt("Failed to map host memory: %s", strerror(errno));
 		return NULL;
 	}
 
@@ -25,7 +25,7 @@ static Memory* MapHostMemory(PhiEndpoint epd, const PhiMapHostMemoryRequest* req
 	if(!memory)
 	{
 		scif_munmap(ptr, request->scif_size);
-		PhiLogError("Failed to allocate memory");
+		LogError("Failed to allocate memory");
 		return NULL;
 	}
 
@@ -80,9 +80,9 @@ int HandleNewMemory(PhiEndpoint endpoint, const PhiMessageHeader* header)
 			return -1;
 		memory = AllocMemory(endpoint, &request);
 		if(memory == NULL)
-			PhiLogErrorFmt("Failed to allocate %zu bytes", (size_t)request.size);
+			LogErrorFmt("Failed to allocate %zu bytes", (size_t)request.size);
 		else
-			PhiLogInfoFmt("Allocated %llu bytes to handle 0x%X", request.size, (uintptr_t)memory);
+			LogInfoFmt("Allocated %llu bytes to handle 0x%X", request.size, (uintptr_t)memory);
 	}
 	else if(header->type == PHI_PACKET_MAP_HOST_MEMORY)
 	{
@@ -93,7 +93,7 @@ int HandleNewMemory(PhiEndpoint endpoint, const PhiMessageHeader* header)
 		if(memory == NULL)
 			reply.result.status = PHI_STATUS_MAP_HOST_MEMORY_FAILED;
 		else
-			PhiLogInfoFmt("Mapped host memory to handle 0x%X", (uint64_t)(uintptr_t)memory);
+			LogInfoFmt("Mapped host memory to handle 0x%X", (uint64_t)(uintptr_t)memory);
 	}
 
 	if(memory != NULL)
@@ -131,7 +131,7 @@ int HandleDestroyMemory(PhiEndpoint endpoint, const PhiMessageHeader* header)
 	if(request.remote_handle == 0)
 	{
 		reply.result.status = PHI_STATUS_INVALID_HANDLE;
-		PhiLogErrorFmt("Could not free memory: invalid handle 0x%X", request.remote_handle);
+		LogErrorFmt("Could not free memory: invalid handle 0x%X", request.remote_handle);
 	}
 	else
 	{
@@ -142,9 +142,9 @@ int HandleDestroyMemory(PhiEndpoint endpoint, const PhiMessageHeader* header)
 		else if(memory->type == PHI_MEMORY_HOST_MAPPED)
 			scif_munmap((void*)memory->ptr, memory->size);
 
-		PhiLogInfoFmt("Destroyed %s memory handle 0x%X",
-		              memory->type == PHI_MEMORY_LOCAL ? "local" : "host-mapped",
-		              request.remote_handle);
+		LogInfoFmt("Destroyed %s memory handle 0x%X",
+		           memory->type == PHI_MEMORY_LOCAL ? "local" : "host-mapped",
+		           request.remote_handle);
 	}
 
 	return SendReply(endpoint, header, &reply, sizeof(reply));

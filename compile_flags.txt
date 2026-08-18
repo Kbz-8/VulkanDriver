@@ -1,5 +1,6 @@
 -xc
 -std=c11
+-mavx512f
 -Isrc/phi/shared
 -Isrc/phi/mic
 -isystem/opt/mpss/3.8.6/sysroots/k1om-mpss-linux/usr/include/

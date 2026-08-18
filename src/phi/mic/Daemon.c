@@ -35,20 +35,20 @@ static int HandleHello(PhiEndpoint endpoint, const PhiMessageHeader* header)
 
 PhiEndpoint StartDaemon(void)
 {
-	PhiLogInfo("Starting the daemon...");
+	LogInfo("Starting the daemon...");
 
-	PhiEndpoint endpoint = PhiTransportListen(PHI_TRANSPORT_PORT);
+	PhiEndpoint endpoint = TransportListen(PHI_TRANSPORT_PORT);
 	if(endpoint == PHI_ENDPOINT_INVALID)
-		PhiLogError("Could not listen on the Phi transport");
+		LogError("Could not listen on the Phi transport");
 
-	PhiLogInfo("Daemon started");
+	LogInfo("Daemon started");
 	return endpoint;
 }
 
 void ShutdownDaemon(PhiEndpoint endpoint)
 {
-	PhiLogInfo("Shutting down the daemon...");
-	PhiTransportClose(endpoint);
+	LogInfo("Shutting down the daemon...");
+	TransportClose(endpoint);
 }
 
 int HandlePacket(PhiEndpoint endpoint)
@@ -116,7 +116,7 @@ int ReadAll(PhiEndpoint endpoint, void* data, size_t size)
 
 	while(offset < size)
 	{
-		ssize_t got = PhiTransportReceive(endpoint, bytes + offset, size - offset);
+		ssize_t got = TransportReceive(endpoint, bytes + offset, size - offset);
 		if(got <= 0)
 			return -1;
 		offset += (size_t)got;
@@ -132,7 +132,7 @@ int WriteAll(PhiEndpoint endpoint, const void* data, size_t size)
 
 	while(offset < size)
 	{
-		ssize_t sent = PhiTransportSend(endpoint, bytes + offset, size - offset);
+		ssize_t sent = TransportSend(endpoint, bytes + offset, size - offset);
 		if(sent <= 0)
 			return -1;
 		offset += (size_t)sent;

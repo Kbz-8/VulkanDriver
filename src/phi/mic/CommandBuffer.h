@@ -10,7 +10,7 @@ typedef struct PhiCommandReader
 } PhiCommandReader;
 
 int HandleWorkExecution(PhiEndpoint endpoint, const PhiMessageHeader* header);
-int PhiDrainCommandReader(PhiCommandReader* reader);
-PhiStatus PhiReadCommandData(PhiCommandReader* reader, void* data, uint64_t size);
+int DrainCommandReader(PhiCommandReader* reader);
+PhiStatus ReadCommandData(PhiCommandReader* reader, void* data, uint64_t size);
 
 #endif

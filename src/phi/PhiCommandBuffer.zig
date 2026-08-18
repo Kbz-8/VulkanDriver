@@ -367,8 +367,17 @@ pub fn fillBuffer(interface: *Interface, buffer: *base.Buffer, offset: vk.Device
 
     const memory = try remoteMemory(buffer);
 
+    var fill_size = if (size == vk.WHOLE_SIZE)
+        buffer.size - offset
+    else
+        size;
+
+    // VK_WHOLE_SIZE fills only complete 4-byte words. Any trailing 1-3 bytes are untouched
+    if (size == vk.WHOLE_SIZE)
+        fill_size &= ~@as(vk.DeviceSize, 3);
+
     try self.appendCommand(proto.PhiCmdFillBuffer, proto.PHI_CMD_FILL_BUFFER, .{
-        .size = if (size == vk.WHOLE_SIZE) buffer.size - offset else size,
+        .size = fill_size,
         .memory = @intCast(memory.remote_handle),
         .offset = offset,
         .data = data,

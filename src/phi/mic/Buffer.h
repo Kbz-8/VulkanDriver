@@ -3,7 +3,7 @@
 
 #include <CommandBuffer.h>
 
-int PhiIsBufferCommand(const PhiCmdHeader* header);
-PhiStatus PhiExecuteBufferCommand(PhiCommandReader* reader, const PhiCmdHeader* header);
+int IsBufferCommand(const PhiCmdHeader* header);
+PhiStatus ExecuteBufferCommand(PhiCommandReader* reader, const PhiCmdHeader* header);
 
 #endif

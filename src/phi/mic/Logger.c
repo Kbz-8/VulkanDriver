@@ -37,7 +37,7 @@ inline static void SetConsoleColor(FILE* file, int code)
 	fprintf(file, "\033[1;%dm", code);
 }
 
-void PhiLog(PhiLogLevel level, const char* fmt, const char* file, const char* function, int line, ...)
+void Log(LogLevel level, const char* fmt, const char* file, const char* function, int line, ...)
 {
 	time_t now = time(0);
 	struct tm tstruct = *localtime(&now);

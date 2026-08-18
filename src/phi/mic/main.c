@@ -10,7 +10,7 @@ static void* HandleClient(void* const argument)
 	PhiEndpoint client = (PhiEndpoint)(intptr_t)argument;
 
 	(void)HandlePacket(client);
-	PhiTransportClose(client);
+	TransportClose(client);
 	return NULL;
 }
 
@@ -28,30 +28,30 @@ int main(int argc, char** argv)
 	if(pthread_attr_init(&client_thread_attributes) != 0 ||
 	   pthread_attr_setdetachstate(&client_thread_attributes, PTHREAD_CREATE_DETACHED) != 0)
 	{
-		PhiLogError("Could not initialize client thread attributes");
+		LogError("Could not initialize client thread attributes");
 		ShutdownDaemon(endpoint);
 		return 1;
 	}
 
 	for(;;)
 	{
-		PhiEndpoint client = PhiTransportAccept(endpoint);
+		PhiEndpoint client = TransportAccept(endpoint);
 
 		if(client == PHI_ENDPOINT_INVALID)
 		{
 			if(errno == EINTR)
 				continue;
-			PhiLogError("Could not accept transport connection");
+			LogError("Could not accept transport connection");
 			break;
 		}
 
-		PhiLogInfo("Host connected to the daemon");
+		LogInfo("Host connected to the daemon");
 
 		pthread_t client_thread;
 		if(pthread_create(&client_thread, &client_thread_attributes, HandleClient, (void*)(intptr_t)client) != 0)
 		{
-			PhiLogError("Could not create transport client thread");
-			PhiTransportClose(client);
+			LogError("Could not create transport client thread");
+			TransportClose(client);
 		}
 	}
 

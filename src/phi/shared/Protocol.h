@@ -26,6 +26,7 @@ typedef enum PhiPacketType
 	PHI_PACKET_MAP_HOST_MEMORY = 8,
 } PhiPacketType;
 
+// When adding status, update StatusName in Logger.h
 typedef enum PhiStatus
 {
 	PHI_STATUS_OK = 0,

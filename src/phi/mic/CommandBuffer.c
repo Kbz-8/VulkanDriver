@@ -1,8 +1,9 @@
 #include <CommandBuffer.h>
+#include <Logger.h>
 
 #include <Buffer.h>
 
-PhiStatus PhiReadCommandData(PhiCommandReader* reader, void* data, uint64_t size)
+PhiStatus ReadCommandData(PhiCommandReader* reader, void* data, uint64_t size)
 {
 	if(reader->remaining < size)
 		return PHI_STATUS_BAD_MESSAGE;
@@ -14,7 +15,7 @@ PhiStatus PhiReadCommandData(PhiCommandReader* reader, void* data, uint64_t size
 	return PHI_STATUS_OK;
 }
 
-int PhiDrainCommandReader(PhiCommandReader* reader)
+int DrainCommandReader(PhiCommandReader* reader)
 {
 	if(reader->remaining == 0)
 		return 0;
@@ -26,7 +27,7 @@ int PhiDrainCommandReader(PhiCommandReader* reader)
 
 static PhiStatus ReadCommandHeader(PhiCommandReader* reader, PhiCmdHeader* command_header)
 {
-	PhiStatus status = PhiReadCommandData(reader, command_header, sizeof(*command_header));
+	PhiStatus status = ReadCommandData(reader, command_header, sizeof(*command_header));
 	if(status != PHI_STATUS_OK)
 		return status;
 
@@ -38,11 +39,16 @@ static PhiStatus ReadCommandHeader(PhiCommandReader* reader, PhiCmdHeader* comma
 
 static PhiStatus ExecuteCommand(PhiCommandReader* reader, const PhiCmdHeader* command_header)
 {
-	if(PhiIsBufferCommand(command_header))
-		return PhiExecuteBufferCommand(reader, command_header);
+	if(IsBufferCommand(command_header))
+		return ExecuteBufferCommand(reader, command_header);
 
 	return PHI_STATUS_BAD_MESSAGE;
 }
+
+static const char* CommandName[] = {
+	"CopyBuffer",
+	"FillBuffer",
+};
 
 int HandleWorkExecution(PhiEndpoint endpoint, const PhiMessageHeader* header)
 {
@@ -71,7 +77,7 @@ int HandleWorkExecution(PhiEndpoint endpoint, const PhiMessageHeader* header)
 
 	if(reader.remaining != request.command_buffer_size)
 	{
-		if(PhiDrainCommandReader(&reader) < 0)
+		if(DrainCommandReader(&reader) < 0)
 			return -1;
 		reply.result.status = PHI_STATUS_BAD_MESSAGE;
 		return SendReply(endpoint, header, &reply, sizeof(reply));
@@ -86,10 +92,13 @@ int HandleWorkExecution(PhiEndpoint endpoint, const PhiMessageHeader* header)
 
 		reply.result.status = ExecuteCommand(&reader, &cmd_header);
 		if(reply.result.status != PHI_STATUS_OK)
+		{
+			LogErrorFmt("Command %s execution failed: %s", CommandName[cmd_header.type], StatusName[reply.result.status]);
 			break;
+		}
 	}
 
-	if(reader.remaining > 0 && PhiDrainCommandReader(&reader) < 0)
+	if(reader.remaining > 0 && DrainCommandReader(&reader) < 0)
 		return -1;
 
 	return SendReply(endpoint, header, &reply, sizeof(reply));

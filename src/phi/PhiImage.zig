@@ -1,14 +1,12 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
+const proto = @import("lib").proto;
 
 const VkError = base.VkError;
 
 const Self = @This();
 pub const Interface = base.Image;
-
-pub const F32x4 = @Vector(4, f32);
-pub const U32x4 = @Vector(4, u32);
 
 interface: Interface,
 
@@ -39,7 +37,8 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 }
 
 pub fn getMemoryRequirements(_: *Interface, requirements: *vk.MemoryRequirements) VkError!void {
-    _ = requirements;
+    requirements.alignment = proto.PHI_MEMORY_ALIGNMENT;
+    requirements.size = std.mem.alignForward(vk.DeviceSize, requirements.size, proto.PHI_MEMORY_ALIGNMENT);
 }
 
 pub fn copyToMemory(interface: *const Interface, memory: []u8, subresource: vk.ImageSubresourceLayers) VkError!void {

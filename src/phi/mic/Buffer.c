@@ -1,9 +1,10 @@
 #include <Buffer.h>
+#include <Logger.h>
 #include <Memory.h>
 
 #include <avx/Avx.h>
 
-int PhiIsBufferCommand(const PhiCmdHeader* header)
+int IsBufferCommand(const PhiCmdHeader* header)
 {
 	switch((PhiCmdType)header->type)
 	{
@@ -19,7 +20,7 @@ int PhiIsBufferCommand(const PhiCmdHeader* header)
 static PhiStatus CopyBuffer(PhiCommandReader* reader)
 {
 	PhiCmdCopyBuffer command;
-	PhiStatus status = PhiReadCommandData(reader, &command, sizeof(command));
+	PhiStatus status = ReadCommandData(reader, &command, sizeof(command));
 	if(status != PHI_STATUS_OK)
 		return status;
 
@@ -41,13 +42,16 @@ static PhiStatus FillBuffer(PhiCommandReader* reader)
 {
 	PhiCmdFillBuffer command;
 
-	PhiStatus status = PhiReadCommandData(reader, &command, sizeof(command));
+	PhiStatus status = ReadCommandData(reader, &command, sizeof(command));
 
 	if(status != PHI_STATUS_OK)
 		return status;
 
 	if(command.memory == 0)
+	{
+		LogErrorFmt("Invalid memory handle: %p", command.memory);
 		return PHI_STATUS_INVALID_HANDLE;
+	}
 
 	Memory* memory = (Memory*)command.memory;
 
@@ -57,8 +61,12 @@ static PhiStatus FillBuffer(PhiCommandReader* reader)
 	const uint32_t value = command.data;
 
 	// Check if dst and size are 4-byte aligned
-	if((((uintptr_t)dst | size) & 3) != 0)
+	uintptr_t alignment = ((uintptr_t)dst | size) & 3;
+	if(alignment != 0)
+	{
+		LogErrorFmt("Invalid memory alignment: %d", alignment);
 		return PHI_STATUS_INVALID_ARGUMENT;
+	}
 
 	// Bring dst to a 64-byte cache-line boundary.
 	while(size >= 4 && ((uintptr_t)dst & 63) != 0)
@@ -95,7 +103,7 @@ static PhiStatus FillBuffer(PhiCommandReader* reader)
 	return PHI_STATUS_OK;
 }
 
-PhiStatus PhiExecuteBufferCommand(PhiCommandReader* reader, const PhiCmdHeader* header)
+PhiStatus ExecuteBufferCommand(PhiCommandReader* reader, const PhiCmdHeader* header)
 {
 	switch((PhiCmdType)header->type)
 	{

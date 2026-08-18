@@ -576,7 +576,9 @@ fn addPhiDaemonCompilerArgs(
         "-std=c11",
         "-Wall",
         "-Wextra",
+        "-Werror",
         "-Wno-unused-parameter",
+        "-Wno-unused-variable",
         "-pthread",
     });
 
