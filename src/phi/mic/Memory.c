@@ -71,7 +71,7 @@ int HandleNewMemory(PhiEndpoint endpoint, const PhiMessageHeader* header)
 		return SendReply(endpoint, header, &reply, sizeof(reply));
 	}
 
-	Memory* memory;
+	Memory* memory = NULL;
 
 	if(header->type == PHI_PACKET_ALLOC_MEMORY)
 	{

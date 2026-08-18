@@ -67,7 +67,7 @@ pub fn create(device: *PhiDevice, allocator: std.mem.Allocator, size: vk.DeviceS
         errdefer device.interface.device_allocator.allocator().free(backing);
 
         const offset = device.transport.registerHostMemory(backing) catch return VkError.OutOfHostMemory;
-        errdefer device.transport.unregisterHostMemory(offset, backing.len) catch {};
+        errdefer device.transport.unregisterHostMemory(offset, backing.len) catch @panic("Caught an error while handling an error");
 
         const request: proto.PhiMapHostMemoryRequest = .{
             .scif_offset = offset,

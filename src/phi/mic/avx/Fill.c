@@ -1,10 +1,12 @@
 #include <immintrin.h>
 #include <stdint.h>
 
+#include <avx/Intrinsic.h>
+
 // Dst must be 64-byte aligned
-void PhiFill256KNC(void* dst, uint32_t value)
+void AvxFill256(void* dst, uint32_t value)
 {
-	__m512i v = _mm512_set1_epi32((int)value);
+	__m512i v = _mm512_set1_epi32_knc((int)value);
 
 	uint8_t* d = (uint8_t*)dst;
 
@@ -15,9 +17,9 @@ void PhiFill256KNC(void* dst, uint32_t value)
 }
 
 // Dst must be 64-byte aligned
-void PhiFill64KNC(void* dst, uint32_t value)
+void AvxFill64(void* dst, uint32_t value)
 {
-	__m512i v = _mm512_set1_epi32((int)value);
+	__m512i v = _mm512_set1_epi32_knc((int)value);
 
 	_mm512_store_epi32(dst, v);
 }
