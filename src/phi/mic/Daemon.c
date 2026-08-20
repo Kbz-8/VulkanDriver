@@ -3,6 +3,7 @@
 #include <Daemon.h>
 #include <Logger.h>
 #include <Memory.h>
+#include <Queue.h>
 
 static int HandleHello(PhiEndpoint endpoint, const PhiMessageHeader* header)
 {
@@ -39,7 +40,10 @@ PhiEndpoint StartDaemon(void)
 
 	PhiEndpoint endpoint = TransportListen(PHI_TRANSPORT_PORT);
 	if(endpoint == PHI_ENDPOINT_INVALID)
+	{
 		LogError("Could not listen on the Phi transport");
+		return 0;
+	}
 
 	LogInfo("Daemon started");
 	return endpoint;
@@ -91,6 +95,9 @@ int HandlePacket(PhiEndpoint endpoint)
 				if(HandleWorkExecution(endpoint, &header) < 0)
 					return -1;
 				break;
+
+			case PHI_PACKET_QUEUE_SETUP:
+				return HandleQueueSetup(endpoint, &header);
 
 			case PHI_PACKET_SHUTDOWN:
 				if(DrainPayload(endpoint, header.payload_size) < 0)

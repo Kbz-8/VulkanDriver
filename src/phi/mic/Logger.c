@@ -32,13 +32,15 @@
 #define UNDERLINE_OFF 24
 #define INVERSE_OFF 27
 
-inline static void SetConsoleColor(FILE* file, int code)
+static inline void SetConsoleColor(FILE* file, int code)
 {
 	fprintf(file, "\033[1;%dm", code);
 }
 
 void Log(LogLevel level, const char* fmt, const char* file, const char* function, int line, ...)
 {
+#ifndef NOLOGS
+
 	time_t now = time(0);
 	struct tm tstruct = *localtime(&now);
 	char buffer[128];
@@ -86,11 +88,13 @@ void Log(LogLevel level, const char* fmt, const char* file, const char* function
 	fputc('\n', out);
 	fflush(out);
 
+#endif
+
 	if(level == PHI_LOG_LEVEL_FATAL)
 	{
-		SetConsoleColor(out, BG_RED);
-		fprintf(out, "Fatal Error: emergency exit\n");
-		SetConsoleColor(out, BG_DEF);
+		SetConsoleColor(stderr, BG_RED);
+		fprintf(stderr, "Fatal Error: emergency exit\n");
+		SetConsoleColor(stderr, BG_DEF);
 		abort();
 	}
 }

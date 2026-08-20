@@ -14,6 +14,7 @@ PhiEndpoint TransportAccept(PhiEndpoint endpoint);
 int TransportClose(PhiEndpoint endpoint);
 
 PhiEndpoint TransportListen(uint16_t port);
+int TransportReadRemote(PhiEndpoint endpoint, void* data, size_t size, uint64_t remote_offset);
 ssize_t TransportReceive(PhiEndpoint endpoint, void* data, size_t size);
 ssize_t TransportSend(PhiEndpoint endpoint, const void* data, size_t size);
 

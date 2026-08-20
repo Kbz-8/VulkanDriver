@@ -13,6 +13,7 @@ epd: Endpoint,
 sequence: u64 = 1,
 mutex: std.Io.Mutex = .init,
 instance: *base.Instance,
+node_id: u16,
 
 pub fn init(instance: *base.Instance, node_id: u16) VkError!Self {
     const epd = blk: {
@@ -45,11 +46,16 @@ pub fn init(instance: *base.Instance, node_id: u16) VkError!Self {
     var self: Self = .{
         .epd = epd,
         .instance = instance,
+        .node_id = node_id,
     };
     try self.handshake();
 
     std.log.scoped(.PhiTransport).info("Successfully connected", .{});
     return self;
+}
+
+pub fn connectPeer(self: *const Self) VkError!Self {
+    return init(self.instance, self.node_id);
 }
 
 pub fn deinit(self: *Self) void {
@@ -58,9 +64,18 @@ pub fn deinit(self: *Self) void {
         std.log.scoped(.PhiTransport).warn("Failed to shut down remote session: {s}", .{@errorName(err)});
     };
 
-    closeEndpoint(self.epd);
-    scif.unload();
+    self.close();
     std.log.scoped(.PhiTransport).info("Closed connection", .{});
+}
+
+/// Close a transport without issuing an RPC shutdown. Queue transports switch
+/// to a raw full-duplex doorbell protocol after setup and must use this path
+pub fn close(self: *Self) void {
+    if (self.epd < 0) return;
+
+    closeEndpoint(self.epd);
+    self.epd = -1;
+    scif.unload();
 }
 
 pub fn request(self: *Self, command: c_uint, payload: []const u8, reply_payload: []u8) VkError!void {
@@ -98,6 +113,20 @@ pub fn request(self: *Self, command: c_uint, payload: []const u8, reply_payload:
     try self.readAll(reply_payload);
 }
 
+pub fn sendQueueDoorbell(self: *Self, sequence: u64) VkError!void {
+    const doorbell: proto.PhiQueueDoorbell = .{
+        .sequence = sequence,
+    };
+    try self.writeAll(std.mem.asBytes(&doorbell));
+}
+
+pub fn receiveQueueCompletion(self: *Self) VkError!proto.PhiQueueCompletion {
+    // SAFETY: readAll initializes the complete structure.
+    var completion: proto.PhiQueueCompletion = undefined;
+    try self.readAll(std.mem.asBytes(&completion));
+    return completion;
+}
+
 pub fn statusToErr(status: c_int) VkError {
     return switch (status) {
         proto.PHI_STATUS_OUT_OF_MEMORY => VkError.OutOfDeviceMemory,
@@ -112,7 +141,7 @@ fn writeAll(self: *Self, bytes: []const u8) VkError!void {
     while (offset < bytes.len) {
         const written = scif.send(self.epd, bytes[offset..].ptr, bytes.len - offset, scif.send_block);
         if (written <= 0) {
-            return VkError.InitializationFailed;
+            return VkError.DeviceLost;
         }
         offset += @intCast(written);
     }
@@ -123,7 +152,7 @@ fn readAll(self: *Self, bytes: []u8) VkError!void {
     while (offset < bytes.len) {
         const read = scif.recv(self.epd, bytes[offset..].ptr, bytes.len - offset, scif.recv_block);
         if (read <= 0) {
-            return VkError.InitializationFailed;
+            return VkError.DeviceLost;
         }
         offset += @intCast(read);
     }

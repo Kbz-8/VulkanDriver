@@ -4,6 +4,8 @@
 #include <Buffer.h>
 #include <Image.h>
 
+#include <string.h>
+
 static const char* CommandName[] = {
 	"CopyBuffer", "FillBuffer", "CopyBufferToImage", "CopyImageToBuffer", "CopyImage",
 };
@@ -13,8 +15,15 @@ PhiStatus ReadCommandData(PhiCommandReader* reader, void* data, uint64_t size)
 	if(reader->remaining < size)
 		return PHI_STATUS_BAD_MESSAGE;
 
-	if(ReadAll(reader->endpoint, data, (size_t)size) < 0)
+	if(reader->memory != NULL)
+	{
+		memcpy(data, reader->memory, (size_t)size);
+		reader->memory += (size_t)size;
+	}
+	else if(ReadAll(reader->endpoint, data, (size_t)size) < 0)
+	{
 		return PHI_STATUS_BAD_MESSAGE;
+	}
 
 	reader->remaining -= size;
 	return PHI_STATUS_OK;
@@ -24,6 +33,13 @@ int DrainCommandReader(PhiCommandReader* reader)
 {
 	if(reader->remaining == 0)
 		return 0;
+
+	if(reader->memory != NULL)
+	{
+		reader->memory += (size_t)reader->remaining;
+		reader->remaining = 0;
+		return 0;
+	}
 
 	int result = DrainPayload(reader->endpoint, reader->remaining);
 	reader->remaining = 0;
@@ -53,6 +69,45 @@ static PhiStatus ExecuteCommand(PhiCommandReader* reader, const PhiCmdHeader* co
 	return PHI_STATUS_BAD_MESSAGE;
 }
 
+static PhiStatus ExecuteCommands(PhiCommandReader* reader, uint64_t cmd_count)
+{
+	PhiStatus status = PHI_STATUS_OK;
+
+	for(uint64_t cmd_index = 0; cmd_index < cmd_count; ++cmd_index)
+	{
+		PhiCmdHeader cmd_header;
+		status = ReadCommandHeader(reader, &cmd_header);
+		if(status != PHI_STATUS_OK)
+			break;
+
+		status = ExecuteCommand(reader, &cmd_header);
+		if(status != PHI_STATUS_OK)
+		{
+			const size_t command_name_count = sizeof(CommandName) / sizeof(CommandName[0]);
+			const char* command_name = cmd_header.type < command_name_count ? CommandName[cmd_header.type] : "Unknown";
+			LogErrorFmt("Command %s execution failed: %s", command_name, StatusName[status]);
+			break;
+		}
+	}
+
+	return status;
+}
+
+PhiStatus ExecuteCommandBuffer(const void* data, uint64_t size, uint64_t cmd_count)
+{
+	PhiCommandReader reader = {
+		.endpoint = PHI_ENDPOINT_INVALID,
+		.memory = data,
+		.remaining = size,
+	};
+
+	const PhiStatus status = ExecuteCommands(&reader, cmd_count);
+	if(status != PHI_STATUS_OK)
+		return status;
+
+	return reader.remaining == 0 ? PHI_STATUS_OK : PHI_STATUS_BAD_MESSAGE;
+}
+
 int HandleWorkExecution(PhiEndpoint endpoint, const PhiMessageHeader* header)
 {
 	PhiWorkExecutionRequest request;
@@ -75,6 +130,7 @@ int HandleWorkExecution(PhiEndpoint endpoint, const PhiMessageHeader* header)
 
 	PhiCommandReader reader = {
 		.endpoint = endpoint,
+		.memory = NULL,
 		.remaining = header->payload_size - sizeof(request),
 	};
 
@@ -86,20 +142,7 @@ int HandleWorkExecution(PhiEndpoint endpoint, const PhiMessageHeader* header)
 		return SendReply(endpoint, header, &reply, sizeof(reply));
 	}
 
-	for(uint64_t cmd_index = 0; cmd_index < request.cmd_count; ++cmd_index)
-	{
-		PhiCmdHeader cmd_header;
-		reply.result.status = ReadCommandHeader(&reader, &cmd_header);
-		if(reply.result.status != PHI_STATUS_OK)
-			break;
-
-		reply.result.status = ExecuteCommand(&reader, &cmd_header);
-		if(reply.result.status != PHI_STATUS_OK)
-		{
-			LogErrorFmt("Command %s execution failed: %s", CommandName[cmd_header.type], StatusName[reply.result.status]);
-			break;
-		}
-	}
+	reply.result.status = ExecuteCommands(&reader, request.cmd_count);
 
 	if(reader.remaining > 0 && DrainCommandReader(&reader) < 0)
 		return -1;

@@ -28,6 +28,13 @@ PhiEndpoint TransportListen(uint16_t port)
 	return endpoint;
 }
 
+int TransportReadRemote(PhiEndpoint endpoint, void* data, size_t size, uint64_t remote_offset)
+{
+	if(size == 0)
+		return 0;
+	return scif_vreadfrom(endpoint, data, size, (off_t)remote_offset, SCIF_RMA_SYNC);
+}
+
 ssize_t TransportReceive(PhiEndpoint endpoint, void* data, size_t size)
 {
 	return scif_recv(endpoint, data, size, SCIF_RECV_BLOCK);

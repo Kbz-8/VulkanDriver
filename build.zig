@@ -595,7 +595,7 @@ fn addPhiDaemonCompilerArgs(
     switch (optimize) {
         .Debug => cmd.addArgs(&.{ "-O0", "-g3" }),
         .ReleaseSafe => cmd.addArgs(&.{ "-O2", "-g", "-DNDEBUG" }),
-        .ReleaseFast => cmd.addArgs(&.{ "-O3", "-DNDEBUG" }),
+        .ReleaseFast => cmd.addArgs(&.{ "-O3", "-DNDEBUG", "-DNOLOGS" }),
         .ReleaseSmall => cmd.addArgs(&.{ "-Os", "-DNDEBUG" }),
     }
 }
@@ -612,6 +612,7 @@ fn addPhiDaemon(b: *std.Build, optimize: std.builtin.OptimizeMode, cc: []const u
         "src/phi/mic/Image.c",
         "src/phi/mic/Logger.c",
         "src/phi/mic/Memory.c",
+        "src/phi/mic/Queue.c",
         "src/phi/mic/Transport.c",
         // Add non-AVX files here
     };

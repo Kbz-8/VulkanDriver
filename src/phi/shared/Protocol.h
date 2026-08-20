@@ -7,8 +7,11 @@
 #define PHI_MEMORY_ALIGNMENT 64
 
 #define PHI_PROTOCOL_MAGIC 0x50484941u
-#define PHI_PROTOCOL_VERSION 1u
+#define PHI_PROTOCOL_VERSION 2u
 #define PHI_SCIF_PORT 43616u
+
+#define PHI_QUEUE_RING_CAPACITY 64u
+#define PHI_QUEUE_SHUTDOWN_SEQUENCE UINT64_MAX
 
 #ifndef PHI_TRANSPORT_PORT
 #define PHI_TRANSPORT_PORT PHI_SCIF_PORT
@@ -24,6 +27,7 @@ typedef enum PhiPacketType
 	PHI_PACKET_WORK_EXECUTION = 6,
 	PHI_PACKET_SHUTDOWN = 7,
 	PHI_PACKET_MAP_HOST_MEMORY = 8,
+	PHI_PACKET_QUEUE_SETUP = 9,
 } PhiPacketType;
 
 // When adding status, update StatusName in Logger.h
@@ -103,5 +107,46 @@ typedef struct PhiWorkExecutionRequest
 	uint64_t cmd_count;
 	uint64_t command_buffer_size;
 } PhiWorkExecutionRequest;
+
+typedef struct PhiQueueSubmission
+{
+	uint64_t sequence;
+	uint64_t command_scif_offset;
+	uint64_t command_size;
+	uint64_t command_count;
+} PhiQueueSubmission;
+
+typedef struct PhiQueueShared
+{
+	// Host-written producer timeline. Keep it on its own cache line
+	uint64_t producer_sequence;
+	uint8_t producer_padding[56];
+
+	// MIC-written completion timeline. Keep it on its own cache line
+	uint64_t completed_sequence;
+	uint8_t completion_padding[56];
+
+	PhiQueueSubmission submissions[PHI_QUEUE_RING_CAPACITY];
+} PhiQueueShared;
+
+typedef struct PhiQueueSetupRequest
+{
+	uint64_t scif_offset;
+	uint64_t scif_size;
+	uint32_t ring_capacity;
+	uint32_t reserved;
+} PhiQueueSetupRequest;
+
+typedef struct PhiQueueDoorbell
+{
+	uint64_t sequence;
+} PhiQueueDoorbell;
+
+typedef struct PhiQueueCompletion
+{
+	uint64_t sequence;
+	int32_t status;
+	uint32_t reserved;
+} PhiQueueCompletion;
 
 #endif
