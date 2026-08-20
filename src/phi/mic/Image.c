@@ -1,6 +1,8 @@
+#include "Commands.h"
 #include <stddef.h>
 #include <stdint.h>
 
+#include <Blitter.h>
 #include <Image.h>
 #include <Logger.h>
 #include <Memory.h>
@@ -331,18 +333,6 @@ static PhiStatus CopyImageRegion(const PhiCmdCopyImage* command)
 	return PHI_STATUS_OK;
 }
 
-static PhiStatus ExecuteCopyImage(PhiCommandReader* reader)
-{
-	PhiCmdCopyImage command;
-
-	PhiStatus status = ReadCommandData(reader, &command, sizeof(command));
-
-	if(status != PHI_STATUS_OK)
-		return status;
-
-	return CopyImageRegion(&command);
-}
-
 int IsImageCommand(const PhiCmdHeader* header)
 {
 	switch((PhiCmdType)header->type)
@@ -350,6 +340,7 @@ int IsImageCommand(const PhiCmdHeader* header)
 		case PHI_CMD_COPY_BUFFER_TO_IMAGE:
 		case PHI_CMD_COPY_IMAGE_TO_BUFFER:
 		case PHI_CMD_COPY_IMAGE:
+		case PHI_CMD_BLIT_IMAGE:
 			return 1;
 
 		default:
@@ -364,7 +355,23 @@ PhiStatus ExecuteImageCommand(PhiCommandReader* reader, const PhiCmdHeader* head
 		case PHI_CMD_COPY_BUFFER_TO_IMAGE:
 		case PHI_CMD_COPY_IMAGE_TO_BUFFER:
 		case PHI_CMD_COPY_IMAGE:
-			return ExecuteCopyImage(reader);
+			{
+				PhiCmdCopyImage command;
+				PhiStatus status = ReadCommandData(reader, &command, sizeof(command));
+				if(status != PHI_STATUS_OK)
+					return status;
+				return CopyImageRegion(&command);
+			}
+
+		case PHI_CMD_BLIT_IMAGE:
+			{
+
+				PhiCmdBlitImage command;
+				PhiStatus status = ReadCommandData(reader, &command, sizeof(command));
+				if(status != PHI_STATUS_OK)
+					return status;
+				return BlitImage(&command);
+			}
 
 		default:
 			return PHI_STATUS_BAD_MESSAGE;

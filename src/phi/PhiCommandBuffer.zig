@@ -181,12 +181,12 @@ pub fn bindVertexBuffer(interface: *Interface, index: usize, buffer: *base.Buffe
 pub fn blitImage(interface: *Interface, src: *base.Image, src_layout: vk.ImageLayout, dst: *base.Image, dst_layout: vk.ImageLayout, regions: []const vk.ImageBlit, filter: vk.Filter) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     self.cmd_count += 1;
-    _ = src;
+
     _ = src_layout;
-    _ = dst;
     _ = dst_layout;
-    _ = regions;
-    _ = filter;
+
+    for (regions) |region|
+        try copy.blitImage(self, src, dst, region, filter);
 }
 
 pub fn clearAttachment(interface: *Interface, attachment: vk.ClearAttachment, rect: vk.ClearRect) VkError!void {

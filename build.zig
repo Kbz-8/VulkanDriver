@@ -606,6 +606,7 @@ fn addPhiDaemon(b: *std.Build, optimize: std.builtin.OptimizeMode, cc: []const u
 
     const sources = [_][]const u8{
         "src/phi/mic/main.c",
+        "src/phi/mic/Blitter.c",
         "src/phi/mic/Buffer.c",
         "src/phi/mic/CommandBuffer.c",
         "src/phi/mic/Daemon.c",

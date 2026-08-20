@@ -1,3 +1,4 @@
+const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 const lib = @import("lib.zig");
@@ -414,5 +415,118 @@ pub fn copyImage(cmd: *PhiCommandBuffer, src: *base.Image, dst: *base.Image, reg
         src_memory,
         dst_memory,
         region,
+    );
+}
+
+pub fn blitImage(cmd: *PhiCommandBuffer, src: *base.Image, dst: *base.Image, region: vk.ImageBlit, filter: vk.Filter) VkError!void {
+    const src_memory = try remoteImageMemory(src);
+    const dst_memory = try remoteImageMemory(dst);
+
+    var src_offset_0 = region.src_offsets[0];
+    var src_offset_1 = region.src_offsets[1];
+
+    var dst_offset_0 = region.dst_offsets[0];
+    var dst_offset_1 = region.dst_offsets[1];
+
+    if (dst_offset_0.x > dst_offset_1.x) {
+        std.mem.swap(i32, &dst_offset_0.x, &dst_offset_1.x);
+        std.mem.swap(i32, &src_offset_0.x, &src_offset_1.x);
+    }
+
+    if (dst_offset_0.y > dst_offset_1.y) {
+        std.mem.swap(i32, &dst_offset_0.y, &dst_offset_1.y);
+        std.mem.swap(i32, &src_offset_0.y, &src_offset_1.y);
+    }
+
+    if (dst_offset_0.z > dst_offset_1.z) {
+        std.mem.swap(i32, &dst_offset_0.z, &dst_offset_1.z);
+        std.mem.swap(i32, &src_offset_0.z, &src_offset_1.z);
+    }
+
+    const src_extent = try getMipExtent(src, region.src_subresource.mip_level);
+
+    const step_x = @as(f32, @floatFromInt(src_offset_1.x - src_offset_0.x)) / @as(f32, @floatFromInt(dst_offset_1.x - dst_offset_0.x));
+    const step_y = @as(f32, @floatFromInt(src_offset_1.y - src_offset_0.y)) / @as(f32, @floatFromInt(dst_offset_1.y - dst_offset_0.y));
+
+    const step_z = @as(f32, @floatFromInt(src_offset_1.z - src_offset_0.z)) / @as(f32, @floatFromInt(dst_offset_1.z - dst_offset_0.z));
+    const src_x0 = @as(f32, @floatFromInt(src_offset_0.x)) + (0.5 - @as(f32, @floatFromInt(dst_offset_0.x))) * step_x;
+
+    const src_y0 = @as(f32, @floatFromInt(src_offset_0.y)) + (0.5 - @as(f32, @floatFromInt(dst_offset_0.y))) * step_y;
+    const src_z0 = @as(f32, @floatFromInt(src_offset_0.z)) + (0.5 - @as(f32, @floatFromInt(dst_offset_0.z))) * step_z;
+
+    const src_layout = try src.getSubresourceLayout(.{
+        .aspect_mask = region.src_subresource.aspect_mask,
+        .mip_level = region.src_subresource.mip_level,
+        .array_layer = region.src_subresource.base_array_layer,
+    });
+
+    const dst_layout = try dst.getSubresourceLayout(.{
+        .aspect_mask = region.dst_subresource.aspect_mask,
+        .mip_level = region.dst_subresource.mip_level,
+        .array_layer = region.dst_subresource.base_array_layer,
+    });
+
+    const src_format = src.formatFromAspect(region.src_subresource.aspect_mask);
+    const dst_format = dst.formatFromAspect(region.dst_subresource.aspect_mask);
+
+    const apply_filter = (filter != .nearest);
+    const resolve_srgb = src.samples.toInt() > 1 and
+        dst.samples.toInt() == 1 and
+        base.format.isSrgb(src_format) and
+        base.format.isSrgb(dst_format);
+    const allow_srgb_conversion = apply_filter or resolve_srgb or base.format.isSrgb(src_format) != base.format.isSrgb(dst_format);
+
+    const clamp_to_edge = src_offset_0.x < 0 or
+        src_offset_0.y < 0 or
+        @as(u32, @intCast(src_offset_1.x)) > src_extent.width or
+        @as(u32, @intCast(src_offset_1.y)) > src_extent.height or
+        (filter != .nearest and ((src_x0 < 0.5) or (src_y0 < 0.5)));
+
+    try cmd.appendCommand(
+        proto.PhiCmdBlitImage,
+        proto.PHI_CMD_BLIT_IMAGE,
+        .{
+            .src_memory = @intCast(src_memory.remote_handle),
+            .src_offset = src.memory_offset + src_layout.offset,
+            .src_row_pitch = src_layout.row_pitch,
+            .src_slice_pitch = src_layout.depth_pitch,
+            .src_layer_pitch = src_layout.array_pitch,
+
+            .dst_memory = @intCast(dst_memory.remote_handle),
+            .dst_offset = dst.memory_offset + dst_layout.offset,
+            .dst_row_pitch = dst_layout.row_pitch,
+            .dst_slice_pitch = dst_layout.depth_pitch,
+            .dst_layer_pitch = dst_layout.array_pitch,
+
+            .dst_format = @intCast(@as(i32, @intFromEnum(dst_format))),
+            .src_format = @intCast(@as(i32, @intFromEnum(src_format))),
+
+            .src_width = src_extent.width,
+            .src_height = src_extent.height,
+            .src_depth = src_extent.depth,
+
+            .dst_x0 = dst_offset_0.x,
+            .dst_y0 = dst_offset_0.y,
+            .dst_z0 = dst_offset_0.z,
+            .dst_x1 = dst_offset_1.x,
+            .dst_y1 = dst_offset_1.y,
+            .dst_z1 = dst_offset_1.z,
+
+            .src_x0 = src_x0,
+            .src_y0 = src_y0,
+            .src_z0 = src_z0,
+
+            .step_x = step_x,
+            .step_y = step_y,
+            .step_z = step_z,
+
+            .layer_count = region.dst_subresource.layer_count,
+
+            .filter = @intCast(@intFromEnum(filter)),
+            .clamp_to_edge = @intFromBool(clamp_to_edge),
+            .allow_srgb_conversion = @intFromBool(allow_srgb_conversion),
+
+            .reserved = 0,
+        },
     );
 }

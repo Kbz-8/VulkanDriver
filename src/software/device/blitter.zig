@@ -45,7 +45,7 @@ const BlitData = struct {
     width_ratio: f32,
 };
 
-fn computeOffset3D(x: usize, y: usize, z: usize, slice_bytes: usize, pitch_bytes: usize, texel_bytes: usize) usize {
+inline fn computeOffset3D(x: usize, y: usize, z: usize, slice_bytes: usize, pitch_bytes: usize, texel_bytes: usize) usize {
     return z * slice_bytes + y * pitch_bytes + x * texel_bytes;
 }
 
