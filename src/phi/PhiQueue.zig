@@ -92,7 +92,7 @@ pub fn create(allocator: std.mem.Allocator, device: *base.Device, index: u32, fa
     @memset(ring_backing, 0);
 
     const ring_offset = try transport.registerHostMemory(ring_backing);
-    errdefer transport.unregisterHostMemory(ring_offset, ring_backing.len) catch {};
+    errdefer transport.unregisterHostMemory(ring_offset, ring_backing.len) catch @panic("Caught an error while handling an error");
 
     const setup_request: proto.PhiQueueSetupRequest = .{
         .scif_offset = ring_offset,
@@ -328,7 +328,7 @@ fn prepareSubmit(self: *Self, allocator: std.mem.Allocator, info: Interface.Subm
         }
 
         const offset = try self.transport.registerHostMemory(backing);
-        errdefer self.transport.unregisterHostMemory(offset, backing.len) catch {};
+        errdefer self.transport.unregisterHostMemory(offset, backing.len) catch @panic("Caught an error while handling an error");
 
         command_backing = backing;
         scif_offset = offset;
