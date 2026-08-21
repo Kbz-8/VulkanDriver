@@ -18,6 +18,15 @@ pub const Interface = base.Queue;
 const ring_capacity: usize = @intCast(proto.PHI_QUEUE_RING_CAPACITY);
 const ring_capacity_u64: u64 = @intCast(ring_capacity);
 const shutdown_sequence = std.math.maxInt(u64);
+const shutdown_timeout_ns = 5 * std.time.ns_per_s;
+const shutdown_poll_ns = 10 * std.time.ns_per_ms;
+
+const CompletionShutdown = enum {
+    acknowledged,
+    stopped_without_acknowledgement,
+    timed_out,
+    wait_failed,
+};
 
 const PreparedSubmit = struct {
     wait_semaphores: std.ArrayList(*base.BinarySemaphore),
@@ -63,6 +72,7 @@ pending: [ring_capacity]?PendingCompletion,
 
 error_state: ?VkError,
 shutting_down: bool,
+completion_stopped: bool,
 remote_stopped: bool,
 
 pub fn create(allocator: std.mem.Allocator, device: *base.Device, index: u32, family_index: u32, flags: vk.DeviceQueueCreateFlags) VkError!*Interface {
@@ -129,6 +139,7 @@ pub fn create(allocator: std.mem.Allocator, device: *base.Device, index: u32, fa
         .pending = [_]?PendingCompletion{null} ** ring_capacity,
         .error_state = null,
         .shutting_down = false,
+        .completion_stopped = false,
         .remote_stopped = false,
     };
 
@@ -141,27 +152,63 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void
     const io = interface.owner.io();
     const device_allocator = interface.owner.device_allocator.allocator();
 
+    var graceful_shutdown = true;
     waitIdle(interface) catch |err| {
+        graceful_shutdown = false;
         std.log.scoped(.PhiQueue).warn("Queue did not become idle during destruction: {s}", .{@errorName(err)});
     };
-
-    var graceful_shutdown = true;
+    var mutex_locked = true;
     self.mutex.lock(io) catch {
+        mutex_locked = false;
         graceful_shutdown = false;
     };
-    if (graceful_shutdown) {
+    var shutdown_next_sequence: u64 = 0;
+    var shutdown_completed_sequence: u64 = 0;
+    if (mutex_locked) {
         self.shutting_down = true;
+        shutdown_next_sequence = self.next_remote_sequence;
+        shutdown_completed_sequence = self.completed_sequence;
         self.condition.broadcast(io);
         self.mutex.unlock(io);
+    }
 
+    if (graceful_shutdown) {
+        std.log.scoped(.PhiQueue).info(
+            "Sending shutdown doorbell (next remote sequence {d}, completed {d})",
+            .{ shutdown_next_sequence, shutdown_completed_sequence },
+        );
         self.transport.sendQueueDoorbell(shutdown_sequence) catch |err| {
             graceful_shutdown = false;
             std.log.scoped(.PhiQueue).warn("Failed to send queue shutdown doorbell: {s}", .{@errorName(err)});
-            self.transport.close();
         };
-    } else {
-        // Wake the blocking completion receiver before releasing queue storage
-        self.transport.close();
+
+        if (graceful_shutdown) {
+            switch (self.waitForCompletionShutdown(io)) {
+                .acknowledged => {},
+                .stopped_without_acknowledgement => {
+                    graceful_shutdown = false;
+                    std.log.scoped(.PhiQueue).warn("Remote queue stopped without acknowledging shutdown", .{});
+                },
+                .timed_out => {
+                    graceful_shutdown = false;
+                    const progress = self.completionProgress(io);
+                    std.log.scoped(.PhiQueue).warn(
+                        "Timed out waiting for remote queue shutdown (next remote sequence {d}, completed {d}); closing SCIF endpoint",
+                        .{ progress.next, progress.completed },
+                    );
+                },
+                .wait_failed => {
+                    graceful_shutdown = false;
+                    std.log.scoped(.PhiQueue).warn("Failed while waiting for remote queue shutdown; closing SCIF endpoint", .{});
+                },
+            }
+        }
+    }
+
+    if (!graceful_shutdown) {
+        // Wake the blocking completion receiver before releasing queue storage.
+        // Keep libscif loaded until the receiver has returned from scif_recv.
+        self.transport.interrupt();
     }
 
     self.completion_group.await(io) catch |err| {
@@ -521,9 +568,16 @@ fn publish(self: *Self, prepared: *PreparedSubmit, fence: ?*base.Fence) VkError!
 }
 
 fn completionRunner(self: *Self) void {
+    defer self.markCompletionStopped();
+
     while (true) {
-        const completion = self.transport.receiveQueueCompletion() catch {
-            if (!self.isShuttingDown()) self.markLost(VkError.DeviceLost);
+        const completion = self.transport.receiveQueueCompletion() catch |err| {
+            if (!self.isShuttingDown()) {
+                std.log.scoped(.PhiQueue).err("Queue completion receive failed: {s}", .{@errorName(err)});
+                self.markLost(VkError.DeviceLost);
+            } else {
+                std.log.scoped(.PhiQueue).warn("Queue completion receiver stopped without shutdown acknowledgement: {s}", .{@errorName(err)});
+            }
             return;
         };
 
@@ -531,6 +585,7 @@ fn completionRunner(self: *Self) void {
             const io = self.interface.owner.io();
             self.mutex.lock(io) catch return;
             self.remote_stopped = completion.status == proto.PHI_STATUS_OK;
+            std.log.scoped(.PhiQueue).info("Received remote queue shutdown acknowledgement (status {d})", .{completion.status});
             self.condition.broadcast(io);
             self.mutex.unlock(io);
             return;
@@ -574,7 +629,14 @@ fn completeOne(self: *Self, completion: proto.PhiQueueCompletion) void {
     if (pending.command_backing) |backing| allocator.free(backing);
 
     if (completion.status != proto.PHI_STATUS_OK or cleanup_failed) {
-        self.markLost(VkError.DeviceLost);
+        std.log.scoped(.PhiQueue).err(
+            "Queue completion {d} failed with remote status {d} (cleanup failed: {})",
+            .{ completion.sequence, completion.status, cleanup_failed },
+        );
+        // A remote command error is confined to this submission. The protocol
+        // stream and ring remain synchronized, so poisoning every later CTS
+        // submission would only hide the command that actually failed.
+        if (cleanup_failed) self.markLost(VkError.DeviceLost);
         failPending(&pending);
     } else if (self.hasError()) {
         failPending(&pending);
@@ -647,6 +709,43 @@ fn hasError(self: *Self) bool {
     self.mutex.lock(io) catch return true;
     defer self.mutex.unlock(io);
     return self.error_state != null;
+}
+
+fn completionProgress(self: *Self, io: std.Io) struct { next: u64, completed: u64 } {
+    self.mutex.lock(io) catch return .{ .next = 0, .completed = 0 };
+    defer self.mutex.unlock(io);
+    return .{ .next = self.next_remote_sequence, .completed = self.completed_sequence };
+}
+
+fn waitForCompletionShutdown(self: *Self, io: std.Io) CompletionShutdown {
+    const deadline = std.Io.Clock.Timestamp.fromNow(io, .{
+        .raw = .fromNanoseconds(shutdown_timeout_ns),
+        .clock = .awake,
+    });
+
+    while (true) {
+        self.mutex.lock(io) catch return .wait_failed;
+        const stopped = self.completion_stopped;
+        const acknowledged = self.remote_stopped;
+        self.mutex.unlock(io);
+
+        if (stopped) return if (acknowledged) .acknowledged else .stopped_without_acknowledgement;
+
+        const remaining = deadline.durationFromNow(io);
+        if (remaining.raw.nanoseconds <= 0) return .timed_out;
+        (std.Io.Clock.Duration{
+            .raw = .fromNanoseconds(@min(remaining.raw.nanoseconds, shutdown_poll_ns)),
+            .clock = .awake,
+        }).sleep(io) catch return .wait_failed;
+    }
+}
+
+fn markCompletionStopped(self: *Self) void {
+    const io = self.interface.owner.io();
+    self.mutex.lock(io) catch return;
+    self.completion_stopped = true;
+    self.condition.broadcast(io);
+    self.mutex.unlock(io);
 }
 
 fn isShuttingDown(self: *Self) bool {

@@ -12,6 +12,8 @@ const Self = @This();
 epd: Endpoint,
 sequence: u64 = 1,
 mutex: std.Io.Mutex = .init,
+endpoint_mutex: base.SpinMutex = .{},
+library_loaded: bool = true,
 instance: *base.Instance,
 node_id: u16,
 
@@ -68,13 +70,25 @@ pub fn deinit(self: *Self) void {
     std.log.scoped(.PhiTransport).info("Closed connection", .{});
 }
 
-/// Close a transport without issuing an RPC shutdown. Queue transports switch
-/// to a raw full-duplex doorbell protocol after setup and must use this path
-pub fn close(self: *Self) void {
-    if (self.epd < 0) return;
-
-    closeEndpoint(self.epd);
+/// Close the endpoint so a thread blocked in SCIF receive wakes up. The SCIF
+/// library stays loaded until `close`, because that thread may still be
+/// returning through a dynamically loaded function.
+pub fn interrupt(self: *Self) void {
+    self.endpoint_mutex.lock();
+    const endpoint = self.epd;
     self.epd = -1;
+    self.endpoint_mutex.unlock();
+
+    if (endpoint >= 0) closeEndpoint(endpoint);
+}
+
+/// Close a transport without issuing an RPC shutdown. Queue transports switch
+/// to a raw full-duplex doorbell protocol after setup and must use this path.
+pub fn close(self: *Self) void {
+    self.interrupt();
+    if (!self.library_loaded) return;
+
+    self.library_loaded = false;
     scif.unload();
 }
 
@@ -137,9 +151,10 @@ pub fn statusToErr(status: c_int) VkError {
 }
 
 fn writeAll(self: *Self, bytes: []const u8) VkError!void {
+    const endpoint = self.getEndpoint() orelse return VkError.DeviceLost;
     var offset: usize = 0;
     while (offset < bytes.len) {
-        const written = scif.send(self.epd, bytes[offset..].ptr, bytes.len - offset, scif.send_block);
+        const written = scif.send(endpoint, bytes[offset..].ptr, bytes.len - offset, scif.send_block);
         if (written <= 0) {
             return VkError.DeviceLost;
         }
@@ -148,14 +163,21 @@ fn writeAll(self: *Self, bytes: []const u8) VkError!void {
 }
 
 fn readAll(self: *Self, bytes: []u8) VkError!void {
+    const endpoint = self.getEndpoint() orelse return VkError.DeviceLost;
     var offset: usize = 0;
     while (offset < bytes.len) {
-        const read = scif.recv(self.epd, bytes[offset..].ptr, bytes.len - offset, scif.recv_block);
+        const read = scif.recv(endpoint, bytes[offset..].ptr, bytes.len - offset, scif.recv_block);
         if (read <= 0) {
             return VkError.DeviceLost;
         }
         offset += @intCast(read);
     }
+}
+
+fn getEndpoint(self: *Self) ?Endpoint {
+    self.endpoint_mutex.lock();
+    defer self.endpoint_mutex.unlock();
+    return if (self.epd >= 0) self.epd else null;
 }
 
 fn closeEndpoint(endpoint: Endpoint) void {
@@ -181,8 +203,9 @@ fn handshake(self: *Self) VkError!void {
 }
 
 pub fn registerHostMemory(self: *Self, memory: []u8) VkError!u64 {
+    const endpoint = self.getEndpoint() orelse return VkError.DeviceLost;
     const offset = scif.register(
-        self.epd,
+        endpoint,
         memory.ptr,
         memory.len,
         0,
@@ -196,7 +219,8 @@ pub fn registerHostMemory(self: *Self, memory: []u8) VkError!u64 {
 }
 
 pub fn unregisterHostMemory(self: *Self, offset: u64, size: usize) VkError!void {
-    if (scif.unregister(self.epd, @intCast(offset), size) != 0) {
+    const endpoint = self.getEndpoint() orelse return VkError.DeviceLost;
+    if (scif.unregister(endpoint, @intCast(offset), size) != 0) {
         return VkError.Unknown;
     }
 }

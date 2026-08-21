@@ -7,7 +7,7 @@
 #include <string.h>
 
 static const char* CommandName[] = {
-	"CopyBuffer", "FillBuffer", "CopyBufferToImage", "CopyImageToBuffer", "CopyImage",
+	"CopyBuffer", "FillBuffer", "CopyBufferToImage", "CopyImageToBuffer", "CopyImage", "BlitImage",
 };
 
 PhiStatus ReadCommandData(PhiCommandReader* reader, void* data, uint64_t size)

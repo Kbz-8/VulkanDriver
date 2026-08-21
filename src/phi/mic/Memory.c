@@ -82,7 +82,9 @@ int HandleNewMemory(PhiEndpoint endpoint, const PhiMessageHeader* header)
 		if(memory == NULL)
 			LogErrorFmt("Failed to allocate %zu bytes", (size_t)request.size);
 		else
-			LogInfoFmt("Allocated %llu bytes to handle 0x%X", request.size, (uintptr_t)memory);
+			LogInfoFmt("Allocated %llu bytes to handle 0x%llX",
+			           (unsigned long long)request.size,
+			           (unsigned long long)(uintptr_t)memory);
 	}
 	else if(header->type == PHI_PACKET_MAP_HOST_MEMORY)
 	{
@@ -93,7 +95,7 @@ int HandleNewMemory(PhiEndpoint endpoint, const PhiMessageHeader* header)
 		if(memory == NULL)
 			reply.result.status = PHI_STATUS_MAP_HOST_MEMORY_FAILED;
 		else
-			LogInfoFmt("Mapped host memory to handle 0x%X", (uint64_t)(uintptr_t)memory);
+			LogInfoFmt("Mapped host memory to handle 0x%llX", (unsigned long long)(uintptr_t)memory);
 	}
 
 	if(memory != NULL)
@@ -131,20 +133,36 @@ int HandleDestroyMemory(PhiEndpoint endpoint, const PhiMessageHeader* header)
 	if(request.remote_handle == 0)
 	{
 		reply.result.status = PHI_STATUS_INVALID_HANDLE;
-		LogErrorFmt("Could not free memory: invalid handle 0x%X", request.remote_handle);
+		LogErrorFmt("Could not free memory: invalid handle 0x%llX", (unsigned long long)request.remote_handle);
 	}
 	else
 	{
-		const Memory* memory = (const Memory*)(uintptr_t)request.remote_handle;
+		Memory* memory = (Memory*)(uintptr_t)request.remote_handle;
+		const MemoryType memory_type = memory->type;
+		const char* memory_type_name;
 
-		if(memory->type == PHI_MEMORY_LOCAL)
-			free((void*)memory);
-		else if(memory->type == PHI_MEMORY_HOST_MAPPED)
-			scif_munmap((void*)memory->ptr, memory->size);
+		if(memory_type == PHI_MEMORY_LOCAL)
+			memory_type_name = "local";
+		else if(memory_type == PHI_MEMORY_HOST_MAPPED)
+			memory_type_name = "host-mapped";
+		else
+		{
+			reply.result.status = PHI_STATUS_INVALID_HANDLE;
+			LogErrorFmt("Could not free memory handle 0x%llX: invalid memory type", (unsigned long long)request.remote_handle);
+			return SendReply(endpoint, header, &reply, sizeof(reply));
+		}
 
-		LogInfoFmt("Destroyed %s memory handle 0x%X",
-		           memory->type == PHI_MEMORY_LOCAL ? "local" : "host-mapped",
-		           request.remote_handle);
+		if(memory_type == PHI_MEMORY_HOST_MAPPED && scif_munmap(memory->ptr, (size_t)memory->scif_size) != 0)
+		{
+			reply.result.status = PHI_STATUS_INVALID_HANDLE;
+			LogErrorFmt("Failed to unmap memory handle 0x%llX: %s", (unsigned long long)request.remote_handle, strerror(errno));
+		}
+		else
+		{
+			LogInfoFmt("Destroyed %s memory handle 0x%llX", memory_type_name, (unsigned long long)request.remote_handle);
+		}
+
+		free(memory);
 	}
 
 	return SendReply(endpoint, header, &reply, sizeof(reply));

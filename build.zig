@@ -607,6 +607,7 @@ fn addPhiDaemon(b: *std.Build, optimize: std.builtin.OptimizeMode, cc: []const u
     const sources = [_][]const u8{
         "src/phi/mic/main.c",
         "src/phi/mic/Blitter.c",
+        "src/phi/mic/BlitFormats.c",
         "src/phi/mic/Buffer.c",
         "src/phi/mic/CommandBuffer.c",
         "src/phi/mic/Daemon.c",
@@ -648,7 +649,7 @@ fn addPhiDaemon(b: *std.Build, optimize: std.builtin.OptimizeMode, cc: []const u
         cmd.addFileArg(avx_object);
     }
 
-    cmd.addArgs(&.{ "-lscif", "-o" });
+    cmd.addArgs(&.{ "-lscif", "-lm", "-o" });
     return cmd.addOutputFileArg("phi_device.mic");
 }
 

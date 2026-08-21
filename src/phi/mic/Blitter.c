@@ -1,3 +1,4 @@
+#include <BlitFormats.h>
 #include <Blitter.h>
 #include <Logger.h>
 #include <Memory.h>
@@ -8,7 +9,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define UNORM8_SCALE (1.0f / 255.0f)
 #define BLIT_WEIGHT_SCALE 1024.0f
 #define BLIT_PARALLEL_MIN_PIXELS (256u * 1024u)
 #define BLIT_TASK_TARGET_BYTES (64u * 1024u)
@@ -20,18 +20,8 @@ enum
 	PHI_FILTER_LINEAR = 1,
 };
 
-typedef struct Color
-{
-	float r;
-	float g;
-	float b;
-	float a;
-} Color;
-
-typedef struct FormatInfo
-{
-	uint32_t texel_size;
-} FormatInfo;
+typedef PhiBlitFloat4 Color;
+typedef PhiBlitFormatInfo FormatInfo;
 
 typedef struct SampleCoordinate
 {
@@ -51,149 +41,11 @@ typedef struct BlitWork
 	uint64_t rows_per_layer;
 } BlitWork;
 
-static int GetFormatInfo(PhiFormat format, FormatInfo* info)
-{
-	switch(format)
-	{
-		case PHI_FORMAT_R8_UNORM:
-			info->texel_size = 1;
-			return 1;
-
-		case PHI_FORMAT_R8G8_UNORM:
-			info->texel_size = 2;
-			return 1;
-
-		case PHI_FORMAT_R8G8B8_UNORM:
-		case PHI_FORMAT_B8G8R8_UNORM:
-			info->texel_size = 3;
-			return 1;
-
-		case PHI_FORMAT_R8G8B8A8_UNORM:
-		case PHI_FORMAT_B8G8R8A8_UNORM:
-		case PHI_FORMAT_A8B8G8R8_UNORM_PACK32:
-			info->texel_size = 4;
-			return 1;
-
-		default:
-			return 0;
-	}
-}
-
-static Color ReadUnorm8(const uint8_t* texel, PhiFormat format)
-{
-	Color color = { 0.0f, 0.0f, 0.0f, 1.0f };
-
-	switch(format)
-	{
-		case PHI_FORMAT_R8_UNORM:
-			color.r = (float)texel[0] * UNORM8_SCALE;
-			break;
-
-		case PHI_FORMAT_R8G8_UNORM:
-			color.r = (float)texel[0] * UNORM8_SCALE;
-			color.g = (float)texel[1] * UNORM8_SCALE;
-			break;
-
-		case PHI_FORMAT_R8G8B8_UNORM:
-			color.r = (float)texel[0] * UNORM8_SCALE;
-			color.g = (float)texel[1] * UNORM8_SCALE;
-			color.b = (float)texel[2] * UNORM8_SCALE;
-			break;
-
-		case PHI_FORMAT_B8G8R8_UNORM:
-			color.r = (float)texel[2] * UNORM8_SCALE;
-			color.g = (float)texel[1] * UNORM8_SCALE;
-			color.b = (float)texel[0] * UNORM8_SCALE;
-			break;
-
-		case PHI_FORMAT_R8G8B8A8_UNORM:
-		case PHI_FORMAT_A8B8G8R8_UNORM_PACK32:
-			color.r = (float)texel[0] * UNORM8_SCALE;
-			color.g = (float)texel[1] * UNORM8_SCALE;
-			color.b = (float)texel[2] * UNORM8_SCALE;
-			color.a = (float)texel[3] * UNORM8_SCALE;
-			break;
-
-		case PHI_FORMAT_B8G8R8A8_UNORM:
-			color.r = (float)texel[2] * UNORM8_SCALE;
-			color.g = (float)texel[1] * UNORM8_SCALE;
-			color.b = (float)texel[0] * UNORM8_SCALE;
-			color.a = (float)texel[3] * UNORM8_SCALE;
-			break;
-
-		default:
-			break;
-	}
-
-	return color;
-}
-
-static inline uint8_t QuantizeUnorm8(float value)
-{
-	if(value <= 0.0f)
-		return 0;
-	if(value >= 1.0f)
-		return UINT8_MAX;
-	return (uint8_t)(value * 255.0f + 0.5f);
-}
-
-static void WriteUnorm8(uint8_t* texel, PhiFormat format, Color color)
-{
-	const uint8_t r = QuantizeUnorm8(color.r);
-	const uint8_t g = QuantizeUnorm8(color.g);
-	const uint8_t b = QuantizeUnorm8(color.b);
-	const uint8_t a = QuantizeUnorm8(color.a);
-
-	switch(format)
-	{
-		case PHI_FORMAT_R8_UNORM:
-			texel[0] = r;
-			break;
-
-		case PHI_FORMAT_R8G8_UNORM:
-			texel[0] = r;
-			texel[1] = g;
-			break;
-
-		case PHI_FORMAT_R8G8B8_UNORM:
-			texel[0] = r;
-			texel[1] = g;
-			texel[2] = b;
-			break;
-
-		case PHI_FORMAT_B8G8R8_UNORM:
-			texel[0] = b;
-			texel[1] = g;
-			texel[2] = r;
-			break;
-
-		case PHI_FORMAT_R8G8B8A8_UNORM:
-		case PHI_FORMAT_A8B8G8R8_UNORM_PACK32:
-			texel[0] = r;
-			texel[1] = g;
-			texel[2] = b;
-			texel[3] = a;
-			break;
-
-		case PHI_FORMAT_B8G8R8A8_UNORM:
-			texel[0] = b;
-			texel[1] = g;
-			texel[2] = r;
-			texel[3] = a;
-			break;
-
-		default:
-			break;
-	}
-}
-
 static inline Color LerpColor(Color a, Color b, float factor)
 {
 	Color result;
-	result.r = a.r + (b.r - a.r) * factor;
-	result.g = a.g + (b.g - a.g) * factor;
-	result.b = a.b + (b.b - a.b) * factor;
-	result.a = a.a + (b.a - a.a) * factor;
+	for(uint32_t component = 0; component < 4; ++component)
+		result.values[component] = a.values[component] + (b.values[component] - a.values[component]) * factor;
 	return result;
 }
 
@@ -238,59 +90,133 @@ static Color ReadTexel(const uint8_t* src,
                        uint32_t z)
 {
 	const uint64_t offset = (uint64_t)z * slice_pitch + (uint64_t)y * row_pitch + (uint64_t)x * texel_size;
-	return ReadUnorm8(src + (size_t)offset, format);
+	return PhiReadBlitFloat4(src + (size_t)offset, format);
+}
+
+static inline Color PrepareLinearSample(Color color,
+                                        const PhiCmdBlitImage* command,
+                                        const FormatInfo* src_info,
+                                        int* apply_srgb_conversion)
+{
+	if(command->allow_srgb_conversion && src_info->is_srgb)
+	{
+		*apply_srgb_conversion = 0;
+		return PhiConvertBlitFloat4(color, (PhiFormat)command->src_format, (PhiFormat)command->dst_format, 1, 1);
+	}
+	return color;
 }
 
 static Color
-Sample(const uint8_t* src, const PhiCmdBlitImage* command, uint32_t texel_size, float x, float y, float z, int filter_3d)
+Sample(const uint8_t* src, const PhiCmdBlitImage* command, const FormatInfo* src_info, float x, float y, float z, int filter_3d)
 {
 	const PhiFormat format = (PhiFormat)command->src_format;
+	int apply_srgb_conversion = 1;
 
 	if(command->filter == PHI_FILTER_NEAREST)
 	{
-		return ReadTexel(src,
-		                 format,
-		                 texel_size,
-		                 command->src_row_pitch,
-		                 command->src_slice_pitch,
-		                 GetNearestCoordinate(x, command->src_width),
-		                 GetNearestCoordinate(y, command->src_height),
-		                 GetNearestCoordinate(z, command->src_depth));
+		Color color = ReadTexel(src,
+		                        format,
+		                        src_info->texel_size,
+		                        command->src_row_pitch,
+		                        command->src_slice_pitch,
+		                        GetNearestCoordinate(x, command->src_width),
+		                        GetNearestCoordinate(y, command->src_height),
+		                        GetNearestCoordinate(z, command->src_depth));
+		return PhiConvertBlitFloat4(color, format, (PhiFormat)command->dst_format, command->allow_srgb_conversion, 1);
 	}
 
 	const SampleCoordinate sample_x = GetLinearCoordinate(x, command->src_width);
 	const SampleCoordinate sample_y = GetLinearCoordinate(y, command->src_height);
 	const SampleCoordinate sample_z = GetLinearCoordinate(z, command->src_depth);
 
-	const Color color_0_0 = ReadTexel(
-	    src, format, texel_size, command->src_row_pitch, command->src_slice_pitch, sample_x.lo, sample_y.lo, sample_z.lo);
-	const Color color_0_1 = ReadTexel(
-	    src, format, texel_size, command->src_row_pitch, command->src_slice_pitch, sample_x.hi, sample_y.lo, sample_z.lo);
-	const Color color_1_0 = ReadTexel(
-	    src, format, texel_size, command->src_row_pitch, command->src_slice_pitch, sample_x.lo, sample_y.hi, sample_z.lo);
-	const Color color_1_1 = ReadTexel(
-	    src, format, texel_size, command->src_row_pitch, command->src_slice_pitch, sample_x.hi, sample_y.hi, sample_z.lo);
+	Color color_0_0 = ReadTexel(src,
+	                            format,
+	                            src_info->texel_size,
+	                            command->src_row_pitch,
+	                            command->src_slice_pitch,
+	                            sample_x.lo,
+	                            sample_y.lo,
+	                            sample_z.lo);
+	Color color_0_1 = ReadTexel(src,
+	                            format,
+	                            src_info->texel_size,
+	                            command->src_row_pitch,
+	                            command->src_slice_pitch,
+	                            sample_x.hi,
+	                            sample_y.lo,
+	                            sample_z.lo);
+	Color color_1_0 = ReadTexel(src,
+	                            format,
+	                            src_info->texel_size,
+	                            command->src_row_pitch,
+	                            command->src_slice_pitch,
+	                            sample_x.lo,
+	                            sample_y.hi,
+	                            sample_z.lo);
+	Color color_1_1 = ReadTexel(src,
+	                            format,
+	                            src_info->texel_size,
+	                            command->src_row_pitch,
+	                            command->src_slice_pitch,
+	                            sample_x.hi,
+	                            sample_y.hi,
+	                            sample_z.lo);
+	color_0_0 = PrepareLinearSample(color_0_0, command, src_info, &apply_srgb_conversion);
+	color_0_1 = PrepareLinearSample(color_0_1, command, src_info, &apply_srgb_conversion);
+	color_1_0 = PrepareLinearSample(color_1_0, command, src_info, &apply_srgb_conversion);
+	color_1_1 = PrepareLinearSample(color_1_1, command, src_info, &apply_srgb_conversion);
 
 	const Color row_0 = LerpColor(color_0_0, color_0_1, sample_x.factor);
 	const Color row_1 = LerpColor(color_1_0, color_1_1, sample_x.factor);
 	const Color slice_0 = LerpColor(row_0, row_1, sample_y.factor);
 
 	if(!filter_3d)
-		return slice_0;
+		return PhiConvertBlitFloat4(
+		    slice_0, format, (PhiFormat)command->dst_format, command->allow_srgb_conversion, apply_srgb_conversion);
 
-	const Color color_0_0_1 = ReadTexel(
-	    src, format, texel_size, command->src_row_pitch, command->src_slice_pitch, sample_x.lo, sample_y.lo, sample_z.hi);
-	const Color color_0_1_1 = ReadTexel(
-	    src, format, texel_size, command->src_row_pitch, command->src_slice_pitch, sample_x.hi, sample_y.lo, sample_z.hi);
-	const Color color_1_0_1 = ReadTexel(
-	    src, format, texel_size, command->src_row_pitch, command->src_slice_pitch, sample_x.lo, sample_y.hi, sample_z.hi);
-	const Color color_1_1_1 = ReadTexel(
-	    src, format, texel_size, command->src_row_pitch, command->src_slice_pitch, sample_x.hi, sample_y.hi, sample_z.hi);
+	Color color_0_0_1 = ReadTexel(src,
+	                              format,
+	                              src_info->texel_size,
+	                              command->src_row_pitch,
+	                              command->src_slice_pitch,
+	                              sample_x.lo,
+	                              sample_y.lo,
+	                              sample_z.hi);
+	Color color_0_1_1 = ReadTexel(src,
+	                              format,
+	                              src_info->texel_size,
+	                              command->src_row_pitch,
+	                              command->src_slice_pitch,
+	                              sample_x.hi,
+	                              sample_y.lo,
+	                              sample_z.hi);
+	Color color_1_0_1 = ReadTexel(src,
+	                              format,
+	                              src_info->texel_size,
+	                              command->src_row_pitch,
+	                              command->src_slice_pitch,
+	                              sample_x.lo,
+	                              sample_y.hi,
+	                              sample_z.hi);
+	Color color_1_1_1 = ReadTexel(src,
+	                              format,
+	                              src_info->texel_size,
+	                              command->src_row_pitch,
+	                              command->src_slice_pitch,
+	                              sample_x.hi,
+	                              sample_y.hi,
+	                              sample_z.hi);
+	color_0_0_1 = PrepareLinearSample(color_0_0_1, command, src_info, &apply_srgb_conversion);
+	color_0_1_1 = PrepareLinearSample(color_0_1_1, command, src_info, &apply_srgb_conversion);
+	color_1_0_1 = PrepareLinearSample(color_1_0_1, command, src_info, &apply_srgb_conversion);
+	color_1_1_1 = PrepareLinearSample(color_1_1_1, command, src_info, &apply_srgb_conversion);
 
 	const Color row_0_1 = LerpColor(color_0_0_1, color_0_1_1, sample_x.factor);
 	const Color row_1_1 = LerpColor(color_1_0_1, color_1_1_1, sample_x.factor);
 	const Color slice_1 = LerpColor(row_0_1, row_1_1, sample_y.factor);
-	return LerpColor(slice_0, slice_1, sample_z.factor);
+	Color color = LerpColor(slice_0, slice_1, sample_z.factor);
+	return PhiConvertBlitFloat4(
+	    color, format, (PhiFormat)command->dst_format, command->allow_srgb_conversion, apply_srgb_conversion);
 }
 
 static inline int IsMemoryRangeValid(const Memory* memory, uint64_t offset, uint64_t size)
@@ -425,13 +351,26 @@ static inline void BlitScalarPixel(uint8_t* dst,
                                    const uint8_t* src,
                                    const PhiCmdBlitImage* command,
                                    const FormatInfo* src_info,
+                                   const FormatInfo* dst_info,
                                    float source_x,
                                    float source_y,
                                    float source_z,
                                    int filter_3d)
 {
-	const Color color = Sample(src, command, src_info->texel_size, source_x, source_y, source_z, filter_3d);
-	WriteUnorm8(dst, (PhiFormat)command->dst_format, color);
+	if(src_info->is_integer && dst_info->is_integer)
+	{
+		const uint32_t x = GetNearestCoordinate(source_x, command->src_width);
+		const uint32_t y = GetNearestCoordinate(source_y, command->src_height);
+		const uint32_t z = GetNearestCoordinate(source_z, command->src_depth);
+		const uint64_t offset =
+		    (uint64_t)z * command->src_slice_pitch + (uint64_t)y * command->src_row_pitch + (uint64_t)x * src_info->texel_size;
+		const PhiBlitInt4 color = PhiReadBlitInt4(src + (size_t)offset, (PhiFormat)command->src_format);
+		PhiWriteBlitInt4(color, dst, (PhiFormat)command->dst_format);
+		return;
+	}
+
+	const Color color = Sample(src, command, src_info, source_x, source_y, source_z, filter_3d);
+	PhiWriteBlitFloat4(color, dst, (PhiFormat)command->dst_format);
 }
 
 static void BlitRow(uint8_t* dst,
@@ -448,7 +387,8 @@ static void BlitRow(uint8_t* dst,
 
 	// Fast path
 	if(command->filter == PHI_FILTER_NEAREST && command->src_format == command->dst_format && command->step_x == 1.0f &&
-	   first_source_x >= 0.0f && first_source_x + (float)(pixel_count - 1) < (float)command->src_width)
+	   !(command->allow_srgb_conversion && (src_info->is_srgb || dst_info->is_srgb)) && first_source_x >= 0.0f &&
+	   first_source_x + (float)(pixel_count - 1) < (float)command->src_width)
 	{
 		const uint32_t source_texel_x = GetNearestCoordinate(first_source_x, command->src_width);
 		const uint32_t source_texel_y = GetNearestCoordinate(source_y, command->src_height);
@@ -461,13 +401,14 @@ static void BlitRow(uint8_t* dst,
 	}
 
 	uint32_t processed = 0;
-	if(src_info->texel_size == 4 && dst_info->texel_size == 4 && command->src_width <= INT32_MAX)
+	if(src_info->vector_unorm8x4 && dst_info->vector_unorm8x4 && command->src_width <= INT32_MAX)
 	{
 		while(processed < pixel_count && ((uintptr_t)(dst + (size_t)processed * 4) & 63) != 0)
 		{
 			const int32_t destination_x = command->dst_x0 + (int32_t)processed;
 			const float source_x = command->src_x0 + (float)destination_x * command->step_x;
-			BlitScalarPixel(dst + (size_t)processed * 4, src, command, src_info, source_x, source_y, source_z, filter_3d);
+			BlitScalarPixel(
+			    dst + (size_t)processed * 4, src, command, src_info, dst_info, source_x, source_y, source_z, filter_3d);
 			++processed;
 		}
 
@@ -536,8 +477,15 @@ static void BlitRow(uint8_t* dst,
 	{
 		const int32_t destination_x = command->dst_x0 + (int32_t)processed;
 		const float source_x = command->src_x0 + (float)destination_x * command->step_x;
-		BlitScalarPixel(
-		    dst + (size_t)processed * dst_info->texel_size, src, command, src_info, source_x, source_y, source_z, filter_3d);
+		BlitScalarPixel(dst + (size_t)processed * dst_info->texel_size,
+		                src,
+		                command,
+		                src_info,
+		                dst_info,
+		                source_x,
+		                source_y,
+		                source_z,
+		                filter_3d);
 		++processed;
 	}
 }
@@ -581,9 +529,18 @@ PhiStatus BlitImage(const PhiCmdBlitImage* command)
 	FormatInfo src_info;
 	FormatInfo dst_info;
 
-	if(!GetFormatInfo((PhiFormat)command->src_format, &src_info) || !GetFormatInfo((PhiFormat)command->dst_format, &dst_info))
+	if(!PhiGetBlitFormatInfo((PhiFormat)command->src_format, &src_info) ||
+	   !PhiGetBlitFormatInfo((PhiFormat)command->dst_format, &dst_info))
 	{
 		LogErrorFmt("Unsupported blit image formats: src=%u dst=%u", command->src_format, command->dst_format);
+		return PHI_STATUS_INVALID_ARGUMENT;
+	}
+
+	const int integer_path = src_info.is_integer && dst_info.is_integer;
+	if((integer_path && (!src_info.can_read_int || !dst_info.can_write_int)) ||
+	   (!integer_path && (!src_info.can_read_float || !dst_info.can_write_float)))
+	{
+		LogErrorFmt("Unsupported blit image format direction: src=%u dst=%u", command->src_format, command->dst_format);
 		return PHI_STATUS_INVALID_ARGUMENT;
 	}
 
