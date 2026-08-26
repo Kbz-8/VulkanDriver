@@ -82,21 +82,34 @@ pub fn create(device: *Device, allocator: std.mem.Allocator, surface: *SurfaceKH
 }
 
 pub fn getNextImage(self: *const Self, timeout: u64, semaphore: ?*BinarySemaphore, fence: ?*Fence, index: *u32) VkError!void {
-    // TODO: handle timeout correctly
+    // TODO: handle finite timeouts correctly
+    if (try self.acquireAvailableImage(semaphore, fence, index))
+        return;
 
-    for (self.images, 0..) |*image, i| {
-        if (image.state == .available) {
-            image.state = .drawing;
-            index.* = @intCast(i);
-            if (semaphore) |s|
-                try s.signal();
-            if (fence) |f|
-                try f.signal();
-            return;
-        }
-    }
+    if (self.surface) |surface|
+        try surface.waitForImage(timeout);
+
+    if (try self.acquireAvailableImage(semaphore, fence, index))
+        return;
 
     return if (timeout > 0) VkError.Timeout else VkError.NotReady;
+}
+
+fn acquireAvailableImage(self: *const Self, semaphore: ?*BinarySemaphore, fence: ?*Fence, index: *u32) VkError!bool {
+    for (self.images, 0..) |*image, i| {
+        if (image.state != .available)
+            continue;
+
+        image.state = .drawing;
+        index.* = @intCast(i);
+        if (semaphore) |s|
+            try s.signal();
+        if (fence) |f|
+            try f.signal();
+        return true;
+    }
+
+    return false;
 }
 
 pub fn present(self: *Self, index: usize) VkError!void {
@@ -114,19 +127,19 @@ pub fn detachSurface(self: *Self) VkError!void {
 
     if (self.surface) |surface| {
         surface.swapchain = null;
-        for (self.images) |*image| {
-            if (image.state == .available)
-                try surface.detachImage(allocator, image);
-        }
+        for (self.images) |*image|
+            try surface.detachImage(allocator, image);
     }
     self.surface = null;
 }
 
 pub fn destroy(self: *Self, allocator: std.mem.Allocator) void {
+    if (self.surface) |surface|
+        surface.swapchain = null;
+
     for (self.images) |*image| {
-        if (self.surface) |surface| {
+        if (self.surface) |surface|
             surface.detachImage(allocator, image) catch @panic("Caught an error while handling an error");
-        }
         image.deinit(allocator);
     }
     allocator.free(self.images);

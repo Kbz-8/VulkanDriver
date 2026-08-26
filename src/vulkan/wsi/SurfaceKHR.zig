@@ -31,6 +31,7 @@ pub const VTable = struct {
     getCapabilities: *const fn (*const Self, *vk.SurfaceCapabilitiesKHR) VkError!void,
     attachImage: *const fn (*Self, std.mem.Allocator, *PresentImage) VkError!void,
     detachImage: *const fn (*Self, std.mem.Allocator, *PresentImage) VkError!void,
+    waitForImage: *const fn (*Self, u64) VkError!void,
     presentImage: *const fn (*Self, std.mem.Allocator, *PresentImage) VkError!void,
 };
 
@@ -79,6 +80,10 @@ pub inline fn attachImage(self: *Self, allocator: std.mem.Allocator, image: *Pre
 
 pub inline fn detachImage(self: *Self, allocator: std.mem.Allocator, image: *PresentImage) VkError!void {
     try self.vtable.detachImage(self, allocator, image);
+}
+
+pub inline fn waitForImage(self: *Self, timeout: u64) VkError!void {
+    try self.vtable.waitForImage(self, timeout);
 }
 
 pub inline fn presentImage(self: *Self, allocator: std.mem.Allocator, image: *PresentImage) VkError!void {

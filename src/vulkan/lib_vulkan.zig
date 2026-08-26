@@ -52,7 +52,14 @@ const has_wayland = switch (builtin.os.tag) {
     else => false,
 };
 
+const has_x11 = switch (builtin.os.tag) {
+    .linux, .freebsd, .netbsd, .openbsd, .dragonfly => true,
+    else => false,
+};
+
 pub const WaylandSurfaceKHR = if (has_wayland) @import("wsi/WaylandSurfaceKHR.zig") else null;
+pub const XlibSurfaceKHR = if (has_x11) @import("wsi/XlibSurfaceKHR.zig") else null;
+pub const XcbSurfaceKHR = if (has_x11) @import("wsi/XcbSurfaceKHR.zig") else null;
 
 inline fn entryPointBeginLogTrace(comptime scope: @EnumLiteral()) void {
     std.log.scoped(scope).debug("Calling {s}...", .{@tagName(scope)});
@@ -100,6 +107,8 @@ const global_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
 
 const instance_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkCreateWaylandSurfaceKHR"),
+    functionMapEntryPoint("vkCreateXlibSurfaceKHR"),
+    functionMapEntryPoint("vkCreateXcbSurfaceKHR"),
     functionMapEntryPoint("vkDestroyInstance"),
     functionMapEntryPoint("vkDestroySurfaceKHR"),
     functionMapEntryPoint("vkEnumeratePhysicalDeviceGroups"),
@@ -131,6 +140,8 @@ const physical_device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComp
     functionMapEntryPoint("vkGetPhysicalDeviceSurfacePresentModesKHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceSurfaceSupportKHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceWaylandPresentationSupportKHR"),
+    functionMapEntryPoint("vkGetPhysicalDeviceXlibPresentationSupportKHR"),
+    functionMapEntryPoint("vkGetPhysicalDeviceXcbPresentationSupportKHR"),
 });
 
 const device_pfn_map = block: {
@@ -2406,6 +2417,42 @@ pub export fn apeCreateWaylandSurfaceKHR(p_instance: vk.Instance, info: *const v
     }
 }
 
+pub export fn apeCreateXlibSurfaceKHR(p_instance: vk.Instance, info: *const vk.XlibSurfaceCreateInfoKHR, callbacks: ?*const vk.AllocationCallbacks, p_surface: *vk.SurfaceKHR) callconv(vk.vulkan_call_conv) vk.Result {
+    if (comptime has_x11) {
+        entryPointBeginLogTrace(.vkCreateXlibSurfaceKHR);
+        defer entryPointEndLogTrace();
+
+        if (info.s_type != .xlib_surface_create_info_khr)
+            return .error_validation_failed;
+
+        const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+        const instance = Dispatchable(Instance).fromHandleObject(p_instance) catch |err| return toVkResult(err);
+        const surface = XlibSurfaceKHR.create(instance, allocator, info) catch |err| return toVkResult(err);
+        p_surface.* = wrapNonDispatchable(SurfaceKHR, allocator, surface, vk.SurfaceKHR) catch |err| return toVkResult(err);
+        return .success;
+    } else {
+        return .error_unknown;
+    }
+}
+
+pub export fn apeCreateXcbSurfaceKHR(p_instance: vk.Instance, info: *const vk.XcbSurfaceCreateInfoKHR, callbacks: ?*const vk.AllocationCallbacks, p_surface: *vk.SurfaceKHR) callconv(vk.vulkan_call_conv) vk.Result {
+    if (comptime has_x11) {
+        entryPointBeginLogTrace(.vkCreateXcbSurfaceKHR);
+        defer entryPointEndLogTrace();
+
+        if (info.s_type != .xcb_surface_create_info_khr)
+            return .error_validation_failed;
+
+        const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+        const instance = Dispatchable(Instance).fromHandleObject(p_instance) catch |err| return toVkResult(err);
+        const surface = XcbSurfaceKHR.create(instance, allocator, info) catch |err| return toVkResult(err);
+        p_surface.* = wrapNonDispatchable(SurfaceKHR, allocator, surface, vk.SurfaceKHR) catch |err| return toVkResult(err);
+        return .success;
+    } else {
+        return .error_unknown;
+    }
+}
+
 pub export fn apeDestroySurfaceKHR(p_instance: vk.Instance, p_surface: vk.SurfaceKHR, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkDestroySurfaceKHR);
     defer entryPointEndLogTrace();
@@ -2476,6 +2523,46 @@ pub export fn apeGetPhysicalDeviceWaylandPresentationSupportKHR(p_physical_devic
 
         Dispatchable(PhysicalDevice).checkHandleValidity(p_physical_device) catch |err| errorLogger(err);
         return .true;
+    } else {
+        return .false;
+    }
+}
+
+pub export fn apeGetPhysicalDeviceXlibPresentationSupportKHR(p_physical_device: vk.PhysicalDevice, queue_family_index: u32, display: *vk.Display, visual_id: vk.VisualID) callconv(vk.vulkan_call_conv) vk.Bool32 {
+    if (comptime has_x11) {
+        entryPointBeginLogTrace(.vkGetPhysicalDeviceXlibPresentationSupportKHR);
+        defer entryPointEndLogTrace();
+
+        const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| {
+            errorLogger(err);
+            return .false;
+        };
+        const queue_index = std.math.cast(usize, queue_family_index) orelse return .false;
+        if (queue_index >= physical_device.queue_family_props.items.len or
+            physical_device.queue_family_props.items[queue_index].queue_count == 0)
+            return .false;
+
+        return if (XlibSurfaceKHR.supportsPresentation(display, visual_id)) .true else .false;
+    } else {
+        return .false;
+    }
+}
+
+pub export fn apeGetPhysicalDeviceXcbPresentationSupportKHR(p_physical_device: vk.PhysicalDevice, queue_family_index: u32, connection: *vk.xcb_connection_t, visual_id: vk.xcb_visualid_t) callconv(vk.vulkan_call_conv) vk.Bool32 {
+    if (comptime has_x11) {
+        entryPointBeginLogTrace(.vkGetPhysicalDeviceXcbPresentationSupportKHR);
+        defer entryPointEndLogTrace();
+
+        const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| {
+            errorLogger(err);
+            return .false;
+        };
+        const queue_index = std.math.cast(usize, queue_family_index) orelse return .false;
+        if (queue_index >= physical_device.queue_family_props.items.len or
+            physical_device.queue_family_props.items[queue_index].queue_count == 0)
+            return .false;
+
+        return if (XcbSurfaceKHR.supportsPresentation(connection, visual_id)) .true else .false;
     } else {
         return .false;
     }

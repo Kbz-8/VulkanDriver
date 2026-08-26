@@ -129,8 +129,8 @@ Assume thou that functions lacking in this array are, for now, not intended to b
 | vkCreateSwapchainKHR                             | ✅ Implemented |
 | vkCreateWaylandSurfaceKHR                        | ✅ Implemented |
 | vkCreateWin32SurfaceKHR                          | ⚙️ WIP         |
-| vkCreateXcbSurfaceKHR                            | ⚙️ WIP         |
-| vkCreateXlibSurfaceKHR                           | ⚙️ WIP         |
+| vkCreateXcbSurfaceKHR                            | ✅ Implemented |
+| vkCreateXlibSurfaceKHR                           | ✅ Implemented |
 | vkDestroyBuffer                                  | ✅ Implemented |
 | vkDestroyBufferView                              | ✅ Implemented |
 | vkDestroyCommandPool                             | ✅ Implemented |
@@ -194,8 +194,8 @@ Assume thou that functions lacking in this array are, for now, not intended to b
 | vkGetPhysicalDeviceSurfaceSupportKHR             | ✅ Implemented |
 | vkGetPhysicalDeviceWaylandPresentationSupportKHR | ✅ Implemented |
 | vkGetPhysicalDeviceWin32PresentationSupportKHR   | ⚙️ WIP         |
-| vkGetPhysicalDeviceXcbPresentationSupportKHR     | ⚙️ WIP         |
-| vkGetPhysicalDeviceXlibPresentationSupportKHR    | ⚙️ WIP         |
+| vkGetPhysicalDeviceXcbPresentationSupportKHR     | ✅ Implemented |
+| vkGetPhysicalDeviceXlibPresentationSupportKHR    | ✅ Implemented |
 | vkGetPipelineCacheData                           | ✅ Implemented |
 | vkGetQueryPoolResults                            | ✅ Implemented |
 | vkGetRenderAreaGranularity                       | ✅ Implemented |
