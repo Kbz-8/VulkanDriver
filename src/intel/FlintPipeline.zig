@@ -15,16 +15,7 @@ const PipelineKind = enum {
     compute,
 };
 
-pub const ComputeArtifact = struct {
-    program: compiler.Program,
-    resources: compiler.targets.ComputeResourceLayout,
-
-    fn deinit(self: *ComputeArtifact, allocator: std.mem.Allocator) void {
-        self.resources.deinit(allocator);
-        self.program.deinit();
-        self.* = undefined;
-    }
-};
+pub const ComputeArtifact = compiler.targets.ComputeArtifact;
 
 const CommonStage = struct {
     stage: shader_ir.ir.module.Stage,
@@ -144,7 +135,7 @@ fn compileStage(allocator: std.mem.Allocator, info: *const vk.PipelineShaderStag
 
 fn lowerToFlint(allocator: std.mem.Allocator, module: *base.ShaderModule.IrModule, device_info: ?compiler.device.DeviceInfo) VkError!?ComputeArtifact {
     const target = device_info orelse return null;
-    var program = compiler.targets.lower(allocator, module, target, .{}) catch |err| switch (err) {
+    return compiler.targets.compileCompute(allocator, module, target, .{}) catch |err| switch (err) {
         error.OutOfMemory => return VkError.OutOfHostMemory,
 
         error.UnsupportedGeneration,
@@ -156,43 +147,13 @@ fn lowerToFlint(allocator: std.mem.Allocator, module: *base.ShaderModule.IrModul
         error.UnsupportedType,
         error.UnsupportedOperation,
         error.UnsupportedTerminator,
+        error.TooManyStorageBuffers,
         => return null,
 
         else => {
-            std.log.scoped(.FlintPipeline).err("shader lowering failed: {s}", .{@errorName(err)});
+            std.log.scoped(.FlintPipeline).err("compute compilation failed: {s}", .{@errorName(err)});
             return VkError.ValidationFailed;
         },
-    };
-    errdefer program.deinit();
-
-    var resources = compiler.targets.layoutComputeResources(allocator, &program) catch |err| switch (err) {
-        error.OutOfMemory => return VkError.OutOfHostMemory,
-        error.UnsupportedGeneration,
-        error.TooManyStorageBuffers,
-        => {
-            program.deinit();
-            return null;
-        },
-    };
-    errdefer resources.deinit(allocator);
-
-    compiler.targets.lowerComputeResources(&program, &resources) catch |err| switch (err) {
-        error.UnsupportedGeneration => {
-            resources.deinit(allocator);
-            program.deinit();
-            return null;
-        },
-        error.InvalidProgram,
-        error.InvalidResourceLayout,
-        => {
-            std.log.scoped(.FlintPipeline).err("Flint compute resource lowering failed: {s}", .{@errorName(err)});
-            return VkError.ValidationFailed;
-        },
-    };
-
-    return .{
-        .program = program,
-        .resources = resources,
     };
 }
 
@@ -321,6 +282,8 @@ test "Flint pipeline: lower common compute IR" {
     try std.testing.expect(program.properties.block_parameters_lowered);
     try std.testing.expect(!program.properties.system_values_lowered);
     try std.testing.expect(program.properties.resources_lowered);
+    try std.testing.expect(program.properties.messages_lowered);
+    try std.testing.expect(program.properties.registers_allocated);
     try std.testing.expect(!program.properties.instructions_selected);
     try std.testing.expectEqual([3]u32{ 1, 1, 1 }, program.workgroup_size);
     try std.testing.expectEqual(@as(usize, 1), program.storage_buffers.entries.items.len);
@@ -330,6 +293,6 @@ test "Flint pipeline: lower common compute IR" {
 
     const text = try compiler.printer.allocPrint(std.testing.allocator, program);
     defer std.testing.allocator.free(text);
-    try std.testing.expect(std.mem.indexOf(u8, text, "load_global_invocation_id %id_x:u32, component(0)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "store_buffer bti(0), 0:u32, %id_x:u32") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "load_global_invocation_id r0:u32, component(0)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "surface_write bti(0), 0:u32, r0:u32") != null);
 }

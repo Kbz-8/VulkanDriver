@@ -913,12 +913,6 @@ pub const Lowerer = struct {
 
         program.properties.common_ir_lowered = true;
         validator.validate(&program) catch return Error.InvalidLoweredProgram;
-
-        block_arguments.run(allocator, &program) catch |err| return switch (err) {
-            error.OutOfMemory => Error.OutOfMemory,
-            else => Error.InvalidLoweredProgram,
-        };
-        validator.validate(&program) catch return Error.InvalidLoweredProgram;
         return program;
     }
 };
@@ -964,6 +958,7 @@ fn expectLowered(source: []const u8, expected: []const u8) !void {
 
     var program = try lower(std.testing.allocator, &module, test_device, .{});
     defer program.deinit();
+    try block_arguments.run(std.testing.allocator, &program);
     try std.testing.expect(program.properties.common_ir_lowered);
     try std.testing.expect(!program.properties.instructions_selected);
 
@@ -979,6 +974,7 @@ fn expectLoweredFragments(source: []const u8, expected: []const []const u8, unex
 
     var program = try lower(std.testing.allocator, &module, test_device, .{});
     defer program.deinit();
+    try block_arguments.run(std.testing.allocator, &program);
     try std.testing.expect(program.properties.common_ir_lowered);
     try std.testing.expect(!program.properties.instructions_selected);
 

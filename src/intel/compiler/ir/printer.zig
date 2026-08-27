@@ -136,6 +136,22 @@ fn writeOperation(program: *const program_ir.Program, writer: *std.Io.Writer, ex
             try writer.writeAll(", ");
             try writeSource(program, writer, execution_size, op.source);
         },
+        .surface_read => |op| {
+            try writer.writeAll("surface_read ");
+            try writeDestination(program, writer, execution_size, op.destination);
+            try writer.print(", bti({d}), ", .{op.binding_table});
+            try writeSource(program, writer, execution_size, op.address);
+            if (op.immediate_offset != 0)
+                try writer.print(", offset({d})", .{op.immediate_offset});
+        },
+        .surface_write => |op| {
+            try writer.print("surface_write bti({d}), ", .{op.binding_table});
+            try writeSource(program, writer, execution_size, op.address);
+            if (op.immediate_offset != 0)
+                try writer.print(", offset({d})", .{op.immediate_offset});
+            try writer.writeAll(", ");
+            try writeSource(program, writer, execution_size, op.data);
+        },
         .move => |op| {
             try writer.writeAll("mov ");
             try writeDestination(program, writer, execution_size, op.destination);

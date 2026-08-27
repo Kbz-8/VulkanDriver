@@ -32,6 +32,7 @@ pub const Error = error{
     UnloweredParallelCopy,
     UnloweredSystemValue,
     UnloweredResource,
+    UnloweredMessage,
     InvalidPayloadLayout,
     EntryBlockHasParameters,
     DuplicateBlockParameter,
@@ -138,6 +139,8 @@ fn validateInstruction(program: *const program_ir.Program, inst: instruction.Ins
                 return Error.InvalidGlobalInvocationId;
         },
         .load_buffer => |op| {
+            if (program.properties.messages_lowered)
+                return Error.UnloweredMessage;
             try validateBufferReference(program, op.buffer);
             try validateDestination(program, op.destination);
             try validateBufferOffset(program, op.byte_offset);
@@ -145,10 +148,24 @@ fn validateInstruction(program: *const program_ir.Program, inst: instruction.Ins
                 return Error.InvalidBufferAccess;
         },
         .store_buffer => |op| {
+            if (program.properties.messages_lowered)
+                return Error.UnloweredMessage;
             try validateBufferReference(program, op.buffer);
             try validateBufferOffset(program, op.byte_offset);
             try validateSource(program, op.source);
             if (!op.source.type.isInitialTargetType())
+                return Error.InvalidBufferAccess;
+        },
+        .surface_read => |op| {
+            try validateDestination(program, op.destination);
+            try validateBufferOffset(program, op.address);
+            if (!op.destination.type.isInitialTargetType())
+                return Error.InvalidBufferAccess;
+        },
+        .surface_write => |op| {
+            try validateBufferOffset(program, op.address);
+            try validateSource(program, op.data);
+            if (!op.data.type.isInitialTargetType())
                 return Error.InvalidBufferAccess;
         },
         .move => |op| {

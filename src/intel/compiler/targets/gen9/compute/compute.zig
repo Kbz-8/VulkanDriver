@@ -1,5 +1,6 @@
 const std = @import("std");
 
+pub const message_lowering = @import("message_lowering.zig");
 pub const resource_layout = @import("resource_layout.zig");
 pub const resource_lowering = @import("resource_lowering.zig");
 pub const ResourceLayout = resource_layout.Layout;

@@ -28,6 +28,20 @@ pub const StoreBuffer = struct {
     source: operand.Source,
 };
 
+pub const SurfaceRead = struct {
+    destination: operand.Destination,
+    binding_table: u8,
+    address: operand.Source,
+    immediate_offset: u32 = 0,
+};
+
+pub const SurfaceWrite = struct {
+    binding_table: u8,
+    address: operand.Source,
+    immediate_offset: u32 = 0,
+    data: operand.Source,
+};
+
 pub const Move = struct {
     destination: operand.Destination,
     source: operand.Source,
@@ -70,6 +84,8 @@ pub const Operation = union(enum) {
     load_global_invocation_id: LoadGlobalInvocationId,
     load_buffer: LoadBuffer,
     store_buffer: StoreBuffer,
+    surface_read: SurfaceRead,
+    surface_write: SurfaceWrite,
     move: Move,
     binary: Binary,
     compare: Compare,

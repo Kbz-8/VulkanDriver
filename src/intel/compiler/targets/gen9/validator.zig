@@ -64,6 +64,16 @@ fn validateInstruction(inst: instruction.Instruction) Error!void {
             try validateSource(op.byte_offset);
             try validateSource(op.source);
         },
+        .surface_read => |op| {
+            try validateBindingTableIndex(op.binding_table);
+            try validateDestination(op.destination);
+            try validateSource(op.address);
+        },
+        .surface_write => |op| {
+            try validateBindingTableIndex(op.binding_table);
+            try validateSource(op.address);
+            try validateSource(op.data);
+        },
         .move => |op| {
             try validateDestination(op.destination);
             try validateSource(op.source);
@@ -94,9 +104,13 @@ fn validateInstruction(inst: instruction.Instruction) Error!void {
 fn validateBufferReference(reference: instruction.BufferReference) Error!void {
     switch (reference) {
         .logical => {},
-        .binding_table => |index| if (index >= compute.resource_layout.max_storage_buffers)
-            return Error.InvalidBindingTableIndex,
+        .binding_table => |index| try validateBindingTableIndex(index),
     }
+}
+
+fn validateBindingTableIndex(index: u8) Error!void {
+    if (index >= compute.resource_layout.max_storage_buffers)
+        return Error.InvalidBindingTableIndex;
 }
 
 fn validateSource(source: operand.Source) Error!void {
