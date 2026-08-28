@@ -14,6 +14,8 @@ pub const Properties = packed struct {
     system_values_lowered: bool = false,
     resources_lowered: bool = false,
     messages_lowered: bool = false,
+    message_addresses_lowered: bool = false,
+    message_payloads_lowered: bool = false,
     control_flow_lowered: bool = false,
 
     regions_legalized: bool = false,
@@ -23,7 +25,7 @@ pub const Properties = packed struct {
     flags_allocated: bool = false,
     branches_resolved: bool = false,
 
-    _padding: u19 = 0,
+    _padding: u17 = 0,
 };
 
 pub const StorageBuffer = struct {

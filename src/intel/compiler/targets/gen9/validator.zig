@@ -74,6 +74,7 @@ fn validateInstruction(inst: instruction.Instruction) Error!void {
             try validateSource(op.address);
             try validateSource(op.data);
         },
+        .surface_message => |op| try validateBindingTableIndex(op.binding_table),
         .move => |op| {
             try validateDestination(op.destination);
             try validateSource(op.source);

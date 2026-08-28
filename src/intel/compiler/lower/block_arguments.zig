@@ -6,6 +6,7 @@ const operand = @import("../ir/operand.zig");
 const program_ir = @import("../ir/program.zig");
 const pseudo = @import("../ir/pseudo.zig");
 const validator = @import("../ir/validator.zig");
+const device = @import("../device.zig");
 
 pub const Error = std.mem.Allocator.Error || error{
     InvalidProgram,
@@ -128,7 +129,7 @@ fn rewriteEdge(
     return .{ .target = edge_block, .arguments = &.{} };
 }
 
-fn executionSize(dispatch_width: @import("../device.zig").DispatchWidth) @import("../device.zig").ExecutionSize {
+fn executionSize(dispatch_width: device.DispatchWidth) device.ExecutionSize {
     return @enumFromInt(@intFromEnum(dispatch_width));
 }
 
@@ -140,7 +141,6 @@ fn mapBuilderError(err: anyerror) Error {
 }
 
 test "[ir] block arguments: lower register and flag parameters" {
-    const device = @import("../device.zig");
     const printer = @import("../ir/printer.zig");
 
     const device_info: device.DeviceInfo = .{
@@ -215,8 +215,6 @@ test "[ir] block arguments: lower register and flag parameters" {
 }
 
 test "[ir] block arguments: split same-target conditional edges" {
-    const device = @import("../device.zig");
-
     const device_info: device.DeviceInfo = .{
         .generation = .gen9,
         .platform = .skylake,

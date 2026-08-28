@@ -33,6 +33,7 @@ pub const Error = error{
     UnloweredSystemValue,
     UnloweredResource,
     UnloweredMessage,
+    InvalidMessage,
     InvalidPayloadLayout,
     EntryBlockHasParameters,
     DuplicateBlockParameter,
@@ -168,6 +169,22 @@ fn validateInstruction(program: *const program_ir.Program, inst: instruction.Ins
             if (!op.data.type.isInitialTargetType())
                 return Error.InvalidBufferAccess;
         },
+        .surface_message => |op| {
+            try validateRegisterSpan(program, op.payload);
+            if (!op.data_type.isInitialTargetType())
+                return Error.InvalidMessage;
+            switch (op.kind) {
+                .read => {
+                    if (op.payload.register_count != 1 or op.response == null)
+                        return Error.InvalidMessage;
+                    try validateRegisterSpan(program, op.response.?);
+                    if (op.response.?.register_count != 1)
+                        return Error.InvalidMessage;
+                },
+                .write => if (op.payload.register_count != 2 or op.response != null)
+                    return Error.InvalidMessage,
+            }
+        },
         .move => |op| {
             try validateDestination(program, op.destination);
             try validateSource(program, op.source);
@@ -300,6 +317,15 @@ fn validateDestination(program: *const program_ir.Program, destination: operand.
     switch (destination.register) {
         .immediate, .null => return Error.InvalidDestination,
         else => try validateRegisterRef(program, destination.register),
+    }
+}
+
+fn validateRegisterSpan(program: *const program_ir.Program, span: operand.RegisterSpan) Error!void {
+    if (span.register_count == 0)
+        return Error.InvalidMessage;
+    switch (span.base) {
+        .virtual, .physical_grf => try validateRegisterRef(program, span.base),
+        else => return Error.InvalidMessage,
     }
 }
 

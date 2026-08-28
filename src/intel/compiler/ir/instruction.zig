@@ -42,6 +42,19 @@ pub const SurfaceWrite = struct {
     data: operand.Source,
 };
 
+pub const SurfaceMessageKind = enum {
+    read,
+    write,
+};
+
+pub const SurfaceMessage = struct {
+    kind: SurfaceMessageKind,
+    binding_table: u8,
+    payload: operand.RegisterSpan,
+    response: ?operand.RegisterSpan,
+    data_type: operand.DataType,
+};
+
 pub const Move = struct {
     destination: operand.Destination,
     source: operand.Source,
@@ -86,6 +99,7 @@ pub const Operation = union(enum) {
     store_buffer: StoreBuffer,
     surface_read: SurfaceRead,
     surface_write: SurfaceWrite,
+    surface_message: SurfaceMessage,
     move: Move,
     binary: Binary,
     compare: Compare,

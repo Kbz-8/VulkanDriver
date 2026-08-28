@@ -283,6 +283,8 @@ test "Flint pipeline: lower common compute IR" {
     try std.testing.expect(!program.properties.system_values_lowered);
     try std.testing.expect(program.properties.resources_lowered);
     try std.testing.expect(program.properties.messages_lowered);
+    try std.testing.expect(program.properties.message_addresses_lowered);
+    try std.testing.expect(program.properties.message_payloads_lowered);
     try std.testing.expect(program.properties.registers_allocated);
     try std.testing.expect(!program.properties.instructions_selected);
     try std.testing.expectEqual([3]u32{ 1, 1, 1 }, program.workgroup_size);
@@ -294,5 +296,5 @@ test "Flint pipeline: lower common compute IR" {
     const text = try compiler.printer.allocPrint(std.testing.allocator, program);
     defer std.testing.allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "load_global_invocation_id r0:u32, component(0)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "surface_write bti(0), 0:u32, r0:u32") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "surface_message write bti(0)") != null);
 }

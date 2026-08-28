@@ -152,6 +152,17 @@ fn writeOperation(program: *const program_ir.Program, writer: *std.Io.Writer, ex
             try writer.writeAll(", ");
             try writeSource(program, writer, execution_size, op.data);
         },
+        .surface_message => |op| {
+            try writer.print("surface_message {t} bti({d}), payload(", .{ op.kind, op.binding_table });
+            try writeRegister(program, writer, op.payload.base);
+            try writer.print(", {d})", .{op.payload.register_count});
+            if (op.response) |response| {
+                try writer.writeAll(", response(");
+                try writeRegister(program, writer, response.base);
+                try writer.print(", {d})", .{response.register_count});
+            }
+            try writer.print(", type({t})", .{op.data_type});
+        },
         .move => |op| {
             try writer.writeAll("mov ");
             try writeDestination(program, writer, execution_size, op.destination);

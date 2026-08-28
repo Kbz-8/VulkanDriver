@@ -106,6 +106,8 @@ test "[gen9] target: lower 256 KiB SSBO copy loop" {
 
     try std.testing.expect(program.properties.resources_lowered);
     try std.testing.expect(program.properties.messages_lowered);
+    try std.testing.expect(program.properties.message_addresses_lowered);
+    try std.testing.expect(program.properties.message_payloads_lowered);
     try std.testing.expectEqual(@as(usize, 2), resources.bindings.len);
     try std.testing.expectEqual(compute.resource_layout.Binding{
         .set = 0,
@@ -118,28 +120,24 @@ test "[gen9] target: lower 256 KiB SSBO copy loop" {
         .binding_table_index = 1,
     }, resources.bindings[1]);
 
-    var load_offsets: [4]bool = @splat(false);
-    var store_offsets: [4]bool = @splat(false);
     var load_count: usize = 0;
     var store_count: usize = 0;
     for (program.instructions.entries.items) |instruction_entry| {
         const inst = instruction_entry orelse continue;
         switch (inst.operation) {
-            .surface_read => |operation| {
-                try std.testing.expectEqual(@as(u8, 0), operation.binding_table);
-                try std.testing.expect(operation.immediate_offset % @sizeOf(u32) == 0);
-                const component = operation.immediate_offset / @sizeOf(u32);
-                try std.testing.expect(component < load_offsets.len);
-                load_offsets[component] = true;
-                load_count += 1;
-            },
-            .surface_write => |operation| {
-                try std.testing.expectEqual(@as(u8, 1), operation.binding_table);
-                try std.testing.expect(operation.immediate_offset % @sizeOf(u32) == 0);
-                const component = operation.immediate_offset / @sizeOf(u32);
-                try std.testing.expect(component < store_offsets.len);
-                store_offsets[component] = true;
-                store_count += 1;
+            .surface_message => |operation| switch (operation.kind) {
+                .read => {
+                    try std.testing.expectEqual(@as(u8, 0), operation.binding_table);
+                    try std.testing.expectEqual(@as(u8, 1), operation.payload.register_count);
+                    try std.testing.expect(operation.response != null);
+                    load_count += 1;
+                },
+                .write => {
+                    try std.testing.expectEqual(@as(u8, 1), operation.binding_table);
+                    try std.testing.expectEqual(@as(u8, 2), operation.payload.register_count);
+                    try std.testing.expect(operation.response == null);
+                    store_count += 1;
+                },
             },
             .parallel_copy => return error.UnloweredParallelCopy,
             else => {},
@@ -148,6 +146,4 @@ test "[gen9] target: lower 256 KiB SSBO copy loop" {
 
     try std.testing.expectEqual(@as(usize, 4), load_count);
     try std.testing.expectEqual(@as(usize, 4), store_count);
-    try std.testing.expectEqual([4]bool{ true, true, true, true }, load_offsets);
-    try std.testing.expectEqual([4]bool{ true, true, true, true }, store_offsets);
 }

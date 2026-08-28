@@ -76,6 +76,11 @@ fn reserveExistingPhysicalRegisters(program: *const program_ir.Program, initial:
                 reserveRegister(&next_byte, op.address.register, grf_size);
                 reserveRegister(&next_byte, op.data.register, grf_size);
             },
+            .surface_message => |op| {
+                reserveRegister(&next_byte, op.payload.base, grf_size);
+                if (op.response) |response|
+                    reserveRegister(&next_byte, response.base, grf_size);
+            },
             .move => |op| {
                 reserveRegister(&next_byte, op.destination.register, grf_size);
                 reserveRegister(&next_byte, op.source.register, grf_size);
@@ -127,6 +132,11 @@ fn rewriteProgram(program: *program_ir.Program, allocations: []const ?operand.Ph
             .surface_write => |*op| {
                 try rewriteSource(program, &op.address, allocations);
                 try rewriteSource(program, &op.data, allocations);
+            },
+            .surface_message => |*op| {
+                try rewriteRegister(program, &op.payload.base, allocations);
+                if (op.response) |*response|
+                    try rewriteRegister(program, &response.base, allocations);
             },
             .move => |*op| {
                 try rewriteDestination(program, &op.destination, allocations);

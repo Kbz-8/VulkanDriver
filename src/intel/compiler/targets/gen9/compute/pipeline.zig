@@ -10,12 +10,14 @@ const flag_allocation = @import("../flag_allocation.zig");
 const register_allocation = @import("../register_allocation.zig");
 
 const compute = @import("compute.zig");
+const message_addresses = @import("message_addresses.zig");
 const message_lowering = @import("message_lowering.zig");
+const message_payloads = @import("message_payloads.zig");
 const resource_layout = @import("resource_layout.zig");
 const resource_lowering = @import("resource_lowering.zig");
 
 pub const Error = common_ir.Error || block_arguments.Error || parallel_copies.Error ||
-    message_lowering.Error || resource_layout.Error || resource_lowering.Error || flag_allocation.Error || register_allocation.Error || compute.Error || error{
+    message_addresses.Error || message_lowering.Error || message_payloads.Error || resource_layout.Error || resource_lowering.Error || flag_allocation.Error || register_allocation.Error || compute.Error || error{
     UnsupportedGeneration,
     UnsupportedStage,
     UnsupportedDispatchWidth,
@@ -64,6 +66,8 @@ pub fn compile(allocator: std.mem.Allocator, module: *shader_ir.module.Module, d
 
     try resource_lowering.run(&program, &resources);
     try message_lowering.run(&program);
+    try message_addresses.run(&program);
+    try message_payloads.run(&program);
     try flag_allocation.run(allocator, &program);
     try register_allocation.run(allocator, &program);
 

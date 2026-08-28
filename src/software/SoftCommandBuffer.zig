@@ -13,6 +13,7 @@ const SoftPipeline = @import("SoftPipeline.zig");
 const SoftRenderPass = @import("SoftRenderPass.zig");
 
 const ExecutionDevice = @import("device/Device.zig");
+const Renderer = @import("device/Renderer.zig");
 const blitter = @import("device/blitter.zig");
 
 const Self = @This();
@@ -1375,7 +1376,7 @@ pub fn setDepthBias(interface: *Interface, constant_factor: f32, clamp: f32, slo
     const CommandImpl = struct {
         const Impl = @This();
 
-        depth_bias: @import("device/Renderer.zig").DepthBias,
+        depth_bias: Renderer.DepthBias,
 
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
@@ -1402,7 +1403,7 @@ pub fn setDepthBounds(interface: *Interface, min: f32, max: f32) VkError!void {
     const CommandImpl = struct {
         const Impl = @This();
 
-        depth_bounds: @import("device/Renderer.zig").DepthBounds,
+        depth_bounds: Renderer.DepthBounds,
 
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
