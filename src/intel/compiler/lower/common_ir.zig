@@ -997,7 +997,7 @@ fn expectLoweringError(source: []const u8, expected: Error) !void {
         return;
     };
     defer program.deinit();
-    return Error.TestExpectedError;
+    return error.TestExpectedError;
 }
 
 test "[ir] Lower: basic shader" {
