@@ -1,6 +1,11 @@
 const std = @import("std");
 
+pub const abi = @import("abi.zig");
+pub const dispatch = @import("dispatch.zig");
+pub const eu_encoder = @import("eu_encoder.zig");
+pub const kernel_encoder = @import("kernel_encoder.zig");
 pub const message_addresses = @import("message_addresses.zig");
+pub const message_descriptor = @import("message_descriptor.zig");
 pub const message_lowering = @import("message_lowering.zig");
 pub const message_payloads = @import("message_payloads.zig");
 pub const resource_layout = @import("resource_layout.zig");

@@ -14,11 +14,11 @@ pub const Error = std.mem.Allocator.Error || error{
 
 pub fn run(program: *program_ir.Program) Error!void {
     if (!program.properties.message_addresses_lowered)
-        return error.MessageAddressesNotLowered;
+        return Error.MessageAddressesNotLowered;
     if (program.properties.message_payloads_lowered)
         return;
     if (program.device_info.grf_size_bytes != 32)
-        return error.InvalidProgram;
+        return Error.InvalidProgram;
 
     var builder = Builder.init(program);
     for (program.blocks.entries.items, 0..) |entry, block_index| {
@@ -27,17 +27,17 @@ pub fn run(program: *program_ir.Program) Error!void {
         var instruction_index: usize = 0;
 
         while (true) {
-            const block = program.blocks.get(block_id) orelse return error.InvalidProgram;
+            const block = program.blocks.get(block_id) orelse return Error.InvalidProgram;
             if (instruction_index >= block.instructions.items.len)
                 break;
 
             const instruction_id = block.instructions.items[instruction_index];
-            const inst = program.instructions.get(instruction_id) orelse return error.InvalidProgram;
+            const inst = program.instructions.get(instruction_id) orelse return Error.InvalidProgram;
             const execution_size = inst.execution_size;
             switch (inst.operation) {
                 .surface_read => |op| {
                     if (op.immediate_offset != 0 or op.address.type != .u32)
-                        return error.InvalidProgram;
+                        return Error.InvalidProgram;
                     const response = try responseSpan(op.destination);
                     const payload = try addPayloadRegister(&builder, execution_size, 1);
                     _ = builder.insertInstruction(block_id, instruction_index, execution_size, null, .{ .move = .{
@@ -45,7 +45,7 @@ pub fn run(program: *program_ir.Program) Error!void {
                         .source = op.address,
                     } }) catch |err| return mapBuilderError(err);
 
-                    const mutable = program.instructions.getMut(instruction_id) orelse return error.InvalidProgram;
+                    const mutable = program.instructions.getMut(instruction_id) orelse return Error.InvalidProgram;
                     mutable.operation = .{ .surface_message = .{
                         .kind = .read,
                         .binding_table = op.binding_table,
@@ -57,7 +57,7 @@ pub fn run(program: *program_ir.Program) Error!void {
                 },
                 .surface_write => |op| {
                     if (op.immediate_offset != 0 or op.address.type != .u32)
-                        return error.InvalidProgram;
+                        return Error.InvalidProgram;
                     const payload = try addPayloadRegister(&builder, execution_size, 2);
                     _ = builder.insertInstruction(block_id, instruction_index, execution_size, null, .{ .move = .{
                         .destination = payloadDestination(payload, 0, .u32),
@@ -68,7 +68,7 @@ pub fn run(program: *program_ir.Program) Error!void {
                         .source = op.data,
                     } }) catch |err| return mapBuilderError(err);
 
-                    const mutable = program.instructions.getMut(instruction_id) orelse return error.InvalidProgram;
+                    const mutable = program.instructions.getMut(instruction_id) orelse return Error.InvalidProgram;
                     mutable.operation = .{ .surface_message = .{
                         .kind = .write,
                         .binding_table = op.binding_table,
@@ -107,20 +107,20 @@ fn payloadDestination(register: ids.VirtualRegisterId, byte_offset: u16, data_ty
 
 fn responseSpan(destination: operand.Destination) Error!operand.RegisterSpan {
     if (destination.region.byte_offset != 0 or destination.region.horizontal_stride != 1)
-        return error.InvalidProgram;
+        return Error.InvalidProgram;
     return switch (destination.register) {
         .virtual, .physical_grf => .{
             .base = destination.register,
             .register_count = 1,
         },
-        else => error.InvalidProgram,
+        else => Error.InvalidProgram,
     };
 }
 
 fn mapBuilderError(err: Builder.Error) Error {
     return switch (err) {
-        error.OutOfMemory => error.OutOfMemory,
-        else => error.InvalidProgram,
+        error.OutOfMemory => Error.OutOfMemory,
+        else => Error.InvalidProgram,
     };
 }
 

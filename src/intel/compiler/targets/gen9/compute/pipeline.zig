@@ -10,25 +10,42 @@ const flag_allocation = @import("../flag_allocation.zig");
 const register_allocation = @import("../register_allocation.zig");
 
 const compute = @import("compute.zig");
+const abi = @import("abi.zig");
+const kernel_encoder = @import("kernel_encoder.zig");
 const message_addresses = @import("message_addresses.zig");
 const message_lowering = @import("message_lowering.zig");
 const message_payloads = @import("message_payloads.zig");
 const resource_layout = @import("resource_layout.zig");
 const resource_lowering = @import("resource_lowering.zig");
 
-pub const Error = common_ir.Error || block_arguments.Error || parallel_copies.Error ||
-    message_addresses.Error || message_lowering.Error || message_payloads.Error || resource_layout.Error || resource_lowering.Error || flag_allocation.Error || register_allocation.Error || compute.Error || error{
-    UnsupportedGeneration,
-    UnsupportedStage,
-    UnsupportedDispatchWidth,
-    UnsupportedGrfSize,
-};
+pub const Error = common_ir.Error ||
+    block_arguments.Error ||
+    parallel_copies.Error ||
+    abi.Error ||
+    kernel_encoder.Error ||
+    message_addresses.Error ||
+    message_lowering.Error ||
+    message_payloads.Error ||
+    resource_layout.Error ||
+    resource_lowering.Error ||
+    flag_allocation.Error ||
+    register_allocation.Error ||
+    compute.Error ||
+    error{
+        UnsupportedGeneration,
+        UnsupportedStage,
+        UnsupportedDispatchWidth,
+        UnsupportedGrfSize,
+    };
 
 pub const Artifact = struct {
     program: program_ir.Program,
     resources: resource_layout.Layout,
+    kernel: ?[]u8,
 
     pub fn deinit(self: *Artifact, allocator: std.mem.Allocator) void {
+        if (self.kernel) |kernel|
+            allocator.free(kernel);
         self.resources.deinit(allocator);
         self.program.deinit();
         self.* = undefined;
@@ -55,6 +72,7 @@ pub fn compile(allocator: std.mem.Allocator, module: *shader_ir.module.Module, d
     );
     errdefer program.deinit();
 
+    try abi.run(&program);
     try block_arguments.run(allocator, &program);
     try parallel_copies.run(allocator, &program);
 
@@ -71,8 +89,22 @@ pub fn compile(allocator: std.mem.Allocator, module: *shader_ir.module.Module, d
     try flag_allocation.run(allocator, &program);
     try register_allocation.run(allocator, &program);
 
+    const kernel = kernel_encoder.encode(allocator, &program) catch |err| switch (err) {
+        error.UnsupportedControlFlow,
+        error.UnsupportedOperation,
+        error.UnsupportedPredication,
+        error.UnsupportedExecutionSize,
+        error.UnsupportedDataType,
+        error.UnsupportedOperand,
+        error.EotRegisterUnavailable,
+        => null,
+        else => return err,
+    };
+    errdefer if (kernel) |bytes| allocator.free(bytes);
+
     return .{
         .program = program,
         .resources = resources,
+        .kernel = kernel,
     };
 }

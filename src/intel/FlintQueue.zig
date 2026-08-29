@@ -97,6 +97,7 @@ pub fn submit(interface: *Interface, infos: []Interface.SubmitInfo, fence: ?*bas
                 try device.kmd.submitBatch(
                     interface.owner.io(),
                     allocator,
+                    .blitter,
                     &.{},
                     &.{},
                     syncs.items,
@@ -129,6 +130,7 @@ pub fn submit(interface: *Interface, infos: []Interface.SubmitInfo, fence: ?*bas
         try device.kmd.submitBatch(
             interface.owner.io(),
             allocator,
+            .blitter,
             &.{},
             &.{},
             syncs[0..sync_count],

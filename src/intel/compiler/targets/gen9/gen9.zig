@@ -99,6 +99,9 @@ test "[gen9] target: lower 256 KiB SSBO copy loop" {
     const resources = &artifact.resources;
 
     try std.testing.expect(program.properties.common_ir_lowered);
+    try std.testing.expect(program.properties.compute_abi_lowered);
+    try std.testing.expectEqual(@as(u16, 1), program.program_data.payload_grf_count);
+    try std.testing.expectEqual(@as(u16, 0), program.payload.header_grf.?.number);
     try std.testing.expect(program.properties.block_parameters_lowered);
     try std.testing.expect(program.properties.parallel_copies_lowered);
     try std.testing.expect(program.properties.flags_allocated);

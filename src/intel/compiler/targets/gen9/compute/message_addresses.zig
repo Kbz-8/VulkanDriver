@@ -18,7 +18,7 @@ const AddressAdjustment = struct {
 
 pub fn run(program: *program_ir.Program) Error!void {
     if (!program.properties.messages_lowered)
-        return error.MessagesNotLowered;
+        return Error.MessagesNotLowered;
     if (program.properties.message_addresses_lowered)
         return;
 
@@ -29,18 +29,18 @@ pub fn run(program: *program_ir.Program) Error!void {
         var instruction_index: usize = 0;
 
         while (true) {
-            const block = program.blocks.get(block_id) orelse return error.InvalidProgram;
+            const block = program.blocks.get(block_id) orelse return Error.InvalidProgram;
             if (instruction_index >= block.instructions.items.len)
                 break;
 
             const instruction_id = block.instructions.items[instruction_index];
-            const inst = program.instructions.get(instruction_id) orelse return error.InvalidProgram;
+            const inst = program.instructions.get(instruction_id) orelse return Error.InvalidProgram;
             const adjustment = addressAdjustment(inst.operation) orelse {
                 instruction_index += 1;
                 continue;
             };
             if (adjustment.address.type != .u32)
-                return error.InvalidProgram;
+                return Error.InvalidProgram;
 
             if (adjustment.immediate_offset == 0) {
                 instruction_index += 1;
@@ -51,15 +51,18 @@ pub fn run(program: *program_ir.Program) Error!void {
                 .immediate => |immediate| {
                     const base = switch (immediate) {
                         .u32 => |value| value,
-                        else => return error.InvalidProgram,
+                        else => return Error.InvalidProgram,
                     };
-                    const mutable = program.instructions.getMut(instruction_id) orelse return error.InvalidProgram;
-                    const address = messageAddressMut(&mutable.operation) orelse return error.InvalidProgram;
+                    const mutable = program.instructions.getMut(instruction_id) orelse return Error.InvalidProgram;
+                    const address = messageAddressMut(&mutable.operation) orelse return Error.InvalidProgram;
                     address.source.register = .{ .immediate = .{ .u32 = base +% adjustment.immediate_offset } };
                     address.immediate_offset.* = 0;
                     instruction_index += 1;
                 },
-                .virtual, .physical_grf, .architecture => {
+                .virtual,
+                .physical_grf,
+                .architecture,
+                => {
                     const execution_width: u32 = @intFromEnum(inst.execution_size);
                     const size_bytes = execution_width * @sizeOf(u32);
                     const address_register = builder.addVirtualRegister(.{
@@ -82,8 +85,8 @@ pub fn run(program: *program_ir.Program) Error!void {
                         },
                     }) catch |err| return mapBuilderError(err);
 
-                    const mutable = program.instructions.getMut(instruction_id) orelse return error.InvalidProgram;
-                    const address = messageAddressMut(&mutable.operation) orelse return error.InvalidProgram;
+                    const mutable = program.instructions.getMut(instruction_id) orelse return Error.InvalidProgram;
+                    const address = messageAddressMut(&mutable.operation) orelse return Error.InvalidProgram;
                     address.source.* = .{
                         .register = .{ .virtual = address_register },
                         .type = .u32,
@@ -92,7 +95,7 @@ pub fn run(program: *program_ir.Program) Error!void {
                     address.immediate_offset.* = 0;
                     instruction_index += 2;
                 },
-                .null => return error.InvalidProgram,
+                .null => return Error.InvalidProgram,
             }
         }
     }
@@ -131,8 +134,8 @@ fn immediateSource(value: u32) operand.Source {
 
 fn mapBuilderError(err: Builder.Error) Error {
     return switch (err) {
-        error.OutOfMemory => error.OutOfMemory,
-        else => error.InvalidProgram,
+        error.OutOfMemory => Error.OutOfMemory,
+        else => Error.InvalidProgram,
     };
 }
 

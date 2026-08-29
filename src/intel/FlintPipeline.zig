@@ -49,7 +49,7 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
     };
     initialized = true;
 
-    self.stages = try compileStages(self.artifact_allocator.allocator(), &.{info.stage}, .compute, compilerDeviceInfo(device));
+    self.stages = try compileStages(self.artifact_allocator.allocator(), device.io(), &.{info.stage}, .compute, compilerDeviceInfo(device));
     if (self.computeArtifact()) |artifact|
         try validateComputePipelineLayout(self.interface.layout, &artifact.resources);
     return self;
@@ -74,11 +74,11 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
         stages[0..info.stage_count]
     else
         return VkError.ValidationFailed;
-    self.stages = try compileStages(self.artifact_allocator.allocator(), stage_infos, .graphics, compilerDeviceInfo(device));
+    self.stages = try compileStages(self.artifact_allocator.allocator(), device.io(), stage_infos, .graphics, compilerDeviceInfo(device));
     return self;
 }
 
-fn compileStages(allocator: std.mem.Allocator, infos: []const vk.PipelineShaderStageCreateInfo, pipeline_kind: PipelineKind, device_info: ?compiler.device.DeviceInfo) VkError![]CommonStage {
+fn compileStages(allocator: std.mem.Allocator, io: std.Io, infos: []const vk.PipelineShaderStageCreateInfo, pipeline_kind: PipelineKind, device_info: ?compiler.device.DeviceInfo) VkError![]CommonStage {
     if (infos.len == 0)
         return VkError.ValidationFailed;
 
@@ -91,13 +91,13 @@ fn compileStages(allocator: std.mem.Allocator, infos: []const vk.PipelineShaderS
     }
 
     for (infos, stages) |*info, *stage| {
-        stage.* = try compileStage(allocator, info, pipeline_kind, device_info);
+        stage.* = try compileStage(allocator, io, info, pipeline_kind, device_info);
         initialized += 1;
     }
     return stages;
 }
 
-fn compileStage(allocator: std.mem.Allocator, info: *const vk.PipelineShaderStageCreateInfo, pipeline_kind: PipelineKind, device_info: ?compiler.device.DeviceInfo) VkError!CommonStage {
+fn compileStage(allocator: std.mem.Allocator, io: std.Io, info: *const vk.PipelineShaderStageCreateInfo, pipeline_kind: PipelineKind, device_info: ?compiler.device.DeviceInfo) VkError!CommonStage {
     const specializations = try specializationValues(allocator, info.p_specialization_info);
     defer if (specializations.len != 0) allocator.free(specializations);
 
@@ -122,15 +122,49 @@ fn compileStage(allocator: std.mem.Allocator, info: *const vk.PipelineShaderStag
     errdefer module.deinit();
 
     std.debug.assert(module.stage == expected_stage);
+    if (base.config.flint_dump_common_ir)
+        dumpCommonIr(allocator, io, std.mem.span(info.p_name), &module);
 
     var artifact = try lowerToFlint(allocator, &module, device_info);
     errdefer if (artifact) |*value| value.deinit(allocator);
+    if (base.config.flint_dump_ir) {
+        if (artifact) |*value|
+            dumpFlintIr(allocator, io, std.mem.span(info.p_name), &value.program);
+    }
 
     return .{
         .stage = expected_stage,
         .module = module,
         .artifact = artifact,
     };
+}
+
+fn dumpCommonIr(allocator: std.mem.Allocator, io: std.Io, entry_point: []const u8, module: *const base.ShaderModule.IrModule) void {
+    const text = shader_ir.ir.printer.allocPrint(allocator, module) catch |err| {
+        std.log.scoped(.FlintPipeline).err("could not print backend-agnostic IR: {s}", .{@errorName(err)});
+        return;
+    };
+    defer allocator.free(text);
+
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_file_writer: std.Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
+    const stdout_writer = &stdout_file_writer.interface;
+    stdout_writer.print("\n=== backend-agnostic IR: {s} ===\n{s}\n", .{ entry_point, text }) catch @panic("Debug printing failed");
+    stdout_writer.flush() catch @panic("Debug printing failed");
+}
+
+fn dumpFlintIr(allocator: std.mem.Allocator, io: std.Io, entry_point: []const u8, program: *const compiler.program.Program) void {
+    const text = compiler.printer.allocPrint(allocator, program) catch |err| {
+        std.log.scoped(.FlintPipeline).err("could not print Flint IR: {s}", .{@errorName(err)});
+        return;
+    };
+    defer allocator.free(text);
+
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_file_writer: std.Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
+    const stdout_writer = &stdout_file_writer.interface;
+    stdout_writer.print("\n=== Flint IR: {s} ===\n{s}\n", .{ entry_point, text }) catch @panic("Debug printing failed");
+    stdout_writer.flush() catch @panic("Debug printing failed");
 }
 
 fn lowerToFlint(allocator: std.mem.Allocator, module: *base.ShaderModule.IrModule, device_info: ?compiler.device.DeviceInfo) VkError!?ComputeArtifact {
@@ -279,6 +313,9 @@ test "Flint pipeline: lower common compute IR" {
     const program = &artifact.program;
 
     try std.testing.expect(program.properties.common_ir_lowered);
+    try std.testing.expect(program.properties.compute_abi_lowered);
+    try std.testing.expectEqual(@as(u16, 1), program.program_data.payload_grf_count);
+    try std.testing.expectEqual(@as(u16, 0), program.payload.header_grf.?.number);
     try std.testing.expect(program.properties.block_parameters_lowered);
     try std.testing.expect(!program.properties.system_values_lowered);
     try std.testing.expect(program.properties.resources_lowered);
@@ -295,6 +332,6 @@ test "Flint pipeline: lower common compute IR" {
 
     const text = try compiler.printer.allocPrint(std.testing.allocator, program);
     defer std.testing.allocator.free(text);
-    try std.testing.expect(std.mem.indexOf(u8, text, "load_global_invocation_id r0:u32, component(0)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "load_global_invocation_id r1:u32, component(0)") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "surface_message write bti(0)") != null);
 }

@@ -28,7 +28,7 @@ const FlagWrite = struct {
 };
 
 pub fn run(allocator: std.mem.Allocator, program: *program_ir.Program) Error!void {
-    validator.validate(program) catch return error.InvalidProgram;
+    validator.validate(program) catch return Error.InvalidProgram;
     if (program.properties.parallel_copies_lowered)
         return;
 
@@ -39,12 +39,12 @@ pub fn run(allocator: std.mem.Allocator, program: *program_ir.Program) Error!voi
         var instruction_index: usize = 0;
 
         while (true) {
-            const block = program.blocks.get(block_id) orelse return error.InvalidProgram;
+            const block = program.blocks.get(block_id) orelse return Error.InvalidProgram;
             if (instruction_index >= block.instructions.items.len)
                 break;
 
             const instruction_id = block.instructions.items[instruction_index];
-            const inst = program.instructions.get(instruction_id) orelse return error.InvalidProgram;
+            const inst = program.instructions.get(instruction_id) orelse return Error.InvalidProgram;
             const parallel_copy = switch (inst.operation) {
                 .parallel_copy => |copy| copy,
                 else => {
@@ -53,7 +53,7 @@ pub fn run(allocator: std.mem.Allocator, program: *program_ir.Program) Error!voi
                 },
             };
             if (inst.predicate != null)
-                return error.InvalidProgram;
+                return Error.InvalidProgram;
             const execution_size = inst.execution_size;
 
             var emitted: std.ArrayList(EmittedInstruction) = .empty;
@@ -61,16 +61,16 @@ pub fn run(allocator: std.mem.Allocator, program: *program_ir.Program) Error!voi
             try lowerParallelCopy(allocator, &builder, execution_size, parallel_copy, &emitted);
 
             if (emitted.items.len == 0) {
-                const mutable_block = program.blocks.getMut(block_id) orelse return error.InvalidProgram;
+                const mutable_block = program.blocks.getMut(block_id) orelse return Error.InvalidProgram;
                 const removed_id = mutable_block.instructions.orderedRemove(instruction_index);
                 if (removed_id != instruction_id or !program.instructions.remove(instruction_id))
-                    return error.InvalidProgram;
+                    return Error.InvalidProgram;
                 continue;
             }
 
             builder.replaceOperation(instruction_id, emitted.items[0].operation) catch |err|
                 return mapBuilderError(err);
-            const replacement = program.instructions.getMut(instruction_id) orelse return error.InvalidProgram;
+            const replacement = program.instructions.getMut(instruction_id) orelse return Error.InvalidProgram;
             replacement.predicate = emitted.items[0].predicate;
 
             for (emitted.items[1..], 1..) |item, offset| {
@@ -87,7 +87,7 @@ pub fn run(allocator: std.mem.Allocator, program: *program_ir.Program) Error!voi
     }
 
     program.properties.parallel_copies_lowered = true;
-    validator.validate(program) catch return error.InvalidProgram;
+    validator.validate(program) catch return Error.InvalidProgram;
 }
 
 fn lowerParallelCopy(
@@ -130,9 +130,9 @@ fn scheduleRegisterCopies(
 
         const cycle_copy = &pending.items[0];
         const destination_id = destinationVirtualRegister(cycle_copy.destination) orelse
-            return error.InvalidProgram;
+            return Error.InvalidProgram;
         const destination_register = builder.program.virtual_registers.get(destination_id) orelse
-            return error.InvalidProgram;
+            return Error.InvalidProgram;
         const temporary = builder.addVirtualRegister(.{
             .size_bytes = destination_register.size_bytes,
             .alignment_bytes = destination_register.alignment_bytes,
@@ -295,8 +295,8 @@ fn immediateU32(value: u32) operand.Source {
 
 fn mapBuilderError(err: anyerror) Error {
     return switch (err) {
-        error.OutOfMemory => error.OutOfMemory,
-        else => error.InvalidProgram,
+        Error.OutOfMemory => Error.OutOfMemory,
+        else => Error.InvalidProgram,
     };
 }
 

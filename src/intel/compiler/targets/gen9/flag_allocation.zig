@@ -18,15 +18,15 @@ const physical_flag_count = 2;
 
 pub fn run(allocator: std.mem.Allocator, program: *program_ir.Program) Error!void {
     if (!program.properties.block_parameters_lowered)
-        return error.BlockParametersNotLowered;
+        return Error.BlockParametersNotLowered;
 
     if (!program.properties.parallel_copies_lowered)
-        return error.ParallelCopiesNotLowered;
+        return Error.ParallelCopiesNotLowered;
 
     if (program.properties.flags_allocated)
         return;
 
-    validator.validate(program) catch return error.InvalidProgram;
+    validator.validate(program) catch return Error.InvalidProgram;
 
     const allocations = try allocator.alloc(?operand.PhysicalFlag, program.virtual_flags.entries.items.len);
     defer allocator.free(allocations);
@@ -38,9 +38,9 @@ pub fn run(allocator: std.mem.Allocator, program: *program_ir.Program) Error!voi
     for (allocations) |*allocation| {
         const marker = allocation.* orelse continue;
         if (marker.subregister != std.math.maxInt(u8))
-            return error.InvalidProgram;
+            return Error.InvalidProgram;
 
-        const subregister = std.mem.indexOfScalar(bool, &occupied, false) orelse return error.OutOfFlagRegisters;
+        const subregister = std.mem.indexOfScalar(bool, &occupied, false) orelse return Error.OutOfFlagRegisters;
 
         allocation.* = .{
             .register = 0,
@@ -51,7 +51,7 @@ pub fn run(allocator: std.mem.Allocator, program: *program_ir.Program) Error!voi
 
     try visitProgramFlags(program, allocations, &occupied, true);
     program.properties.flags_allocated = true;
-    validator.validate(program) catch return error.InvalidProgram;
+    validator.validate(program) catch return Error.InvalidProgram;
 }
 
 fn visitProgramFlags(
@@ -63,14 +63,14 @@ fn visitProgramFlags(
     for (program.instructions.entries.items, 0..) |entry, instruction_index| {
         _ = entry orelse continue;
         const inst = program.instructions.getMut(ids.InstructionId.fromIndex(instruction_index)) orelse
-            return error.InvalidProgram;
+            return Error.InvalidProgram;
 
         if (inst.predicate) |*predicate|
             try visitFlagRef(program, &predicate.flag, allocations, occupied, rewrite);
 
         switch (inst.operation) {
             .compare => |*compare| try visitFlagRef(program, &compare.destination, allocations, occupied, rewrite),
-            .parallel_copy => return error.ParallelCopiesNotLowered,
+            .parallel_copy => return Error.ParallelCopiesNotLowered,
             else => {},
         }
     }
@@ -78,8 +78,8 @@ fn visitProgramFlags(
     for (program.blocks.entries.items, 0..) |entry, block_index| {
         _ = entry orelse continue;
         const block = program.blocks.getMut(ids.BlockId.fromIndex(block_index)) orelse
-            return error.InvalidProgram;
-        const terminator = if (block.terminator) |*value| value else return error.InvalidProgram;
+            return Error.InvalidProgram;
+        const terminator = if (block.terminator) |*value| value else return Error.InvalidProgram;
 
         switch (terminator.*) {
             .jump => |*edge| try visitEdge(program, edge, allocations, occupied, rewrite),
@@ -129,7 +129,7 @@ fn visitFlagRef(
     switch (flag.*) {
         .virtual => |virtual| {
             if (!program.virtual_flags.isLive(virtual) or virtual.index() >= allocations.len)
-                return error.InvalidProgram;
+                return Error.InvalidProgram;
 
             if (!rewrite) {
                 // Mark this virtual flag as referenced without assigning a physical
@@ -139,14 +139,14 @@ fn visitFlagRef(
                 return;
             }
 
-            const physical = allocations[virtual.index()] orelse return error.InvalidProgram;
+            const physical = allocations[virtual.index()] orelse return Error.InvalidProgram;
             if (physical.subregister >= physical_flag_count)
-                return error.InvalidProgram;
+                return Error.InvalidProgram;
             flag.* = .{ .physical = physical };
         },
         .physical => |physical| {
             if (physical.register != 0 or physical.subregister >= physical_flag_count)
-                return error.InvalidProgram;
+                return Error.InvalidProgram;
             occupied[physical.subregister] = true;
         },
     }
@@ -251,7 +251,7 @@ test "[gen9] flag allocation: report exhaustion without rewriting" {
     try program.setTerminator(entry, .end_thread);
     markPrerequisites(&program);
 
-    try std.testing.expectError(error.OutOfFlagRegisters, run(std.testing.allocator, &program));
+    try std.testing.expectError(Error.OutOfFlagRegisters, run(std.testing.allocator, &program));
     try std.testing.expect(!program.properties.flags_allocated);
     try std.testing.expectEqual(first, program.instructions.get(first_compare).?.operation.compare.destination.virtual);
 }

@@ -12,6 +12,7 @@ const MemoryRange = @import("MemoryRange.zig");
 
 const copy = @import("copy_commands.zig");
 const blitter = @import("blitter.zig");
+const gen9_dispatch = @import("compiler/targets/gen9/compute/dispatch.zig");
 
 const Self = @This();
 pub const Interface = base.CommandBuffer;
@@ -19,6 +20,8 @@ pub const Interface = base.CommandBuffer;
 interface: Interface,
 batch: std.ArrayList(u32),
 relocations: std.ArrayList(kmd.Relocation),
+gpu_allocations: std.ArrayList(kmd.Memory),
+engine: ?kmd.Engine,
 bound_compute_pipeline: ?*FlintPipeline,
 bound_compute_descriptor_sets: [base.vulkan_max_descriptor_sets]?*FlintDescriptorSet,
 
@@ -84,6 +87,8 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
         .interface = interface,
         .batch = .empty,
         .relocations = .empty,
+        .gpu_allocations = .empty,
+        .engine = null,
         .bound_compute_pipeline = null,
         .bound_compute_descriptor_sets = @splat(null),
     };
@@ -93,8 +98,10 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     const command_allocator = self.interface.host_allocator.allocator();
+    self.releaseGpuAllocations();
     self.batch.deinit(command_allocator);
     self.relocations.deinit(command_allocator);
+    self.gpu_allocations.deinit(command_allocator);
     allocator.destroy(self);
 }
 
@@ -105,7 +112,7 @@ pub fn submitGpuBatch(self: *Self, syncs: []const kmd.SyncDependency) VkError!vo
     // Empty command buffers still need a no-op submission to carry queue synchronization.
     const device: *FlintDevice = @alignCast(@fieldParentPtr("interface", self.interface.owner));
     const allocator = self.interface.host_allocator.allocator();
-    try device.kmd.submitBatch(self.interface.owner.io(), allocator, self.batch.items, self.relocations.items, syncs);
+    try device.kmd.submitBatch(self.interface.owner.io(), allocator, self.engine orelse .blitter, self.batch.items, self.relocations.items, syncs);
 }
 
 pub fn begin(interface: *Interface, info: *const vk.CommandBufferBeginInfo) VkError!void {
@@ -119,20 +126,44 @@ pub fn end(interface: *Interface) VkError!void {
 
 pub fn reset(interface: *Interface, flags: vk.CommandBufferResetFlags) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    self.releaseGpuAllocations();
     if (flags.release_resources_bit) {
         const command_allocator = self.interface.host_allocator.allocator();
         self.batch.clearAndFree(command_allocator);
         self.relocations.clearAndFree(command_allocator);
+        self.gpu_allocations.clearAndFree(command_allocator);
     } else {
         self.batch.clearRetainingCapacity();
         self.relocations.clearRetainingCapacity();
+        self.gpu_allocations.clearRetainingCapacity();
     }
+    self.engine = null;
     self.bound_compute_pipeline = null;
     self.bound_compute_descriptor_sets = @splat(null);
 }
 
+fn releaseGpuAllocations(self: *Self) void {
+    const device: *FlintDevice = @alignCast(@fieldParentPtr("interface", self.interface.owner));
+    for (self.gpu_allocations.items) |*allocation|
+        allocation.deinit(&device.kmd, self.interface.owner.io());
+    self.gpu_allocations.clearRetainingCapacity();
+}
+
+pub fn requireEngine(self: *Self, engine: kmd.Engine) VkError!void {
+    if (self.engine) |current| {
+        if (current != engine)
+            return VkError.FeatureNotPresent;
+    } else {
+        self.engine = engine;
+    }
+}
+
 pub fn emit(self: *Self, dword: u32) VkError!void {
     self.batch.append(self.interface.host_allocator.allocator(), dword) catch return VkError.OutOfHostMemory;
+}
+
+fn emitSlice(self: *Self, words: []const u32) VkError!void {
+    self.batch.appendSlice(self.interface.host_allocator.allocator(), words) catch return VkError.OutOfHostMemory;
 }
 
 pub fn emitRelocatedAddress(self: *Self, range: MemoryRange, read: bool, write: bool) VkError!void {
@@ -145,6 +176,7 @@ pub fn emitRelocatedAddress(self: *Self, range: MemoryRange, read: bool, write: 
         .delta = @intCast(range.offset),
         .read = read,
         .write = write,
+        .domain = if ((self.engine orelse .blitter) == .render) .render else .none,
     }) catch return VkError.OutOfHostMemory;
 }
 
@@ -300,35 +332,132 @@ pub fn dispatchBase(interface: *Interface, base_group_x: u32, base_group_y: u32,
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     if (group_count_x == 0 or group_count_y == 0 or group_count_z == 0)
         return;
-
-    inline for ([_]struct { u32, u32 }{
-        .{ base_group_x, group_count_x },
-        .{ base_group_y, group_count_y },
-        .{ base_group_z, group_count_z },
-    }) |dimension| {
-        const group_end = std.math.add(u32, dimension[0], dimension[1]) catch return VkError.ValidationFailed;
-        if (group_end > 65535)
-            return VkError.ValidationFailed;
-    }
+    if (base_group_x != 0 or base_group_y != 0 or base_group_z != 0 or
+        group_count_x != 1 or group_count_y != 1 or group_count_z != 1)
+        return VkError.FeatureNotPresent;
 
     const pipeline = self.bound_compute_pipeline orelse return VkError.ValidationFailed;
     const artifact = pipeline.computeArtifact() orelse return VkError.FeatureNotPresent;
+    const kernel = artifact.kernel orelse return VkError.FeatureNotPresent;
+    if (!std.mem.eql(u32, &artifact.program.workgroup_size, &.{ 1, 1, 1 }) or
+        artifact.program.program_data.scratch_size_bytes != 0)
+        return VkError.FeatureNotPresent;
+
+    var ranges: [gen9_dispatch.max_surfaces]?MemoryRange = @splat(null);
+    var sizes: [gen9_dispatch.max_surfaces]u64 = @splat(0);
     for (artifact.resources.bindings) |resource| {
-        if (resource.set >= base.vulkan_max_descriptor_sets)
+        if (resource.set >= base.vulkan_max_descriptor_sets or @as(usize, resource.binding_table_index) >= gen9_dispatch.max_surfaces)
             return VkError.ValidationFailed;
 
         const descriptor_set = self.bound_compute_descriptor_sets[resource.set] orelse return VkError.ValidationFailed;
         const expected_layout = pipeline.interface.layout.set_layouts[resource.set] orelse return VkError.ValidationFailed;
-
         if (descriptor_set.interface.layout != expected_layout)
             return VkError.ValidationFailed;
 
         const descriptor = try descriptor_set.getBuffer(resource.binding, 0);
         const buffer = descriptor.buffer orelse return VkError.ValidationFailed;
-
         if (!buffer.usage.storage_buffer_bit or buffer.memory == null)
             return VkError.ValidationFailed;
+
+        const range = try MemoryRange.fromBuffer(buffer, descriptor.offset, descriptor.size);
+        ranges[resource.binding_table_index] = range;
+        sizes[resource.binding_table_index] = range.size;
     }
+
+    const old_engine = self.engine;
+    try self.requireEngine(.render);
+    const old_batch_len = self.batch.items.len;
+    const old_relocation_len = self.relocations.items.len;
+    const old_allocation_len = self.gpu_allocations.items.len;
+    errdefer {
+        self.engine = old_engine;
+        self.batch.items.len = old_batch_len;
+        self.relocations.items.len = old_relocation_len;
+        while (self.gpu_allocations.items.len > old_allocation_len) {
+            const device: *FlintDevice = @alignCast(@fieldParentPtr("interface", self.interface.owner));
+            self.gpu_allocations.items[self.gpu_allocations.items.len - 1].deinit(&device.kmd, self.interface.owner.io());
+            self.gpu_allocations.items.len -= 1;
+        }
+    }
+
+    const device: *FlintDevice = @alignCast(@fieldParentPtr("interface", self.interface.owner));
+    var state = try device.kmd.allocateMemory(self.interface.owner.io(), gen9_dispatch.page_size);
+    var state_owned = true;
+    errdefer if (state_owned) state.deinit(&device.kmd, self.interface.owner.io());
+
+    const mapped = try state.map(&device.kmd, self.interface.owner.io(), 0, gen9_dispatch.page_size);
+    const state_layout = gen9_dispatch.writeState(mapped, kernel, sizes[0..artifact.resources.bindings.len]) catch |err| switch (err) {
+        error.StateTooLarge,
+        error.UnsupportedBufferSize,
+        error.EmptyBuffer,
+        error.TooManySurfaces,
+        => return VkError.FeatureNotPresent,
+    };
+    state.unmap();
+    try state.flushRange(&device.kmd, self.interface.owner.io(), 0, state_layout.size);
+    const state_handle = try state.handle();
+
+    self.gpu_allocations.append(self.interface.host_allocator.allocator(), state) catch return VkError.OutOfHostMemory;
+    state_owned = false;
+
+    for (0..@as(usize, state_layout.surface_count)) |index| {
+        const range = ranges[index] orelse return VkError.ValidationFailed;
+        if (range.offset > std.math.maxInt(u32))
+            return VkError.FeatureNotPresent;
+        self.relocations.append(self.interface.host_allocator.allocator(), .{
+            .source_handle = state_handle,
+            .target_handle = try range.memory.allocation.handle(),
+            .offset = state_layout.surface_address_offsets[index],
+            .delta = @intCast(range.offset),
+            .read = true,
+            .write = true,
+            .domain = .render,
+        }) catch return VkError.OutOfHostMemory;
+    }
+
+    try self.emitSlice(&gen9_dispatch.pipeControl(gen9_dispatch.pipe_control.cs_stall |
+        gen9_dispatch.pipe_control.dc_flush |
+        gen9_dispatch.pipe_control.render_target_flush |
+        gen9_dispatch.pipe_control.depth_flush));
+    try self.emitSlice(&gen9_dispatch.pipeControl(gen9_dispatch.pipe_control.cs_stall |
+        gen9_dispatch.pipe_control.texture_invalidate |
+        gen9_dispatch.pipe_control.constant_invalidate |
+        gen9_dispatch.pipe_control.state_invalidate |
+        gen9_dispatch.pipe_control.instruction_invalidate));
+    try self.emitSlice(&gen9_dispatch.ccStatePointers);
+    try self.emitSlice(&gen9_dispatch.pipelineSelectGpgpu);
+    try self.emitSlice(&gen9_dispatch.pipeControl(gen9_dispatch.pipe_control.cs_stall |
+        gen9_dispatch.pipe_control.dc_flush |
+        gen9_dispatch.pipe_control.render_target_flush));
+
+    const sba_start = self.batch.items.len * @sizeOf(u32);
+    try self.emitSlice(&gen9_dispatch.stateBaseAddress());
+    inline for (.{
+        .{ 4, kmd.Domain.render },
+        .{ 6, kmd.Domain.render },
+        .{ 10, kmd.Domain.instruction },
+    }) |base_address| {
+        self.relocations.append(self.interface.host_allocator.allocator(), .{
+            .target_handle = state_handle,
+            .offset = sba_start + base_address[0] * @sizeOf(u32),
+            .delta = gen9_dispatch.base_address_delta,
+            .read = true,
+            .domain = base_address[1],
+        }) catch return VkError.OutOfHostMemory;
+    }
+
+    try self.emitSlice(&gen9_dispatch.pipeControl(gen9_dispatch.pipe_control.cs_stall |
+        gen9_dispatch.pipe_control.texture_invalidate |
+        gen9_dispatch.pipe_control.constant_invalidate |
+        gen9_dispatch.pipe_control.state_invalidate |
+        gen9_dispatch.pipe_control.instruction_invalidate));
+    try self.emitSlice(&gen9_dispatch.pipeControl(gen9_dispatch.pipe_control.cs_stall));
+    try self.emitSlice(&gen9_dispatch.mediaVfeState());
+    try self.emitSlice(&gen9_dispatch.interfaceDescriptorLoad(state_layout.interface_descriptor_offset));
+    try self.emitSlice(&gen9_dispatch.gpgpuWalker(.{ 1, 1, 1 }, 1));
+    try self.emitSlice(&gen9_dispatch.mediaStateFlush);
+    try self.emitSlice(&gen9_dispatch.pipeControl(gen9_dispatch.pipe_control.cs_stall |
+        gen9_dispatch.pipe_control.dc_flush));
 }
 
 pub fn setDeviceMask(interface: *Interface, device_mask: u32) VkError!void {
@@ -382,23 +511,30 @@ pub fn endRenderPass(interface: *Interface) VkError!void {
 pub fn executeCommands(interface: *Interface, commands: *Interface) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     const secondary: *Self = @alignCast(@fieldParentPtr("interface", commands));
+    if (secondary.gpu_allocations.items.len != 0)
+        return VkError.FeatureNotPresent;
+    if (secondary.engine) |engine|
+        try self.requireEngine(engine);
+
     const allocator = self.interface.host_allocator.allocator();
     const relocation_offset = self.batch.items.len * @sizeOf(u32);
-
     self.batch.appendSlice(allocator, secondary.batch.items) catch return VkError.OutOfHostMemory;
     for (secondary.relocations.items) |relocation| {
         self.relocations.append(allocator, .{
+            .source_handle = relocation.source_handle,
             .target_handle = relocation.target_handle,
-            .offset = relocation.offset + relocation_offset,
+            .offset = relocation.offset + if (relocation.source_handle == null) relocation_offset else 0,
             .delta = relocation.delta,
             .read = relocation.read,
             .write = relocation.write,
+            .domain = relocation.domain,
         }) catch return VkError.OutOfHostMemory;
     }
 }
 
 pub fn fillBuffer(interface: *Interface, buffer: *base.Buffer, offset: vk.DeviceSize, size: vk.DeviceSize, data: u32) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    try self.requireEngine(.blitter);
     const dst_range = try copy.fillRange(buffer, offset, size);
 
     var filled: vk.DeviceSize = 0;

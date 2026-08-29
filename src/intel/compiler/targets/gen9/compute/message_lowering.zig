@@ -9,7 +9,7 @@ pub const Error = error{
 
 pub fn run(program: *program_ir.Program) Error!void {
     if (!program.properties.resources_lowered)
-        return error.ResourcesNotLowered;
+        return Error.ResourcesNotLowered;
     if (program.properties.messages_lowered)
         return;
 
@@ -18,12 +18,12 @@ pub fn run(program: *program_ir.Program) Error!void {
         inst.operation = switch (inst.operation) {
             .load_buffer => |op| .{ .surface_read = .{
                 .destination = op.destination,
-                .binding_table = bindingTableIndex(op.buffer) orelse return error.InvalidProgram,
+                .binding_table = bindingTableIndex(op.buffer) orelse return Error.InvalidProgram,
                 .address = op.byte_offset,
                 .immediate_offset = op.immediate_offset,
             } },
             .store_buffer => |op| .{ .surface_write = .{
-                .binding_table = bindingTableIndex(op.buffer) orelse return error.InvalidProgram,
+                .binding_table = bindingTableIndex(op.buffer) orelse return Error.InvalidProgram,
                 .address = op.byte_offset,
                 .immediate_offset = op.immediate_offset,
                 .data = op.source,
@@ -106,5 +106,5 @@ test "[gen9] compute message lowering: reject unresolved resources" {
     var program = program_ir.Program.init(std.testing.allocator, .{ 1, 1, 1 }, test_device, .simd8);
     defer program.deinit();
 
-    try std.testing.expectError(error.ResourcesNotLowered, run(&program));
+    try std.testing.expectError(Error.ResourcesNotLowered, run(&program));
 }

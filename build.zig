@@ -470,8 +470,8 @@ fn customSoft(
 // Flint specialized functions
 
 fn customFlint(
-    _: *std.Build,
-    _: *Step.Options,
+    b: *std.Build,
+    options: *Step.Options,
     _: *Step.Compile,
     lib_mod: *std.Build.Module,
     _: *std.Build.Module,
@@ -484,6 +484,12 @@ fn customFlint(
 ) !void {
     lib_mod.addImport("intel_c", base_c_mod);
     lib_mod.addImport("shader_ir", shader_ir_mod);
+
+    const dump_common_ir = b.option(bool, "flint-dump-common-ir", "Print backend-agnostic shader IR after translation") orelse false;
+    const dump_ir = b.option(bool, "flint-dump-ir", "Print final Flint IR after backend lowering") orelse false;
+
+    options.addOption(bool, "flint_dump_common_ir", dump_common_ir);
+    options.addOption(bool, "flint_dump_ir", dump_ir);
 }
 
 // Phi specialized functions

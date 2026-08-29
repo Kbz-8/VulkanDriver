@@ -23,7 +23,15 @@ pub const Device = struct {
         return VkError.OutOfDeviceMemory;
     }
 
-    pub fn submitBatch(_: *Device, _: std.Io, _: std.mem.Allocator, _: []const u32, _: []const common_kmd.Relocation, _: []const common_kmd.SyncDependency) VkError!void {
+    pub fn submitBatch(
+        _: *Device,
+        _: std.Io,
+        _: std.mem.Allocator,
+        _: common_kmd.Engine,
+        _: []const u32,
+        _: []const common_kmd.Relocation,
+        _: []const common_kmd.SyncDependency,
+    ) VkError!void {
         return VkError.FeatureNotPresent;
     }
 };

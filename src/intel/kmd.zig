@@ -19,12 +19,25 @@ pub const blt_depth_8: u32 = 0 << 24;
 pub const rop_source_copy: u32 = 0xcc << 16;
 pub const max_blt_span: vk.DeviceSize = 32 * 1024 - 1;
 
+pub const Engine = enum {
+    blitter,
+    render,
+};
+
+pub const Domain = enum {
+    none,
+    render,
+    instruction,
+};
+
 pub const Relocation = struct {
+    source_handle: ?u32 = null,
     target_handle: u32,
     offset: u64,
     delta: u32,
     read: bool = false,
     write: bool = false,
+    domain: Domain = .none,
 };
 
 pub const SyncDependency = struct {
@@ -63,10 +76,10 @@ pub const Device = union(KmdType) {
         };
     }
 
-    pub fn submitBatch(self: *Device, io: std.Io, allocator: std.mem.Allocator, commands: []const u32, relocations: []const Relocation, syncs: []const SyncDependency) VkError!void {
+    pub fn submitBatch(self: *Device, io: std.Io, allocator: std.mem.Allocator, engine: Engine, commands: []const u32, relocations: []const Relocation, syncs: []const SyncDependency) VkError!void {
         return switch (self.*) {
-            .i915 => |*device| device.submitBatch(io, allocator, commands, relocations, syncs),
-            .xe => |*device| device.submitBatch(io, allocator, commands, relocations, syncs),
+            .i915 => |*device| device.submitBatch(io, allocator, engine, commands, relocations, syncs),
+            .xe => |*device| device.submitBatch(io, allocator, engine, commands, relocations, syncs),
             .invalid => VkError.DeviceLost,
         };
     }

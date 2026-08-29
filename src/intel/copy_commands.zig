@@ -9,6 +9,7 @@ const FlintCommandBuffer = @import("FlintCommandBuffer.zig");
 const MemoryRange = @import("MemoryRange.zig");
 
 pub fn emitLinearCopy(cmd: *FlintCommandBuffer, src: MemoryRange, dst: MemoryRange) VkError!void {
+    try cmd.requireEngine(.blitter);
     if (src.size != dst.size) return VkError.ValidationFailed;
 
     var copied: vk.DeviceSize = 0;

@@ -13,7 +13,7 @@ pub const Error = std.mem.Allocator.Error || error{
 };
 
 pub fn run(allocator: std.mem.Allocator, program: *program_ir.Program) Error!void {
-    validator.validate(program) catch return error.InvalidProgram;
+    validator.validate(program) catch return Error.InvalidProgram;
     if (program.properties.block_parameters_lowered)
         return;
 
@@ -28,8 +28,8 @@ pub fn run(allocator: std.mem.Allocator, program: *program_ir.Program) Error!voi
 
     var emitted_parallel_copy = false;
     for (original_blocks.items) |block_id| {
-        const block = program.blocks.get(block_id) orelse return error.InvalidProgram;
-        const terminator = block.terminator orelse return error.InvalidProgram;
+        const block = program.blocks.get(block_id) orelse return Error.InvalidProgram;
+        const terminator = block.terminator orelse return Error.InvalidProgram;
         const rewritten: instruction.Terminator = switch (terminator) {
             .jump => |edge| .{ .jump = try rewriteEdge(
                 allocator,
@@ -74,9 +74,9 @@ fn rewriteEdge(
     if (edge.arguments.len == 0)
         return .{ .target = edge.target, .arguments = &.{} };
 
-    const target = builder.program.blocks.get(edge.target) orelse return error.InvalidProgram;
+    const target = builder.program.blocks.get(edge.target) orelse return Error.InvalidProgram;
     if (target.parameters.items.len != edge.arguments.len)
-        return error.InvalidProgram;
+        return Error.InvalidProgram;
 
     var register_copies: std.ArrayList(pseudo.RegisterCopy) = .empty;
     defer register_copies.deinit(allocator);
@@ -88,10 +88,10 @@ fn rewriteEdge(
             .register => |destination_id| {
                 const source = switch (argument) {
                     .source => |value| value,
-                    .predicate => return error.InvalidProgram,
+                    .predicate => return Error.InvalidProgram,
                 };
                 const destination = builder.program.virtual_registers.get(destination_id) orelse
-                    return error.InvalidProgram;
+                    return Error.InvalidProgram;
                 try register_copies.append(allocator, .{
                     .destination = .{
                         .register = .{ .virtual = destination_id },
@@ -102,7 +102,7 @@ fn rewriteEdge(
             },
             .flag => |destination_id| {
                 const source = switch (argument) {
-                    .source => return error.InvalidProgram,
+                    .source => return Error.InvalidProgram,
                     .predicate => |value| value,
                 };
                 try flag_copies.append(allocator, .{
@@ -135,8 +135,8 @@ fn executionSize(dispatch_width: device.DispatchWidth) device.ExecutionSize {
 
 fn mapBuilderError(err: anyerror) Error {
     return switch (err) {
-        error.OutOfMemory => error.OutOfMemory,
-        else => error.InvalidProgram,
+        Error.OutOfMemory => Error.OutOfMemory,
+        else => Error.InvalidProgram,
     };
 }
 

@@ -870,7 +870,7 @@ pub const Lowerer = struct {
 
         var transformer_context: shader_ir.transformer_manager.Context = .{ .allocator = allocator };
         _ = transformer_manager.run(self.module, &transformer_context) catch |err| return switch (err) {
-            error.OutOfMemory => Error.OutOfMemory,
+            Error.OutOfMemory => Error.OutOfMemory,
             else => Error.SanitizationFailed,
         };
         if (!self.module.properties.no_function_calls)
@@ -997,7 +997,7 @@ fn expectLoweringError(source: []const u8, expected: Error) !void {
         return;
     };
     defer program.deinit();
-    return error.TestExpectedError;
+    return Error.TestExpectedError;
 }
 
 test "[ir] Lower: basic shader" {

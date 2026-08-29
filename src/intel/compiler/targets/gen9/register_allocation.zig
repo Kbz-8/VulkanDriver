@@ -14,15 +14,15 @@ pub const Error = std.mem.Allocator.Error || error{
 
 pub fn run(allocator: std.mem.Allocator, program: *program_ir.Program) Error!void {
     if (!program.properties.block_parameters_lowered)
-        return error.BlockParametersNotLowered;
+        return Error.BlockParametersNotLowered;
     if (!program.properties.parallel_copies_lowered)
-        return error.ParallelCopiesNotLowered;
+        return Error.ParallelCopiesNotLowered;
     if (program.properties.registers_allocated)
         return;
 
     const grf_size = program.device_info.grf_size_bytes;
     if (grf_size == 0)
-        return error.InvalidProgram;
+        return Error.InvalidProgram;
 
     const allocations = try allocator.alloc(?operand.PhysicalGrf, program.virtual_registers.entries.items.len);
     defer allocator.free(allocations);
@@ -35,9 +35,9 @@ pub fn run(allocator: std.mem.Allocator, program: *program_ir.Program) Error!voi
     for (program.virtual_registers.entries.items, 0..) |entry, index| {
         const register = entry orelse continue;
         const start = std.mem.alignForward(usize, next_byte, register.alignment_bytes);
-        const end = std.math.add(usize, start, register.size_bytes) catch return error.OutOfRegisters;
+        const end = std.math.add(usize, start, register.size_bytes) catch return Error.OutOfRegisters;
         if (end > capacity)
-            return error.OutOfRegisters;
+            return Error.OutOfRegisters;
 
         allocations[index] = .{
             .number = @intCast(start / grf_size),
@@ -47,7 +47,7 @@ pub fn run(allocator: std.mem.Allocator, program: *program_ir.Program) Error!voi
     }
 
     try rewriteProgram(program, allocations);
-    program.program_data.total_grf_count = @intCast(std.math.divCeil(usize, next_byte, grf_size) catch return error.InvalidProgram);
+    program.program_data.total_grf_count = @intCast(std.math.divCeil(usize, next_byte, grf_size) catch return Error.InvalidProgram);
     program.properties.registers_allocated = true;
 }
 
@@ -94,7 +94,7 @@ fn reserveExistingPhysicalRegisters(program: *const program_ir.Program, initial:
                 reserveRegister(&next_byte, op.lhs.register, grf_size);
                 reserveRegister(&next_byte, op.rhs.register, grf_size);
             },
-            .parallel_copy => return error.ParallelCopiesNotLowered,
+            .parallel_copy => return Error.ParallelCopiesNotLowered,
         }
     }
     return next_byte;
@@ -151,15 +151,15 @@ fn rewriteProgram(program: *program_ir.Program, allocations: []const ?operand.Ph
                 try rewriteSource(program, &op.lhs, allocations);
                 try rewriteSource(program, &op.rhs, allocations);
             },
-            .parallel_copy => return error.ParallelCopiesNotLowered,
+            .parallel_copy => return Error.ParallelCopiesNotLowered,
         }
     }
 
     for (program.blocks.entries.items) |*entry| {
         const block = if (entry.*) |*value| value else continue;
         if (block.parameters.items.len != 0)
-            return error.BlockParametersNotLowered;
-        const terminator = if (block.terminator) |*value| value else return error.InvalidProgram;
+            return Error.BlockParametersNotLowered;
+        const terminator = if (block.terminator) |*value| value else return Error.InvalidProgram;
         switch (terminator.*) {
             .jump => |*edge| try rewriteEdge(program, edge, allocations),
             .conditional_branch => |*branch| {
@@ -192,8 +192,8 @@ fn rewriteRegister(program: *const program_ir.Program, register: *operand.Regist
         else => return,
     };
     if (!program.virtual_registers.isLive(virtual) or virtual.index() >= allocations.len)
-        return error.InvalidProgram;
-    const physical = allocations[virtual.index()] orelse return error.InvalidProgram;
+        return Error.InvalidProgram;
+    const physical = allocations[virtual.index()] orelse return Error.InvalidProgram;
     register.* = .{ .physical_grf = physical };
 }
 
@@ -262,6 +262,6 @@ test "[gen9] register allocation: report GRF exhaustion" {
     try program.setTerminator(entry, .end_thread);
     markPrerequisites(&program);
 
-    try std.testing.expectError(error.OutOfRegisters, run(std.testing.allocator, &program));
+    try std.testing.expectError(Error.OutOfRegisters, run(std.testing.allocator, &program));
     try std.testing.expect(!program.properties.registers_allocated);
 }

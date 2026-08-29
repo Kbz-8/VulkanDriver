@@ -11,6 +11,7 @@ pub const Properties = packed struct {
     block_parameters_lowered: bool = false,
     parallel_copies_lowered: bool = false,
 
+    compute_abi_lowered: bool = false,
     system_values_lowered: bool = false,
     resources_lowered: bool = false,
     messages_lowered: bool = false,
@@ -25,7 +26,7 @@ pub const Properties = packed struct {
     flags_allocated: bool = false,
     branches_resolved: bool = false,
 
-    _padding: u17 = 0,
+    _padding: u16 = 0,
 };
 
 pub const StorageBuffer = struct {

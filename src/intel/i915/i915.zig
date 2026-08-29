@@ -7,13 +7,17 @@ pub const gem_close = 0x09;
 
 pub const mmap_offset_wb = 2;
 pub const gem_domain_cpu = 0x00000001;
+pub const gem_domain_render = 0x00000004;
+pub const gem_domain_instruction = 0x00000010;
 pub const gem_domain_gtt = 0x00000040;
+pub const exec_render = 1 << 0;
 pub const exec_blt = 3 << 0;
 pub const exec_fence_array: u64 = 1 << 19;
 pub const exec_fence_wait: u32 = 1 << 0;
 pub const exec_fence_signal: u32 = 1 << 1;
 pub const exec_object_write = 1 << 2;
 pub const mi_flush_dw: u32 = (0x26 << 23) | 3;
+pub const mi_batch_buffer_end: u32 = 0x05000000;
 
 pub const GemCreate = extern struct {
     size: u64,

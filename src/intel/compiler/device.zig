@@ -47,18 +47,39 @@ pub const DeviceInfo = struct {
         const platform: Platform = switch (pci_device_id & 0xff00) {
             0x1900 => .skylake,
             0x5900 => .kabylake,
+
             0x3e00 => switch (pci_device_id) {
-                0x3ea0, 0x3ea1, 0x3ea2, 0x3ea3, 0x3ea4 => .whiskey_lake,
+                0x3ea0,
+                0x3ea1,
+                0x3ea2,
+                0x3ea3,
+                0x3ea4,
+                => .whiskey_lake,
+
                 else => .coffee_lake,
             },
+
             0x9b00 => .comet_lake,
             0x8a00 => .ice_lake,
             0x4500 => .elkhart_lake,
             0x4e00 => .jasper_lake,
+
             else => switch (pci_device_id) {
-                0x0a84, 0x1a84, 0x1a85, 0x5a84, 0x5a85 => .broxton,
-                0x3184, 0x3185 => .gemini_lake,
-                0x87c0, 0x87ca => .kabylake,
+                0x0a84,
+                0x1a84,
+                0x1a85,
+                0x5a84,
+                0x5a85,
+                => .broxton,
+
+                0x3184,
+                0x3185,
+                => .gemini_lake,
+
+                0x87c0,
+                0x87ca,
+                => .kabylake,
+
                 else => return null,
             },
         };
@@ -72,7 +93,11 @@ pub const DeviceInfo = struct {
             .whiskey_lake,
             .comet_lake,
             => .gen9,
-            .ice_lake, .elkhart_lake, .jasper_lake => .gen11,
+
+            .ice_lake,
+            .elkhart_lake,
+            .jasper_lake,
+            => .gen11,
         };
 
         return .{
