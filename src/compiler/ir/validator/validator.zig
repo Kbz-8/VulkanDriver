@@ -375,6 +375,23 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             } else if (result_type == null or result_type.? != callee.return_type)
                 return ValidationError.WrongResultType;
         },
+        .array_length => |op| {
+            const resource = module.resources.get(op.resource) orelse return ValidationError.InvalidValue;
+
+            if (resource.kind != .storage_buffer)
+                return ValidationError.WrongResourceKind;
+
+            if (!isUnsignedInteger(module, try operandType(module, function_id, op.byte_offset)))
+                return ValidationError.WrongOperandType;
+
+            if (op.stride == 0)
+                return ValidationError.InvalidInstruction;
+
+            const result = result_type orelse return ValidationError.WrongResultPresence;
+
+            if (!isArrayLengthResultType(module, result))
+                return ValidationError.WrongResultType;
+        },
     }
 }
 
@@ -502,6 +519,16 @@ fn isBufferAccessibleType(module: *const module_ir.Module, type_id: ids.TypeId) 
             const element_type = module.types.get(vector.element_type) orelse return false;
             return element_type.* == .integer or element_type.* == .floating;
         },
+        else => false,
+    };
+}
+
+fn isArrayLengthResultType(module: *const module_ir.Module, type_id: ids.TypeId) bool {
+    const ty = module.types.get(type_id) orelse return false;
+
+    return switch (ty.*) {
+        .integer => |integer| integer.signedness == .unsigned and (integer.bits == 32 or integer.bits == 64),
+
         else => false,
     };
 }

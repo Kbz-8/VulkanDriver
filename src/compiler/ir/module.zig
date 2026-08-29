@@ -94,6 +94,8 @@ pub const Builtin = enum {
     frag_coord,
     frag_depth,
     global_invocation_id,
+    num_workgroups,
+    workgroup_size,
 };
 
 pub const InterfaceSemantic = union(enum) {

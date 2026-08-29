@@ -170,6 +170,11 @@ fn writeType(module: *const module_ir.Module, writer: *std.Io.Writer, type_id: i
             try writer.writeByte(']');
         },
         .resource_handle => |handle| try writer.print("resourceHandle[{t}]", .{handle.kind}),
+        .runtime_array => |array| {
+            try writer.writeAll("runtime_array[");
+            try writeType(module, writer, array.element_type);
+            try writer.writeByte(']');
+        },
     }
 }
 
@@ -246,6 +251,14 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             try writer.writeByte('(');
             try writeValueList(module, writer, op.arguments);
             try writer.writeByte(')');
+        },
+        .array_length => |op| {
+            try writer.writeAll("array_length ");
+            const resource = module.resources.get(op.resource);
+            try writeNamedRef(writer, if (resource) |r| r.name else null, "resource", op.resource.index());
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.byte_offset);
+            try writer.print(", stride {}", .{op.stride});
         },
     }
 }

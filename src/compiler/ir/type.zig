@@ -24,6 +24,10 @@ pub const ArrayType = struct {
     length: u32,
 };
 
+pub const RuntimeArrayType = struct {
+    element_type: TypeId,
+};
+
 pub const StructureType = struct {
     members: []const TypeId,
 };
@@ -68,6 +72,7 @@ pub const Type = union(enum) {
     structure: StructureType,
     pointer: PointerType,
     resource_handle: ResourceHandleType,
+    runtime_array: RuntimeArrayType,
 
     pub fn eql(a: Type, b: Type) bool {
         return switch (a) {
@@ -99,6 +104,10 @@ pub const Type = union(enum) {
             },
             .resource_handle => |value| switch (b) {
                 .resource_handle => |other| std.meta.eql(value, other),
+                else => false,
+            },
+            .runtime_array => |value| switch (b) {
+                .runtime_array => |other| std.meta.eql(value, other),
                 else => false,
             },
         };

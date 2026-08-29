@@ -115,6 +115,12 @@ pub const Call = struct {
     arguments: []const ValueId,
 };
 
+pub const ArrayLength = struct {
+    resource: ResourceId,
+    byte_offset: ValueId,
+    stride: u32,
+};
+
 pub const Operation = union(enum) {
     unary: Unary,
     binary: Binary,
@@ -128,6 +134,7 @@ pub const Operation = union(enum) {
     load_buffer: LoadBuffer,
     store_buffer: StoreBuffer,
     call: Call,
+    array_length: ArrayLength,
 
     pub fn visitValueUses(self: Operation, context: anytype, comptime visitor: anytype) void {
         switch (self) {
@@ -163,6 +170,7 @@ pub const Operation = union(enum) {
                 for (op.arguments) |argument|
                     visitor(context, argument);
             },
+            .array_length => |op| visitor(context, op.byte_offset),
         }
     }
 
@@ -201,6 +209,7 @@ pub const Operation = union(enum) {
                 replaceOne(&op.value, old, replacement, &count);
             },
             .call => |*op| op.arguments = try replaceSlice(allocator, op.arguments, old, replacement, &count),
+            .array_length => |*op| replaceOne(&op.byte_offset, old, replacement, &count),
         }
         return count;
     }

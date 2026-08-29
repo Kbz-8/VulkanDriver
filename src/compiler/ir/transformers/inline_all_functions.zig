@@ -391,6 +391,11 @@ fn remapOperation(
             .value = try mappedValue(module, value_map, op.value),
         } },
         .call => Error.InvalidModule,
+        .array_length => |op| .{ .array_length = .{
+            .resource = op.resource,
+            .byte_offset = try mappedValue(module, value_map, op.byte_offset),
+            .stride = op.stride,
+        } },
     };
 }
 

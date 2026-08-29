@@ -431,6 +431,7 @@ const LoweringState = struct {
             .load_buffer => |operation| try self.lowerLoadBuffer(block_id, source_instruction.result, operation),
             .store_buffer => |operation| try self.lowerStoreBuffer(block_id, source_instruction.result, operation),
             .call => return Error.UnsanitizedModule,
+            .array_length => return Error.UnsupportedOperation,
         }
     }
 
