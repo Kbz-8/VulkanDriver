@@ -387,6 +387,7 @@ const Lowerer = struct {
                 try self.emit(.store_buffer, src.components, src.base, byte_offset, bc.invalid_register, bc.invalid_register, @intFromEnum(op.resource));
             },
             .call => return CompileError.UnsupportedOperation,
+            .array_length => return CompileError.UnsupportedOperation,
         }
     }
 
