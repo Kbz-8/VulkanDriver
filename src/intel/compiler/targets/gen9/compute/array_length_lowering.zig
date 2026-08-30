@@ -2,7 +2,6 @@ const std = @import("std");
 
 const Builder = @import("../../../ir/Builder.zig");
 const ids = @import("../../../ir/id.zig");
-const instruction = @import("../../../ir/instruction.zig");
 const operand = @import("../../../ir/operand.zig");
 const program_ir = @import("../../../ir/program.zig");
 const resource_layout = @import("resource_layout.zig");

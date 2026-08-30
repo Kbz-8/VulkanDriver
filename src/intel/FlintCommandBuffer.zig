@@ -415,7 +415,7 @@ pub fn dispatchBase(interface: *Interface, base_group_x: u32, base_group_y: u32,
         }) catch return VkError.OutOfHostMemory;
     }
 
-    const size_table_surface = @as(usize, state_layout.storage_surface_count);
+    const size_table_surface: usize = state_layout.storage_surface_count;
     self.relocations.append(self.interface.host_allocator.allocator(), .{
         .source_handle = state_handle,
         .target_handle = state_handle,
