@@ -34,6 +34,11 @@ pub const ValidationError = error{
     WrongReturnType,
 };
 
+const IntegerShape = struct {
+    bits: u16,
+    components: u8,
+};
+
 pub const Error = ValidationError || std.mem.Allocator.Error;
 
 pub fn validate(module: *const module_ir.Module) Error!void {
@@ -227,13 +232,37 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
 
     switch (instruction.operation) {
         .unary => |op| {
-            const operand_type = try operandType(module, function_id, op.operand);
+            const operand_type =
+                try operandType(module, function_id, op.operand);
 
-            if (result_type == null)
-                return ValidationError.WrongResultPresence;
+            const result =
+                result_type orelse return ValidationError.WrongResultPresence;
 
-            if (result_type.? != operand_type)
-                return ValidationError.WrongResultType;
+            switch (op.opcode) {
+                .bitwise_not => {
+                    if (!isIntegerScalarOrVector(module, operand_type))
+                        return ValidationError.WrongOperandType;
+
+                    if (!isIntegerScalarOrVector(module, result))
+                        return ValidationError.WrongResultType;
+
+                    if (!haveSameIntegerShape(module, operand_type, result))
+                        return ValidationError.WrongResultType;
+                },
+
+                .logical_not => {
+                    if (!isBoolean(module, operand_type))
+                        return ValidationError.WrongOperandType;
+
+                    if (!isBoolean(module, result))
+                        return ValidationError.WrongResultType;
+                },
+
+                .negate => {
+                    if (result != operand_type)
+                        return ValidationError.WrongResultType;
+                },
+            }
         },
         .binary => |op| {
             const lhs_type = try operandType(module, function_id, op.lhs);
@@ -531,6 +560,46 @@ fn isArrayLengthResultType(module: *const module_ir.Module, type_id: ids.TypeId)
 
         else => false,
     };
+}
+
+fn integerShape(module: *const module_ir.Module, type_id: ids.TypeId) ?IntegerShape {
+    const ty = module.types.get(type_id) orelse return null;
+
+    return switch (ty.*) {
+        .integer => |integer| .{
+            .bits = integer.bits,
+            .components = 1,
+        },
+
+        .vector => |vector| blk: {
+            const element =
+                module.types.get(vector.element_type) orelse return null;
+
+            const integer = switch (element.*) {
+                .integer => |integer| integer,
+                else => return null,
+            };
+
+            break :blk .{
+                .bits = integer.bits,
+                .components = vector.length,
+            };
+        },
+
+        else => null,
+    };
+}
+
+fn isIntegerScalarOrVector(module: *const module_ir.Module, type_id: ids.TypeId) bool {
+    return integerShape(module, type_id) != null;
+}
+
+fn haveSameIntegerShape(module: *const module_ir.Module, lhs: ids.TypeId, rhs: ids.TypeId) bool {
+    const lhs_shape = integerShape(module, lhs) orelse return false;
+    const rhs_shape = integerShape(module, rhs) orelse return false;
+
+    return lhs_shape.bits == rhs_shape.bits and
+        lhs_shape.components == rhs_shape.components;
 }
 
 fn targetsBlock(terminator: module_ir.Terminator, target: ids.BlockId) bool {
