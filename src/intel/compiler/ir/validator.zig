@@ -5,42 +5,43 @@ const program_ir = @import("program.zig");
 const pseudo = @import("pseudo.zig");
 
 pub const Error = error{
-    MissingEntryBlock,
-    InvalidBlock,
-    MissingTerminator,
-    InvalidInstruction,
-    InvalidVirtualRegister,
-    InvalidVirtualFlag,
-    UnallocatedVirtualFlag,
-    InvalidPhysicalRegister,
-    InvalidRegisterSize,
-    InvalidRegisterAlignment,
-    InvalidLaneCount,
-    InvalidRegion,
-    InvalidDestination,
-    InvalidImmediateType,
-    InvalidStorageBuffer,
-    InvalidBufferReference,
-    InvalidGlobalInvocationId,
-    InvalidBufferAccess,
-    InvalidWorkgroupSize,
-    EmptyParallelCopy,
-    InvalidParallelCopyDestination,
-    ParallelCopyTypeMismatch,
-    DuplicateParallelCopyDestination,
-    PredicatedParallelCopy,
-    UnloweredParallelCopy,
-    UnloweredSystemValue,
-    UnloweredResource,
-    UnloweredMessage,
-    InvalidMessage,
-    InvalidPayloadLayout,
-    EntryBlockHasParameters,
     DuplicateBlockParameter,
+    DuplicateParallelCopyDestination,
     EdgeArgumentCountMismatch,
     EdgeArgumentKindMismatch,
     EdgeArgumentTypeMismatch,
+    EmptyParallelCopy,
+    EntryBlockHasParameters,
+    InvalidBlock,
+    InvalidBufferAccess,
+    InvalidBufferReference,
+    InvalidDestination,
+    InvalidGlobalInvocationId,
+    InvalidImmediateType,
+    InvalidInstruction,
+    InvalidLaneCount,
+    InvalidMath,
+    InvalidMessage,
+    InvalidParallelCopyDestination,
+    InvalidPayloadLayout,
+    InvalidPhysicalRegister,
+    InvalidRegion,
+    InvalidRegisterAlignment,
+    InvalidRegisterSize,
+    InvalidStorageBuffer,
+    InvalidVirtualFlag,
+    InvalidVirtualRegister,
+    InvalidWorkgroupSize,
+    MissingEntryBlock,
+    MissingTerminator,
+    ParallelCopyTypeMismatch,
+    PredicatedParallelCopy,
+    UnallocatedVirtualFlag,
     UnloweredBlockParameter,
+    UnloweredMessage,
+    UnloweredParallelCopy,
+    UnloweredResource,
+    UnloweredSystemValue,
 };
 
 pub fn validate(program: *const program_ir.Program) Error!void {
@@ -157,6 +158,13 @@ fn validateInstruction(program: *const program_ir.Program, inst: instruction.Ins
             if (!op.source.type.isInitialTargetType())
                 return Error.InvalidBufferAccess;
         },
+        .array_length => |op| {
+            try validateBufferReference(program, op.buffer);
+            try validateDestination(program, op.destination);
+            try validateBufferOffset(program, op.byte_offset);
+            if (op.destination.type != .u32 or op.stride == 0)
+                return Error.InvalidBufferAccess;
+        },
         .surface_read => |op| {
             try validateDestination(program, op.destination);
             try validateBufferOffset(program, op.address);
@@ -198,6 +206,22 @@ fn validateInstruction(program: *const program_ir.Program, inst: instruction.Ins
             try validateFlag(program, op.destination);
             try validateSource(program, op.lhs);
             try validateSource(program, op.rhs);
+        },
+        .math => |op| {
+            try validateDestination(program, op.destination);
+            try validateSource(program, op.lhs);
+            try validateSource(program, op.rhs);
+
+            switch (op.opcode) {
+                .integer_quotient => {
+                    if (inst.execution_size != .simd8)
+                        return Error.InvalidMath;
+                    if (op.destination.type != .u32 and op.destination.type != .i32)
+                        return Error.InvalidMath;
+                    if (op.lhs.type != op.destination.type or op.rhs.type != op.destination.type)
+                        return Error.InvalidMath;
+                },
+            }
         },
 
         .parallel_copy => |op| {

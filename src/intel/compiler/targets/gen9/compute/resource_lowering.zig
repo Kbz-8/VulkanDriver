@@ -53,6 +53,7 @@ fn bufferReference(operation: instruction.Operation) ?instruction.BufferReferenc
     return switch (operation) {
         .load_buffer => |op| op.buffer,
         .store_buffer => |op| op.buffer,
+        .array_length => |op| op.buffer,
         else => null,
     };
 }
@@ -61,6 +62,7 @@ fn bufferReferenceMut(operation: *instruction.Operation) ?*instruction.BufferRef
     return switch (operation.*) {
         .load_buffer => |*op| &op.buffer,
         .store_buffer => |*op| &op.buffer,
+        .array_length => |*op| &op.buffer,
         else => null,
     };
 }

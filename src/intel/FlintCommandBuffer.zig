@@ -346,7 +346,7 @@ pub fn dispatchBase(interface: *Interface, base_group_x: u32, base_group_y: u32,
     var ranges: [gen9_dispatch.max_surfaces]?MemoryRange = @splat(null);
     var sizes: [gen9_dispatch.max_surfaces]u64 = @splat(0);
     for (artifact.resources.bindings) |resource| {
-        if (resource.set >= base.vulkan_max_descriptor_sets or @as(usize, resource.binding_table_index) >= gen9_dispatch.max_surfaces)
+        if (resource.set >= base.vulkan_max_descriptor_sets or @as(usize, resource.binding_table_index) >= gen9_dispatch.max_storage_surfaces)
             return VkError.ValidationFailed;
 
         const descriptor_set = self.bound_compute_descriptor_sets[resource.set] orelse return VkError.ValidationFailed;
@@ -400,7 +400,7 @@ pub fn dispatchBase(interface: *Interface, base_group_x: u32, base_group_y: u32,
     self.gpu_allocations.append(self.interface.host_allocator.allocator(), state) catch return VkError.OutOfHostMemory;
     state_owned = false;
 
-    for (0..@as(usize, state_layout.surface_count)) |index| {
+    for (0..@as(usize, state_layout.storage_surface_count)) |index| {
         const range = ranges[index] orelse return VkError.ValidationFailed;
         if (range.offset > std.math.maxInt(u32))
             return VkError.FeatureNotPresent;
@@ -414,6 +414,17 @@ pub fn dispatchBase(interface: *Interface, base_group_x: u32, base_group_y: u32,
             .domain = .render,
         }) catch return VkError.OutOfHostMemory;
     }
+
+    const size_table_surface = @as(usize, state_layout.storage_surface_count);
+    self.relocations.append(self.interface.host_allocator.allocator(), .{
+        .source_handle = state_handle,
+        .target_handle = state_handle,
+        .offset = state_layout.surface_address_offsets[size_table_surface],
+        .delta = state_layout.size_table_offset,
+        .read = true,
+        .write = false,
+        .domain = .render,
+    }) catch return VkError.OutOfHostMemory;
 
     try self.emitSlice(&gen9_dispatch.pipeControl(gen9_dispatch.pipe_control.cs_stall |
         gen9_dispatch.pipe_control.dc_flush |

@@ -136,6 +136,15 @@ fn writeOperation(program: *const program_ir.Program, writer: *std.Io.Writer, ex
             try writer.writeAll(", ");
             try writeSource(program, writer, execution_size, op.source);
         },
+        .array_length => |op| {
+            try writer.writeAll("array_length ");
+            try writeDestination(program, writer, execution_size, op.destination);
+            try writer.writeAll(", ");
+            try writeBufferReference(program, writer, op.buffer);
+            try writer.writeAll(", ");
+            try writeSource(program, writer, execution_size, op.byte_offset);
+            try writer.print(", stride({d})", .{op.stride});
+        },
         .surface_read => |op| {
             try writer.writeAll("surface_read ");
             try writeDestination(program, writer, execution_size, op.destination);
@@ -180,6 +189,14 @@ fn writeOperation(program: *const program_ir.Program, writer: *std.Io.Writer, ex
         .compare => |op| {
             try writer.print("cmp_{t} ", .{op.opcode});
             try writeFlagRef(program, writer, op.destination);
+            try writer.writeAll(", ");
+            try writeSource(program, writer, execution_size, op.lhs);
+            try writer.writeAll(", ");
+            try writeSource(program, writer, execution_size, op.rhs);
+        },
+        .math => |op| {
+            try writer.print("{t} ", .{op.opcode});
+            try writeDestination(program, writer, execution_size, op.destination);
             try writer.writeAll(", ");
             try writeSource(program, writer, execution_size, op.lhs);
             try writer.writeAll(", ");

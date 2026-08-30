@@ -412,6 +412,19 @@ const Parser = struct {
             } };
         }
 
+        if (std.mem.eql(u8, name, "array_length")) {
+            const resource_name = (try self.expect(.at_name)).text;
+            try self.expectDiscard(.comma);
+            const byte_offset = try self.parseValueRef();
+            try self.expectDiscard(.comma);
+            try self.expectIdentifier("stride");
+            return .{ .array_length = .{
+                .resource_name = resource_name,
+                .byte_offset = byte_offset,
+                .stride = try self.parseUnsigned(u32, .number),
+            } };
+        }
+
         if (std.mem.eql(u8, name, "call")) {
             const function_name = (try self.expect(.at_name)).text;
             try self.expectDiscard(.left_paren);
@@ -520,6 +533,13 @@ const Parser = struct {
                     .length = length,
                 },
             });
+        }
+
+        if (std.mem.eql(u8, token.text, "runtime_array")) {
+            try self.expectDiscard(.left_square);
+            const element_type = try self.parseType();
+            try self.expectDiscard(.right_square);
+            return module.internType(.{ .runtime_array = .{ .element_type = element_type } });
         }
 
         if (std.mem.eql(u8, token.text, "struct")) {

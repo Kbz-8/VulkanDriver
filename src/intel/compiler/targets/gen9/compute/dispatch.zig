@@ -1,6 +1,7 @@
 const std = @import("std");
 
-pub const max_surfaces: usize = 4;
+pub const max_storage_surfaces: usize = 4;
+pub const max_surfaces: usize = max_storage_surfaces + 1;
 pub const page_size: usize = 4096;
 pub const surface_state_size: usize = 64;
 pub const interface_descriptor_size: usize = 32;
@@ -22,12 +23,14 @@ pub const StateLayout = struct {
     surface_offsets: [max_surfaces]u32,
     surface_address_offsets: [max_surfaces]u32,
     surface_count: u8,
+    storage_surface_count: u8,
+    size_table_offset: u32,
     binding_table_offset: u32,
     interface_descriptor_offset: u32,
 };
 
 pub fn writeState(destination: []u8, kernel: []const u8, buffer_sizes: []const u64) Error!StateLayout {
-    if (buffer_sizes.len > max_surfaces)
+    if (buffer_sizes.len > max_storage_surfaces)
         return Error.TooManySurfaces;
 
     var layout: StateLayout = .{
@@ -35,7 +38,9 @@ pub fn writeState(destination: []u8, kernel: []const u8, buffer_sizes: []const u
         .kernel_offset = 0,
         .surface_offsets = @splat(0),
         .surface_address_offsets = @splat(0),
-        .surface_count = @intCast(buffer_sizes.len),
+        .surface_count = @intCast(buffer_sizes.len + 1),
+        .storage_surface_count = @intCast(buffer_sizes.len),
+        .size_table_offset = 0,
         .binding_table_offset = 0,
         .interface_descriptor_offset = 0,
     };
@@ -48,11 +53,23 @@ pub fn writeState(destination: []u8, kernel: []const u8, buffer_sizes: []const u
         cursor += surface_state_size;
         if (size == 0)
             return Error.EmptyBuffer;
+        if (size > std.math.maxInt(u32))
+            return Error.UnsupportedBufferSize;
     }
+
+    const size_table_surface = buffer_sizes.len;
+    cursor = alignForward(cursor, surface_state_size);
+    layout.surface_offsets[size_table_surface] = @intCast(cursor);
+    layout.surface_address_offsets[size_table_surface] = @intCast(cursor + 8 * @sizeOf(u32));
+    cursor += surface_state_size;
 
     cursor = alignForward(cursor, 32);
     layout.binding_table_offset = @intCast(cursor);
-    cursor += buffer_sizes.len * @sizeOf(u32);
+    cursor += layout.surface_count * @sizeOf(u32);
+
+    cursor = alignForward(cursor, @alignOf(u32));
+    layout.size_table_offset = @intCast(cursor);
+    cursor += @max(buffer_sizes.len, 1) * @sizeOf(u32);
 
     cursor = alignForward(cursor, 64);
     layout.interface_descriptor_offset = @intCast(cursor);
@@ -67,7 +84,10 @@ pub fn writeState(destination: []u8, kernel: []const u8, buffer_sizes: []const u
     for (buffer_sizes, 0..) |size, index| {
         _ = try encodeRawBufferSurface(destination, layout.surface_offsets[index], size);
         putU32(destination, layout.binding_table_offset + @as(u32, @intCast(index * @sizeOf(u32))), layout.surface_offsets[index]);
+        putU32(destination, layout.size_table_offset + @as(u32, @intCast(index * @sizeOf(u32))), @intCast(size));
     }
+    _ = try encodeRawBufferSurface(destination, layout.surface_offsets[size_table_surface], @max(buffer_sizes.len, 1) * @sizeOf(u32));
+    putU32(destination, layout.binding_table_offset + @as(u32, @intCast(size_table_surface * @sizeOf(u32))), layout.surface_offsets[size_table_surface]);
 
     const idd = layout.interface_descriptor_offset;
     putU32(destination, idd + 0, layout.kernel_offset);

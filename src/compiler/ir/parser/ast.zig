@@ -101,5 +101,6 @@ pub const ParsedOperation = union(enum) {
     store_interface: struct { interface_name: []const u8, value: ValueRef },
     load_buffer: struct { resource_name: []const u8, byte_offset: ValueRef },
     store_buffer: struct { resource_name: []const u8, byte_offset: ValueRef, value: ValueRef },
+    array_length: struct { resource_name: []const u8, byte_offset: ValueRef, stride: u32 },
     call: struct { function_name: []const u8, arguments: []const ValueRef },
 };

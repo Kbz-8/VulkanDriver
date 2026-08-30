@@ -25,21 +25,33 @@ pub fn encode(allocator: std.mem.Allocator, program: *program_ir.Program) Error!
             live_block_count += 1;
     }
 
-    if (live_block_count != 1)
+    if (live_block_count != 1) {
+        std.log.scoped(.FlintEuEncoder).err("cannot encode control flow: program has {d} live blocks; only one is currently supported", .{live_block_count});
         return Error.UnsupportedControlFlow;
+    }
 
     var kernel: std.ArrayList(u8) = .empty;
     errdefer kernel.deinit(allocator);
 
     for (entry.instructions.items) |instruction_id| {
         const instruction = program.instructions.get(instruction_id) orelse return Error.InvalidProgram;
-        if (instruction.predicate != null)
+        if (instruction.predicate != null) {
+            std.log.scoped(.FlintEuEncoder).err("cannot encode instruction {d} ({t}): predication is not supported", .{ instruction_id.index(), std.meta.activeTag(instruction.operation) });
             return Error.UnsupportedPredication;
+        }
 
         const encoded = switch (instruction.operation) {
-            .move => |move| try eu.encodeMove(instruction.execution_size, move),
-            .surface_message => |message| try eu.encodeSurfaceMessage(instruction.execution_size, message),
-            else => return Error.UnsupportedOperation,
+            .move => |move| eu.encodeMove(instruction.execution_size, move),
+            .surface_message => |message| eu.encodeSurfaceMessage(instruction.execution_size, message),
+            .binary => |binary| eu.encodeBinary(instruction.execution_size, binary),
+            .math => |math| eu.encodeMath(instruction.execution_size, math),
+            else => {
+                std.log.scoped(.FlintEuEncoder).err("cannot encode instruction {d}: unsupported operation {t}", .{ instruction_id.index(), std.meta.activeTag(instruction.operation) });
+                return Error.UnsupportedOperation;
+            },
+        } catch |err| {
+            std.log.scoped(.FlintEuEncoder).err("failed to encode instruction {d} ({t}): {s}", .{ instruction_id.index(), std.meta.activeTag(instruction.operation), @errorName(err) });
+            return err;
         };
         try appendInstruction(allocator, &kernel, encoded);
     }
@@ -53,7 +65,10 @@ pub fn encode(allocator: std.mem.Allocator, program: *program_ir.Program) Error!
                 try appendInstruction(allocator, &kernel, instruction);
             program.program_data.total_grf_count = eu.eot_payload_grf + 1;
         },
-        else => return Error.UnsupportedControlFlow,
+        else => {
+            std.log.scoped(.FlintEuEncoder).err("cannot encode entry-block terminator {t}", .{std.meta.activeTag(terminator)});
+            return Error.UnsupportedControlFlow;
+        },
     }
 
     return kernel.toOwnedSlice(allocator);

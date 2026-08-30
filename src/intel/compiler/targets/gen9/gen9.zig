@@ -150,3 +150,40 @@ test "[gen9] target: lower 256 KiB SSBO copy loop" {
     try std.testing.expectEqual(@as(usize, 4), load_count);
     try std.testing.expectEqual(@as(usize, 4), store_count);
 }
+
+test "[gen9] target: encode runtime array length" {
+    var module = try shader_ir.parser.parseString(std.testing.allocator,
+        \\shader compute @main
+        \\{
+        \\    @storage: runtime_array[u32] = storage_buffer[set(0), binding(0)]
+        \\    %offset: constant u32 = 16
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %length: u32 = array_length @storage, %offset, stride 4
+        \\            return
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+    module.execution_modes.workgroup_size = .{ 1, 1, 1 };
+
+    const gen9_device: device.DeviceInfo = .{
+        .generation = .gen9,
+        .platform = .skylake,
+        .pci_device_id = 0x1912,
+        .grf_count = 128,
+    };
+    var artifact = try compileCompute(std.testing.allocator, &module, gen9_device, .{});
+    defer artifact.deinit(std.testing.allocator);
+
+    if (artifact.kernel == null) {
+        const encoded = try compute.kernel_encoder.encode(std.testing.allocator, &artifact.program);
+        std.testing.allocator.free(encoded);
+        return error.TestExpectedEncodedKernel;
+    }
+    for (artifact.program.instructions.entries.items) |entry| {
+        const inst = entry orelse continue;
+        try std.testing.expect(inst.operation != .array_length);
+    }
+}

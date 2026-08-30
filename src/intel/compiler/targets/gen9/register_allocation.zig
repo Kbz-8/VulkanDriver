@@ -68,6 +68,10 @@ fn reserveExistingPhysicalRegisters(program: *const program_ir.Program, initial:
                 reserveRegister(&next_byte, op.byte_offset.register, grf_size);
                 reserveRegister(&next_byte, op.source.register, grf_size);
             },
+            .array_length => |op| {
+                reserveRegister(&next_byte, op.destination.register, grf_size);
+                reserveRegister(&next_byte, op.byte_offset.register, grf_size);
+            },
             .surface_read => |op| {
                 reserveRegister(&next_byte, op.destination.register, grf_size);
                 reserveRegister(&next_byte, op.address.register, grf_size);
@@ -91,6 +95,11 @@ fn reserveExistingPhysicalRegisters(program: *const program_ir.Program, initial:
                 reserveRegister(&next_byte, op.rhs.register, grf_size);
             },
             .compare => |op| {
+                reserveRegister(&next_byte, op.lhs.register, grf_size);
+                reserveRegister(&next_byte, op.rhs.register, grf_size);
+            },
+            .math => |op| {
+                reserveRegister(&next_byte, op.destination.register, grf_size);
                 reserveRegister(&next_byte, op.lhs.register, grf_size);
                 reserveRegister(&next_byte, op.rhs.register, grf_size);
             },
@@ -125,6 +134,10 @@ fn rewriteProgram(program: *program_ir.Program, allocations: []const ?operand.Ph
                 try rewriteSource(program, &op.byte_offset, allocations);
                 try rewriteSource(program, &op.source, allocations);
             },
+            .array_length => |*op| {
+                try rewriteDestination(program, &op.destination, allocations);
+                try rewriteSource(program, &op.byte_offset, allocations);
+            },
             .surface_read => |*op| {
                 try rewriteDestination(program, &op.destination, allocations);
                 try rewriteSource(program, &op.address, allocations);
@@ -148,6 +161,11 @@ fn rewriteProgram(program: *program_ir.Program, allocations: []const ?operand.Ph
                 try rewriteSource(program, &op.rhs, allocations);
             },
             .compare => |*op| {
+                try rewriteSource(program, &op.lhs, allocations);
+                try rewriteSource(program, &op.rhs, allocations);
+            },
+            .math => |*op| {
+                try rewriteDestination(program, &op.destination, allocations);
                 try rewriteSource(program, &op.lhs, allocations);
                 try rewriteSource(program, &op.rhs, allocations);
             },

@@ -1,4 +1,5 @@
 const std = @import("std");
+const base = @import("base");
 const shader_compiler = @import("shader_ir");
 const shader_ir = shader_compiler.ir;
 const device = @import("../device.zig");
@@ -431,7 +432,7 @@ const LoweringState = struct {
             .load_buffer => |operation| try self.lowerLoadBuffer(block_id, source_instruction.result, operation),
             .store_buffer => |operation| try self.lowerStoreBuffer(block_id, source_instruction.result, operation),
             .call => return Error.UnsanitizedModule,
-            .array_length => return Error.UnsupportedOperation,
+            .array_length => |operation| try self.lowerArrayLength(block_id, source_instruction.result, operation),
         }
     }
 
@@ -507,6 +508,32 @@ const LoweringState = struct {
         if (lhs_components.len == 0 or lhs_components.len != rhs_components.len or lhs_components.len != result_components.len)
             return Error.InvalidModule;
 
+        switch (operation.opcode) {
+            .unsigned_divide,
+            .signed_divide,
+            => {
+                const signed = operation.opcode == .signed_divide;
+                const target_type: operand.DataType = if (signed) .i32 else .u32;
+
+                for (lhs_components, rhs_components, result_components) |lhs_value, rhs_value, result_component| {
+                    var dst = try destinationFromSource(result_component);
+                    dst.type = target_type;
+
+                    try self.appendInstruction(block_id, null, .{
+                        .math = .{
+                            .opcode = .integer_quotient,
+                            .destination = dst,
+                            .lhs = try retypeIntegerSource(lhs_value, target_type),
+                            .rhs = try retypeIntegerSource(rhs_value, target_type),
+                        },
+                    });
+                }
+                return;
+            },
+
+            else => {},
+        }
+
         const data_type = lhs_components[0].type;
         const opcode: instruction.BinaryOpcode = switch (operation.opcode) {
             .integer_add => if (data_type == .u32 or data_type == .i32) .add else return Error.UnsupportedOperation,
@@ -521,8 +548,11 @@ const LoweringState = struct {
             .bitwise_and => if (data_type == .u32 or data_type == .i32) .bitwise_and else return Error.UnsupportedOperation,
             .bitwise_or => if (data_type == .u32 or data_type == .i32) .bitwise_or else return Error.UnsupportedOperation,
             .bitwise_xor => if (data_type == .u32 or data_type == .i32) .bitwise_xor else return Error.UnsupportedOperation,
+
             .unsigned_divide,
             .signed_divide,
+            => unreachable,
+
             .unsigned_modulo,
             .signed_modulo,
             .float_divide,
@@ -547,6 +577,47 @@ const LoweringState = struct {
                 },
             });
         }
+    }
+
+    fn retypeIntegerSource(source_value: operand.Source, target_type: operand.DataType) Error!operand.Source {
+        if (target_type != .u32 and target_type != .i32)
+            return Error.UnsupportedType;
+
+        var result = source_value;
+
+        switch (source_value.type) {
+            .u32, .i32 => {},
+            else => return Error.UnsupportedType,
+        }
+
+        result.register = switch (source_value.register) {
+            .immediate => |immediate| .{
+                .immediate = switch (target_type) {
+                    .u32 => .{
+                        .u32 = switch (immediate) {
+                            .u32 => |v| v,
+                            .i32 => |v| @bitCast(v),
+                            else => return Error.UnsupportedType,
+                        },
+                    },
+
+                    .i32 => .{
+                        .i32 = switch (immediate) {
+                            .u32 => |v| @bitCast(v),
+                            .i32 => |v| v,
+                            else => return Error.UnsupportedType,
+                        },
+                    },
+
+                    else => unreachable,
+                },
+            },
+
+            else => source_value.register,
+        };
+
+        result.type = target_type;
+        return result;
     }
 
     fn lowerCompare(self: *LoweringState, block_id: ids.BlockId, result: ?shader_ir.id.ValueId, operation: shader_ir.instruction.Compare) Error!void {
@@ -689,21 +760,36 @@ const LoweringState = struct {
         const variable = self.lowerer.module.interface_variables.get(operation.variable) orelse return Error.InvalidModule;
         if (variable.direction != .input)
             return Error.InvalidModule;
+
         switch (variable.semantic) {
-            .builtin => |builtin| if (builtin != .global_invocation_id)
-                return Error.UnsupportedOperation,
+            .builtin => |builtin| switch (builtin) {
+                .global_invocation_id => try self.lowerGlobalInvocationId(block_id, result_id, variable),
+                .num_workgroups => try self.lowerNumWorkgroups(result_id),
+                .workgroup_size => base.unsupported("workgroup size builtin is not yet supported in Flint", .{}),
+                else => return Error.UnsupportedOperation,
+            },
             .location => return Error.UnsupportedOperation,
         }
+    }
 
+    fn lowerGlobalInvocationId(
+        self: *LoweringState,
+        block_id: ids.BlockId,
+        result_id: shader_ir.id.ValueId,
+        variable: *const shader_ir.module.InterfaceVariable,
+    ) Error!void {
         const result_value = self.lowerer.module.values.get(result_id) orelse return Error.InvalidModule;
         if (result_value.type != variable.type)
             return Error.InvalidModule;
+
         const result_components = try self.addRegisterLocation(result_id, .temporary);
         if (result_components.len != 3)
             return Error.UnsupportedOperation;
+
         for (result_components, 0..) |result_component, component_index| {
             if (result_component.type != .u32)
                 return Error.UnsupportedOperation;
+
             try self.appendInstruction(block_id, null, .{
                 .load_global_invocation_id = .{
                     .destination = try destinationFromSource(result_component),
@@ -711,6 +797,28 @@ const LoweringState = struct {
                 },
             });
         }
+    }
+
+    fn lowerNumWorkgroups(self: *LoweringState, result_id: shader_ir.id.ValueId) Error!void {
+        const result_value = self.lowerer.module.values.get(result_id) orelse return Error.InvalidModule;
+        const lowered_type = try self.lowerType(result_value.type);
+
+        if (lowered_type.element_type != .u32 or lowered_type.component_count != 3)
+            return Error.UnsupportedType;
+
+        const vec = try self.storage.alloc(operand.Source, 3);
+
+        for (self.lowerer.module.execution_modes.workgroup_size.?, vec) |value, *component| {
+            component.* = .{
+                .register = .{
+                    .immediate = .{ .u32 = value },
+                },
+                .type = .u32,
+                .region = operand.Region.broadcast(),
+            };
+        }
+
+        try self.putLocation(result_id, .{ .components = vec });
     }
 
     fn lowerStoreInterface(self: *LoweringState, block_id: ids.BlockId, result: ?shader_ir.id.ValueId, operation: shader_ir.instruction.StoreInterface) Error!void {
@@ -757,6 +865,26 @@ const LoweringState = struct {
                 },
             });
         }
+    }
+
+    fn lowerArrayLength(self: *LoweringState, block_id: ids.BlockId, result: ?shader_ir.id.ValueId, operation: shader_ir.instruction.ArrayLength) Error!void {
+        const result_id = try requireResult(result);
+        const byte_offset = try self.source(operation.byte_offset);
+        if (byte_offset.type != .u32)
+            return Error.UnsupportedType;
+
+        const result_components = try self.addRegisterLocation(result_id, .temporary);
+        if (result_components.len != 1 or result_components[0].type != .u32)
+            return Error.UnsupportedType;
+
+        try self.appendInstruction(block_id, null, .{
+            .array_length = .{
+                .destination = try destinationFromSource(result_components[0]),
+                .buffer = .{ .logical = try self.storageBuffer(operation.resource) },
+                .byte_offset = byte_offset,
+                .stride = operation.stride,
+            },
+        });
     }
 
     fn lowerControlAndTerminators(self: *LoweringState, allocator: std.mem.Allocator) Error!void {
@@ -1297,6 +1425,28 @@ test "[ir] Lower: vector storage-buffer operations" {
     }, &.{});
 }
 
+test "[ir] Lower: runtime array length" {
+    const source =
+        \\shader compute @main
+        \\{
+        \\    @storage: runtime_array[u32] = storage_buffer[set(0), binding(3)]
+        \\    %offset: constant u32 = 16
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %length: u32 = array_length @storage, %offset, stride 4
+        \\            return
+        \\    }
+        \\}
+    ;
+
+    try expectLoweredFragments(source, &.{
+        "@storage = storage_buffer[set(0), binding(3)]",
+        "%length: vgrf u32[8], class(temporary)",
+        "[simd8] array_length %length:u32, @storage, 16:u32, stride(4)",
+    }, &.{});
+}
+
 test "[ir] Lower: vector block parameter" {
     const source =
         \\shader compute @main
@@ -1402,20 +1552,6 @@ test "[ir] Lower: boolean block parameter" {
 }
 
 test "[ir] Lower: unsupported operations" {
-    try expectLoweringError(
-        \\shader compute @main
-        \\{
-        \\    %one: constant u32 = bits(0x1)
-        \\    %two: constant u32 = bits(0x2)
-        \\    fn @main() -> void
-        \\    {
-        \\        .entry():
-        \\            %quotient: u32 = unsigned_divide %one, %two
-        \\            return
-        \\    }
-        \\}
-    , Error.UnsupportedOperation);
-
     try expectLoweringError(
         \\shader compute @main
         \\{

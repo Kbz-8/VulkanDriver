@@ -171,19 +171,6 @@ fn lowerToFlint(allocator: std.mem.Allocator, module: *base.ShaderModule.IrModul
     const target = device_info orelse return null;
     return compiler.targets.compileCompute(allocator, module, target, .{}) catch |err| switch (err) {
         error.OutOfMemory => return VkError.OutOfHostMemory,
-
-        error.UnsupportedGeneration,
-        error.UnsupportedStage,
-        error.UnsupportedDispatchWidth,
-        error.UnsupportedGrfSize,
-        error.UnsupportedWorkgroupSize,
-        error.MissingWorkgroupSize,
-        error.UnsupportedType,
-        error.UnsupportedOperation,
-        error.UnsupportedTerminator,
-        error.TooManyStorageBuffers,
-        => return null,
-
         else => {
             std.log.scoped(.FlintPipeline).err("compute compilation failed: {s}", .{@errorName(err)});
             return VkError.ValidationFailed;

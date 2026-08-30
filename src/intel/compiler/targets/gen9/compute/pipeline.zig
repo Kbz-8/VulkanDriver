@@ -11,6 +11,7 @@ const register_allocation = @import("../register_allocation.zig");
 
 const compute = @import("compute.zig");
 const abi = @import("abi.zig");
+const array_length_lowering = @import("array_length_lowering.zig");
 const kernel_encoder = @import("kernel_encoder.zig");
 const message_addresses = @import("message_addresses.zig");
 const message_lowering = @import("message_lowering.zig");
@@ -22,6 +23,7 @@ pub const Error = common_ir.Error ||
     block_arguments.Error ||
     parallel_copies.Error ||
     abi.Error ||
+    array_length_lowering.Error ||
     kernel_encoder.Error ||
     message_addresses.Error ||
     message_lowering.Error ||
@@ -76,29 +78,30 @@ pub fn compile(allocator: std.mem.Allocator, module: *shader_ir.module.Module, d
     try block_arguments.run(allocator, &program);
     try parallel_copies.run(allocator, &program);
 
-    var resources = try resource_layout.Layout.init(
-        allocator,
-        &program,
-    );
+    var resources = try resource_layout.Layout.init(allocator, &program);
     errdefer resources.deinit(allocator);
 
     try resource_lowering.run(&program, &resources);
+    try array_length_lowering.run(&program, &resources);
     try message_lowering.run(&program);
     try message_addresses.run(&program);
     try message_payloads.run(&program);
     try flag_allocation.run(allocator, &program);
     try register_allocation.run(allocator, &program);
 
-    const kernel = kernel_encoder.encode(allocator, &program) catch |err| switch (err) {
-        error.UnsupportedControlFlow,
-        error.UnsupportedOperation,
-        error.UnsupportedPredication,
-        error.UnsupportedExecutionSize,
-        error.UnsupportedDataType,
-        error.UnsupportedOperand,
-        error.EotRegisterUnavailable,
-        => null,
-        else => return err,
+    const kernel = kernel_encoder.encode(allocator, &program) catch |err| encoding_error: {
+        std.log.scoped(.FlintCompiler).err("Gen9 EU kernel encoding failed: {s}", .{@errorName(err)});
+        break :encoding_error switch (err) {
+            error.UnsupportedControlFlow,
+            error.UnsupportedOperation,
+            error.UnsupportedPredication,
+            error.UnsupportedExecutionSize,
+            error.UnsupportedDataType,
+            error.UnsupportedOperand,
+            error.EotRegisterUnavailable,
+            => null,
+            else => return err,
+        };
     };
     errdefer if (kernel) |bytes| allocator.free(bytes);
 

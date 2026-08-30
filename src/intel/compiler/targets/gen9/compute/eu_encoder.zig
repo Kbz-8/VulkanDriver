@@ -54,28 +54,8 @@ const Grf = struct {
 pub fn encodeMove(execution_size: device.ExecutionSize, move: ir_instruction.Move) Error!EncodedInstruction {
     var encoded = try instructionHeader(1, execution_size);
     const destination = try resolveGrf(move.destination.register, move.destination.region.byte_offset);
-
-    setDestination(
-        &encoded,
-        .grf,
-        try hardwareType(move.destination.type),
-        destination,
-        try horizontalStride(move.destination.region.horizontal_stride),
-    );
-
-    switch (move.source.register) {
-        .physical_grf => {
-            const source = try resolveGrf(move.source.register, move.source.region.byte_offset);
-            try setSource0Register(&encoded, move.source, source);
-        },
-        .immediate => |immediate| {
-            if (move.source.negate or move.source.absolute)
-                return Error.UnsupportedOperand;
-            setSource0Immediate(&encoded, try hardwareType(move.source.type), immediate);
-        },
-        else => return Error.UnsupportedOperand,
-    }
-
+    setDestination(&encoded, .grf, try hardwareType(move.destination.type), destination, try horizontalStride(move.destination.region.horizontal_stride));
+    try setSource0(&encoded, move.source);
     return encoded;
 }
 
@@ -141,6 +121,38 @@ pub fn encodeSurfaceMessage(execution_size: device.ExecutionSize, message: ir_in
     return encoded;
 }
 
+pub fn encodeBinary(execution_size: device.ExecutionSize, binary: ir_instruction.Binary) Error!EncodedInstruction {
+    const opcode: u7 = switch (binary.opcode) {
+        .add => 64,
+        else => return Error.UnsupportedOperand,
+    };
+
+    var encoded = try instructionHeader(opcode, execution_size);
+    const destination = try resolveGrf(binary.destination.register, binary.destination.region.byte_offset);
+    setDestination(&encoded, .grf, try hardwareType(binary.destination.type), destination, try horizontalStride(binary.destination.region.horizontal_stride));
+    try setSource0(&encoded, binary.lhs);
+    try setSource1(&encoded, binary.rhs);
+    return encoded;
+}
+
+pub fn encodeMath(execution_size: device.ExecutionSize, math: ir_instruction.Math) Error!EncodedInstruction {
+    if (execution_size != .simd8)
+        return Error.UnsupportedExecutionSize;
+
+    var encoded = try instructionHeader(56, execution_size);
+    const destination = try resolveGrf(math.destination.register, math.destination.region.byte_offset);
+    setDestination(&encoded, .grf, try hardwareType(math.destination.type), destination, try horizontalStride(math.destination.region.horizontal_stride));
+
+    try setSource0(&encoded, math.lhs);
+    try setSource1(&encoded, math.rhs);
+
+    encoded.setBits(27, 24, switch (math.opcode) {
+        .integer_quotient => 12,
+    });
+
+    return encoded;
+}
+
 fn instructionHeader(opcode: u7, execution_size: device.ExecutionSize) Error!EncodedInstruction {
     var encoded: EncodedInstruction = .{};
     encoded.setBits(6, 0, opcode);
@@ -178,6 +190,81 @@ fn setSource0Immediate(encoded: *EncodedInstruction, data_type: HardwareType, im
         .i32 => |value| @as(u32, @bitCast(value)),
         .f32 => |value| @as(u32, @bitCast(value)),
     });
+}
+
+fn setSource0(encoded: *EncodedInstruction, source: operand.Source) Error!void {
+    switch (source.register) {
+        .physical_grf => {
+            const register = try resolveGrf(source.register, source.region.byte_offset);
+            try setSource0Register(encoded, source, register);
+        },
+        .immediate => |immediate| {
+            setSource0Immediate(encoded, try hardwareType(source.type), try applyImmediateModifiers(immediate, source.negate, source.absolute));
+        },
+
+        else => return Error.UnsupportedOperand,
+    }
+}
+
+fn setSource1Register(encoded: *EncodedInstruction, source: operand.Source, register: Grf) Error!void {
+    encoded.setBits(90, 89, @intFromEnum(RegisterFile.grf));
+    encoded.setBits(94, 91, @intFromEnum(try hardwareType(source.type)));
+
+    // Direct addressing.
+    encoded.setBits(100, 96, register.byte_offset);
+    encoded.setBits(108, 101, register.number);
+
+    // Source modifiers.
+    encoded.setBits(109, 109, @intFromBool(source.absolute));
+    encoded.setBits(110, 110, @intFromBool(source.negate));
+
+    // AddressMode = direct.
+    encoded.setBits(111, 111, 0);
+
+    // Align1 region.
+    encoded.setBits(113, 112, try horizontalStride(source.region.horizontal_stride));
+    encoded.setBits(116, 114, try regionWidth(source.region.width));
+    encoded.setBits(120, 117, try verticalStride(source.region.vertical_stride));
+}
+
+fn setSource1Immediate(encoded: *EncodedInstruction, data_type: HardwareType, immediate: operand.Immediate) void {
+    encoded.setBits(90, 89, @intFromEnum(RegisterFile.immediate));
+
+    encoded.setBits(94, 91, @intFromEnum(data_type));
+
+    encoded.setBits(127, 96, switch (immediate) {
+        .u32 => |value| value,
+        .i32 => |value| @as(u32, @bitCast(value)),
+        .f32 => |value| @as(u32, @bitCast(value)),
+    });
+}
+
+fn setSource1(encoded: *EncodedInstruction, source: operand.Source) Error!void {
+    switch (source.register) {
+        .physical_grf => {
+            const register = try resolveGrf(source.register, source.region.byte_offset);
+            try setSource1Register(encoded, source, register);
+        },
+
+        .immediate => |immediate| {
+            setSource1Immediate(encoded, try hardwareType(source.type), try applyImmediateModifiers(immediate, source.negate, source.absolute));
+        },
+
+        else => return Error.UnsupportedOperand,
+    }
+}
+
+fn applyImmediateModifiers(immediate: operand.Immediate, negate: bool, absolute: bool) Error!operand.Immediate {
+    if (absolute)
+        return Error.UnsupportedOperand;
+    if (!negate)
+        return immediate;
+
+    return switch (immediate) {
+        .u32 => |value| .{ .u32 = 0 -% value },
+        .i32 => |value| .{ .i32 = 0 -% value },
+        .f32 => |value| .{ .f32 = -value },
+    };
 }
 
 fn resolveGrf(register: operand.RegisterRef, region_byte_offset: u16) Error!Grf {

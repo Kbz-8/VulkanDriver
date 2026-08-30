@@ -64,6 +64,11 @@ fn validateInstruction(inst: instruction.Instruction) Error!void {
             try validateSource(op.byte_offset);
             try validateSource(op.source);
         },
+        .array_length => |op| {
+            try validateBufferReference(op.buffer);
+            try validateDestination(op.destination);
+            try validateSource(op.byte_offset);
+        },
         .surface_read => |op| {
             try validateBindingTableIndex(op.binding_table);
             try validateDestination(op.destination);
@@ -86,6 +91,11 @@ fn validateInstruction(inst: instruction.Instruction) Error!void {
         },
         .compare => |op| {
             try validateFlag(op.destination);
+            try validateSource(op.lhs);
+            try validateSource(op.rhs);
+        },
+        .math => |op| {
+            try validateDestination(op.destination);
             try validateSource(op.lhs);
             try validateSource(op.rhs);
         },

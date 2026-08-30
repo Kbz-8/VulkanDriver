@@ -28,6 +28,13 @@ pub const StoreBuffer = struct {
     source: operand.Source,
 };
 
+pub const ArrayLength = struct {
+    destination: operand.Destination,
+    buffer: BufferReference,
+    byte_offset: operand.Source,
+    stride: u32,
+};
+
 pub const SurfaceRead = struct {
     destination: operand.Destination,
     binding_table: u8,
@@ -93,15 +100,28 @@ pub const Compare = struct {
     rhs: operand.Source,
 };
 
+pub const MathOpcode = enum {
+    integer_quotient,
+};
+
+pub const Math = struct {
+    opcode: MathOpcode,
+    destination: operand.Destination,
+    lhs: operand.Source,
+    rhs: operand.Source,
+};
+
 pub const Operation = union(enum) {
     load_global_invocation_id: LoadGlobalInvocationId,
     load_buffer: LoadBuffer,
     store_buffer: StoreBuffer,
+    array_length: ArrayLength,
     surface_read: SurfaceRead,
     surface_write: SurfaceWrite,
     surface_message: SurfaceMessage,
     move: Move,
     binary: Binary,
+    math: Math,
     compare: Compare,
     parallel_copy: pseudo.ParallelCopy,
 };

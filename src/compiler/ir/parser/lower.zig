@@ -285,6 +285,19 @@ fn lowerOperation(
                 .inferred_type = null,
             };
         },
+        .array_length => |op| blk: {
+            const resource_id = resources.get(op.resource_name) orelse return error.UnknownResource;
+            const byte_offset = resolveValue(values, op.byte_offset) orelse return error.UnknownValue;
+
+            break :blk .{
+                .operation = .{ .array_length = .{
+                    .resource = resource_id,
+                    .byte_offset = byte_offset,
+                    .stride = op.stride,
+                } },
+                .inferred_type = null,
+            };
+        },
         .call => |op| blk: {
             const function_id = functions.get(op.function_name) orelse return error.UnknownFunction;
             var arguments: std.ArrayList(ids.ValueId) = .empty;
