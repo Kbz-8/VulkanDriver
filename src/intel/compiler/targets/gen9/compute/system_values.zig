@@ -1,6 +1,5 @@
 const std = @import("std");
 
-const instruction = @import("../../../ir/instruction.zig");
 const operand = @import("../../../ir/operand.zig");
 const program_ir = @import("../../../ir/program.zig");
 const validator = @import("../../../ir/validator.zig");
