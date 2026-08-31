@@ -95,6 +95,7 @@ test "[gen9] target: lower 256 KiB SSBO copy loop" {
     };
     var artifact = try compileCompute(std.testing.allocator, &module, gen9_device, .{});
     defer artifact.deinit(std.testing.allocator);
+    try std.testing.expect(artifact.kernel != null);
     const program = &artifact.program;
     const resources = &artifact.resources;
 

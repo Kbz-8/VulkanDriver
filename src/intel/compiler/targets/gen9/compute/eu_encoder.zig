@@ -3,6 +3,7 @@ const device = @import("../../../device.zig");
 const ir_instruction = @import("../../../ir/instruction.zig");
 const operand = @import("../../../ir/operand.zig");
 const message_descriptor = @import("message_descriptor.zig");
+const eu = @import("eu.zig");
 
 pub const Error = error{
     UnsupportedExecutionSize,
@@ -52,7 +53,7 @@ const Grf = struct {
 };
 
 pub fn encodeMove(execution_size: device.ExecutionSize, move: ir_instruction.Move) Error!EncodedInstruction {
-    var encoded = try instructionHeader(1, execution_size);
+    var encoded = try instructionHeader(.mov, execution_size);
     const destination = try resolveGrf(move.destination.register, move.destination.region.byte_offset);
     setDestination(&encoded, .grf, try hardwareType(move.destination.type), destination, try horizontalStride(move.destination.region.horizontal_stride));
     try setSource0(&encoded, move.source);
@@ -63,7 +64,7 @@ pub fn encodeEndThread(header: operand.PhysicalGrf) Error![2]EncodedInstruction 
     if (header.number != 0 or header.byte_offset != 0)
         return Error.InvalidRegister;
 
-    var copy = try instructionHeader(1, .simd8);
+    var copy = try instructionHeader(.mov, .simd8);
     copy.setBits(34, 34, 1); // NoMask
     setDestination(&copy, .grf, .unsigned_dword, .{ .number = eot_payload_grf, .byte_offset = 0 }, 1);
     copy.setBits(42, 41, @intFromEnum(RegisterFile.grf));
@@ -73,7 +74,7 @@ pub fn encodeEndThread(header: operand.PhysicalGrf) Error![2]EncodedInstruction 
     copy.setBits(84, 82, 3);
     copy.setBits(88, 85, 4);
 
-    var send = try instructionHeader(49, .simd8);
+    var send = try instructionHeader(.send, .simd8);
     send.setBits(34, 34, 1); // NoMask
     setDestination(&send, .architecture, .unsigned_word, .{ .number = 0, .byte_offset = 0 }, 1);
     send.setBits(42, 41, @intFromEnum(RegisterFile.grf));
@@ -92,7 +93,7 @@ pub fn encodeEndThread(header: operand.PhysicalGrf) Error![2]EncodedInstruction 
 }
 
 pub fn encodeSurfaceMessage(execution_size: device.ExecutionSize, message: ir_instruction.SurfaceMessage) Error!EncodedInstruction {
-    var encoded = try instructionHeader(49, execution_size);
+    var encoded = try instructionHeader(.send, execution_size);
     const descriptor = message_descriptor.encode(message);
     const payload = try resolveGrf(message.payload.base, 0);
     if (payload.byte_offset != 0)
@@ -121,9 +122,65 @@ pub fn encodeSurfaceMessage(execution_size: device.ExecutionSize, message: ir_in
     return encoded;
 }
 
+pub fn encodeJump(displacement_bytes: i32) Error!EncodedInstruction {
+    return encodeJumpWithPredicate(displacement_bytes, null);
+}
+
+pub fn encodePredicatedJump(displacement_bytes: i32, predicate: operand.Predicate) Error!EncodedInstruction {
+    return encodeJumpWithPredicate(displacement_bytes, predicate);
+}
+
+fn encodeJumpWithPredicate(displacement_bytes: i32, predicate: ?operand.Predicate) Error!EncodedInstruction {
+    var encoded = try instructionHeader(.jmpi, .simd1);
+    encoded.setBits(34, 34, 1); // NoMask
+
+    // JMPI updates the instruction pointer: IP = IP + displacement.
+    setDestination(&encoded, .architecture, .signed_dword, .{ .number = 0xa0, .byte_offset = 0 }, 1);
+    encoded.setBits(42, 41, @intFromEnum(RegisterFile.architecture));
+    encoded.setBits(46, 43, @intFromEnum(HardwareType.signed_dword));
+    encoded.setBits(76, 69, 0xa0);
+    encoded.setBits(81, 80, 0);
+    encoded.setBits(84, 82, 0);
+    encoded.setBits(88, 85, 0);
+    setSource1Immediate(&encoded, .signed_dword, .{ .i32 = displacement_bytes });
+
+    if (predicate) |value| {
+        const flag = switch (value.flag) {
+            .physical => |physical| physical,
+            .virtual => return Error.UnsupportedOperand,
+        };
+        if (flag.register != 0 or flag.subregister > 1)
+            return Error.InvalidRegister;
+
+        encoded.setBits(19, 16, 1); // Normal predicate control.
+        encoded.setBits(20, 20, @intFromBool(value.inverse));
+        encoded.setBits(33, 33, flag.register);
+        encoded.setBits(32, 32, flag.subregister);
+    }
+
+    return encoded;
+}
+
+pub fn patchJump(encoded_bytes: []u8, displacement_bytes: i32) Error!void {
+    if (encoded_bytes.len < 16)
+        return Error.InvalidRegister;
+
+    var encoded: EncodedInstruction = .{ .words = .{
+        std.mem.readInt(u64, encoded_bytes[0..8], .little),
+        std.mem.readInt(u64, encoded_bytes[8..16], .little),
+    } };
+    if (encoded.bits(6, 0) != @intFromEnum(eu.Opcode.jmpi))
+        return Error.UnsupportedOperand;
+    encoded.setBits(127, 96, @as(u32, @bitCast(displacement_bytes)));
+    std.mem.writeInt(u64, encoded_bytes[0..8], encoded.words[0], .little);
+    std.mem.writeInt(u64, encoded_bytes[8..16], encoded.words[1], .little);
+}
+
 pub fn encodeBinary(execution_size: device.ExecutionSize, binary: ir_instruction.Binary) Error!EncodedInstruction {
-    const opcode: u7 = switch (binary.opcode) {
-        .add => 64,
+    const opcode: eu.Opcode = switch (binary.opcode) {
+        .bitwise_xor => .xor,
+        .add => .add,
+        .multiply => .mul,
         else => return Error.UnsupportedOperand,
     };
 
@@ -135,27 +192,57 @@ pub fn encodeBinary(execution_size: device.ExecutionSize, binary: ir_instruction
     return encoded;
 }
 
+pub fn encodeCompare(execution_size: device.ExecutionSize, compare: ir_instruction.Compare) Error!EncodedInstruction {
+    const flag = switch (compare.destination) {
+        .physical => |value| value,
+        .virtual => return Error.UnsupportedOperand,
+    };
+    if (flag.register != 0 or flag.subregister > 1)
+        return Error.InvalidRegister;
+
+    var encoded = try instructionHeader(.cmp, execution_size);
+    setDestination(&encoded, .architecture, try hardwareType(compare.lhs.type), .{ .number = 0, .byte_offset = 0 }, 1);
+    try setSource0(&encoded, compare.lhs);
+    try setSource1(&encoded, compare.rhs);
+
+    const condition: eu.CompareCondition = switch (compare.opcode) {
+        .equal => .zero,
+        .not_equal => .not_zero,
+        .greater_than => .greater,
+        .greater_or_equal => .greater_or_equal,
+        .less_than => .less,
+        .less_or_equal => .less_or_equal,
+    };
+
+    encoded.setBits(27, 24, @intFromEnum(condition));
+    encoded.setBits(33, 33, flag.register);
+    encoded.setBits(32, 32, flag.subregister);
+    return encoded;
+}
+
 pub fn encodeMath(execution_size: device.ExecutionSize, math: ir_instruction.Math) Error!EncodedInstruction {
     if (execution_size != .simd8)
         return Error.UnsupportedExecutionSize;
 
-    var encoded = try instructionHeader(56, execution_size);
+    var encoded = try instructionHeader(.math, execution_size);
     const destination = try resolveGrf(math.destination.register, math.destination.region.byte_offset);
     setDestination(&encoded, .grf, try hardwareType(math.destination.type), destination, try horizontalStride(math.destination.region.horizontal_stride));
 
     try setSource0(&encoded, math.lhs);
     try setSource1(&encoded, math.rhs);
 
-    encoded.setBits(27, 24, switch (math.opcode) {
-        .integer_quotient => 12,
-    });
+    const function: eu.MathFunction = switch (math.opcode) {
+        .integer_quotient => .idiv,
+    };
+
+    encoded.setBits(27, 24, @intFromEnum(function));
 
     return encoded;
 }
 
-fn instructionHeader(opcode: u7, execution_size: device.ExecutionSize) Error!EncodedInstruction {
+fn instructionHeader(opcode: eu.Opcode, execution_size: device.ExecutionSize) Error!EncodedInstruction {
     var encoded: EncodedInstruction = .{};
-    encoded.setBits(6, 0, opcode);
+    encoded.setBits(6, 0, @intFromEnum(opcode));
     encoded.setBits(23, 21, try executionSize(execution_size));
     return encoded;
 }
@@ -334,4 +421,71 @@ fn verticalStride(stride: u8) Error!u4 {
         32 => 6,
         else => Error.InvalidRegion,
     };
+}
+
+fn testBinary(opcode: ir_instruction.BinaryOpcode) ir_instruction.Binary {
+    return .{
+        .opcode = opcode,
+        .destination = .{
+            .register = .{ .physical_grf = .{ .number = 3 } },
+            .type = .u32,
+        },
+        .lhs = .{
+            .register = .{ .physical_grf = .{ .number = 1 } },
+            .type = .u32,
+            .region = operand.Region.contiguous(.simd8),
+        },
+        .rhs = .{
+            .register = .{ .immediate = .{ .u32 = 16 } },
+            .type = .u32,
+            .region = operand.Region.broadcast(),
+        },
+    };
+}
+
+test "[gen9] EU encoder: encode integer multiply" {
+    const encoded = try encodeBinary(.simd8, testBinary(.multiply));
+    try std.testing.expectEqual(@as(u64, 65), encoded.bits(6, 0));
+    try std.testing.expectEqual(@as(u64, 3), encoded.bits(23, 21));
+}
+
+test "[gen9] EU encoder: encode bitwise XOR" {
+    const encoded = try encodeBinary(.simd8, testBinary(.bitwise_xor));
+    try std.testing.expectEqual(@as(u64, 7), encoded.bits(6, 0));
+    try std.testing.expectEqual(@as(u64, 16), encoded.bits(127, 96));
+}
+
+test "[gen9] EU encoder: encode unsigned less-than comparison" {
+    const encoded = try encodeCompare(.simd8, .{
+        .opcode = .less_than,
+        .destination = .{ .physical = .{ .register = 0, .subregister = 1 } },
+        .lhs = .{
+            .register = .{ .physical_grf = .{ .number = 1 } },
+            .type = .u32,
+            .region = operand.Region.contiguous(.simd8),
+        },
+        .rhs = .{
+            .register = .{ .physical_grf = .{ .number = 2 } },
+            .type = .u32,
+            .region = operand.Region.contiguous(.simd8),
+        },
+    });
+
+    try std.testing.expectEqual(@as(u64, 16), encoded.bits(6, 0));
+    try std.testing.expectEqual(@as(u64, 5), encoded.bits(27, 24));
+    try std.testing.expectEqual(@as(u64, 0), encoded.bits(33, 33));
+    try std.testing.expectEqual(@as(u64, 1), encoded.bits(32, 32));
+}
+
+test "[gen9] EU encoder: encode predicated jump" {
+    const encoded = try encodePredicatedJump(-32, .{
+        .flag = .{ .physical = .{ .register = 0, .subregister = 1 } },
+        .inverse = true,
+    });
+
+    try std.testing.expectEqual(@as(u64, @intFromEnum(eu.Opcode.jmpi)), encoded.bits(6, 0));
+    try std.testing.expectEqual(@as(u64, 1), encoded.bits(19, 16));
+    try std.testing.expectEqual(@as(u64, 1), encoded.bits(20, 20));
+    try std.testing.expectEqual(@as(u64, 1), encoded.bits(32, 32));
+    try std.testing.expectEqual(@as(i32, -32), @as(i32, @bitCast(@as(u32, @truncate(encoded.bits(127, 96))))));
 }

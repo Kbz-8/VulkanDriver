@@ -92,7 +92,7 @@ pub fn writeState(destination: []u8, kernel: []const u8, buffer_sizes: []const u
     const idd = layout.interface_descriptor_offset;
     putU32(destination, idd + 0, layout.kernel_offset);
     putU32(destination, idd + 4, 0);
-    putU32(destination, idd + 4 * @sizeOf(u32), @as(u32, @intCast(buffer_sizes.len)) | layout.binding_table_offset);
+    putU32(destination, idd + 4 * @sizeOf(u32), @as(u32, layout.surface_count) | layout.binding_table_offset);
     putU32(destination, idd + 6 * @sizeOf(u32), 1);
 
     return layout;
@@ -183,4 +183,27 @@ fn alignForward(value: usize, alignment: usize) usize {
 
 fn putU32(destination: []u8, offset: u32, value: u32) void {
     std.mem.writeInt(u32, destination[offset..][0..@sizeOf(u32)], value, .little);
+}
+
+test "[gen9] dispatch: interface descriptor exposes internal size-table surface" {
+    var state: [page_size]u8 = undefined;
+    const layout = try writeState(&state, &.{ 0xaa, 0xbb }, &.{ 4096, 8192 });
+
+    try std.testing.expectEqual(@as(u8, 3), layout.surface_count);
+
+    const descriptor_binding_table = std.mem.readInt(
+        u32,
+        state[layout.interface_descriptor_offset + 4 * @sizeOf(u32) ..][0..@sizeOf(u32)],
+        .little,
+    );
+    try std.testing.expectEqual(layout.binding_table_offset | @as(u32, layout.surface_count), descriptor_binding_table);
+
+    for (0..layout.surface_count) |index| {
+        const entry = std.mem.readInt(
+            u32,
+            state[layout.binding_table_offset + index * @sizeOf(u32) ..][0..@sizeOf(u32)],
+            .little,
+        );
+        try std.testing.expectEqual(layout.surface_offsets[index], entry);
+    }
 }

@@ -18,6 +18,8 @@ const message_lowering = @import("message_lowering.zig");
 const message_payloads = @import("message_payloads.zig");
 const resource_layout = @import("resource_layout.zig");
 const resource_lowering = @import("resource_lowering.zig");
+const regions = @import("regions.zig");
+const system_values = @import("system_values.zig");
 
 pub const Error = common_ir.Error ||
     block_arguments.Error ||
@@ -30,6 +32,7 @@ pub const Error = common_ir.Error ||
     message_payloads.Error ||
     resource_layout.Error ||
     resource_lowering.Error ||
+    system_values.Error ||
     flag_allocation.Error ||
     register_allocation.Error ||
     compute.Error ||
@@ -75,6 +78,7 @@ pub fn compile(allocator: std.mem.Allocator, module: *shader_ir.module.Module, d
     errdefer program.deinit();
 
     try abi.run(&program);
+    try system_values.run(&program);
     try block_arguments.run(allocator, &program);
     try parallel_copies.run(allocator, &program);
 
@@ -86,6 +90,7 @@ pub fn compile(allocator: std.mem.Allocator, module: *shader_ir.module.Module, d
     try message_lowering.run(&program);
     try message_addresses.run(&program);
     try message_payloads.run(&program);
+    regions.run(&program);
     try flag_allocation.run(allocator, &program);
     try register_allocation.run(allocator, &program);
 
@@ -98,6 +103,8 @@ pub fn compile(allocator: std.mem.Allocator, module: *shader_ir.module.Module, d
             error.UnsupportedExecutionSize,
             error.UnsupportedDataType,
             error.UnsupportedOperand,
+            error.InvalidRegister,
+            error.InvalidRegion,
             error.EotRegisterUnavailable,
             => null,
             else => return err,
