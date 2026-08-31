@@ -23,8 +23,8 @@
             .hash = "zmath-0.11.0-dev-wjwivdMsAwD-xaLj76YHUq3t9JDH-X16xuMTmnDzqbu2",
         },
         .cts_bin = .{
-            .url = "git+https://git.kbz8.me/kbz_8/Vulkan-CTS-bin.git#b316a134bc0aa7ac21d9c57a1df588809824dcdc",
-            .hash = "N-V-__8AAF9uOh0I4P_99za7N822J3JwsDaqONrFVrcEQo59",
+            .url = "git+https://git.kbz8.me/kbz_8/Vulkan-CTS-bin.git#190a251847dd8d41b1cd05493d5e2b5fd3d4cd32",
+            .hash = "N-V-__8AAF_AmSKsM1ucsQiHOIC71T6pFAneEsOu2hzlc2IA",
         },
         .drm = .{
             .url = "git+https://github.com/Kbz-8/zig-drm#409f58daa8f5174b2fcb8897f1c30f0b0729b611",

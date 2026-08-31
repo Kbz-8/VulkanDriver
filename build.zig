@@ -257,12 +257,17 @@ pub fn build(b: *std.Build) !void {
 }
 
 fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *Step.Compile, comptime mode: RunningMode) !*Step {
+    const arch = if (target.query.cpu_arch) |arch| arch else builtin.cpu.arch;
+    if (!arch.isX86())
+        return error.NoCTSForPlatform;
+
     const cts = b.dependency("cts_bin", .{});
 
     const cts_exe_name = cts.path(b.fmt("deqp-vk-{s}", .{
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
             .linux => "linux.x86_64",
             .windows => "windows.exe",
+            .macos => "macos.x86_64",
             else => return error.NoCTSForPlatform,
         },
     }));
@@ -334,12 +339,17 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
 }
 
 fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *Step.Compile, comptime mode: RunningMode) !*Step {
+    const arch = if (target.query.cpu_arch) |arch| arch else builtin.cpu.arch;
+    if (!arch.isX86())
+        return error.NoCTSForPlatform;
+
     const cts = b.dependency("cts_bin", .{});
 
     const cts_exe_name = cts.path(b.fmt("deqp-vk-{s}", .{
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
             .linux => "linux.x86_64",
             .windows => "windows.exe",
+            .macos => "macos.x86_64",
             else => return error.NoCTSForPlatform,
         },
     }));
