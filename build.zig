@@ -512,7 +512,7 @@ fn customPhi(
     _: *std.Build.Module,
     _: *std.Build.Module,
     base_c_mod: *std.Build.Module,
-    _: *std.Build.Module,
+    shader_ir_mod: *std.Build.Module,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     use_llvm: bool,
@@ -533,6 +533,7 @@ fn customPhi(
     options.addOption([]const u8, "phi_daemon_host_prefix", daemon_host_prefix);
 
     lib_mod.addImport("phi_c", base_c_mod);
+    lib_mod.addImport("shader_ir", shader_ir_mod);
 
     const miclib = b.lazyDependency("miclib", .{
         .target = target,

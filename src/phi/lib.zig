@@ -7,6 +7,7 @@ pub const proto = @import("phi_protocol_c");
 pub const config = base.config;
 pub const mic = @import("miclib");
 pub const scif = @import("scif.zig");
+pub const compiler = @import("compiler/compiler.zig");
 
 pub const PhiInstance = @import("PhiInstance.zig");
 pub const PhiDevice = @import("PhiDevice.zig");
@@ -75,6 +76,7 @@ test {
     std.testing.refAllDecls(PhiPhysicalDevice);
     std.testing.refAllDecls(PhiTransport);
     std.testing.refAllDecls(scif);
+    std.testing.refAllDecls(compiler);
     std.testing.refAllDecls(PhiPipeline);
     std.testing.refAllDecls(PhiPipelineCache);
     std.testing.refAllDecls(PhiPipelineLayout);
