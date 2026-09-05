@@ -332,9 +332,9 @@ pub fn dispatchBase(interface: *Interface, base_group_x: u32, base_group_y: u32,
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     if (group_count_x == 0 or group_count_y == 0 or group_count_z == 0)
         return;
-    if (base_group_x != 0 or base_group_y != 0 or base_group_z != 0 or
-        group_count_x != 1 or group_count_y != 1 or group_count_z != 1)
+    if (base_group_x != 0 or base_group_y != 0 or base_group_z != 0)
         return VkError.FeatureNotPresent;
+    const group_count: [3]u32 = .{ group_count_x, group_count_y, group_count_z };
 
     const pipeline = self.bound_compute_pipeline orelse return VkError.ValidationFailed;
     const artifact = pipeline.computeArtifact() orelse return VkError.FeatureNotPresent;
@@ -364,6 +364,7 @@ pub fn dispatchBase(interface: *Interface, base_group_x: u32, base_group_y: u32,
         sizes[resource.binding_table_index] = range.size;
     }
 
+    std.log.scoped(.FlintDispatch).debug("dispatch {d}x{d}x{d}, kernel {d} bytes, state buffers {any}, existing batch {d} dwords", .{ group_count_x, group_count_y, group_count_z, kernel.len, sizes[0..artifact.resources.bindings.len], self.batch.items.len });
     const old_engine = self.engine;
     try self.requireEngine(.render);
     const old_batch_len = self.batch.items.len;
@@ -386,7 +387,7 @@ pub fn dispatchBase(interface: *Interface, base_group_x: u32, base_group_y: u32,
     errdefer if (state_owned) state.deinit(&device.kmd, self.interface.owner.io());
 
     const mapped = try state.map(&device.kmd, self.interface.owner.io(), 0, gen9_dispatch.page_size);
-    const state_layout = gen9_dispatch.writeState(mapped, kernel, sizes[0..artifact.resources.bindings.len]) catch |err| switch (err) {
+    const state_layout = gen9_dispatch.writeState(mapped, kernel, sizes[0..artifact.resources.bindings.len], group_count) catch |err| switch (err) {
         error.StateTooLarge,
         error.UnsupportedBufferSize,
         error.EmptyBuffer,
@@ -465,7 +466,7 @@ pub fn dispatchBase(interface: *Interface, base_group_x: u32, base_group_y: u32,
     try self.emitSlice(&gen9_dispatch.pipeControl(gen9_dispatch.pipe_control.cs_stall));
     try self.emitSlice(&gen9_dispatch.mediaVfeState());
     try self.emitSlice(&gen9_dispatch.interfaceDescriptorLoad(state_layout.interface_descriptor_offset));
-    try self.emitSlice(&gen9_dispatch.gpgpuWalker(.{ 1, 1, 1 }, 1));
+    try self.emitSlice(&gen9_dispatch.gpgpuWalker(group_count, 1));
     try self.emitSlice(&gen9_dispatch.mediaStateFlush);
     try self.emitSlice(&gen9_dispatch.pipeControl(gen9_dispatch.pipe_control.cs_stall |
         gen9_dispatch.pipe_control.dc_flush));

@@ -22,6 +22,7 @@ pub const Error = error{
     InvalidLaneCount,
     InvalidMath,
     InvalidMessage,
+    InvalidNumWorkgroups,
     InvalidParallelCopyDestination,
     InvalidPayloadLayout,
     InvalidPhysicalRegister,
@@ -139,6 +140,13 @@ fn validateInstruction(program: *const program_ir.Program, inst: instruction.Ins
             try validateDestination(program, op.destination);
             if (op.component >= 3 or op.destination.type != .u32)
                 return Error.InvalidGlobalInvocationId;
+        },
+        .load_num_workgroups => |op| {
+            if (program.properties.system_values_lowered)
+                return Error.UnloweredSystemValue;
+            try validateDestination(program, op.destination);
+            if (op.component >= 3 or op.destination.type != .u32)
+                return Error.InvalidNumWorkgroups;
         },
         .load_buffer => |op| {
             if (program.properties.messages_lowered)
@@ -503,6 +511,21 @@ test "[ir] validator checks compute system values and resources" {
     try std.testing.expectError(Error.InvalidGlobalInvocationId, validate(&program));
     program.instructions.getMut(system_value_id).?.operation.load_global_invocation_id.component = 0;
 
+    program.properties.system_values_lowered = true;
+    try std.testing.expectError(Error.UnloweredSystemValue, validate(&program));
+    program.properties.system_values_lowered = false;
+
+    program.instructions.getMut(system_value_id).?.operation = .{ .load_num_workgroups = .{
+        .destination = .{ .register = .{ .virtual = register }, .type = .u32 },
+        .component = 2,
+    } };
+    try validate(&program);
+    program.instructions.getMut(system_value_id).?.operation.load_num_workgroups.component = 3;
+    try std.testing.expectError(Error.InvalidNumWorkgroups, validate(&program));
+    program.instructions.getMut(system_value_id).?.operation.load_num_workgroups.component = 0;
+    program.instructions.getMut(system_value_id).?.operation.load_num_workgroups.destination.type = .i32;
+    try std.testing.expectError(Error.InvalidNumWorkgroups, validate(&program));
+    program.instructions.getMut(system_value_id).?.operation.load_num_workgroups.destination.type = .u32;
     program.properties.system_values_lowered = true;
     try std.testing.expectError(Error.UnloweredSystemValue, validate(&program));
     program.properties.system_values_lowered = false;

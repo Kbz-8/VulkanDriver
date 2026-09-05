@@ -53,7 +53,7 @@ fn validateInstruction(inst: instruction.Instruction) Error!void {
     if (inst.predicate) |predicate|
         try validateFlag(predicate.flag);
     switch (inst.operation) {
-        .load_global_invocation_id => |op| try validateDestination(op.destination),
+        .load_global_invocation_id, .load_num_workgroups => |op| try validateDestination(op.destination),
         .load_buffer => |op| {
             try validateBufferReference(op.buffer);
             try validateDestination(op.destination);
@@ -172,9 +172,19 @@ fn validateEdge(edge: instruction.Edge) Error!void {
 fn validateFlag(flag: operand.FlagRef) Error!void {
     switch (flag) {
         .virtual => {},
-        .physical => |physical| if (physical.register != 0 or physical.subregister > 1)
+        .physical => |physical| if (physical.register > 1 or physical.subregister > 1)
             return Error.InvalidPhysicalFlag,
     }
+}
+
+test "[gen9] validator: accept all four flag halves and reject out of range flags" {
+    for (0..2) |register| {
+        for (0..2) |subregister| {
+            try validateFlag(.{ .physical = .{ .register = @intCast(register), .subregister = @intCast(subregister) } });
+        }
+    }
+    try std.testing.expectError(Error.InvalidPhysicalFlag, validateFlag(.{ .physical = .{ .register = 2 } }));
+    try std.testing.expectError(Error.InvalidPhysicalFlag, validateFlag(.{ .physical = .{ .register = 1, .subregister = 2 } }));
 }
 
 fn validatePayload(program: *const program_ir.Program) Error!void {

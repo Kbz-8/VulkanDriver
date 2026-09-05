@@ -2,6 +2,8 @@ const std = @import("std");
 
 pub const max_storage_surfaces: usize = 4;
 pub const max_surfaces: usize = max_storage_surfaces + 1;
+pub const num_workgroups_offset: u32 = max_storage_surfaces * @sizeOf(u32);
+const size_table_size: u32 = num_workgroups_offset + 3 * @sizeOf(u32);
 pub const page_size: usize = 4096;
 pub const surface_state_size: usize = 64;
 pub const interface_descriptor_size: usize = 32;
@@ -29,7 +31,7 @@ pub const StateLayout = struct {
     interface_descriptor_offset: u32,
 };
 
-pub fn writeState(destination: []u8, kernel: []const u8, buffer_sizes: []const u64) Error!StateLayout {
+pub fn writeState(destination: []u8, kernel: []const u8, buffer_sizes: []const u64, group_count: [3]u32) Error!StateLayout {
     if (buffer_sizes.len > max_storage_surfaces)
         return Error.TooManySurfaces;
 
@@ -69,7 +71,7 @@ pub fn writeState(destination: []u8, kernel: []const u8, buffer_sizes: []const u
 
     cursor = alignForward(cursor, @alignOf(u32));
     layout.size_table_offset = @intCast(cursor);
-    cursor += @max(buffer_sizes.len, 1) * @sizeOf(u32);
+    cursor += size_table_size;
 
     cursor = alignForward(cursor, 64);
     layout.interface_descriptor_offset = @intCast(cursor);
@@ -86,7 +88,10 @@ pub fn writeState(destination: []u8, kernel: []const u8, buffer_sizes: []const u
         putU32(destination, layout.binding_table_offset + @as(u32, @intCast(index * @sizeOf(u32))), layout.surface_offsets[index]);
         putU32(destination, layout.size_table_offset + @as(u32, @intCast(index * @sizeOf(u32))), @intCast(size));
     }
-    _ = try encodeRawBufferSurface(destination, layout.surface_offsets[size_table_surface], @max(buffer_sizes.len, 1) * @sizeOf(u32));
+    for (group_count, 0..) |count, component| {
+        putU32(destination, layout.size_table_offset + num_workgroups_offset + @as(u32, @intCast(component * @sizeOf(u32))), count);
+    }
+    _ = try encodeRawBufferSurface(destination, layout.surface_offsets[size_table_surface], size_table_size);
     putU32(destination, layout.binding_table_offset + @as(u32, @intCast(size_table_surface * @sizeOf(u32))), layout.surface_offsets[size_table_surface]);
 
     const idd = layout.interface_descriptor_offset;
@@ -185,9 +190,45 @@ fn putU32(destination: []u8, offset: u32, value: u32) void {
     std.mem.writeInt(u32, destination[offset..][0..@sizeOf(u32)], value, .little);
 }
 
+test "[gen9] dispatch: fixed size-table ABI includes workgroup counts" {
+    const buffer_sizes = [_]u64{ 4096, 8192, 16384, 32768 };
+    const group_count: [3]u32 = .{ 7, 11, 13 };
+    try std.testing.expectEqual(@as(u32, 16), num_workgroups_offset);
+    try std.testing.expectEqual(@as(u32, 28), size_table_size);
+
+    for (0..max_storage_surfaces + 1) |buffer_count| {
+        var state: [page_size]u8 = undefined;
+        const layout = try writeState(&state, &.{ 0xaa, 0xbb }, buffer_sizes[0..buffer_count], group_count);
+        for (0..max_storage_surfaces) |index| {
+            const actual = std.mem.readInt(u32, state[layout.size_table_offset + index * @sizeOf(u32) ..][0..4], .little);
+            const expected: u32 = if (index < buffer_count) @intCast(buffer_sizes[index]) else 0;
+            try std.testing.expectEqual(expected, actual);
+        }
+        for (group_count, 0..) |expected, component| {
+            const actual = std.mem.readInt(u32, state[layout.size_table_offset + num_workgroups_offset + component * @sizeOf(u32) ..][0..4], .little);
+            try std.testing.expectEqual(expected, actual);
+        }
+        const surface_offset = layout.surface_offsets[buffer_count];
+        try std.testing.expectEqual(@as(u32, 27), std.mem.readInt(u32, state[surface_offset + 8 ..][0..4], .little));
+        try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, state[surface_offset + 12 ..][0..4], .little));
+        try std.testing.expect(layout.size_table_offset + size_table_size <= layout.interface_descriptor_offset);
+    }
+}
+
+test "[gen9] dispatch: walker preserves multidimensional group counts with one active lane" {
+    const words = gpgpuWalker(.{ 7, 11, 13 }, 1);
+    try std.testing.expectEqual(@as(u32, 7), words[7]);
+    try std.testing.expectEqual(@as(u32, 11), words[10]);
+    try std.testing.expectEqual(@as(u32, 13), words[12]);
+    try std.testing.expectEqual(@as(u32, 1), words[13]);
+    try std.testing.expectEqual(@as(u32, 0), words[4]);
+    for ([_]usize{ 5, 8, 11 }) |index|
+        try std.testing.expectEqual(@as(u32, 0), words[index]);
+}
+
 test "[gen9] dispatch: interface descriptor exposes internal size-table surface" {
     var state: [page_size]u8 = undefined;
-    const layout = try writeState(&state, &.{ 0xaa, 0xbb }, &.{ 4096, 8192 });
+    const layout = try writeState(&state, &.{ 0xaa, 0xbb }, &.{ 4096, 8192 }, .{ 1, 1, 1 });
 
     try std.testing.expectEqual(@as(u8, 3), layout.surface_count);
 

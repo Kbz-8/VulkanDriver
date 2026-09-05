@@ -20,7 +20,11 @@ const JumpFixup = struct {
 pub fn encode(allocator: std.mem.Allocator, program: *program_ir.Program) Error![]u8 {
     if (!program.properties.registers_allocated)
         return Error.InvalidProgram;
-    if (program.program_data.total_grf_count > eu.eot_payload_grf)
+
+    if (program.program_data.total_grf_count > program.device_info.grf_count)
+        return Error.InvalidProgram;
+
+    if (program.device_info.grf_count <= eu.eot_payload_grf)
         return Error.EotRegisterUnavailable;
 
     const entry_id = program.entry_block orelse return Error.InvalidProgram;
@@ -81,7 +85,7 @@ pub fn encode(allocator: std.mem.Allocator, program: *program_ir.Program) Error!
                 const instructions = try eu.encodeEndThread(header);
                 for (instructions) |encoded|
                     try appendInstruction(allocator, &kernel, encoded);
-                program.program_data.total_grf_count = eu.eot_payload_grf + 1;
+                program.program_data.total_grf_count = @max(program.program_data.total_grf_count, eu.eot_payload_grf + 1);
             },
             .@"unreachable" => return Error.UnsupportedControlFlow,
         }
@@ -143,6 +147,38 @@ fn appendInstruction(allocator: std.mem.Allocator, kernel: *std.ArrayList(u8), i
     std.mem.writeInt(u64, bytes[0..8], instruction.words[0], .little);
     std.mem.writeInt(u64, bytes[8..16], instruction.words[1], .little);
     try kernel.appendSlice(allocator, &bytes);
+}
+
+test "[gen9] kernel encoder: use upper GRFs and encode repeatedly" {
+    const device_info = @import("../../../device.zig").DeviceInfo{
+        .generation = .gen9,
+        .platform = .skylake,
+        .pci_device_id = 0x1912,
+        .grf_count = 128,
+    };
+    var program = program_ir.Program.init(std.testing.allocator, .{ 1, 1, 1 }, device_info, .simd8);
+    defer program.deinit();
+    const entry = try program.addBlock("entry");
+    _ = try program.appendInstruction(entry, .simd8, null, .{ .move = .{
+        .destination = .{ .register = .{ .physical_grf = .{ .number = 127 } }, .type = .u32 },
+        .source = .{ .register = .{ .physical_grf = .{ .number = 112 } }, .type = .u32, .region = @import("../../../ir/operand.zig").Region.contiguous(.simd8) },
+    } });
+    try program.setTerminator(entry, .end_thread);
+    program.payload.header_grf = .{ .number = 0 };
+    program.properties.registers_allocated = true;
+    program.program_data.total_grf_count = 128;
+
+    const first = try encode(std.testing.allocator, &program);
+    defer std.testing.allocator.free(first);
+    try std.testing.expectEqual(@as(u16, 128), program.program_data.total_grf_count);
+    const second = try encode(std.testing.allocator, &program);
+    defer std.testing.allocator.free(second);
+    try std.testing.expectEqualSlices(u8, first, second);
+    try std.testing.expectEqual(@as(u64, 127), (std.mem.readInt(u64, first[0..8], .little) >> 53) & 0xff);
+
+    program.device_info.grf_count = 112;
+    program.program_data.total_grf_count = 112;
+    try std.testing.expectError(Error.EotRegisterUnavailable, encode(std.testing.allocator, &program));
 }
 
 test "[gen9] kernel encoder: patch unconditional jump between blocks" {

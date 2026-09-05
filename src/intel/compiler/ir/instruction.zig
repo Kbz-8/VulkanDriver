@@ -9,6 +9,8 @@ pub const LoadGlobalInvocationId = struct {
     component: u8,
 };
 
+pub const LoadNumWorkgroups = LoadGlobalInvocationId;
+
 pub const BufferReference = union(enum) {
     logical: ids.StorageBufferId,
     binding_table: u8,
@@ -113,6 +115,7 @@ pub const Math = struct {
 
 pub const Operation = union(enum) {
     load_global_invocation_id: LoadGlobalInvocationId,
+    load_num_workgroups: LoadNumWorkgroups,
     load_buffer: LoadBuffer,
     store_buffer: StoreBuffer,
     array_length: ArrayLength,

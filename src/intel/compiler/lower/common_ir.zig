@@ -764,7 +764,7 @@ const LoweringState = struct {
         switch (variable.semantic) {
             .builtin => |builtin| switch (builtin) {
                 .global_invocation_id => try self.lowerGlobalInvocationId(block_id, result_id, variable),
-                .num_workgroups => try self.lowerNumWorkgroups(result_id),
+                .num_workgroups => try self.lowerNumWorkgroups(block_id, result_id),
                 .workgroup_size => base.unsupported("workgroup size builtin is not yet supported in Flint", .{}),
                 else => return Error.UnsupportedOperation,
             },
@@ -799,26 +799,22 @@ const LoweringState = struct {
         }
     }
 
-    fn lowerNumWorkgroups(self: *LoweringState, result_id: shader_ir.id.ValueId) Error!void {
+    fn lowerNumWorkgroups(self: *LoweringState, block_id: ids.BlockId, result_id: shader_ir.id.ValueId) Error!void {
         const result_value = self.lowerer.module.values.get(result_id) orelse return Error.InvalidModule;
         const lowered_type = try self.lowerType(result_value.type);
 
         if (lowered_type.element_type != .u32 or lowered_type.component_count != 3)
             return Error.UnsupportedType;
 
-        const vec = try self.storage.alloc(operand.Source, 3);
-
-        for (self.lowerer.module.execution_modes.workgroup_size.?, vec) |value, *component| {
-            component.* = .{
-                .register = .{
-                    .immediate = .{ .u32 = value },
+        const result_components = try self.addRegisterLocation(result_id, .temporary);
+        for (result_components, 0..) |result_component, component_index| {
+            try self.appendInstruction(block_id, null, .{
+                .load_num_workgroups = .{
+                    .destination = try destinationFromSource(result_component),
+                    .component = @intCast(component_index),
                 },
-                .type = .u32,
-                .region = operand.Region.broadcast(),
-            };
+            });
         }
-
-        try self.putLocation(result_id, .{ .components = vec });
     }
 
     fn lowerStoreInterface(self: *LoweringState, block_id: ids.BlockId, result: ?shader_ir.id.ValueId, operation: shader_ir.instruction.StoreInterface) Error!void {
@@ -1395,6 +1391,42 @@ test "[ir] Lower: global invocation ID" {
         "[simd8] load_global_invocation_id %id_y:u32, component(1)",
         "[simd8] load_global_invocation_id %id_z:u32, component(2)",
     }, &.{});
+}
+
+test "[ir] Lower: number of workgroups is a runtime system value" {
+    const source =
+        \\shader compute @main
+        \\{
+        \\    @group_count: vec3[u32] = input[builtin(num_workgroups)]
+        \\    @destination: vec3[u32] = storage_buffer[set(0), binding(0)]
+        \\    %offset: constant u32 = 0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            branch .load()
+        \\        .load():
+        \\            %count: vec3[u32] = load_interface @group_count
+        \\            store_buffer @destination, %offset, %count
+        \\            return
+        \\    }
+        \\}
+    ;
+
+    try expectLoweredFragments(source, &.{
+        "%count_x: vgrf u32[8], class(temporary)",
+        "%count_y: vgrf u32[8], class(temporary)",
+        "%count_z: vgrf u32[8], class(temporary)",
+        ".load:\n    [simd8] load_num_workgroups %count_x:u32, component(0)",
+        "[simd8] load_num_workgroups %count_y:u32, component(1)",
+        "[simd8] load_num_workgroups %count_z:u32, component(2)",
+        "[simd8] store_buffer @destination, 0:u32, %count_x:u32",
+        "[simd8] store_buffer @destination, 0:u32, offset(4), %count_y:u32",
+        "[simd8] store_buffer @destination, 0:u32, offset(8), %count_z:u32",
+    }, &.{
+        "store_buffer @destination, 0:u32, 1:u32",
+        "store_buffer @destination, 0:u32, offset(4), 1:u32",
+        "store_buffer @destination, 0:u32, offset(8), 1:u32",
+    });
 }
 
 test "[ir] Lower: vector storage-buffer operations" {

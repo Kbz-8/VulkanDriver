@@ -78,7 +78,7 @@ pub fn compile(allocator: std.mem.Allocator, module: *shader_ir.module.Module, d
     errdefer program.deinit();
 
     try abi.run(&program);
-    try system_values.run(&program);
+
     try block_arguments.run(allocator, &program);
     try parallel_copies.run(allocator, &program);
 
@@ -86,6 +86,7 @@ pub fn compile(allocator: std.mem.Allocator, module: *shader_ir.module.Module, d
     errdefer resources.deinit(allocator);
 
     try resource_lowering.run(&program, &resources);
+    try system_values.run(&program, resources.bindings.len);
     try array_length_lowering.run(&program, &resources);
     try message_lowering.run(&program);
     try message_addresses.run(&program);

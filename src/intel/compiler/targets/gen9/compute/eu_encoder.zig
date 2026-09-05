@@ -149,7 +149,7 @@ fn encodeJumpWithPredicate(displacement_bytes: i32, predicate: ?operand.Predicat
             .physical => |physical| physical,
             .virtual => return Error.UnsupportedOperand,
         };
-        if (flag.register != 0 or flag.subregister > 1)
+        if (flag.register > 1 or flag.subregister > 1)
             return Error.InvalidRegister;
 
         encoded.setBits(19, 16, 1); // Normal predicate control.
@@ -197,7 +197,7 @@ pub fn encodeCompare(execution_size: device.ExecutionSize, compare: ir_instructi
         .physical => |value| value,
         .virtual => return Error.UnsupportedOperand,
     };
-    if (flag.register != 0 or flag.subregister > 1)
+    if (flag.register > 1 or flag.subregister > 1)
         return Error.InvalidRegister;
 
     var encoded = try instructionHeader(.cmp, execution_size);
@@ -475,6 +475,39 @@ test "[gen9] EU encoder: encode unsigned less-than comparison" {
     try std.testing.expectEqual(@as(u64, 5), encoded.bits(27, 24));
     try std.testing.expectEqual(@as(u64, 0), encoded.bits(33, 33));
     try std.testing.expectEqual(@as(u64, 1), encoded.bits(32, 32));
+}
+
+test "[gen9] EU encoder: encode all flag halves and reject out of range flags" {
+    const binary = testBinary(.add);
+    var compare: ir_instruction.Compare = .{
+        .opcode = .equal,
+        .destination = .{ .physical = .{} },
+        .lhs = binary.lhs,
+        .rhs = binary.rhs,
+    };
+    for (0..2) |register| {
+        for (0..2) |subregister| {
+            const flag: operand.FlagRef = .{ .physical = .{
+                .register = @intCast(register),
+                .subregister = @intCast(subregister),
+            } };
+            compare.destination = flag;
+            const encoded_compare = try encodeCompare(.simd8, compare);
+            const encoded_jump = try encodePredicatedJump(16, .{ .flag = flag });
+            for ([_]EncodedInstruction{ encoded_compare, encoded_jump }) |encoded| {
+                try std.testing.expectEqual(@as(u64, @intCast(register)), encoded.bits(33, 33));
+                try std.testing.expectEqual(@as(u64, @intCast(subregister)), encoded.bits(32, 32));
+            }
+        }
+    }
+    for ([_]operand.PhysicalFlag{
+        .{ .register = 2 },
+        .{ .register = 1, .subregister = 2 },
+    }) |physical| {
+        compare.destination = .{ .physical = physical };
+        try std.testing.expectError(Error.InvalidRegister, encodeCompare(.simd8, compare));
+        try std.testing.expectError(Error.InvalidRegister, encodePredicatedJump(16, .{ .flag = .{ .physical = physical } }));
+    }
 }
 
 test "[gen9] EU encoder: encode predicated jump" {

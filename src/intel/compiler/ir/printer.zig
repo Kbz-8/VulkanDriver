@@ -111,8 +111,8 @@ fn writeInstruction(program: *const program_ir.Program, writer: *std.Io.Writer, 
 
 fn writeOperation(program: *const program_ir.Program, writer: *std.Io.Writer, execution_size: device.ExecutionSize, operation: inst_ir.Operation) !void {
     switch (operation) {
-        .load_global_invocation_id => |op| {
-            try writer.writeAll("load_global_invocation_id ");
+        .load_global_invocation_id, .load_num_workgroups => |op| {
+            try writer.print("{s} ", .{@tagName(operation)});
             try writeDestination(program, writer, execution_size, op.destination);
             try writer.print(", component({d})", .{op.component});
         },

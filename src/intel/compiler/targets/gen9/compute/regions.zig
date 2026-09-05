@@ -43,7 +43,22 @@ fn legalizeSource(source: *operand.Source, execution_size: @import("../../../dev
     const byte_offset = source.region.byte_offset;
     source.region = switch (source.register) {
         .immediate => operand.Region.broadcast(),
+        // Physical payload operands already describe the hardware ABI, including
+        // scalar header fields that must be broadcast rather than read as vectors
+        .physical_grf => source.region,
         else => operand.Region.contiguous(execution_size),
     };
     source.region.byte_offset = byte_offset;
+}
+
+test "[gen9] regions: preserve scalar physical payload reads" {
+    const std = @import("std");
+    var source: operand.Source = .{
+        .register = .{ .physical_grf = .{ .number = 0, .byte_offset = 28 } },
+        .type = .u32,
+        .region = operand.Region.broadcast(),
+    };
+    legalizeSource(&source, .simd8);
+    try std.testing.expectEqual(operand.Region.broadcast(), source.region);
+    try std.testing.expectEqual(@as(u8, 28), source.register.physical_grf.byte_offset);
 }

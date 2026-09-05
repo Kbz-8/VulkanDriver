@@ -320,6 +320,6 @@ test "Flint pipeline: lower common compute IR" {
     const text = try compiler.printer.allocPrint(std.testing.allocator, program);
     defer std.testing.allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "load_global_invocation_id") == null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "mov r1:u32, 0:u32") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "r0:u32[byte=4, broadcast]") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "surface_message write bti(0)") != null);
 }

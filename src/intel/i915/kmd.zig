@@ -123,19 +123,7 @@ pub const Device = struct {
                 group_index = groups.items.len - 1;
             }
 
-            const domain: u32 = switch (relocation.domain) {
-                .none => 0,
-                .render => _i915.gem_domain_render,
-                .instruction => _i915.gem_domain_instruction,
-            };
-            groups.items[group_index].entries.append(allocator, .{
-                .target_handle = relocation.target_handle,
-                .delta = relocation.delta,
-                .offset = relocation.offset,
-                .presumed_offset = 0,
-                .read_domains = if (relocation.read) domain else 0,
-                .write_domain = if (relocation.write) domain else 0,
-            }) catch return VkError.OutOfHostMemory;
+            groups.items[group_index].entries.append(allocator, relocationEntry(relocation)) catch return VkError.OutOfHostMemory;
         }
 
         var objects = std.ArrayList(_i915.ExecObject2).empty;
@@ -201,6 +189,24 @@ pub const Device = struct {
         ) catch return VkError.DeviceLost;
     }
 };
+
+fn relocationEntry(relocation: common_kmd.Relocation) _i915.RelocationEntry {
+    const domain: u32 = switch (relocation.domain) {
+        .none => 0,
+        .render => _i915.gem_domain_render,
+        .instruction => _i915.gem_domain_instruction,
+    };
+    return .{
+        .target_handle = relocation.target_handle,
+        .delta = relocation.delta,
+        .offset = relocation.offset,
+        // GPU address zero is valid. These locations have not been patched yet,
+        // so never let i915 skip the initial relocation, including its delta.
+        .presumed_offset = std.math.maxInt(u64),
+        .read_domains = if (relocation.read) domain else 0,
+        .write_domain = if (relocation.write) domain else 0,
+    };
+}
 
 pub const Memory = struct {
     handle: u32,
@@ -292,3 +298,21 @@ pub const Memory = struct {
         ) catch return VkError.DeviceLost;
     }
 };
+
+test "[i915] initial relocations force patching even at GPU address zero" {
+    const entry = relocationEntry(.{
+        .source_handle = 4,
+        .target_handle = 4,
+        .offset = 64,
+        .delta = 1920,
+        .read = true,
+        .write = false,
+        .domain = .render,
+    });
+    try std.testing.expectEqual(std.math.maxInt(u64), entry.presumed_offset);
+    try std.testing.expectEqual(@as(u32, 1920), entry.delta);
+    try std.testing.expectEqual(@as(u64, 64), entry.offset);
+    try std.testing.expectEqual(@as(u32, 4), entry.target_handle);
+    try std.testing.expectEqual(_i915.gem_domain_render, entry.read_domains);
+    try std.testing.expectEqual(@as(u32, 0), entry.write_domain);
+}
