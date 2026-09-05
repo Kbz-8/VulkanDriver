@@ -6,7 +6,7 @@ const Runtime = @import("../Runtime.zig");
 
 const ir = shader_ir.ir;
 
-test "[interpreter] fragment discard is an execution outcome" {
+test "[interpreter] fragment discard" {
     var module = try ir.parser.parseString(std.testing.allocator,
         \\ shader fragment @main
         \\ {
@@ -27,7 +27,7 @@ test "[interpreter] fragment discard is an execution outcome" {
     try std.testing.expectEqual(Runtime.Outcome.discarded, try runtime.run(&program, .{}));
 }
 
-test "[interpreter] execution budget stops an infinite loop" {
+test "[interpreter] execution budget stops infinite loop" {
     var module = try ir.parser.parseString(std.testing.allocator,
         \\ shader compute @main
         \\ {

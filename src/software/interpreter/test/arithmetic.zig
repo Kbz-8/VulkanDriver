@@ -14,7 +14,7 @@ fn bitsF32(value: u32) f32 {
     return @bitCast(value);
 }
 
-test "[interpreter] vector floating-point arithmetic" {
+test "[interpreter] vector float arithmetic" {
     var module = try ir.parser.parseString(std.testing.allocator,
         \\ shader vertex @main
         \\ {

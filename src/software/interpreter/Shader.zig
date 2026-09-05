@@ -54,9 +54,7 @@ pub fn compile(allocator: std.mem.Allocator, module: *SoftShaderModule, stage: *
     };
     errdefer program.deinit();
 
-    if (!hasCompatibleInterface(&program, expected_stage) or
-        (expected_stage == .compute and module_ir.execution_modes.workgroup_size == null))
-    {
+    if (!hasCompatibleInterface(&program, expected_stage) or (expected_stage == .compute and module_ir.execution_modes.workgroup_size == null)) {
         std.log.scoped(.IrInterpreter).err("unsupported stage interface or execution modes", .{});
         return VkError.ValidationFailed;
     }

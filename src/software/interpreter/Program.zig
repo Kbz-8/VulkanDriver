@@ -43,6 +43,7 @@ stage: module_ir.Stage,
 entry_pc: u32,
 register_count: usize,
 scratch_count: usize,
+array_lengths: []const bc.ArrayLength,
 code: []const bc.Instruction,
 edges: []const bc.Edge,
 copies: []const bc.Copy,
@@ -66,6 +67,7 @@ pub fn compile(backing_allocator: std.mem.Allocator, module: *const module_ir.Mo
         .entry_pc = lowerer.entry_pc,
         .register_count = lowerer.register_count,
         .scratch_count = lowerer.scratch_count,
+        .array_lengths = lowerer.array_lengths.items,
         .code = lowerer.code.items,
         .edges = lowerer.edges.items,
         .copies = lowerer.copies.items,
@@ -107,6 +109,7 @@ const Lowerer = struct {
     register_count: usize = 0,
     scratch_count: usize = 0,
     entry_pc: u32 = 0,
+    array_lengths: std.ArrayList(bc.ArrayLength) = .empty,
     code: std.ArrayList(bc.Instruction) = .empty,
     edges: std.ArrayList(bc.Edge) = .empty,
     copies: std.ArrayList(bc.Copy) = .empty,
@@ -387,7 +390,22 @@ const Lowerer = struct {
                 try self.emit(.store_buffer, src.components, src.base, byte_offset, bc.invalid_register, bc.invalid_register, @intFromEnum(op.resource));
             },
             .call => return CompileError.UnsupportedOperation,
-            .array_length => return CompileError.UnsupportedOperation,
+            .array_length => |op| {
+                const dst = result orelse return CompileError.InvalidOperation;
+                const byte_offset = try self.bufferOffset(op.byte_offset);
+                _ = try self.storageBuffer(op.resource);
+
+                if (dst.components != 1 or dst.kind != .unsigned_integer)
+                    return CompileError.InvalidOperation;
+
+                const metadata_index = try u32Index(self.array_lengths.items.len);
+                try self.array_lengths.append(self.allocator, .{
+                    .resource = @intFromEnum(op.resource),
+                    .stride = op.stride,
+                });
+
+                try self.emit(.array_length, 1, dst.base, byte_offset, bc.invalid_register, bc.invalid_register, metadata_index);
+            },
         }
     }
 

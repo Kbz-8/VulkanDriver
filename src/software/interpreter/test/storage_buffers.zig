@@ -64,7 +64,26 @@ const bounds_shader =
     \\ }
 ;
 
-test "[interpreter] storage-buffer vector load and store use portable little-endian words" {
+const array_length_shader =
+    \\ shader compute @main
+    \\ {
+    \\     @source: runtime_array[u32] = storage_buffer[set(0), binding(0)]
+    \\     @destination: u32 = storage_buffer[set(0), binding(1)]
+    \\
+    \\     %zero: constant u32 = 0
+    \\     %offset: constant u32 = 8
+    \\
+    \\     fn @main() -> void
+    \\     {
+    \\         .entry():
+    \\             %length: u32 = array_length @source, %offset, stride 4
+    \\             store_buffer @destination, %zero, %length
+    \\             return
+    \\     }
+    \\ }
+;
+
+test "[interpreter] ssbo vector load/store use portable little-endian words" {
     var module = try ir.parser.parseString(std.testing.allocator, copy_shader);
     defer module.deinit();
 
@@ -92,7 +111,7 @@ test "[interpreter] storage-buffer vector load and store use portable little-end
     try std.testing.expectEqual(@as(u8, 0xcc), destination[19]);
 }
 
-test "[interpreter] storage-buffer scalar load and store interpret little-endian words" {
+test "[interpreter] ssbo scalar load/store interpret little-endian words" {
     var module = try ir.parser.parseString(std.testing.allocator, scalar_shader);
     defer module.deinit();
 
@@ -108,7 +127,7 @@ test "[interpreter] storage-buffer scalar load and store interpret little-endian
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0x79, 0x56, 0x34, 0x12 }, &destination);
 }
 
-test "[interpreter] storage-buffer accesses report unbound and out-of-bounds resources" {
+test "[interpreter] ssbo access oob resources" {
     var module = try ir.parser.parseString(std.testing.allocator, bounds_shader);
     defer module.deinit();
 
@@ -124,4 +143,23 @@ test "[interpreter] storage-buffer accesses report unbound and out-of-bounds res
     try std.testing.expectError(Runtime.RuntimeError.BufferOutOfBounds, runtime.run(&program, .{ .resource_buffers = &resources }));
     const unchanged = [_]u8{0xa5} ** 8;
     try std.testing.expectEqualSlices(u8, &unchanged, &buffer);
+}
+
+test "[interpreter] ssbo array length" {
+    var module = try ir.parser.parseString(std.testing.allocator, array_length_shader);
+    defer module.deinit();
+
+    var program = try Program.compile(std.testing.allocator, &module);
+    defer program.deinit();
+    var runtime = try Runtime.init(std.testing.allocator, &program);
+    defer runtime.deinit();
+
+    var source = [_]u8{ 0xff, 0x78, 0x56, 0x34, 0x12, 0xef, 0xcd, 0xab, 0x90, 0x04, 0x03, 0x02, 0x01, 0xdd, 0xcc, 0xbb, 0xaa };
+    var destination = [_]u8{0xcc} ** 20;
+    const resources = [_]?[]u8{ source[0..], destination[0..] };
+
+    try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{ .resource_buffers = &resources }));
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 2, 0, 0, 0 }, destination[0..4]);
+    const unchanged = [_]u8{0xcc} ** 16;
+    try std.testing.expectEqualSlices(u8, &unchanged, destination[4..]);
 }

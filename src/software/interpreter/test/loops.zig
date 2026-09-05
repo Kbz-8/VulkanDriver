@@ -6,7 +6,7 @@ const Runtime = @import("../Runtime.zig");
 
 const ir = shader_ir.ir;
 
-test "[interpreter] loop back edges copy block arguments in parallel" {
+test "[interpreter] loop copy block arguments in parallel" {
     var module = try ir.parser.parseString(std.testing.allocator,
         \\ shader compute @main
         \\ {

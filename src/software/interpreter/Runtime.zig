@@ -98,45 +98,13 @@ pub fn run(self: *Self, program: *const Program, options: RunOptions) RuntimeErr
         pc += 1;
 
         switch (instruction.opcode) {
-            .copy => self.copy(instruction),
-            .negate_i32 => self.unaryInt(instruction, .negate),
-            .negate_f32 => self.unaryFloat(instruction),
-            .logical_not => self.unaryInt(instruction, .logical_not),
-            .bitwise_not => self.unaryInt(instruction, .bitwise_not),
-            .integer_add => try self.binaryInt(instruction, .add),
-            .integer_subtract => try self.binaryInt(instruction, .subtract),
-            .integer_multiply => try self.binaryInt(instruction, .multiply),
-            .unsigned_divide => try self.binaryInt(instruction, .unsigned_divide),
-            .signed_divide => try self.binaryInt(instruction, .signed_divide),
-            .unsigned_modulo => try self.binaryInt(instruction, .unsigned_modulo),
-            .signed_modulo => try self.binaryInt(instruction, .signed_modulo),
-            .shift_left => try self.binaryInt(instruction, .shift_left),
-            .logical_shift_right => try self.binaryInt(instruction, .logical_shift_right),
+            .@"unreachable" => return RuntimeError.UnreachableExecuted,
+            .array_length => try self.arrayLength(program, options.resource_buffers, instruction),
             .arithmetic_shift_right => try self.binaryInt(instruction, .arithmetic_shift_right),
             .bitwise_and => try self.binaryInt(instruction, .bitwise_and),
+            .bitwise_not => self.unaryInt(instruction, .bitwise_not),
             .bitwise_or => try self.binaryInt(instruction, .bitwise_or),
             .bitwise_xor => try self.binaryInt(instruction, .bitwise_xor),
-            .logical_and => try self.binaryInt(instruction, .logical_and),
-            .logical_or => try self.binaryInt(instruction, .logical_or),
-            .float_add => self.binaryFloat(instruction, .add),
-            .float_subtract => self.binaryFloat(instruction, .subtract),
-            .float_multiply => self.binaryFloat(instruction, .multiply),
-            .float_divide => self.binaryFloat(instruction, .divide),
-            .float_modulo => self.binaryFloat(instruction, .modulo),
-            .compare_equal => self.compareInt(instruction, .equal),
-            .compare_not_equal => self.compareInt(instruction, .not_equal),
-            .compare_unsigned_less => self.compareInt(instruction, .unsigned_less),
-            .compare_signed_less => self.compareInt(instruction, .signed_less),
-            .compare_ordered_float_equal => self.compareFloat(instruction, .ordered_equal),
-            .compare_unordered_float_equal => self.compareFloat(instruction, .unordered_equal),
-            .compare_ordered_float_not_equal => self.compareFloat(instruction, .ordered_not_equal),
-            .compare_unordered_float_not_equal => self.compareFloat(instruction, .unordered_not_equal),
-            .compare_ordered_float_less => self.compareFloat(instruction, .ordered_less),
-            .compare_unordered_float_less => self.compareFloat(instruction, .unordered_less),
-            .select => self.select(instruction),
-            .load_buffer => try self.loadBuffer(program, options.resource_buffers, instruction),
-            .store_buffer => try self.storeBuffer(program, options.resource_buffers, instruction),
-            .jump_edge => pc = try self.applyEdge(program, instruction.immediate),
             .branch => {
                 if (instruction.immediate >= program.branches.len)
                     return RuntimeError.InvalidBytecode;
@@ -144,9 +112,42 @@ pub fn run(self: *Self, program: *const Program, options: RunOptions) RuntimeErr
                 const branch = program.branches[instruction.immediate];
                 pc = try self.applyEdge(program, if (self.registers[instruction.a] != 0) branch.true_edge else branch.false_edge);
             },
-            .return_void => return .returned,
+            .compare_equal => self.compareInt(instruction, .equal),
+            .compare_not_equal => self.compareInt(instruction, .not_equal),
+            .compare_ordered_float_equal => self.compareFloat(instruction, .ordered_equal),
+            .compare_ordered_float_less => self.compareFloat(instruction, .ordered_less),
+            .compare_ordered_float_not_equal => self.compareFloat(instruction, .ordered_not_equal),
+            .compare_signed_less => self.compareInt(instruction, .signed_less),
+            .compare_unordered_float_equal => self.compareFloat(instruction, .unordered_equal),
+            .compare_unordered_float_less => self.compareFloat(instruction, .unordered_less),
+            .compare_unordered_float_not_equal => self.compareFloat(instruction, .unordered_not_equal),
+            .compare_unsigned_less => self.compareInt(instruction, .unsigned_less),
+            .copy => self.copy(instruction),
             .discard => return .discarded,
-            .@"unreachable" => return RuntimeError.UnreachableExecuted,
+            .float_add => self.binaryFloat(instruction, .add),
+            .float_divide => self.binaryFloat(instruction, .divide),
+            .float_modulo => self.binaryFloat(instruction, .modulo),
+            .float_multiply => self.binaryFloat(instruction, .multiply),
+            .float_subtract => self.binaryFloat(instruction, .subtract),
+            .integer_add => try self.binaryInt(instruction, .add),
+            .integer_multiply => try self.binaryInt(instruction, .multiply),
+            .integer_subtract => try self.binaryInt(instruction, .subtract),
+            .jump_edge => pc = try self.applyEdge(program, instruction.immediate),
+            .load_buffer => try self.loadBuffer(program, options.resource_buffers, instruction),
+            .logical_and => try self.binaryInt(instruction, .logical_and),
+            .logical_not => self.unaryInt(instruction, .logical_not),
+            .logical_or => try self.binaryInt(instruction, .logical_or),
+            .logical_shift_right => try self.binaryInt(instruction, .logical_shift_right),
+            .negate_f32 => self.unaryFloat(instruction),
+            .negate_i32 => self.unaryInt(instruction, .negate),
+            .return_void => return .returned,
+            .select => self.select(instruction),
+            .shift_left => try self.binaryInt(instruction, .shift_left),
+            .signed_divide => try self.binaryInt(instruction, .signed_divide),
+            .signed_modulo => try self.binaryInt(instruction, .signed_modulo),
+            .store_buffer => try self.storeBuffer(program, options.resource_buffers, instruction),
+            .unsigned_divide => try self.binaryInt(instruction, .unsigned_divide),
+            .unsigned_modulo => try self.binaryInt(instruction, .unsigned_modulo),
         }
     }
 }
@@ -172,6 +173,33 @@ const BinaryInt = enum {
 const BinaryFloat = enum { add, subtract, multiply, divide, modulo };
 const CompareInt = enum { equal, not_equal, unsigned_less, signed_less };
 const CompareFloat = enum { ordered_equal, unordered_equal, ordered_not_equal, unordered_not_equal, ordered_less, unordered_less };
+
+fn arrayLength(self: *Self, program: *const Program, resource_buffers: []const ?[]u8, instruction: bc.Instruction) RuntimeError!void {
+    if (instruction.components != 1)
+        return RuntimeError.InvalidBytecode;
+
+    if (instruction.a >= self.registers.len or instruction.b >= self.registers.len)
+        return RuntimeError.InvalidBytecode;
+
+    if (instruction.immediate >= program.array_lengths.len)
+        return RuntimeError.InvalidBytecode;
+
+    const metadata = program.array_lengths[instruction.immediate];
+
+    if (metadata.stride == 0)
+        return RuntimeError.InvalidBytecode;
+
+    const buffer = try resourceBuffer(program, resource_buffers, metadata.resource);
+    const byte_offset: usize = self.registers[instruction.b];
+
+    if (byte_offset > buffer.len)
+        return RuntimeError.BufferOutOfBounds;
+
+    const byte_length = buffer.len - byte_offset;
+    const element_count = byte_length / metadata.stride;
+
+    self.registers[instruction.a] = std.math.cast(u32, element_count) orelse return RuntimeError.IntegerOverflow;
+}
 
 fn copy(self: *Self, instruction: bc.Instruction) void {
     for (0..instruction.components) |component|
