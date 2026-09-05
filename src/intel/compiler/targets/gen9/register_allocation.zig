@@ -175,7 +175,7 @@ pub fn run(allocator: std.mem.Allocator, program: *program_ir.Program) Error!voi
 }
 
 const Access = struct {
-    uses: [3]usize = undefined,
+    uses: [3]usize = .{ 0, 0, 0 },
     use_count: usize = 0,
     definition: ?usize = null,
     full_overwrite: bool = false,
