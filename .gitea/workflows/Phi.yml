@@ -1,4 +1,4 @@
-name: Test
+name: Build and Test
 
 on:
   push:
@@ -7,12 +7,15 @@ on:
     branches: ["master"]
 
 jobs:
-  build_and_test:
+  build:
     runs-on: ubuntu-latest
-    if: "!contains(github.event.head_commit.message, 'ci skip') && !contains(github.event.head_commit.message, 'test skip')"
+    if: ${{ github.event_name != 'push' || !contains(github.event.head_commit.message, 'ci skip') }}
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: https://codeberg.org/mlugg/setup-zig@v2
 
       - name: Install MPSS
@@ -49,20 +52,14 @@ jobs:
           echo "$PATH"
           ls -la /opt/mpss/3.8.6/sysroots/k1om-mpss-linux/bin | head -50
 
-      - name: Installing dependencies
-        run: apt update && apt install spirv-tools
+      - name: Building [release=fast]
+        run: zig build phi --release=fast
 
-      - name: Ape Tests
-        run: zig build test-ape --release=safe
+      - name: Building [release=safe]
+        run: zig build phi --release=safe
 
-      - name: Soft Tests
-        run: zig build test-soft --release=safe
+      - name: Building [release=small]
+        run: zig build phi --release=small
 
-      - name: Flint Tests
-        run: zig build test-flint --release=safe
-
-      - name: Phi Tests
-        run: zig build test-phi --release=safe
-
-      - name: IR Tests
-        run: zig build test-ir --release=safe
+      - name: Testing
+        run: zig build test-phi --release=fast

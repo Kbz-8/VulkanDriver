@@ -1,4 +1,4 @@
-# Ape Vulkan ICD <a href="https://git.kbz8.me/kbz_8/VulkanDriver/actions?workflows=Build.yml"><img src="https://git.kbz8.me/kbz_8/VulkanDriver/actions/workflows/Build.yml/badge.svg"></a> <a href="https://git.kbz8.me/kbz_8/VulkanDriver/actions?workflows=Test.yml"><img src="https://git.kbz8.me/kbz_8/VulkanDriver/actions/workflows/Test.yml/badge.svg"></a>
+# Ape Vulkan ICD <a href="https://git.kbz8.me/kbz_8/VulkanDriver/actions?workflows=DocsAndIR.yml"><img src="https://git.kbz8.me/kbz_8/VulkanDriver/actions/workflows/DocsAndIR.yml/badge.svg"></a>
 
 <img align="right" width="250px" src="./logo.png"/>
 
@@ -14,7 +14,7 @@ To understand Vulkan - not as a humble API mere mortals call upon, but as a laby
 It does not seek to produce a performant or production-worthy driver. \
 _The gods are merciful, but not that merciful._
 
-## Soft [software]
+## Soft [software] <a href="https://git.kbz8.me/kbz_8/VulkanDriver/actions?workflows=Soft.yml"><img src="https://git.kbz8.me/kbz_8/VulkanDriver/actions/workflows/Soft.yml/badge.svg"></a>
 
 Soft be a software implementation of the Vulkan specification, abiding within this driver's own codebase.\
 It maketh use of a bespoke [SPIR-V interpreter](https://git.kbz8.me/kbz_8/SPIRV-Interpreter) and renderer, by whose workings its labours are carried forth.
@@ -222,7 +222,7 @@ Assume thou that functions lacking in this array are, for now, not intended to b
 
 [Here](https://vulkan-driver.kbz8.me/cts/soft/) shalt thou find a most meticulous account of the Vulkan 1.0 conformance trials, set forth for thy scrutiny.
 
-## Phi [Xeon Phi KNC]
+## Phi [Xeon Phi KNC] <a href="https://git.kbz8.me/kbz_8/VulkanDriver/actions?workflows=Phi.yml"><img src="https://git.kbz8.me/kbz_8/VulkanDriver/actions/workflows/Phi.yml/badge.svg"></a>
 
 Phi be an implementation of the Vulkan specification, wrought for the Xeon Phi Knights Corner cards.
 Whether the Knights Landing cards shall one day receive the same providence remaineth to be seen.
@@ -429,7 +429,7 @@ Assume thou that functions lacking in this array are, for now, not intended to b
 
 [The present reckoning](https://vulkan-driver.kbz8.me/cts/phi/) of thy Vulkan 1.0 implementation standeth thus.
 
-## Flint [Intel]
+## Flint [Intel] <a href="https://git.kbz8.me/kbz_8/VulkanDriver/actions?workflows=Flint.yml"><img src="https://git.kbz8.me/kbz_8/VulkanDriver/actions/workflows/Flint.yml/badge.svg"></a>
 
 Flint be an implementation of the Vulkan specification, fashioned for the elder Intel iGPUs of generations 9 through 11.
 Whether Haswell and those that followed-even the Xe kindred-shall one day partake of its workings remaineth unwritten.

@@ -1,4 +1,4 @@
-name: Build
+name: Docs and IR
 
 on:
   push:
@@ -18,40 +18,6 @@ jobs:
 
       - uses: https://codeberg.org/mlugg/setup-zig@v2
 
-      - name: Install MPSS
-        run: |
-          set -euxo pipefail
-
-          apt update
-          apt install -y unzip curl
-
-          MPSS_URL="https://drive.kbz8.me/dav/public-files/KSKeiOKxnFPyfws/mpss.zip"
-          MPSS_ZIP="/tmp/mpss.zip"
-          MPSS_BIN="/opt/mpss/3.8.6/sysroots/k1om-mpss-linux/bin"
-
-          curl --fail --location --show-error --progress-bar "$MPSS_URL" -o "$MPSS_ZIP"
-
-          size="$(stat -c%s "$MPSS_ZIP")"
-          test "$size" -gt 300000000
-
-          unzip -t "$MPSS_ZIP" >/dev/null
-
-          rm -rf /opt/mpss
-          unzip -q "$MPSS_ZIP" -d /opt
-          chmod -R a+rX /opt/mpss
-
-          test -d "$MPSS_BIN"
-
-          # Append as fallback for following CI steps.
-          echo "PATH=$PATH:$MPSS_BIN" >> "$GITHUB_ENV"
-
-          echo "MPSS installed."
-
-      - name: Check MPSS PATH
-        run: |
-          echo "$PATH"
-          ls -la /opt/mpss/3.8.6/sysroots/k1om-mpss-linux/bin | head -50
-
       - name: Check formatting
         run: zig fmt --check src/
 
@@ -60,17 +26,8 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/DonIsaac/zlint/refs/heads/main/tasks/install.sh | bash
           zlint --deny-warnings
 
-      - name: Building Ape
-        run: zig build ape --release=safe
-
-      - name: Building Soft
-        run: zig build soft --release=safe
-
-      - name: Building Flint
-        run: zig build flint --release=safe
-
-      - name: Building Phi
-        run: zig build phi --release=safe
+      - name: Testing IR
+        run: zig build test-ir
 
       - name: Generating docs
         run: zig build docs

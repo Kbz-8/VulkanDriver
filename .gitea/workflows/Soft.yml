@@ -1,0 +1,34 @@
+name: Build and Test
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+    branches: ["master"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'push' || !contains(github.event.head_commit.message, 'ci skip') }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: https://codeberg.org/mlugg/setup-zig@v2
+
+      - name: Building [debug]
+        run: zig build soft
+
+      - name: Building [release=fast]
+        run: zig build soft --release=fast
+
+      - name: Building [release=safe]
+        run: zig build soft --release=safe
+
+      - name: Building [release=small]
+        run: zig build soft --release=small
+
+      - name: Testing
+        run: zig build test-soft
