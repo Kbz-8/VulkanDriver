@@ -15,6 +15,7 @@ pub const CompileError = error{
     InvalidValue,
     TooManyInstructions,
     TooManyRegisters,
+    TooMuchWorkgroupMemory,
     UnsupportedOperation,
     UnsupportedType,
 };
@@ -29,6 +30,12 @@ pub const ResourceBinding = struct {
     kind: ir.types.ResourceKind,
     set: u32,
     binding: u32,
+    array_element: u32,
+};
+
+pub const WorkgroupBinding = struct {
+    byte_offset: u32,
+    byte_size: u32,
 };
 
 pub const RegisterInit = struct {
@@ -40,6 +47,9 @@ const Self = @This();
 
 arena: std.heap.ArenaAllocator,
 stage: module_ir.Stage,
+uses_atomics: bool,
+uses_control_barriers: bool,
+workgroup_memory_size: usize,
 entry_pc: u32,
 register_count: usize,
 scratch_count: usize,
@@ -51,6 +61,7 @@ branches: []const bc.Branch,
 initializers: []const RegisterInit,
 interfaces: []const ?InterfaceBinding,
 resources: []const ?ResourceBinding,
+workgroup_variables: []const ?WorkgroupBinding,
 
 pub fn compile(backing_allocator: std.mem.Allocator, module: *const module_ir.Module) !Self {
     try ir.validator.validate(module);
@@ -64,6 +75,9 @@ pub fn compile(backing_allocator: std.mem.Allocator, module: *const module_ir.Mo
     return .{
         .arena = arena,
         .stage = module.stage,
+        .uses_atomics = module.properties.uses_atomics,
+        .uses_control_barriers = module.properties.uses_control_barriers,
+        .workgroup_memory_size = lowerer.workgroup_memory_size,
         .entry_pc = lowerer.entry_pc,
         .register_count = lowerer.register_count,
         .scratch_count = lowerer.scratch_count,
@@ -75,6 +89,7 @@ pub fn compile(backing_allocator: std.mem.Allocator, module: *const module_ir.Mo
         .initializers = lowerer.initializers.items,
         .interfaces = lowerer.interfaces,
         .resources = lowerer.resources,
+        .workgroup_variables = lowerer.workgroup_variables,
     };
 }
 
@@ -97,6 +112,13 @@ pub fn resourceBinding(self: *const Self, resource: ids.ResourceId) ?ResourceBin
     return self.resources[resource.index()];
 }
 
+pub fn workgroupBinding(self: *const Self, variable: ids.WorkgroupVariableId) ?WorkgroupBinding {
+    if (variable.index() >= self.workgroup_variables.len)
+        return null;
+
+    return self.workgroup_variables[variable.index()];
+}
+
 const Lowerer = struct {
     allocator: std.mem.Allocator,
     module: *const module_ir.Module,
@@ -105,10 +127,12 @@ const Lowerer = struct {
     values: []?bc.Span,
     interfaces: []?InterfaceBinding,
     resources: []?ResourceBinding,
+    workgroup_variables: []?WorkgroupBinding,
     block_pcs: []?u32,
     register_count: usize = 0,
     scratch_count: usize = 0,
     entry_pc: u32 = 0,
+    workgroup_memory_size: usize = 0,
     array_lengths: std.ArrayList(bc.ArrayLength) = .empty,
     code: std.ArrayList(bc.Instruction) = .empty,
     edges: std.ArrayList(bc.Edge) = .empty,
@@ -134,7 +158,21 @@ const Lowerer = struct {
                 .kind = resource.kind,
                 .set = resource.set,
                 .binding = resource.binding,
+                .array_element = resource.array_element,
             } else null;
+        }
+        const workgroup_variables = try allocator.alloc(?WorkgroupBinding, module.workgroup_variables.entries.items.len);
+        @memset(workgroup_variables, null);
+        var workgroup_memory_size: usize = 0;
+        for (module.workgroup_variables.entries.items, workgroup_variables) |entry, *binding| {
+            const variable = entry orelse continue;
+            const byte_size = try typeByteSize(module, variable.type);
+            if (byte_size == 0)
+                return CompileError.UnsupportedType;
+            if (workgroup_memory_size > std.math.maxInt(u32) or byte_size > std.math.maxInt(u32))
+                return CompileError.TooMuchWorkgroupMemory;
+            binding.* = .{ .byte_offset = @intCast(workgroup_memory_size), .byte_size = @intCast(byte_size) };
+            workgroup_memory_size = std.math.add(usize, workgroup_memory_size, byte_size) catch return CompileError.TooMuchWorkgroupMemory;
         }
         const block_pcs = try allocator.alloc(?u32, module.blocks.entries.items.len);
         @memset(block_pcs, null);
@@ -147,6 +185,8 @@ const Lowerer = struct {
             .values = values,
             .interfaces = interfaces,
             .resources = resources,
+            .workgroup_variables = workgroup_variables,
+            .workgroup_memory_size = workgroup_memory_size,
             .block_pcs = block_pcs,
         };
     }
@@ -292,8 +332,14 @@ const Lowerer = struct {
                 const lhs = try self.span(op.lhs);
                 const rhs = try self.span(op.rhs);
 
-                if (!dst.sameShape(lhs) or !dst.sameShape(rhs))
+                if (!dst.sameShape(lhs))
                     return CompileError.InvalidOperation;
+                if (op.opcode == .vector_times_scalar) {
+                    if (rhs.kind != .floating or rhs.components != 1)
+                        return CompileError.InvalidOperation;
+                } else if (!dst.sameShape(rhs)) {
+                    return CompileError.InvalidOperation;
+                }
 
                 try self.emit(try binaryOpcode(op.opcode, dst.kind), dst.components, dst.base, lhs.base, rhs.base, bc.invalid_register, 0);
             },
@@ -378,7 +424,7 @@ const Lowerer = struct {
             .load_buffer => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;
                 const byte_offset = try self.bufferOffset(op.byte_offset);
-                _ = try self.storageBuffer(op.resource);
+                _ = try self.bufferResource(op.resource, false);
                 try self.emit(.load_buffer, dst.components, dst.base, byte_offset, bc.invalid_register, bc.invalid_register, @intFromEnum(op.resource));
             },
             .store_buffer => |op| {
@@ -386,14 +432,53 @@ const Lowerer = struct {
                     return CompileError.InvalidOperation;
                 const src = try self.span(op.value);
                 const byte_offset = try self.bufferOffset(op.byte_offset);
-                _ = try self.storageBuffer(op.resource);
+                _ = try self.bufferResource(op.resource, true);
                 try self.emit(.store_buffer, src.components, src.base, byte_offset, bc.invalid_register, bc.invalid_register, @intFromEnum(op.resource));
+            },
+            .load_workgroup => |op| {
+                const dst = result orelse return CompileError.InvalidOperation;
+                const byte_offset = try self.bufferOffset(op.byte_offset);
+                _ = try self.workgroupVariable(op.variable);
+                try self.emit(.load_workgroup, dst.components, dst.base, byte_offset, bc.invalid_register, bc.invalid_register, @intFromEnum(op.variable));
+            },
+            .store_workgroup => |op| {
+                if (result != null)
+                    return CompileError.InvalidOperation;
+                const src = try self.span(op.value);
+                const byte_offset = try self.bufferOffset(op.byte_offset);
+                _ = try self.workgroupVariable(op.variable);
+                try self.emit(.store_workgroup, src.components, src.base, byte_offset, bc.invalid_register, bc.invalid_register, @intFromEnum(op.variable));
+            },
+            .image_read => |op| {
+                const dst = result orelse return CompileError.InvalidOperation;
+                const coordinate = try self.span(op.coordinate);
+                _ = try self.storageImage(op.resource);
+                if (dst.kind != .unsigned_integer or dst.components != 4 or
+                    coordinate.kind != .signed_integer or coordinate.components != 2)
+                    return CompileError.InvalidOperation;
+                try self.emit(.image_read, 4, dst.base, coordinate.base, bc.invalid_register, bc.invalid_register, @intFromEnum(op.resource));
+            },
+            .image_write => |op| {
+                if (result != null)
+                    return CompileError.InvalidOperation;
+                const coordinate = try self.span(op.coordinate);
+                const value = try self.span(op.value);
+                _ = try self.storageImage(op.resource);
+                if (value.kind != .unsigned_integer or value.components != 4 or
+                    coordinate.kind != .signed_integer or coordinate.components != 2)
+                    return CompileError.InvalidOperation;
+                try self.emit(.image_write, 4, value.base, coordinate.base, bc.invalid_register, bc.invalid_register, @intFromEnum(op.resource));
+            },
+            .control_barrier => {
+                if (result != null)
+                    return CompileError.InvalidOperation;
+                try self.emit(.control_barrier, 1, bc.invalid_register, bc.invalid_register, bc.invalid_register, bc.invalid_register, 0);
             },
             .call => return CompileError.UnsupportedOperation,
             .array_length => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;
                 const byte_offset = try self.bufferOffset(op.byte_offset);
-                _ = try self.storageBuffer(op.resource);
+                _ = try self.bufferResource(op.resource, true);
 
                 if (dst.components != 1 or dst.kind != .unsigned_integer)
                     return CompileError.InvalidOperation;
@@ -416,11 +501,26 @@ const Lowerer = struct {
         return byte_offset.base;
     }
 
-    fn storageBuffer(self: *const Lowerer, id: ids.ResourceId) !ResourceBinding {
+    fn workgroupVariable(self: *const Lowerer, id: ids.WorkgroupVariableId) !WorkgroupBinding {
+        if (id.index() >= self.workgroup_variables.len)
+            return CompileError.InvalidOperation;
+        return self.workgroup_variables[id.index()] orelse CompileError.InvalidOperation;
+    }
+
+    fn bufferResource(self: *const Lowerer, id: ids.ResourceId, writable: bool) !ResourceBinding {
         if (id.index() >= self.resources.len)
             return CompileError.InvalidOperation;
         const resource = self.resources[id.index()] orelse return CompileError.InvalidOperation;
-        if (resource.kind != .storage_buffer)
+        if (resource.kind != .storage_buffer and (writable or resource.kind != .uniform_buffer))
+            return CompileError.InvalidOperation;
+        return resource;
+    }
+
+    fn storageImage(self: *const Lowerer, id: ids.ResourceId) !ResourceBinding {
+        if (id.index() >= self.resources.len)
+            return CompileError.InvalidOperation;
+        const resource = self.resources[id.index()] orelse return CompileError.InvalidOperation;
+        if (resource.kind != .storage_image)
             return CompileError.InvalidOperation;
         return resource;
     }
@@ -510,6 +610,24 @@ const Lowerer = struct {
     }
 };
 
+fn typeByteSize(module: *const module_ir.Module, type_id: ids.TypeId) !usize {
+    const ty = module.types.get(type_id) orelse return CompileError.UnsupportedType;
+    return switch (ty.*) {
+        .boolean => 4,
+        .integer => |integer| if (integer.bits == 32) 4 else CompileError.UnsupportedType,
+        .floating => |floating| if (floating.bits == 32) 4 else CompileError.UnsupportedType,
+        .vector => |vector| std.math.mul(usize, try typeByteSize(module, vector.element_type), vector.length) catch return CompileError.TooMuchWorkgroupMemory,
+        .array => |array| std.math.mul(usize, try typeByteSize(module, array.element_type), array.length) catch return CompileError.TooMuchWorkgroupMemory,
+        .structure => |structure| blk: {
+            var size: usize = 0;
+            for (structure.members) |member|
+                size = std.math.add(usize, size, try typeByteSize(module, member)) catch return CompileError.TooMuchWorkgroupMemory;
+            break :blk size;
+        },
+        else => CompileError.UnsupportedType,
+    };
+}
+
 fn binaryOpcode(op: inst_ir.BinaryOpcode, kind: bc.ValueKind) !bc.Opcode {
     return switch (op) {
         .integer_add => if (kind == .signed_integer or kind == .unsigned_integer) .integer_add else CompileError.InvalidOperation,
@@ -522,6 +640,7 @@ fn binaryOpcode(op: inst_ir.BinaryOpcode, kind: bc.ValueKind) !bc.Opcode {
         .float_add => if (kind == .floating) .float_add else CompileError.InvalidOperation,
         .float_subtract => if (kind == .floating) .float_subtract else CompileError.InvalidOperation,
         .float_multiply => if (kind == .floating) .float_multiply else CompileError.InvalidOperation,
+        .vector_times_scalar => if (kind == .floating) .vector_times_scalar else CompileError.InvalidOperation,
         .float_divide => if (kind == .floating) .float_divide else CompileError.InvalidOperation,
         .float_modulo => if (kind == .floating) .float_modulo else CompileError.InvalidOperation,
         .shift_left => if (kind == .signed_integer or kind == .unsigned_integer) .shift_left else CompileError.InvalidOperation,

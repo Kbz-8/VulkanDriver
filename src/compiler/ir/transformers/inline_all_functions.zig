@@ -390,6 +390,25 @@ fn remapOperation(
             .byte_offset = try mappedValue(module, value_map, op.byte_offset),
             .value = try mappedValue(module, value_map, op.value),
         } },
+        .load_workgroup => |op| .{ .load_workgroup = .{
+            .variable = op.variable,
+            .byte_offset = try mappedValue(module, value_map, op.byte_offset),
+        } },
+        .store_workgroup => |op| .{ .store_workgroup = .{
+            .variable = op.variable,
+            .byte_offset = try mappedValue(module, value_map, op.byte_offset),
+            .value = try mappedValue(module, value_map, op.value),
+        } },
+        .image_read => |op| .{ .image_read = .{
+            .resource = op.resource,
+            .coordinate = try mappedValue(module, value_map, op.coordinate),
+        } },
+        .image_write => |op| .{ .image_write = .{
+            .resource = op.resource,
+            .coordinate = try mappedValue(module, value_map, op.coordinate),
+            .value = try mappedValue(module, value_map, op.value),
+        } },
+        .control_barrier => .control_barrier,
         .call => Error.InvalidModule,
         .array_length => |op| .{ .array_length = .{
             .resource = op.resource,

@@ -110,6 +110,12 @@ pub fn validate(module: *const module_ir.Module) Error!void {
             return Error.InvalidType;
     }
 
+    for (module.workgroup_variables.entries.items) |entry| {
+        const variable = entry orelse continue;
+        if (!module.types.isLive(variable.type))
+            return Error.InvalidType;
+    }
+
     for (module.functions.entries.items, 0..) |entry, function_index| {
         const function = entry orelse continue;
         const function_id = ids.FunctionId.fromIndex(function_index);
@@ -268,8 +274,18 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             const lhs_type = try operandType(module, function_id, op.lhs);
             const rhs_type = try operandType(module, function_id, op.rhs);
 
-            if (lhs_type != rhs_type)
+            if (op.opcode == .vector_times_scalar) {
+                const lhs = module.types.get(lhs_type) orelse return ValidationError.InvalidType;
+                const vector = switch (lhs.*) {
+                    .vector => |vector| vector,
+                    else => return ValidationError.WrongOperandType,
+                };
+                const element = module.types.get(vector.element_type) orelse return ValidationError.InvalidType;
+                if (element.* != .floating or rhs_type != vector.element_type)
+                    return ValidationError.WrongOperandType;
+            } else if (lhs_type != rhs_type) {
                 return ValidationError.WrongOperandType;
+            }
 
             if (result_type == null or result_type.? != lhs_type)
                 return ValidationError.WrongResultType;
@@ -361,7 +377,7 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
         },
         .load_buffer => |op| {
             const resource = module.resources.get(op.resource) orelse return ValidationError.InvalidValue;
-            if (resource.kind != .storage_buffer)
+            if (resource.kind != .storage_buffer and resource.kind != .uniform_buffer)
                 return ValidationError.WrongResourceKind;
 
             if (!isUnsignedInteger(module, try operandType(module, function_id, op.byte_offset)))
@@ -384,6 +400,46 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
 
             if (!isBufferAccessibleType(module, try operandType(module, function_id, op.value)))
                 return ValidationError.WrongOperandType;
+        },
+        .load_workgroup => |op| {
+            _ = module.workgroup_variables.get(op.variable) orelse return ValidationError.InvalidValue;
+            if (!isUnsignedInteger(module, try operandType(module, function_id, op.byte_offset)))
+                return ValidationError.WrongOperandType;
+            const result = result_type orelse return ValidationError.WrongResultPresence;
+            if (!isBufferAccessibleType(module, result))
+                return ValidationError.WrongResultType;
+        },
+        .store_workgroup => |op| {
+            if (result_type != null)
+                return ValidationError.WrongResultPresence;
+            _ = module.workgroup_variables.get(op.variable) orelse return ValidationError.InvalidValue;
+            if (!isUnsignedInteger(module, try operandType(module, function_id, op.byte_offset)))
+                return ValidationError.WrongOperandType;
+            if (!isBufferAccessibleType(module, try operandType(module, function_id, op.value)))
+                return ValidationError.WrongOperandType;
+        },
+        .image_read => |op| {
+            const resource = module.resources.get(op.resource) orelse return ValidationError.InvalidValue;
+            if (resource.kind != .storage_image)
+                return ValidationError.WrongResourceKind;
+            _ = try operandType(module, function_id, op.coordinate);
+            if (result_type == null)
+                return ValidationError.WrongResultPresence;
+        },
+        .image_write => |op| {
+            if (result_type != null)
+                return ValidationError.WrongResultPresence;
+            const resource = module.resources.get(op.resource) orelse return ValidationError.InvalidValue;
+            if (resource.kind != .storage_image)
+                return ValidationError.WrongResourceKind;
+            _ = try operandType(module, function_id, op.coordinate);
+            _ = try operandType(module, function_id, op.value);
+        },
+        .control_barrier => {
+            if (result_type != null)
+                return ValidationError.WrongResultPresence;
+            if (module.stage != .compute)
+                return ValidationError.InvalidInstruction;
         },
         .call => |op| {
             const callee = module.functions.get(op.function) orelse return ValidationError.InvalidFunction;
@@ -956,12 +1012,12 @@ test "Validator: check buffer resources, offsets, and value types" {
     try expectValidationError(Error.WrongResourceKind,
         \\shader compute @main
         \\{
-        \\    @uniforms: u32 = uniform_buffer[set(0), binding(0)]
+        \\    @image: u32 = sampled_image[set(0), binding(0)]
         \\    %offset: constant u32 = 0
         \\    fn @main() -> void
         \\    {
         \\        .entry():
-        \\            %value: u32 = load_buffer @uniforms, %offset
+        \\            %value: u32 = load_buffer @image, %offset
         \\            return
         \\    }
         \\}

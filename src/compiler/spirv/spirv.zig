@@ -1013,6 +1013,7 @@ pub const StorageClass = enum(u32) {
 pub const ExecutionMode = enum(u32) {
     early_fragment_tests = 9,
     local_size = 17,
+    local_size_id = 38,
     _,
 };
 

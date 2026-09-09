@@ -7,6 +7,7 @@ pub const BlockId = ids.BlockId;
 pub const FunctionId = ids.FunctionId;
 pub const InterfaceVariableId = ids.InterfaceVariableId;
 pub const ResourceId = ids.ResourceId;
+pub const WorkgroupVariableId = ids.WorkgroupVariableId;
 
 pub const SourceLocation = struct {
     file: ?[]const u8 = null,
@@ -31,6 +32,7 @@ pub const BinaryOpcode = enum {
     float_add,
     float_subtract,
     float_multiply,
+    vector_times_scalar,
     float_divide,
     float_modulo,
     shift_left,
@@ -110,6 +112,28 @@ pub const StoreBuffer = struct {
     value: ValueId,
 };
 
+pub const LoadWorkgroup = struct {
+    variable: WorkgroupVariableId,
+    byte_offset: ValueId,
+};
+
+pub const ImageRead = struct {
+    resource: ResourceId,
+    coordinate: ValueId,
+};
+
+pub const ImageWrite = struct {
+    resource: ResourceId,
+    coordinate: ValueId,
+    value: ValueId,
+};
+
+pub const StoreWorkgroup = struct {
+    variable: WorkgroupVariableId,
+    byte_offset: ValueId,
+    value: ValueId,
+};
+
 pub const Call = struct {
     function: FunctionId,
     arguments: []const ValueId,
@@ -133,6 +157,11 @@ pub const Operation = union(enum) {
     store_interface: StoreInterface,
     load_buffer: LoadBuffer,
     store_buffer: StoreBuffer,
+    load_workgroup: LoadWorkgroup,
+    store_workgroup: StoreWorkgroup,
+    image_read: ImageRead,
+    image_write: ImageWrite,
+    control_barrier,
     call: Call,
     array_length: ArrayLength,
 
@@ -166,6 +195,17 @@ pub const Operation = union(enum) {
                 visitor(context, op.byte_offset);
                 visitor(context, op.value);
             },
+            .load_workgroup => |op| visitor(context, op.byte_offset),
+            .store_workgroup => |op| {
+                visitor(context, op.byte_offset);
+                visitor(context, op.value);
+            },
+            .image_read => |op| visitor(context, op.coordinate),
+            .image_write => |op| {
+                visitor(context, op.coordinate);
+                visitor(context, op.value);
+            },
+            .control_barrier => {},
             .call => |op| {
                 for (op.arguments) |argument|
                     visitor(context, argument);
@@ -208,6 +248,17 @@ pub const Operation = union(enum) {
                 replaceOne(&op.byte_offset, old, replacement, &count);
                 replaceOne(&op.value, old, replacement, &count);
             },
+            .load_workgroup => |*op| replaceOne(&op.byte_offset, old, replacement, &count),
+            .store_workgroup => |*op| {
+                replaceOne(&op.byte_offset, old, replacement, &count);
+                replaceOne(&op.value, old, replacement, &count);
+            },
+            .image_read => |*op| replaceOne(&op.coordinate, old, replacement, &count),
+            .image_write => |*op| {
+                replaceOne(&op.coordinate, old, replacement, &count);
+                replaceOne(&op.value, old, replacement, &count);
+            },
+            .control_barrier => {},
             .call => |*op| op.arguments = try replaceSlice(allocator, op.arguments, old, replacement, &count),
             .array_length => |*op| replaceOne(&op.byte_offset, old, replacement, &count),
         }
@@ -218,6 +269,9 @@ pub const Operation = union(enum) {
         return switch (self) {
             .store_interface,
             .store_buffer,
+            .store_workgroup,
+            .image_write,
+            .control_barrier,
             .call,
             => true,
 

@@ -8,6 +8,7 @@ const VkError = base.VkError;
 
 const SoftDescriptorSet = @import("../SoftDescriptorSet.zig");
 const SoftDevice = @import("../SoftDevice.zig");
+const SoftImageView = @import("../SoftImageView.zig");
 const SoftPipeline = @import("../SoftPipeline.zig");
 
 const ComputeDispatcher = @import("compute/ComputeDispatcher.zig");
@@ -38,7 +39,7 @@ pub const PipelineState = struct {
     },
 };
 
-pub fn mapStorageBuffer(state: *const PipelineState, set: u32, binding: u32) VkError!?[]u8 {
+pub fn mapBuffer(state: *const PipelineState, set: u32, binding: u32, array_element: u32) VkError!?[]u8 {
     const set_index: usize = set;
     if (set_index >= state.sets.len)
         return null;
@@ -50,12 +51,13 @@ pub fn mapStorageBuffer(state: *const PipelineState, set: u32, binding: u32) VkE
 
     const binding_layout = descriptor_set.interface.layout.bindings[binding_index];
     const dynamic_offset: vk.DeviceSize = switch (binding_layout.descriptor_type) {
-        .storage_buffer_dynamic => blk: {
-            if (binding_layout.dynamic_index >= state.dynamic_offsets[set_index].len)
+        .uniform_buffer_dynamic, .storage_buffer_dynamic => blk: {
+            const dynamic_index = std.math.add(usize, binding_layout.dynamic_index, array_element) catch return VkError.ValidationFailed;
+            if (dynamic_index >= state.dynamic_offsets[set_index].len)
                 return VkError.ValidationFailed;
-            break :blk state.dynamic_offsets[set_index][binding_layout.dynamic_index];
+            break :blk state.dynamic_offsets[set_index][dynamic_index];
         },
-        .storage_buffer => 0,
+        .uniform_buffer, .storage_buffer => 0,
         else => return null,
     };
 
@@ -63,10 +65,11 @@ pub fn mapStorageBuffer(state: *const PipelineState, set: u32, binding: u32) VkE
         .buffer => |descriptors| descriptors,
         else => return null,
     };
-    if (descriptors.len == 0)
+    const descriptor_index: usize = array_element;
+    if (descriptor_index >= descriptors.len)
         return null;
 
-    const descriptor = descriptors[0];
+    const descriptor = descriptors[descriptor_index];
     const buffer = descriptor.object orelse return null;
     const effective_offset = std.math.add(vk.DeviceSize, descriptor.offset, dynamic_offset) catch return VkError.ValidationFailed;
     if (effective_offset > buffer.interface.size)
@@ -76,6 +79,28 @@ pub fn mapStorageBuffer(state: *const PipelineState, set: u32, binding: u32) VkE
     if (descriptor.size > logical_remaining)
         return VkError.ValidationFailed;
     return try buffer.mapAsSliceWithAddedOffset(u8, effective_offset, descriptor.size);
+}
+
+pub fn mapStorageImage(state: *const PipelineState, set: u32, binding: u32, array_element: u32) VkError!?*SoftImageView {
+    const set_index: usize = set;
+    if (set_index >= state.sets.len)
+        return null;
+    const descriptor_set = state.sets[set_index] orelse return null;
+
+    const binding_index: usize = binding;
+    if (binding_index >= descriptor_set.descriptors.len or binding_index >= descriptor_set.interface.layout.bindings.len)
+        return null;
+    if (descriptor_set.interface.layout.bindings[binding_index].descriptor_type != .storage_image)
+        return null;
+
+    const descriptors = switch (descriptor_set.descriptors[binding_index]) {
+        .image => |descriptors| descriptors,
+        else => return null,
+    };
+    const descriptor_index: usize = array_element;
+    if (descriptor_index >= descriptors.len)
+        return null;
+    return descriptors[descriptor_index].object;
 }
 
 compute: ComputeDispatcher,

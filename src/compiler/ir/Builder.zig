@@ -169,11 +169,23 @@ pub fn addInterfaceVariable(
     });
 }
 
+pub fn addWorkgroupVariable(self: *Self, ty: ids.TypeId, name: ?[]const u8) !ids.WorkgroupVariableId {
+    return self.module.workgroup_variables.add(self.module.allocator(), .{
+        .type = ty,
+        .name = try self.copyName(name),
+    });
+}
+
 pub fn addResource(self: *Self, ty: ids.TypeId, kind: type_ir.ResourceKind, set: u32, binding: u32, name: ?[]const u8) !ids.ResourceId {
+    return self.addResourceArrayElement(ty, kind, set, binding, 0, name);
+}
+
+pub fn addResourceArrayElement(self: *Self, ty: ids.TypeId, kind: type_ir.ResourceKind, set: u32, binding: u32, array_element: u32, name: ?[]const u8) !ids.ResourceId {
     return self.module.resources.add(self.module.allocator(), .{
         .kind = kind,
         .set = set,
         .binding = binding,
+        .array_element = array_element,
         .type = ty,
         .name = try self.copyName(name),
     });

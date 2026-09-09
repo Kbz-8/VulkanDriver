@@ -54,7 +54,7 @@ pub fn compile(allocator: std.mem.Allocator, module: *SoftShaderModule, stage: *
     };
     errdefer program.deinit();
 
-    if (!hasCompatibleInterface(&program, expected_stage) or (expected_stage == .compute and module_ir.execution_modes.workgroup_size == null)) {
+    if (!hasCompatibleInterface(&program, expected_stage)) {
         std.log.scoped(.IrInterpreter).err("unsupported stage interface or execution modes", .{});
         return VkError.ValidationFailed;
     }
@@ -109,8 +109,18 @@ fn hasCompatibleInterface(program: *const Program, stage: ir.module.Stage) bool 
                     },
                     else => return false,
                 },
-                .compute => if (builtin != .global_invocation_id or binding.direction != .input or binding.span.components != 3)
-                    return false,
+                .compute => switch (builtin) {
+                    .global_invocation_id,
+                    .local_invocation_id,
+                    .workgroup_id,
+                    .num_workgroups,
+                    .workgroup_size,
+                    => if (binding.direction != .input or binding.span.kind != .unsigned_integer or binding.span.components != 3)
+                        return false,
+                    .local_invocation_index => if (binding.direction != .input or binding.span.kind != .unsigned_integer or binding.span.components != 1)
+                        return false,
+                    else => return false,
+                },
                 .fragment => return false,
             },
         }

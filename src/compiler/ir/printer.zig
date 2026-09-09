@@ -39,7 +39,20 @@ pub fn write(module: *const module_ir.Module, writer: *std.Io.Writer) std.Io.Wri
         try writeNamedRef(writer, resource.name, "resource", index);
         try writer.writeAll(": ");
         try writeType(module, writer, resource.type);
-        try writer.print(" = {t}[set({d}), binding({d})]\n", .{ resource.kind, resource.set, resource.binding });
+        try writer.print(" = {t}[set({d}), binding({d})", .{ resource.kind, resource.set, resource.binding });
+        if (resource.array_element != 0)
+            try writer.print(", array_element({d})", .{resource.array_element});
+        try writer.writeAll("]\n");
+    }
+
+    for (module.workgroup_variables.entries.items, 0..) |entry, index| {
+        const variable = entry orelse continue;
+
+        try writer.writeAll(indent);
+        try writeNamedRef(writer, variable.name, "workgroup", index);
+        try writer.writeAll(": ");
+        try writeType(module, writer, variable.type);
+        try writer.writeAll(" = workgroup[]\n");
     }
 
     for (module.constants.entries.items, 0..) |entry, constant_index| {
@@ -245,6 +258,39 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             try writer.writeAll(", ");
             try writeValueRef(module, writer, op.value);
         },
+        .load_workgroup => |op| {
+            try writer.writeAll("load_workgroup ");
+            const variable = module.workgroup_variables.get(op.variable);
+            try writeNamedRef(writer, if (variable) |v| v.name else null, "workgroup", op.variable.index());
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.byte_offset);
+        },
+        .store_workgroup => |op| {
+            try writer.writeAll("store_workgroup ");
+            const variable = module.workgroup_variables.get(op.variable);
+            try writeNamedRef(writer, if (variable) |v| v.name else null, "workgroup", op.variable.index());
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.byte_offset);
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.value);
+        },
+        .image_read => |op| {
+            try writer.writeAll("image_read ");
+            const resource = module.resources.get(op.resource);
+            try writeNamedRef(writer, if (resource) |r| r.name else null, "resource", op.resource.index());
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.coordinate);
+        },
+        .image_write => |op| {
+            try writer.writeAll("image_write ");
+            const resource = module.resources.get(op.resource);
+            try writeNamedRef(writer, if (resource) |r| r.name else null, "resource", op.resource.index());
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.coordinate);
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.value);
+        },
+        .control_barrier => try writer.writeAll("control_barrier"),
         .call => |op| {
             try writer.writeAll("call ");
             try writeFunctionRef(module, writer, op.function);

@@ -25,7 +25,9 @@ pub const Properties = packed struct {
     no_matrix_types: bool = false,
     no_large_composites: bool = false,
     explicit_resource_offsets: bool = false,
-    _padding: u24 = 0,
+    uses_atomics: bool = false,
+    uses_control_barriers: bool = false,
+    _padding: u22 = 0,
 };
 
 pub const ConstantStore = ids.Store(ids.ConstantId, constants.Constant);
@@ -35,6 +37,7 @@ pub const BlockStore = ids.Store(ids.BlockId, Block);
 pub const FunctionStore = ids.Store(ids.FunctionId, Function);
 pub const InterfaceVariableStore = ids.Store(ids.InterfaceVariableId, InterfaceVariable);
 pub const ResourceStore = ids.Store(ids.ResourceId, Resource);
+pub const WorkgroupVariableStore = ids.Store(ids.WorkgroupVariableId, WorkgroupVariable);
 pub const TypeStore = ids.Store(ids.TypeId, types.Type);
 
 pub const Edge = struct {
@@ -94,6 +97,9 @@ pub const Builtin = enum {
     frag_coord,
     frag_depth,
     global_invocation_id,
+    local_invocation_id,
+    local_invocation_index,
+    workgroup_id,
     num_workgroups,
     workgroup_size,
 };
@@ -110,10 +116,16 @@ pub const InterfaceVariable = struct {
     name: ?[]const u8 = null,
 };
 
+pub const WorkgroupVariable = struct {
+    type: ids.TypeId,
+    name: ?[]const u8 = null,
+};
+
 pub const Resource = struct {
     kind: types.ResourceKind,
     set: u32,
     binding: u32,
+    array_element: u32 = 0,
     type: ids.TypeId,
     name: ?[]const u8 = null,
 };
@@ -131,6 +143,7 @@ pub const Module = struct {
     functions: FunctionStore = .{},
     interface_variables: InterfaceVariableStore = .{},
     resources: ResourceStore = .{},
+    workgroup_variables: WorkgroupVariableStore = .{},
     properties: Properties = .{},
 
     pub fn init(backing_allocator: std.mem.Allocator, stage: Stage) Module {

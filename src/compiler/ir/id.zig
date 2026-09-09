@@ -8,6 +8,7 @@ pub const BlockTag = opaque {};
 pub const FunctionTag = opaque {};
 pub const InterfaceVariableTag = opaque {};
 pub const ResourceTag = opaque {};
+pub const WorkgroupVariableTag = opaque {};
 
 pub const TypeId = Id(TypeTag);
 pub const ConstantId = Id(ConstantTag);
@@ -17,6 +18,7 @@ pub const BlockId = Id(BlockTag);
 pub const FunctionId = Id(FunctionTag);
 pub const InterfaceVariableId = Id(InterfaceVariableTag);
 pub const ResourceId = Id(ResourceTag);
+pub const WorkgroupVariableId = Id(WorkgroupVariableTag);
 
 pub fn Id(comptime Tag: type) type {
     return enum(u32) {

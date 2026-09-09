@@ -23,6 +23,7 @@ pub fn lower(allocator: std.mem.Allocator, module: *module_ir.Module, parsed: *P
     var constants: std.AutoHashMapUnmanaged(u32, ids.ConstantId) = .empty;
     var interfaces: std.StringHashMapUnmanaged(ids.InterfaceVariableId) = .empty;
     var resources: std.StringHashMapUnmanaged(ids.ResourceId) = .empty;
+    var workgroup_variables: std.StringHashMapUnmanaged(ids.WorkgroupVariableId) = .empty;
     var functions: std.StringHashMapUnmanaged(ids.FunctionId) = .empty;
 
     for (parsed.interfaces.items) |interface| {
@@ -37,8 +38,16 @@ pub fn lower(allocator: std.mem.Allocator, module: *module_ir.Module, parsed: *P
         if (resources.contains(resource.name))
             return error.DuplicateName;
 
-        const id = try builder.addResource(resource.ty, resource.kind, resource.set, resource.binding, resource.name);
+        const id = try builder.addResourceArrayElement(resource.ty, resource.kind, resource.set, resource.binding, resource.array_element, resource.name);
         try resources.put(allocator, resource.name, id);
+    }
+
+    for (parsed.workgroup_variables.items) |variable| {
+        if (workgroup_variables.contains(variable.name))
+            return error.DuplicateName;
+
+        const id = try builder.addWorkgroupVariable(variable.ty, variable.name);
+        try workgroup_variables.put(allocator, variable.name, id);
     }
 
     for (parsed.constants.items, 0..) |constant, constant_index| {
@@ -103,7 +112,7 @@ pub fn lower(allocator: std.mem.Allocator, module: *module_ir.Module, parsed: *P
 
         for (function.blocks.items) |block| {
             for (block.instructions.items) |instruction| {
-                const lowered = try lowerOperation(allocator, module, &values, &interfaces, &resources, &functions, instruction.operation);
+                const lowered = try lowerOperation(allocator, module, &values, &interfaces, &resources, &workgroup_variables, &functions, instruction.operation);
                 const result_type = instruction.result_type orelse lowered.inferred_type;
 
                 if (instruction.printed_result != null and result_type == null)
@@ -135,6 +144,7 @@ fn lowerOperation(
     values: *const std.StringHashMapUnmanaged(ids.ValueId),
     interfaces: *const std.StringHashMapUnmanaged(ids.InterfaceVariableId),
     resources: *const std.StringHashMapUnmanaged(ids.ResourceId),
+    workgroup_variables: *const std.StringHashMapUnmanaged(ids.WorkgroupVariableId),
     functions: *const std.StringHashMapUnmanaged(ids.FunctionId),
     parsed: ParsedOperation,
 ) !LoweredOperation {
@@ -285,6 +295,31 @@ fn lowerOperation(
                 .inferred_type = null,
             };
         },
+        .load_workgroup => |op| blk: {
+            const variable = workgroup_variables.get(op.variable_name) orelse return error.UnknownResource;
+            const byte_offset = resolveValue(values, op.byte_offset) orelse return error.UnknownValue;
+            break :blk .{
+                .operation = .{ .load_workgroup = .{
+                    .variable = variable,
+                    .byte_offset = byte_offset,
+                } },
+                .inferred_type = null,
+            };
+        },
+        .store_workgroup => |op| blk: {
+            const variable = workgroup_variables.get(op.variable_name) orelse return error.UnknownResource;
+            const byte_offset = resolveValue(values, op.byte_offset) orelse return error.UnknownValue;
+            const value = resolveValue(values, op.value) orelse return error.UnknownValue;
+            break :blk .{
+                .operation = .{ .store_workgroup = .{
+                    .variable = variable,
+                    .byte_offset = byte_offset,
+                    .value = value,
+                } },
+                .inferred_type = null,
+            };
+        },
+        .control_barrier => .{ .operation = .control_barrier, .inferred_type = null },
         .array_length => |op| blk: {
             const resource_id = resources.get(op.resource_name) orelse return error.UnknownResource;
             const byte_offset = resolveValue(values, op.byte_offset) orelse return error.UnknownValue;

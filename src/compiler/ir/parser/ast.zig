@@ -10,6 +10,7 @@ pub const ParsedModule = struct {
     entry_point_name: ?[]const u8,
     interfaces: std.ArrayList(ParsedInterface) = .empty,
     resources: std.ArrayList(ParsedResource) = .empty,
+    workgroup_variables: std.ArrayList(ParsedWorkgroupVariable) = .empty,
     constants: std.ArrayList(ParsedConstant) = .empty,
     functions: std.ArrayList(ParsedFunction) = .empty,
 };
@@ -27,6 +28,12 @@ pub const ParsedResource = struct {
     ty: ids.TypeId,
     set: u32,
     binding: u32,
+    array_element: u32,
+};
+
+pub const ParsedWorkgroupVariable = struct {
+    name: []const u8,
+    ty: ids.TypeId,
 };
 
 pub const ParsedConstantValue = union(enum) {
@@ -101,6 +108,9 @@ pub const ParsedOperation = union(enum) {
     store_interface: struct { interface_name: []const u8, value: ValueRef },
     load_buffer: struct { resource_name: []const u8, byte_offset: ValueRef },
     store_buffer: struct { resource_name: []const u8, byte_offset: ValueRef, value: ValueRef },
+    load_workgroup: struct { variable_name: []const u8, byte_offset: ValueRef },
+    store_workgroup: struct { variable_name: []const u8, byte_offset: ValueRef, value: ValueRef },
+    control_barrier,
     array_length: struct { resource_name: []const u8, byte_offset: ValueRef, stride: u32 },
     call: struct { function_name: []const u8, arguments: []const ValueRef },
 };

@@ -54,3 +54,39 @@ test "[interpreter] vector float arithmetic" {
     for (result, expected) |actual, wanted|
         try std.testing.expectEqual(wanted, bitsF32(actual));
 }
+
+test "[interpreter] vector times scalar broadcasts" {
+    var module = try ir.parser.parseString(std.testing.allocator,
+        \\shader compute @main
+        \\{
+        \\    @vector: vec4[f32] = input[location(0), component(0), index(0)]
+        \\    @scalar: f32 = input[location(1), component(0), index(0)]
+        \\    @output: vec4[f32] = output[location(0), component(0), index(0)]
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %vector_value: vec4[f32] = load_interface @vector
+        \\            %scalar_value: f32 = load_interface @scalar
+        \\            %product: vec4[f32] = vector_times_scalar %vector_value, %scalar_value
+        \\            store_interface @output, %product
+        \\            return
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+
+    var program = try Program.compile(std.testing.allocator, &module);
+    defer program.deinit();
+    var runtime = try Runtime.init(std.testing.allocator, &program);
+    defer runtime.deinit();
+
+    try runtime.writeInput(&program, ir.id.InterfaceVariableId.fromIndex(0), &.{ f32Bits(2), f32Bits(-3), f32Bits(0.5), f32Bits(8) });
+    try runtime.writeInput(&program, ir.id.InterfaceVariableId.fromIndex(1), &.{f32Bits(4)});
+    try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
+
+    var result: [4]u32 = undefined;
+    try runtime.readOutput(&program, ir.id.InterfaceVariableId.fromIndex(2), &result);
+    const expected = [_]f32{ 8, -12, 2, 32 };
+    for (result, expected) |actual, wanted|
+        try std.testing.expectEqual(wanted, bitsF32(actual));
+}

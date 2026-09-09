@@ -135,7 +135,7 @@ pub fn dispatchBase(self: *Self, base_group_x: u32, base_group_y: u32, base_grou
         context.deinit(allocator);
 
     const worker_count = if (comptime base.config.soft_ir_interpreter)
-        shader.runtimes.len
+        if (shader.program.uses_atomics) 1 else shader.runtimes.len
     else if (shader.module.module.reflection_infos.has_atomics)
         1
     else

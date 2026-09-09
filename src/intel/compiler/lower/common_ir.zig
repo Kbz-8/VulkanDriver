@@ -103,7 +103,7 @@ const LoweringState = struct {
             return existing;
 
         const resource = self.lowerer.module.resources.get(source_id) orelse return Error.InvalidModule;
-        if (resource.kind != .storage_buffer)
+        if (resource.kind != .storage_buffer or resource.array_element != 0)
             return Error.UnsupportedOperation;
         const buffer_id = self.builder.addStorageBuffer(.{
             .set = resource.set,
@@ -431,6 +431,12 @@ const LoweringState = struct {
             .composite_extract => |operation| try self.lowerCompositeExtract(source_instruction.result, operation),
             .load_buffer => |operation| try self.lowerLoadBuffer(block_id, source_instruction.result, operation),
             .store_buffer => |operation| try self.lowerStoreBuffer(block_id, source_instruction.result, operation),
+            .load_workgroup,
+            .store_workgroup,
+            .image_read,
+            .image_write,
+            .control_barrier,
+            => return Error.UnsupportedOperation,
             .call => return Error.UnsanitizedModule,
             .array_length => |operation| try self.lowerArrayLength(block_id, source_instruction.result, operation),
         }
@@ -505,7 +511,9 @@ const LoweringState = struct {
         const lhs_components = try self.components(operation.lhs);
         const rhs_components = try self.components(operation.rhs);
         const result_components = try self.addRegisterLocation(result_id, .temporary);
-        if (lhs_components.len == 0 or lhs_components.len != rhs_components.len or lhs_components.len != result_components.len)
+        const broadcast_rhs = operation.opcode == .vector_times_scalar;
+        if (lhs_components.len == 0 or lhs_components.len != result_components.len or
+            (broadcast_rhs and rhs_components.len != 1) or (!broadcast_rhs and lhs_components.len != rhs_components.len))
             return Error.InvalidModule;
 
         switch (operation.opcode) {
@@ -541,7 +549,7 @@ const LoweringState = struct {
             .integer_subtract => if (data_type == .u32 or data_type == .i32) .add else return Error.UnsupportedOperation,
             .float_subtract => if (data_type == .f32) .add else return Error.UnsupportedOperation,
             .integer_multiply => if (data_type == .u32 or data_type == .i32) .multiply else return Error.UnsupportedOperation,
-            .float_multiply => if (data_type == .f32) .multiply else return Error.UnsupportedOperation,
+            .float_multiply, .vector_times_scalar => if (data_type == .f32) .multiply else return Error.UnsupportedOperation,
             .shift_left => if (data_type == .u32 or data_type == .i32) .shift_left else return Error.UnsupportedOperation,
             .logical_shift_right => if (data_type == .u32) .shift_right else return Error.UnsupportedOperation,
             .arithmetic_shift_right => if (data_type == .i32) .shift_right else return Error.UnsupportedOperation,
@@ -562,10 +570,12 @@ const LoweringState = struct {
             => return Error.UnsupportedOperation,
         };
 
-        for (lhs_components, rhs_components, result_components) |lhs, rhs_value, result_component| {
-            if (lhs.type != data_type or rhs_value.type != data_type or result_component.type != data_type)
+        for (lhs_components, result_components, 0..) |lhs, result_component, component| {
+            if (lhs.type != data_type or result_component.type != data_type)
                 return Error.InvalidModule;
-            var rhs = rhs_value;
+            var rhs = rhs_components[if (broadcast_rhs) 0 else component];
+            if (rhs.type != data_type)
+                return Error.InvalidModule;
             if (operation.opcode == .integer_subtract or operation.opcode == .float_subtract)
                 rhs.negate = !rhs.negate;
             try self.appendInstruction(block_id, null, .{

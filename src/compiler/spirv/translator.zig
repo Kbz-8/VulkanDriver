@@ -69,6 +69,27 @@ const BufferAddress = struct {
     pointee_type: u32,
 };
 
+const DescriptorArray = struct {
+    resources: []const ir.id.ResourceId,
+    element_type: u32,
+};
+
+const WorkgroupAddress = struct {
+    variable: ir.id.WorkgroupVariableId,
+    byte_offset: ?ir.id.ValueId,
+    pointee_type: u32,
+};
+
+const ImageAddress = struct {
+    resource: ir.id.ResourceId,
+    coordinate: ir.id.ValueId,
+};
+
+const AtomicAddress = union(enum) {
+    buffer: BufferAddress,
+    workgroup: WorkgroupAddress,
+};
+
 const CompositeAddress = struct {
     root: union(enum) {
         local: usize,
@@ -82,6 +103,7 @@ const CompositeAddress = struct {
 const LocalVariable = struct {
     spv_id: u32,
     type: ir.id.TypeId,
+    initial_value: ir.id.ValueId,
 };
 
 const PhiInfo = struct {
@@ -106,9 +128,15 @@ const Context = struct {
     types: []?ir.id.TypeId,
     values: []?ir.id.ValueId,
     blocks: []?ir.id.BlockId,
+    functions: []?ir.id.FunctionId,
     interfaces: []?ir.id.InterfaceVariableId,
     resources: []?ir.id.ResourceId,
+    image_resources: []?ir.id.ResourceId,
+    image_addresses: []?ImageAddress,
     buffer_addresses: []?BufferAddress,
+    descriptor_arrays: []?DescriptorArray,
+    workgroup_variables: []?ir.id.WorkgroupVariableId,
+    workgroup_addresses: []?WorkgroupAddress,
     composite_addresses: []?CompositeAddress,
     member_offsets: std.ArrayList(MemberOffset) = .empty,
     phi_infos: std.ArrayList(PhiInfo) = .empty,
@@ -238,6 +266,14 @@ const Context = struct {
                         .members = members,
                     },
                 });
+            },
+            .type_image => blk: {
+                if (operands.len < 8 or operands.len > 9 or operands[2] != 1 or operands[4] != 0 or operands[5] != 0 or operands[6] != 2)
+                    return TranslationError.UnsupportedType;
+                break :blk try self.builder.internType(.{ .resource_handle = .{
+                    .kind = .storage_image,
+                    .data_type = try self.translateType(operands[1]),
+                } });
             },
             .type_pointer => blk: {
                 try expectOperandCount(operands, 3);
@@ -392,14 +428,36 @@ const Context = struct {
         return self.blocks[index] orelse TranslationError.InvalidBlock;
     }
 
+    fn function(self: *const Context, spv_id: u32) TranslationError!ir.id.FunctionId {
+        return self.functions[try self.idIndex(spv_id)] orelse TranslationError.MissingFunction;
+    }
+
     fn interfaceVariable(self: *const Context, spv_id: u32) TranslationError!ir.id.InterfaceVariableId {
         const index = try self.idIndex(spv_id);
         return self.interfaces[index] orelse TranslationError.UnsupportedOpcode;
     }
 
+    fn imageResource(self: *const Context, spv_id: u32) TranslationError!?ir.id.ResourceId {
+        return self.image_resources[try self.idIndex(spv_id)];
+    }
+
+    fn imageAddress(self: *const Context, spv_id: u32) TranslationError!?ImageAddress {
+        return self.image_addresses[try self.idIndex(spv_id)];
+    }
+
     fn bufferAddress(self: *const Context, spv_id: u32) TranslationError!?BufferAddress {
         const index = try self.idIndex(spv_id);
         return self.buffer_addresses[index];
+    }
+
+    fn descriptorArray(self: *const Context, spv_id: u32) TranslationError!?DescriptorArray {
+        const index = try self.idIndex(spv_id);
+        return self.descriptor_arrays[index];
+    }
+
+    fn workgroupAddress(self: *const Context, spv_id: u32) TranslationError!?WorkgroupAddress {
+        const index = try self.idIndex(spv_id);
+        return self.workgroup_addresses[index];
     }
 
     fn compositeAddress(self: *const Context, spv_id: u32) TranslationError!?CompositeAddress {
@@ -450,9 +508,15 @@ pub fn instantiate(allocator: std.mem.Allocator, source: *const SourceModule, op
         .types = try allocOptional(ir.id.TypeId, scratch, bound),
         .values = try allocOptional(ir.id.ValueId, scratch, bound),
         .blocks = try allocOptional(ir.id.BlockId, scratch, bound),
+        .functions = try allocOptional(ir.id.FunctionId, scratch, bound),
         .interfaces = try allocOptional(ir.id.InterfaceVariableId, scratch, bound),
         .resources = try allocOptional(ir.id.ResourceId, scratch, bound),
+        .image_resources = try allocOptional(ir.id.ResourceId, scratch, bound),
+        .image_addresses = try allocOptional(ImageAddress, scratch, bound),
         .buffer_addresses = try allocOptional(BufferAddress, scratch, bound),
+        .descriptor_arrays = try allocOptional(DescriptorArray, scratch, bound),
+        .workgroup_variables = try allocOptional(ir.id.WorkgroupVariableId, scratch, bound),
+        .workgroup_addresses = try allocOptional(WorkgroupAddress, scratch, bound),
         .composite_addresses = try allocOptional(CompositeAddress, scratch, bound),
         .local_indices = try allocOptional(usize, scratch, bound),
         .block_local_inputs = try allocOptional(ir.id.ValueId, scratch, 0),
@@ -467,14 +531,34 @@ pub fn instantiate(allocator: std.mem.Allocator, source: *const SourceModule, op
     try collectDeclarations(&context);
     try translateInterfaces(&context, entry_point.interface_ids);
     try translateResources(&context);
+    try translateWorkgroupVariables(&context);
     try applyExecutionModes(&context, entry_point.function_id);
-    try translateFunction(&context, entry_point.function_id, options.entry_point);
+    try declareFunctions(&context, entry_point, options.entry_point);
+    try translateFunctions(&context);
     try ir.validator.validate(&module);
     module.properties.valid_cfg = true;
     module.properties.valid_ssa = true;
     module.properties.structured_control_flow = true;
-    module.properties.no_function_calls = true;
+
+    if (hasFunctionCalls(&module)) {
+        var manager = ir.transformer_manager.Manager.init(scratch);
+        defer manager.deinit();
+        try manager.add(ir.inline_all_functions.transformer);
+        var transformer_context: ir.transformer_manager.Context = .{ .allocator = scratch };
+        _ = try manager.run(&module, &transformer_context);
+    } else {
+        module.properties.no_function_calls = true;
+    }
     return module;
+}
+
+fn hasFunctionCalls(module: *const ir.module.Module) bool {
+    for (module.instructions.entries.items) |entry| {
+        const instruction = entry orelse continue;
+        if (instruction.operation == .call)
+            return true;
+    }
+    return false;
 }
 
 /// Convenience wrapper for callers that do not retain a source module.
@@ -659,7 +743,7 @@ fn translateResources(context: *Context) !void {
             return TranslationError.InvalidInstruction;
 
         const storage_class: spirv.StorageClass = @enumFromInt(variable.operands[2]);
-        if (storage_class != .uniform and storage_class != .storage_buffer)
+        if (storage_class != .uniform and storage_class != .storage_buffer and storage_class != .uniform_constant)
             continue;
 
         const pointer = context.type_defs[try context.idIndex(variable.operands[0])] orelse return TranslationError.MissingDefinition;
@@ -670,32 +754,111 @@ fn translateResources(context: *Context) !void {
             return TranslationError.InvalidInstruction;
 
         const pointee_id = pointer.operands[2];
-        const pointee_decoration = context.decorations[try context.idIndex(pointee_id)];
-        const kind: ir.types.ResourceKind = if (storage_class == .storage_buffer or pointee_decoration.buffer_block)
+        const pointee = context.type_defs[try context.idIndex(pointee_id)] orelse return TranslationError.MissingDefinition;
+        const variable_decoration = context.decorations[spv_index];
+        if (storage_class == .uniform_constant) {
+            if (pointee.opcode != .type_image)
+                continue;
+            const resource = try context.builder.addResource(
+                try context.translateType(pointee_id),
+                .storage_image,
+                variable_decoration.descriptor_set orelse return TranslationError.InvalidInstruction,
+                variable_decoration.binding orelse return TranslationError.InvalidInstruction,
+                context.nameOf(@intCast(spv_index)),
+            );
+            context.resources[spv_index] = resource;
+            context.image_resources[spv_index] = resource;
+            continue;
+        }
+        const is_descriptor_array = pointee.opcode == .type_array;
+        const resource_type_id = if (is_descriptor_array) blk: {
+            try expectOperandCount(pointee.operands, 3);
+            break :blk pointee.operands[1];
+        } else pointee_id;
+        const resource_decoration = context.decorations[try context.idIndex(resource_type_id)];
+        const kind: ir.types.ResourceKind = if (storage_class == .storage_buffer or resource_decoration.buffer_block)
             .storage_buffer
-        else if (pointee_decoration.block)
+        else if (resource_decoration.block)
             .uniform_buffer
         else
             continue;
 
-        const variable_decoration = context.decorations[spv_index];
-        const resource = try context.builder.addResource(
-            try context.translateType(pointee_id),
-            kind,
-            variable_decoration.descriptor_set orelse return TranslationError.InvalidInstruction,
-            variable_decoration.binding orelse return TranslationError.InvalidInstruction,
-            context.nameOf(@intCast(spv_index)),
-        );
-        context.resources[spv_index] = resource;
-        context.buffer_addresses[spv_index] = .{
-            .resource = resource,
-            .byte_offset = null,
-            .pointee_type = pointee_id,
-        };
+        const set = variable_decoration.descriptor_set orelse return TranslationError.InvalidInstruction;
+        const binding = variable_decoration.binding orelse return TranslationError.InvalidInstruction;
+        const resource_type = try context.translateType(resource_type_id);
+        if (is_descriptor_array) {
+            const count: usize = try constantIndex(context, pointee.operands[2]);
+            if (count == 0)
+                return TranslationError.InvalidInstruction;
+            const resources = try context.scratch.alloc(ir.id.ResourceId, count);
+            for (resources, 0..) |*resource, array_element| {
+                resource.* = try context.builder.addResourceArrayElement(
+                    resource_type,
+                    kind,
+                    set,
+                    binding,
+                    @intCast(array_element),
+                    if (array_element == 0) context.nameOf(@intCast(spv_index)) else null,
+                );
+            }
+            context.resources[spv_index] = resources[0];
+            context.descriptor_arrays[spv_index] = .{
+                .resources = resources,
+                .element_type = resource_type_id,
+            };
+        } else {
+            const resource = try context.builder.addResource(
+                resource_type,
+                kind,
+                set,
+                binding,
+                context.nameOf(@intCast(spv_index)),
+            );
+            context.resources[spv_index] = resource;
+            context.buffer_addresses[spv_index] = .{
+                .resource = resource,
+                .byte_offset = null,
+                .pointee_type = pointee_id,
+            };
+        }
     }
 
     if (context.module.resources.entries.items.len != 0)
         context.module.properties.explicit_resource_offsets = true;
+}
+
+fn translateWorkgroupVariables(context: *Context) !void {
+    for (context.variable_defs, 0..) |optional_variable, spv_index| {
+        const variable = optional_variable orelse continue;
+        if (variable.operands.len < 3 or variable.operands.len > 4)
+            return TranslationError.InvalidInstruction;
+
+        const storage_class: spirv.StorageClass = @enumFromInt(variable.operands[2]);
+        if (storage_class != .workgroup)
+            continue;
+        if (variable.operands.len != 3)
+            return TranslationError.UnsupportedOpcode;
+
+        const pointer = context.type_defs[try context.idIndex(variable.operands[0])] orelse return TranslationError.MissingDefinition;
+        if (pointer.opcode != .type_pointer)
+            return TranslationError.InvalidInstruction;
+        try expectOperandCount(pointer.operands, 3);
+        if (pointer.operands[1] != variable.operands[2])
+            return TranslationError.InvalidInstruction;
+
+        const pointee_type = pointer.operands[2];
+        _ = try workgroupTypeSize(context, pointee_type);
+        const translated = try context.builder.addWorkgroupVariable(
+            try context.translateType(pointee_type),
+            context.nameOf(@intCast(spv_index)),
+        );
+        context.workgroup_variables[spv_index] = translated;
+        context.workgroup_addresses[spv_index] = .{
+            .variable = translated,
+            .byte_offset = null,
+            .pointee_type = pointee_type,
+        };
+    }
 }
 
 fn findEntryPoint(parser: Parser, requested_name: []const u8, requested_stage: ?ir.module.Stage) !EntryPoint {
@@ -741,7 +904,7 @@ fn findEntryPoint(parser: Parser, requested_name: []const u8, requested_stage: ?
 fn applyExecutionModes(context: *Context, entry_function: u32) !void {
     var iterator = context.parser.iterator();
     while (try iterator.next()) |instruction| {
-        if (instruction.opcode != .execution_mode)
+        if (instruction.opcode != .execution_mode and instruction.opcode != .execution_mode_id)
             continue;
 
         if (instruction.operands.len < 2)
@@ -755,15 +918,76 @@ fn applyExecutionModes(context: *Context, entry_function: u32) !void {
         switch (mode) {
             .early_fragment_tests => context.module.execution_modes.early_fragment_tests = true,
             .local_size => {
+                if (instruction.opcode != .execution_mode)
+                    return TranslationError.InvalidInstruction;
                 try expectOperandCount(instruction.operands, 5);
                 context.module.execution_modes.workgroup_size = instruction.operands[2..5].*;
+            },
+            .local_size_id => {
+                if (instruction.opcode != .execution_mode_id)
+                    return TranslationError.InvalidInstruction;
+                try expectOperandCount(instruction.operands, 5);
+                context.module.execution_modes.workgroup_size = .{
+                    try constantIndex(context, instruction.operands[2]),
+                    try constantIndex(context, instruction.operands[3]),
+                    try constantIndex(context, instruction.operands[4]),
+                };
             },
             else => {},
         }
     }
+
+    for (context.decorations, 0..) |decoration, spv_id| {
+        if (decoration.builtin != @intFromEnum(spirv.Builtin.workgroup_size))
+            continue;
+        const definition = context.value_defs[spv_id] orelse continue;
+        if (definition.opcode != .spec_constant_composite and definition.opcode != .constant_composite)
+            continue;
+        try expectOperandCount(definition.operands, 5);
+        context.module.execution_modes.workgroup_size = .{
+            try constantIndex(context, definition.operands[2]),
+            try constantIndex(context, definition.operands[3]),
+            try constantIndex(context, definition.operands[4]),
+        };
+    }
 }
 
-fn translateFunction(context: *Context, spv_function: u32, entry_name: []const u8) !void {
+fn declareFunctions(context: *Context, entry_point: EntryPoint, entry_name: []const u8) !void {
+    var iterator = context.parser.iterator();
+    while (try iterator.next()) |instruction| {
+        if (instruction.opcode != .function)
+            continue;
+        try expectOperandCount(instruction.operands, 4);
+        const spv_function = instruction.operands[1];
+        const index = try context.idIndex(spv_function);
+        if (context.functions[index] != null)
+            return TranslationError.DuplicateId;
+        const function_type = try functionTypeDefinition(context, instruction.operands[3]);
+        if (function_type.operands.len < 2 or function_type.operands[1] != instruction.operands[0])
+            return TranslationError.InvalidFunctionType;
+        const function = try context.builder.addFunction(
+            try context.translateType(instruction.operands[0]),
+            context.nameOf(spv_function) orelse if (spv_function == entry_point.function_id) entry_name else null,
+        );
+        context.functions[index] = function;
+        if (spv_function == entry_point.function_id)
+            context.builder.setEntryPoint(function);
+    }
+    if (context.module.entry_point == null)
+        return TranslationError.MissingFunction;
+}
+
+fn translateFunctions(context: *Context) !void {
+    var iterator = context.parser.iterator();
+    while (try iterator.next()) |instruction| {
+        if (instruction.opcode == .function) {
+            try expectOperandCount(instruction.operands, 4);
+            try translateFunction(context, instruction.operands[1]);
+        }
+    }
+}
+
+fn translateFunction(context: *Context, spv_function: u32) !void {
     const function_instruction = try findFunction(context.parser, spv_function);
     try expectOperandCount(function_instruction.operands, 4);
     const function_type = try functionTypeDefinition(context, function_instruction.operands[3]);
@@ -771,12 +995,9 @@ fn translateFunction(context: *Context, spv_function: u32, entry_name: []const u
     if (function_type.operands.len < 2 or function_type.operands[1] != function_instruction.operands[0])
         return TranslationError.InvalidFunctionType;
 
-    const function = try context.builder.addFunction(
-        try context.translateType(function_instruction.operands[0]),
-        context.nameOf(spv_function) orelse entry_name,
-    );
-    context.builder.setEntryPoint(function);
-
+    const function = try context.function(spv_function);
+    context.locals.clearRetainingCapacity();
+    context.entry_label = null;
     try collectFunctionLocals(context, spv_function);
     try predeclareFunction(context, spv_function, function, function_type.operands[2..]);
     try translateFunctionInstructions(context, spv_function);
@@ -798,7 +1019,8 @@ fn collectFunctionLocals(context: *Context, spv_function: u32) !void {
         if (instruction.opcode != .variable)
             continue;
 
-        try expectOperandCount(instruction.operands, 3);
+        if (instruction.operands.len < 3 or instruction.operands.len > 4)
+            return TranslationError.InvalidInstruction;
         const storage_class: spirv.StorageClass = @enumFromInt(instruction.operands[2]);
         if (storage_class != .function)
             return TranslationError.UnsupportedOpcode;
@@ -815,10 +1037,22 @@ fn collectFunctionLocals(context: *Context, spv_function: u32) !void {
         if (context.local_indices[result_index] != null)
             return TranslationError.DuplicateId;
 
+        const local_type = try context.translateType(pointer.operands[2]);
+        const initial_value = if (instruction.operands.len == 4)
+            try context.resolveValue(instruction.operands[3])
+        else
+            try context.module.values.add(context.module.allocator(), .{
+                .type = local_type,
+                .definition = .undef,
+            });
+        if (context.module.typeOf(initial_value) != local_type)
+            return TranslationError.InvalidInstruction;
+
         context.local_indices[result_index] = context.locals.items.len;
         try context.locals.append(context.scratch, .{
             .spv_id = result_id,
-            .type = try context.translateType(pointer.operands[2]),
+            .type = local_type,
+            .initial_value = initial_value,
         });
     }
 
@@ -934,7 +1168,7 @@ fn translateFunctionInstructions(context: *Context, spv_function: u32) !void {
                 current_block = try context.block(label);
                 for (context.current_locals, 0..) |*current, local_index| {
                     current.* = if (label == context.entry_label.?)
-                        null
+                        context.locals.items[local_index].initial_value
                     else
                         context.block_local_inputs[try context.blockLocalIndex(label, local_index)];
                 }
@@ -982,6 +1216,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             try expectOperandCount(operands, 2);
             _ = try context.translateValue(operands[1]);
         },
+        .ext_inst => try translateExtendedInstruction(context, block, operands),
         .copy_object => {
             try expectOperandCount(operands, 3);
             const source = try context.resolveValue(operands[2]);
@@ -995,6 +1230,10 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             if (operands.len < 3)
                 return TranslationError.InvalidInstruction;
 
+            if (try context.imageResource(operands[2])) |resource| {
+                context.image_resources[try context.idIndex(operands[1])] = resource;
+                return;
+            }
             const result_type = try context.translateType(operands[0]);
             if (try context.localIndex(operands[2])) |local_index| {
                 const value = context.current_locals[local_index] orelse return TranslationError.InvalidInstruction;
@@ -1006,6 +1245,16 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                     .load_buffer = .{
                         .resource = address.resource,
                         .byte_offset = try bufferByteOffset(context, address),
+                    },
+                }, context.nameOf(operands[1]))).?;
+                try context.setValue(operands[1], result);
+            } else if (try context.workgroupAddress(operands[2])) |address| {
+                if (result_type != try context.translateType(address.pointee_type))
+                    return TranslationError.InvalidInstruction;
+                const result = (try context.builder.appendInstruction(block, result_type, .{
+                    .load_workgroup = .{
+                        .variable = address.variable,
+                        .byte_offset = try workgroupByteOffset(context, address),
                     },
                 }, context.nameOf(operands[1]))).?;
                 try context.setValue(operands[1], result);
@@ -1050,6 +1299,16 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                         .value = value,
                     },
                 }, null);
+            } else if (try context.workgroupAddress(operands[0])) |address| {
+                if (context.module.typeOf(value) != try context.translateType(address.pointee_type))
+                    return TranslationError.InvalidInstruction;
+                _ = try context.builder.appendInstruction(block, null, .{
+                    .store_workgroup = .{
+                        .variable = address.variable,
+                        .byte_offset = try workgroupByteOffset(context, address),
+                        .value = value,
+                    },
+                }, null);
             } else if (try context.compositeAddress(operands[0]) != null) {
                 return TranslationError.UnsupportedOpcode;
             } else {
@@ -1062,6 +1321,56 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             }
         },
         .access_chain => try translateAccessChain(context, block, operands),
+        .vector_shuffle => try translateVectorShuffle(context, block, operands),
+        .image_read => {
+            if (operands.len < 4)
+                return TranslationError.InvalidInstruction;
+            const resource = (try context.imageResource(operands[2])) orelse return TranslationError.UnsupportedOpcode;
+            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+                .image_read = .{ .resource = resource, .coordinate = try context.resolveValue(operands[3]) },
+            }, context.nameOf(operands[1]))).?;
+            try context.setValue(operands[1], result);
+        },
+        .image_write => {
+            if (operands.len < 3)
+                return TranslationError.InvalidInstruction;
+            const resource = (try context.imageResource(operands[0])) orelse return TranslationError.UnsupportedOpcode;
+            _ = try context.builder.appendInstruction(block, null, .{ .image_write = .{
+                .resource = resource,
+                .coordinate = try context.resolveValue(operands[1]),
+                .value = try context.resolveValue(operands[2]),
+            } }, null);
+        },
+        .image_texel_pointer => {
+            try expectOperandCount(operands, 5);
+            const resource = (try context.imageResource(operands[2])) orelse return TranslationError.UnsupportedOpcode;
+            if (try constantIndex(context, operands[4]) != 0)
+                return TranslationError.UnsupportedOpcode;
+            const index = try context.idIndex(operands[1]);
+            if (context.image_addresses[index] != null)
+                return TranslationError.DuplicateId;
+            context.image_addresses[index] = .{
+                .resource = resource,
+                .coordinate = try context.resolveValue(operands[3]),
+            };
+        },
+        .memory_barrier => {
+            try expectOperandCount(operands, 2);
+            _ = try constantIndex(context, operands[0]);
+            _ = try constantIndex(context, operands[1]);
+        },
+        .control_barrier => {
+            try expectOperandCount(operands, 3);
+            const execution_scope = try constantIndex(context, operands[0]);
+            const memory_scope = try constantIndex(context, operands[1]);
+            _ = try constantIndex(context, operands[2]);
+            if (execution_scope != 2 or (memory_scope != 1 and memory_scope != 2))
+                return TranslationError.UnsupportedOpcode;
+            _ = try context.builder.appendInstruction(block, null, .control_barrier, null);
+            context.module.properties.uses_control_barriers = true;
+        },
+        .atomic_i_add => try translateAtomicIAdd(context, block, operands),
+        .atomic_exchange => try translateAtomicExchange(context, block, operands),
         .s_negate,
         .f_negate,
         .logical_not,
@@ -1092,6 +1401,18 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                 context.nameOf(operands[1]),
             )).?;
 
+            try context.setValue(operands[1], result);
+        },
+        .vector_times_scalar => {
+            try expectOperandCount(operands, 4);
+
+            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+                .binary = .{
+                    .opcode = .vector_times_scalar,
+                    .lhs = try context.resolveValue(operands[2]),
+                    .rhs = try context.resolveValue(operands[3]),
+                },
+            }, context.nameOf(operands[1]))).?;
             try context.setValue(operands[1], result);
         },
         .i_add,
@@ -1126,6 +1447,20 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                 },
             }, context.nameOf(operands[1]))).?;
 
+            try context.setValue(operands[1], result);
+        },
+        .u_greater_than_equal => {
+            try expectOperandCount(operands, 4);
+            const result_type = try context.translateType(operands[0]);
+            const less = (try context.builder.appendInstruction(block, result_type, .{ .compare = .{
+                .opcode = .unsigned_less,
+                .lhs = try context.resolveValue(operands[2]),
+                .rhs = try context.resolveValue(operands[3]),
+            } }, null)).?;
+            const result = (try context.builder.appendInstruction(block, result_type, .{ .unary = .{
+                .opcode = .logical_not,
+                .operand = less,
+            } }, context.nameOf(operands[1]))).?;
             try context.setValue(operands[1], result);
         },
         .logical_equal,
@@ -1205,7 +1540,18 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
 
             try context.setValue(operands[1], result);
         },
-        .function_call => return TranslationError.UnsupportedOpcode,
+        .function_call => {
+            if (operands.len < 3)
+                return TranslationError.InvalidInstruction;
+            const arguments = try context.scratch.alloc(ir.id.ValueId, operands.len - 3);
+            for (operands[3..], arguments) |argument, *translated|
+                translated.* = try context.resolveValue(argument);
+            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{ .call = .{
+                .function = try context.function(operands[2]),
+                .arguments = arguments,
+            } }, context.nameOf(operands[1]))).?;
+            try context.setValue(operands[1], result);
+        },
         .array_length => try translateArrayLength(context, block, operands),
 
         else => {
@@ -1219,21 +1565,300 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
     }
 }
 
+fn translateExtendedInstruction(context: *Context, block: ir.id.BlockId, operands: []const u32) !void {
+    if (operands.len < 4 or !try isGlslStd450(context, operands[2]))
+        return TranslationError.UnsupportedOpcode;
+    switch (operands[3]) {
+        81 => try translateNClamp(context, block, operands),
+        else => return TranslationError.UnsupportedOpcode,
+    }
+}
+
+fn isGlslStd450(context: *const Context, import_id: u32) !bool {
+    var iterator = context.parser.iterator();
+    while (try iterator.next()) |instruction| {
+        if (instruction.opcode != .ext_inst_import or instruction.operands.len < 2 or instruction.operands[0] != import_id)
+            continue;
+        return Parser.literalStringEquals(instruction.operands[1..], "GLSL.std.450");
+    }
+    return false;
+}
+
+fn translateNClamp(context: *Context, block: ir.id.BlockId, operands: []const u32) !void {
+    try expectOperandCount(operands, 7);
+    const result_type = try context.translateType(operands[0]);
+    const result_definition = context.module.types.get(result_type) orelse return TranslationError.InvalidId;
+    const vector = switch (result_definition.*) {
+        .vector => |vector| vector,
+        else => return TranslationError.UnsupportedType,
+    };
+    const element_definition = context.module.types.get(vector.element_type) orelse return TranslationError.InvalidId;
+    if (element_definition.* != .floating or element_definition.floating.bits != 32)
+        return TranslationError.UnsupportedType;
+
+    const input = try context.resolveValue(operands[4]);
+    const minimum = try context.resolveValue(operands[5]);
+    const maximum = try context.resolveValue(operands[6]);
+    if (context.module.typeOf(input) != result_type or context.module.typeOf(minimum) != result_type or context.module.typeOf(maximum) != result_type)
+        return TranslationError.InvalidInstruction;
+
+    const bool_type = try context.builder.internType(.boolean);
+    const elements = try context.scratch.alloc(ir.id.ValueId, vector.length);
+    for (elements, 0..) |*element, index| {
+        const indices = &.{@as(u32, @intCast(index))};
+        const input_element = (try context.builder.appendInstruction(block, vector.element_type, .{ .composite_extract = .{
+            .composite = input,
+            .indices = indices,
+        } }, null)).?;
+        const minimum_element = (try context.builder.appendInstruction(block, vector.element_type, .{ .composite_extract = .{
+            .composite = minimum,
+            .indices = indices,
+        } }, null)).?;
+        const maximum_element = (try context.builder.appendInstruction(block, vector.element_type, .{ .composite_extract = .{
+            .composite = maximum,
+            .indices = indices,
+        } }, null)).?;
+        const below_minimum = (try context.builder.appendInstruction(block, bool_type, .{ .compare = .{
+            .opcode = .ordered_float_less,
+            .lhs = input_element,
+            .rhs = minimum_element,
+        } }, null)).?;
+        const lower_clamped = (try context.builder.appendInstruction(block, vector.element_type, .{ .select = .{
+            .condition = below_minimum,
+            .true_value = minimum_element,
+            .false_value = input_element,
+        } }, null)).?;
+        const above_maximum = (try context.builder.appendInstruction(block, bool_type, .{ .compare = .{
+            .opcode = .ordered_float_less,
+            .lhs = maximum_element,
+            .rhs = lower_clamped,
+        } }, null)).?;
+        element.* = (try context.builder.appendInstruction(block, vector.element_type, .{ .select = .{
+            .condition = above_maximum,
+            .true_value = maximum_element,
+            .false_value = lower_clamped,
+        } }, null)).?;
+    }
+    const result = (try context.builder.appendInstruction(block, result_type, .{ .composite_construct = .{
+        .elements = elements,
+    } }, context.nameOf(operands[1]))).?;
+    try context.setValue(operands[1], result);
+}
+
+fn translateVectorShuffle(context: *Context, block: ir.id.BlockId, operands: []const u32) !void {
+    if (operands.len < 5)
+        return TranslationError.InvalidInstruction;
+    const first = try context.resolveValue(operands[2]);
+    const second = try context.resolveValue(operands[3]);
+    const first_type = context.module.types.get(context.module.typeOf(first) orelse return TranslationError.InvalidId) orelse return TranslationError.InvalidId;
+    const second_type = context.module.types.get(context.module.typeOf(second) orelse return TranslationError.InvalidId) orelse return TranslationError.InvalidId;
+    const first_vector = if (first_type.* == .vector) first_type.vector else return TranslationError.UnsupportedType;
+    const second_vector = if (second_type.* == .vector) second_type.vector else return TranslationError.UnsupportedType;
+    if (first_vector.element_type != second_vector.element_type)
+        return TranslationError.InvalidInstruction;
+    const elements = try context.scratch.alloc(ir.id.ValueId, operands.len - 4);
+    for (operands[4..], elements) |selector, *element| {
+        const selected = if (selector < first_vector.length)
+            .{ first, selector }
+        else if (selector < @as(u32, first_vector.length) + second_vector.length)
+            .{ second, selector - first_vector.length }
+        else
+            return TranslationError.UnsupportedOpcode;
+        element.* = (try context.builder.appendInstruction(block, first_vector.element_type, .{
+            .composite_extract = .{ .composite = selected[0], .indices = &.{selected[1]} },
+        }, null)).?;
+    }
+    const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+        .composite_construct = .{ .elements = elements },
+    }, context.nameOf(operands[1]))).?;
+    try context.setValue(operands[1], result);
+}
+
+fn translateAtomicIAdd(context: *Context, block: ir.id.BlockId, operands: []const u32) !void {
+    try expectOperandCount(operands, 6);
+
+    if (try context.imageAddress(operands[2])) |address|
+        return translateImageAtomicIAdd(context, block, operands, address);
+
+    const address: AtomicAddress = if (try context.bufferAddress(operands[2])) |buffer|
+        .{ .buffer = buffer }
+    else if (try context.workgroupAddress(operands[2])) |workgroup|
+        .{ .workgroup = workgroup }
+    else
+        return TranslationError.UnsupportedOpcode;
+    _ = try constantIndex(context, operands[3]);
+    _ = try constantIndex(context, operands[4]);
+
+    const pointee_type = switch (address) {
+        .buffer => |item| item.pointee_type,
+        .workgroup => |item| item.pointee_type,
+    };
+    const result_type = try context.translateType(operands[0]);
+    if (result_type != try context.translateType(pointee_type))
+        return TranslationError.InvalidInstruction;
+    const result_type_definition = context.module.types.get(result_type) orelse return TranslationError.InvalidId;
+    switch (result_type_definition.*) {
+        .integer => |integer| if (integer.bits != 32) return TranslationError.UnsupportedType,
+        else => return TranslationError.UnsupportedType,
+    }
+
+    const value = try context.resolveValue(operands[5]);
+    if (context.module.typeOf(value) != result_type)
+        return TranslationError.InvalidInstruction;
+    const previous = (try context.builder.appendInstruction(block, result_type, switch (address) {
+        .buffer => |item| .{ .load_buffer = .{
+            .resource = item.resource,
+            .byte_offset = try bufferByteOffset(context, item),
+        } },
+        .workgroup => |item| .{ .load_workgroup = .{
+            .variable = item.variable,
+            .byte_offset = try workgroupByteOffset(context, item),
+        } },
+    }, context.nameOf(operands[1]))).?;
+    const updated = (try context.builder.appendInstruction(block, result_type, .{
+        .binary = .{
+            .opcode = .integer_add,
+            .lhs = previous,
+            .rhs = value,
+        },
+    }, null)).?;
+    _ = try context.builder.appendInstruction(block, null, switch (address) {
+        .buffer => |item| .{ .store_buffer = .{
+            .resource = item.resource,
+            .byte_offset = try bufferByteOffset(context, item),
+            .value = updated,
+        } },
+        .workgroup => |item| .{ .store_workgroup = .{
+            .variable = item.variable,
+            .byte_offset = try workgroupByteOffset(context, item),
+            .value = updated,
+        } },
+    }, null);
+
+    try context.setValue(operands[1], previous);
+    context.module.properties.uses_atomics = true;
+}
+
+fn translateAtomicExchange(context: *Context, block: ir.id.BlockId, operands: []const u32) !void {
+    try expectOperandCount(operands, 6);
+    _ = try constantIndex(context, operands[3]);
+    _ = try constantIndex(context, operands[4]);
+
+    const result_type = try context.translateType(operands[0]);
+    const value = try context.resolveValue(operands[5]);
+    if (context.module.typeOf(value) != result_type)
+        return TranslationError.InvalidInstruction;
+
+    if (try context.bufferAddress(operands[2])) |address| {
+        if (result_type != try context.translateType(address.pointee_type))
+            return TranslationError.InvalidInstruction;
+        const previous = (try context.builder.appendInstruction(block, result_type, .{ .load_buffer = .{
+            .resource = address.resource,
+            .byte_offset = try bufferByteOffset(context, address),
+        } }, context.nameOf(operands[1]))).?;
+        _ = try context.builder.appendInstruction(block, null, .{ .store_buffer = .{
+            .resource = address.resource,
+            .byte_offset = try bufferByteOffset(context, address),
+            .value = value,
+        } }, null);
+        try context.setValue(operands[1], previous);
+    } else if (try context.workgroupAddress(operands[2])) |address| {
+        if (result_type != try context.translateType(address.pointee_type))
+            return TranslationError.InvalidInstruction;
+        const previous = (try context.builder.appendInstruction(block, result_type, .{ .load_workgroup = .{
+            .variable = address.variable,
+            .byte_offset = try workgroupByteOffset(context, address),
+        } }, context.nameOf(operands[1]))).?;
+        _ = try context.builder.appendInstruction(block, null, .{ .store_workgroup = .{
+            .variable = address.variable,
+            .byte_offset = try workgroupByteOffset(context, address),
+            .value = value,
+        } }, null);
+        try context.setValue(operands[1], previous);
+    } else {
+        return TranslationError.UnsupportedOpcode;
+    }
+    context.module.properties.uses_atomics = true;
+}
+
+fn translateImageAtomicIAdd(context: *Context, block: ir.id.BlockId, operands: []const u32, address: ImageAddress) !void {
+    _ = try constantIndex(context, operands[3]);
+    _ = try constantIndex(context, operands[4]);
+
+    const result_type = try context.translateType(operands[0]);
+    const result_type_definition = context.module.types.get(result_type) orelse return TranslationError.InvalidId;
+    switch (result_type_definition.*) {
+        .integer => |integer| if (integer.bits != 32 or integer.signedness != .unsigned) return TranslationError.UnsupportedType,
+        else => return TranslationError.UnsupportedType,
+    }
+    const value = try context.resolveValue(operands[5]);
+    if (context.module.typeOf(value) != result_type)
+        return TranslationError.InvalidInstruction;
+
+    const vector_type = try context.builder.internType(.{ .vector = .{
+        .element_type = result_type,
+        .length = 4,
+    } });
+    const previous_vector = (try context.builder.appendInstruction(block, vector_type, .{ .image_read = .{
+        .resource = address.resource,
+        .coordinate = address.coordinate,
+    } }, null)).?;
+    var components: [4]ir.id.ValueId = undefined;
+    for (&components, 0..) |*component, index| {
+        component.* = (try context.builder.appendInstruction(block, result_type, .{ .composite_extract = .{
+            .composite = previous_vector,
+            .indices = &.{@as(u32, @intCast(index))},
+        } }, if (index == 0) context.nameOf(operands[1]) else null)).?;
+    }
+    const previous = components[0];
+    const updated = (try context.builder.appendInstruction(block, result_type, .{ .binary = .{
+        .opcode = .integer_add,
+        .lhs = previous,
+        .rhs = value,
+    } }, null)).?;
+    components[0] = updated;
+    const updated_vector = (try context.builder.appendInstruction(block, vector_type, .{ .composite_construct = .{
+        .elements = &components,
+    } }, null)).?;
+    _ = try context.builder.appendInstruction(block, null, .{ .image_write = .{
+        .resource = address.resource,
+        .coordinate = address.coordinate,
+        .value = updated_vector,
+    } }, null);
+
+    try context.setValue(operands[1], previous);
+    context.module.properties.uses_atomics = true;
+}
+
 fn translateAccessChain(context: *Context, block: ir.id.BlockId, operands: []const u32) !void {
     if (operands.len < 4)
         return TranslationError.InvalidInstruction;
 
     if (try context.bufferAddress(operands[2])) |base|
-        return translateBufferAccessChain(context, block, operands, base);
+        return translateBufferAccessChain(context, block, operands, base, 3);
+
+    if (try context.workgroupAddress(operands[2])) |base|
+        return translateWorkgroupAccessChain(context, block, operands, base);
+
+    if (try context.descriptorArray(operands[2])) |descriptor_array| {
+        const array_element: usize = try constantIndex(context, operands[3]);
+        if (array_element >= descriptor_array.resources.len)
+            return TranslationError.InvalidInstruction;
+        return translateBufferAccessChain(context, block, operands, .{
+            .resource = descriptor_array.resources[array_element],
+            .byte_offset = null,
+            .pointee_type = descriptor_array.element_type,
+        }, 4);
+    }
 
     try translateCompositeAccessChain(context, operands);
 }
 
-fn translateBufferAccessChain(context: *Context, block: ir.id.BlockId, operands: []const u32, base: BufferAddress) !void {
+fn translateBufferAccessChain(context: *Context, block: ir.id.BlockId, operands: []const u32, base: BufferAddress, first_index: usize) !void {
     var current_type = base.pointee_type;
     var byte_offset = base.byte_offset;
 
-    for (operands[3..]) |index_id| {
+    for (operands[first_index..]) |index_id| {
         const type_definition = context.type_defs[try context.idIndex(current_type)] orelse return TranslationError.MissingDefinition;
         switch (type_definition.opcode) {
             .type_struct => {
@@ -1279,6 +1904,59 @@ fn translateBufferAccessChain(context: *Context, block: ir.id.BlockId, operands:
         return TranslationError.DuplicateId;
     context.buffer_addresses[result_index] = .{
         .resource = base.resource,
+        .byte_offset = byte_offset,
+        .pointee_type = current_type,
+    };
+}
+
+fn translateWorkgroupAccessChain(context: *Context, block: ir.id.BlockId, operands: []const u32, base: WorkgroupAddress) !void {
+    var current_type = base.pointee_type;
+    var byte_offset = base.byte_offset;
+
+    for (operands[3..]) |index_id| {
+        const type_definition = context.type_defs[try context.idIndex(current_type)] orelse return TranslationError.MissingDefinition;
+        switch (type_definition.opcode) {
+            .type_struct => {
+                const member = try constantIndex(context, index_id);
+                if (member + 1 >= type_definition.operands.len)
+                    return TranslationError.InvalidInstruction;
+                var member_offset: u32 = 0;
+                for (type_definition.operands[1 .. member + 1]) |member_type|
+                    member_offset = std.math.add(u32, member_offset, try workgroupTypeSize(context, member_type)) catch return TranslationError.UnsupportedType;
+                if (member_offset != 0) {
+                    const term = try context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = member_offset });
+                    byte_offset = try addByteOffset(context, block, byte_offset, term);
+                }
+                current_type = type_definition.operands[member + 1];
+            },
+            .type_array, .type_vector => {
+                try expectOperandCount(type_definition.operands, 3);
+                const element_type = type_definition.operands[1];
+                const stride = try workgroupTypeSize(context, element_type);
+                const index = try unsignedOffsetValue(context, block, index_id);
+                const stride_value = try context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = stride });
+                const term = (try context.builder.appendInstruction(block, try unsigned32Type(context), .{
+                    .binary = .{ .opcode = .integer_multiply, .lhs = index, .rhs = stride_value },
+                }, null)).?;
+                byte_offset = try addByteOffset(context, block, byte_offset, term);
+                current_type = element_type;
+            },
+            else => return TranslationError.UnsupportedType,
+        }
+    }
+
+    const result_pointer = context.type_defs[try context.idIndex(operands[0])] orelse return TranslationError.MissingDefinition;
+    if (result_pointer.opcode != .type_pointer)
+        return TranslationError.InvalidInstruction;
+    try expectOperandCount(result_pointer.operands, 3);
+    if (result_pointer.operands[1] != @intFromEnum(spirv.StorageClass.workgroup) or result_pointer.operands[2] != current_type)
+        return TranslationError.InvalidInstruction;
+
+    const result_index = try context.idIndex(operands[1]);
+    if (context.workgroup_addresses[result_index] != null)
+        return TranslationError.DuplicateId;
+    context.workgroup_addresses[result_index] = .{
+        .variable = base.variable,
         .byte_offset = byte_offset,
         .pointee_type = current_type,
     };
@@ -1511,6 +2189,40 @@ fn bufferByteOffset(context: *Context, address: BufferAddress) !ir.id.ValueId {
     return address.byte_offset orelse context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = 0 });
 }
 
+fn workgroupByteOffset(context: *Context, address: WorkgroupAddress) !ir.id.ValueId {
+    return address.byte_offset orelse context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = 0 });
+}
+
+fn workgroupTypeSize(context: *Context, spv_type: u32) !u32 {
+    const ty = context.type_defs[try context.idIndex(spv_type)] orelse return TranslationError.MissingDefinition;
+    return switch (ty.opcode) {
+        .type_bool => 4,
+        .type_int, .type_float => blk: {
+            if (ty.operands.len < 2 or ty.operands[1] != 32)
+                return TranslationError.UnsupportedType;
+            break :blk 4;
+        },
+        .type_vector => blk: {
+            try expectOperandCount(ty.operands, 3);
+            const element_size = try workgroupTypeSize(context, ty.operands[1]);
+            break :blk std.math.mul(u32, element_size, ty.operands[2]) catch return TranslationError.UnsupportedType;
+        },
+        .type_array => blk: {
+            try expectOperandCount(ty.operands, 3);
+            const element_size = try workgroupTypeSize(context, ty.operands[1]);
+            const length = try constantIndex(context, ty.operands[2]);
+            break :blk std.math.mul(u32, element_size, length) catch return TranslationError.UnsupportedType;
+        },
+        .type_struct => blk: {
+            var size: u32 = 0;
+            for (ty.operands[1..]) |member_type|
+                size = std.math.add(u32, size, try workgroupTypeSize(context, member_type)) catch return TranslationError.UnsupportedType;
+            break :blk size;
+        },
+        else => TranslationError.UnsupportedType,
+    };
+}
+
 fn constantIndex(context: *Context, spv_id: u32) !u32 {
     const value = context.module.values.get(try context.resolveValue(spv_id)) orelse return TranslationError.InvalidId;
     if (value.definition != .constant)
@@ -1699,6 +2411,9 @@ fn translateBuiltin(builtin: spirv.Builtin) TranslationError!ir.module.Builtin {
         .frag_coord => .frag_coord,
         .frag_depth => .frag_depth,
         .global_invocation_id => .global_invocation_id,
+        .local_invocation_id => .local_invocation_id,
+        .local_invocation_index => .local_invocation_index,
+        .workgroup_id => .workgroup_id,
         .workgroup_size => .workgroup_size,
         .num_workgroups => .num_workgroups,
         .vertex_index => .vertex_index,
@@ -2014,6 +2729,78 @@ test "SPIR-V: access chains into interface vectors and promoted local vectors" {
     try std.testing.expect(std.mem.indexOf(u8, text, "bitcast %signed_one") != null);
 }
 
+test "SPIR-V: vector times scalar" {
+    const assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint GLCompute %main "main" %vector %scalar
+        \\OpExecutionMode %main LocalSize 1 1 1
+        \\OpName %product "product"
+        \\OpDecorate %vector Location 0
+        \\OpDecorate %scalar Location 1
+        \\%void = OpTypeVoid
+        \\%fn_void = OpTypeFunction %void
+        \\%float = OpTypeFloat 32
+        \\%vec3 = OpTypeVector %float 3
+        \\%ptr_input_vec3 = OpTypePointer Input %vec3
+        \\%ptr_input_float = OpTypePointer Input %float
+        \\%vector = OpVariable %ptr_input_vec3 Input
+        \\%scalar = OpVariable %ptr_input_float Input
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    %vector_value = OpLoad %vec3 %vector
+        \\    %scalar_value = OpLoad %float %scalar
+        \\    %product = OpVectorTimesScalar %vec3 %vector_value %scalar_value
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+
+    const text = try ir.printer.allocPrint(std.testing.allocator, &module);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "%product: vec3[f32] = vector_times_scalar") != null);
+}
+
+test "SPIR-V: function-local promotion preserves initial state across edges" {
+    const assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint GLCompute %main "main"
+        \\OpExecutionMode %main LocalSize 1 1 1
+        \\%void = OpTypeVoid
+        \\%fn_void = OpTypeFunction %void
+        \\%uint = OpTypeInt 32 0
+        \\%ptr_function_uint = OpTypePointer Function %uint
+        \\%zero = OpConstant %uint 0
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    %uninitialized = OpVariable %ptr_function_uint Function
+        \\    %initialized = OpVariable %ptr_function_uint Function %zero
+        \\    OpBranch %exit
+        \\    %exit = OpLabel
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+
+    const function = module.functions.get(module.entry_point.?).?;
+    const entry = module.blocks.get(function.blocks.items[0]).?;
+    const edge = entry.terminator.?.branch;
+    try std.testing.expectEqual(@as(usize, 2), edge.arguments.len);
+    try std.testing.expect(module.values.get(edge.arguments[0]).?.definition == .undef);
+    const initialized = module.values.get(edge.arguments[1]).?;
+    try std.testing.expect(initialized.definition == .constant);
+    try std.testing.expectEqual(@as(u64, 0), module.constants.get(initialized.definition.constant).?.value.integer_bits);
+}
+
 test "SPIR-V: storage buffers and promoted function locals" {
     const assembly =
         \\OpCapability Shader
@@ -2112,6 +2899,106 @@ test "SPIR-V: storage buffers and promoted function locals" {
 
     var parsed = try ir.parser.parseString(std.testing.allocator, text);
     defer parsed.deinit();
+}
+
+test "SPIR-V: storage buffer descriptor arrays" {
+    const assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint GLCompute %main "main"
+        \\OpExecutionMode %main LocalSize 1 1 1
+        \\OpName %buffers "buffers"
+        \\OpDecorate %Buffer BufferBlock
+        \\OpMemberDecorate %Buffer 0 Offset 0
+        \\OpDecorate %buffers Binding 0
+        \\OpDecorate %buffers DescriptorSet 0
+        \\%void = OpTypeVoid
+        \\%fn_void = OpTypeFunction %void
+        \\%uint = OpTypeInt 32 0
+        \\%uint_0 = OpConstant %uint 0
+        \\%uint_1 = OpConstant %uint 1
+        \\%uint_2 = OpConstant %uint 2
+        \\%Buffer = OpTypeStruct %uint
+        \\%buffers_array = OpTypeArray %Buffer %uint_2
+        \\%ptr_uniform_buffers = OpTypePointer Uniform %buffers_array
+        \\%ptr_uniform_uint = OpTypePointer Uniform %uint
+        \\%buffers = OpVariable %ptr_uniform_buffers Uniform
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    %first = OpAccessChain %ptr_uniform_uint %buffers %uint_0 %uint_0
+        \\    OpStore %first %uint_1
+        \\    %second = OpAccessChain %ptr_uniform_uint %buffers %uint_1 %uint_0
+        \\    OpStore %second %uint_2
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), module.resources.entries.items.len);
+    const first = module.resources.get(ir.id.ResourceId.fromIndex(0)).?;
+    const second = module.resources.get(ir.id.ResourceId.fromIndex(1)).?;
+    try std.testing.expectEqual(ir.types.ResourceKind.storage_buffer, first.kind);
+    try std.testing.expectEqual(@as(u32, 0), first.array_element);
+    try std.testing.expectEqual(@as(u32, 1), second.array_element);
+    try std.testing.expectEqual(first.set, second.set);
+    try std.testing.expectEqual(first.binding, second.binding);
+
+    const text = try ir.printer.allocPrint(std.testing.allocator, &module);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "@buffers: struct[u32] = storage_buffer[set(0), binding(0)]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "@resource1: struct[u32] = storage_buffer[set(0), binding(0), array_element(1)]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "store_buffer @buffers") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "store_buffer @resource1") != null);
+
+    var parsed = try ir.parser.parseString(std.testing.allocator, text);
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(u32, 1), parsed.resources.get(ir.id.ResourceId.fromIndex(1)).?.array_element);
+}
+
+test "SPIR-V: lowers 32-bit storage-buffer atomic add conservatively" {
+    const assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint GLCompute %main "main"
+        \\OpExecutionMode %main LocalSize 1 1 1
+        \\OpName %previous "previous"
+        \\OpName %buffer "buffer"
+        \\OpDecorate %Buffer BufferBlock
+        \\OpMemberDecorate %Buffer 0 Offset 0
+        \\OpDecorate %buffer Binding 0
+        \\OpDecorate %buffer DescriptorSet 0
+        \\%void = OpTypeVoid
+        \\%fn_void = OpTypeFunction %void
+        \\%uint = OpTypeInt 32 0
+        \\%zero = OpConstant %uint 0
+        \\%one = OpConstant %uint 1
+        \\%Buffer = OpTypeStruct %uint
+        \\%ptr_uniform_buffer = OpTypePointer Uniform %Buffer
+        \\%ptr_uniform_uint = OpTypePointer Uniform %uint
+        \\%buffer = OpVariable %ptr_uniform_buffer Uniform
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    %pointer = OpAccessChain %ptr_uniform_uint %buffer %zero
+        \\    %previous = OpAtomicIAdd %uint %pointer %one %zero %one
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+
+    try std.testing.expect(module.properties.uses_atomics);
+    const text = try ir.printer.allocPrint(std.testing.allocator, &module);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "%previous: u32 = load_buffer @buffer") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "integer_add %previous") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "store_buffer @buffer") != null);
 }
 
 test "SPIR-V: fragment execution modes and translated properties" {

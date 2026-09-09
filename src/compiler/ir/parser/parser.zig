@@ -36,6 +36,7 @@ const ValueRef = ast.ValueRef;
 const ParsedModule = ast.ParsedModule;
 const ParsedInterface = ast.ParsedInterface;
 const ParsedResource = ast.ParsedResource;
+const ParsedWorkgroupVariable = ast.ParsedWorkgroupVariable;
 const ParsedConstantValue = ast.ParsedConstantValue;
 const ParsedConstant = ast.ParsedConstant;
 const ParsedParameter = ast.ParsedParameter;
@@ -51,6 +52,7 @@ const TokenTag = Lexer.TokenTag;
 const ParsedDeclaration = union(enum) {
     interface: ParsedInterface,
     resource: ParsedResource,
+    workgroup_variable: ParsedWorkgroupVariable,
 };
 
 const Parser = struct {
@@ -113,6 +115,11 @@ const Parser = struct {
             } };
         }
 
+        if (std.mem.eql(u8, kind_token.text, "workgroup")) {
+            try self.expectDiscard(.right_square);
+            return .{ .workgroup_variable = .{ .name = name, .ty = ty } };
+        }
+
         const kind = std.meta.stringToEnum(type_ir.ResourceKind, kind_token.text) orelse return Error.InvalidSemantic;
         try self.expectIdentifier("set");
         try self.expectDiscard(.left_paren);
@@ -124,6 +131,14 @@ const Parser = struct {
         try self.expectDiscard(.left_paren);
         const binding = try self.parseUnsigned(u32, .number);
         try self.expectDiscard(.right_paren);
+
+        const array_element = if (try self.consume(.comma)) blk: {
+            try self.expectIdentifier("array_element");
+            try self.expectDiscard(.left_paren);
+            const element = try self.parseUnsigned(u32, .number);
+            try self.expectDiscard(.right_paren);
+            break :blk element;
+        } else 0;
         try self.expectDiscard(.right_square);
 
         return .{ .resource = .{
@@ -132,6 +147,7 @@ const Parser = struct {
             .ty = ty,
             .set = set,
             .binding = binding,
+            .array_element = array_element,
         } };
     }
 
@@ -411,6 +427,30 @@ const Parser = struct {
                 .value = try self.parseValueRef(),
             } };
         }
+
+        if (std.mem.eql(u8, name, "load_workgroup")) {
+            const variable_name = (try self.expect(.at_name)).text;
+            try self.expectDiscard(.comma);
+            return .{ .load_workgroup = .{
+                .variable_name = variable_name,
+                .byte_offset = try self.parseValueRef(),
+            } };
+        }
+
+        if (std.mem.eql(u8, name, "store_workgroup")) {
+            const variable_name = (try self.expect(.at_name)).text;
+            try self.expectDiscard(.comma);
+            const byte_offset = try self.parseValueRef();
+            try self.expectDiscard(.comma);
+            return .{ .store_workgroup = .{
+                .variable_name = variable_name,
+                .byte_offset = byte_offset,
+                .value = try self.parseValueRef(),
+            } };
+        }
+
+        if (std.mem.eql(u8, name, "control_barrier"))
+            return .control_barrier;
 
         if (std.mem.eql(u8, name, "array_length")) {
             const resource_name = (try self.expect(.at_name)).text;
@@ -803,6 +843,7 @@ pub fn parseString(backing_allocator: std.mem.Allocator, source: []const u8) !mo
             .at_name => switch (try parser.parseDeclaration()) {
                 .interface => |interface| try parsed.interfaces.append(temporary_allocator, interface),
                 .resource => |resource| try parsed.resources.append(temporary_allocator, resource),
+                .workgroup_variable => |variable| try parsed.workgroup_variables.append(temporary_allocator, variable),
             },
             .identifier => {
                 if (std.mem.eql(u8, token.text, "fn")) {
@@ -875,6 +916,7 @@ test "Parser: resources and buffer operations" {
         \\ {
         \\     @uniforms: u32 = uniform_buffer[set(0), binding(1)]
         \\     @storage: struct[u32, f32] = storage_buffer[set(2), binding(3)]
+        \\     @arrayed_storage: u32 = storage_buffer[set(2), binding(4), array_element(2)]
         \\     @texture: vec4[f32] = sampled_image[set(4), binding(5)]
         \\     @image: vec4[f32] = storage_image[set(6), binding(7)]
         \\     @linear_sampler: resourceHandle[sampler] = sampler[set(8), binding(9)]
@@ -898,6 +940,7 @@ test "Parser: resources and buffer operations" {
 
     try std.testing.expect(std.mem.indexOf(u8, printed, "@uniforms: u32 = uniform_buffer[set(0), binding(1)]") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "@storage: struct[u32, f32] = storage_buffer[set(2), binding(3)]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "@arrayed_storage: u32 = storage_buffer[set(2), binding(4), array_element(2)]") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "@texture: vec4[f32] = sampled_image[set(4), binding(5)]") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "@image: vec4[f32] = storage_image[set(6), binding(7)]") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "@linear_sampler: resourceHandle[sampler] = sampler[set(8), binding(9)]") != null);

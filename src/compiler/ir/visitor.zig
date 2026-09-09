@@ -6,6 +6,7 @@ pub const Visitor = struct {
     context: ?*anyopaque = null,
     visitInterfaceVariable: ?*const fn (?*anyopaque, ids.InterfaceVariableId, *const module_ir.InterfaceVariable) anyerror!void = null,
     visitResource: ?*const fn (?*anyopaque, ids.ResourceId, *const module_ir.Resource) anyerror!void = null,
+    visitWorkgroupVariable: ?*const fn (?*anyopaque, ids.WorkgroupVariableId, *const module_ir.WorkgroupVariable) anyerror!void = null,
     visitFunction: ?*const fn (?*anyopaque, ids.FunctionId, *const module_ir.Function) anyerror!void = null,
     visitBlock: ?*const fn (?*anyopaque, ids.BlockId, *const module_ir.Block) anyerror!void = null,
     visitInstruction: ?*const fn (?*anyopaque, ids.InstructionId, *const instruction_ir.Instruction) anyerror!void = null,
@@ -32,6 +33,12 @@ pub fn walk(module: *const module_ir.Module, visitor: Visitor) !void {
         const resource = entry orelse continue;
         if (visitor.visitResource) |callback|
             try callback(visitor.context, ids.ResourceId.fromIndex(index), &resource);
+    }
+
+    for (module.workgroup_variables.entries.items, 0..) |entry, index| {
+        const variable = entry orelse continue;
+        if (visitor.visitWorkgroupVariable) |callback|
+            try callback(visitor.context, ids.WorkgroupVariableId.fromIndex(index), &variable);
     }
 
     for (module.functions.entries.items, 0..) |entry, function_index| {
