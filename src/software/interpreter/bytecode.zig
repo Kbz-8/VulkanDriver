@@ -1,7 +1,9 @@
 const std = @import("std");
 
-pub const Register = u16;
-pub const invalid_register = std.math.maxInt(Register);
+pub const Register = enum(u16) {
+    invalid_register = std.math.maxInt(u16),
+    _,
+};
 
 pub const ValueKind = enum(u8) {
     boolean,
@@ -20,14 +22,14 @@ pub const Span = struct {
     }
 };
 
-/// Native-endian internal bytecode. It is not a serialized or stable ABI.
+/// Native-endian internal bytecode. It is not a serialized or stable ABI
 pub const Instruction = extern struct {
     opcode: Opcode,
     components: u16 = 1,
-    a: Register = invalid_register,
-    b: Register = invalid_register,
-    c: Register = invalid_register,
-    d: Register = invalid_register,
+    a: Register = .invalid_register,
+    b: Register = .invalid_register,
+    c: Register = .invalid_register,
+    d: Register = .invalid_register,
     immediate: u32 = 0,
 };
 
@@ -37,8 +39,8 @@ comptime {
 
 pub const Opcode = enum(u16) {
     @"unreachable",
-    array_length,
     arithmetic_shift_right,
+    array_length,
     bitwise_and,
     bitwise_not,
     bitwise_or,
@@ -54,19 +56,19 @@ pub const Opcode = enum(u16) {
     compare_unordered_float_less,
     compare_unordered_float_not_equal,
     compare_unsigned_less,
+    control_barrier,
     copy,
     discard,
     float_add,
     float_divide,
     float_modulo,
     float_multiply,
-    vector_times_scalar,
     float_subtract,
+    image_read,
+    image_write,
     integer_add,
     integer_multiply,
     integer_subtract,
-    image_read,
-    image_write,
     jump_edge,
     load_buffer,
     load_workgroup,
@@ -83,9 +85,9 @@ pub const Opcode = enum(u16) {
     signed_modulo,
     store_buffer,
     store_workgroup,
-    control_barrier,
     unsigned_divide,
     unsigned_modulo,
+    vector_times_scalar,
 };
 
 pub const Copy = struct {

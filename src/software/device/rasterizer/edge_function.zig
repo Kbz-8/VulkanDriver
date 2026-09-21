@@ -95,10 +95,8 @@ pub fn drawTriangle(
         stage.module.module.reflection_infos.needs_derivatives
     else
         false;
-    const early_fragment_tests = if (comptime base.config.soft_ir_interpreter)
-        false
-    else if (fragment_stage) |stage|
-        stage.module.module.reflection_infos.early_fragment_tests
+    const early_fragment_tests = if (fragment_stage) |stage|
+        if (comptime base.config.soft_ir_interpreter) stage.early_fragment_tests else stage.module.module.reflection_infos.early_fragment_tests
     else
         false;
     const fragment_uses_sample_id = if (comptime base.config.soft_ir_interpreter)
@@ -114,9 +112,7 @@ pub fn drawTriangle(
     else
         false;
 
-    const runtimes_count = if (comptime base.config.soft_ir_interpreter)
-        1
-    else if (fragment_stage) |stage|
+    const runtimes_count = if (fragment_stage) |stage|
         stage.runtimes.len
     else
         1;
@@ -186,7 +182,7 @@ pub fn drawTriangle(
                 .depth_attachment_access = depth_attachment_access,
                 .stencil_attachment_access = stencil_attachment_access,
                 .front_face = front_face,
-                .has_fragment_shader = if (comptime base.config.soft_ir_interpreter) false else fragment_stage != null,
+                .has_fragment_shader = fragment_stage != null,
                 .early_fragment_tests = early_fragment_tests,
                 .fragment_uses_derivatives = fragment_uses_derivatives,
                 .fragment_uses_sample_id = fragment_uses_sample_id,

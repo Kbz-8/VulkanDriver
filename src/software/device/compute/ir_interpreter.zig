@@ -40,12 +40,14 @@ pub fn prepare(allocator: std.mem.Allocator, shader: *Shader, state: *const Pipe
     const local_size = shader.workgroup_size orelse return VkError.ValidationFailed;
     const local_xy = std.math.mul(usize, local_size[0], local_size[1]) catch return VkError.ValidationFailed;
     const local_count = std.math.mul(usize, local_xy, local_size[2]) catch return VkError.ValidationFailed;
+
     if (shader.runtimes.len == 0)
         return VkError.InvalidPipelineDrv;
 
     const resource_buffers = allocator.alloc(?[]u8, shader.program.resources.len) catch return VkError.OutOfDeviceMemory;
     errdefer allocator.free(resource_buffers);
     @memset(resource_buffers, null);
+
     for (shader.program.resources, resource_buffers) |optional_resource, *buffer| {
         const resource = optional_resource orelse continue;
         if (resource.kind == .storage_buffer or resource.kind == .uniform_buffer)
@@ -55,6 +57,7 @@ pub fn prepare(allocator: std.mem.Allocator, shader: *Shader, state: *const Pipe
     const resource_images = allocator.alloc(?*SoftImageView, shader.program.resources.len) catch return VkError.OutOfDeviceMemory;
     errdefer allocator.free(resource_images);
     @memset(resource_images, null);
+
     for (shader.program.resources, resource_images) |optional_resource, *image| {
         const resource = optional_resource orelse continue;
         if (resource.kind == .storage_image)
@@ -81,6 +84,7 @@ pub fn prepare(allocator: std.mem.Allocator, shader: *Shader, state: *const Pipe
 
 pub fn runBatch(context: Context, batch: Batch) !void {
     const shader = context.shader;
+
     if (batch.worker_index >= shader.runtimes.len)
         return VkError.InvalidPipelineDrv;
 
@@ -91,12 +95,14 @@ pub fn runBatch(context: Context, batch: Batch) !void {
     var barrier_runtimes: []Runtime = &.{};
     var statuses: []Runtime.Outcome = &.{};
     var initialized: usize = 0;
+
     defer {
         for (barrier_runtimes[0..initialized]) |*runtime|
             runtime.deinit();
         context.allocator.free(barrier_runtimes);
         context.allocator.free(statuses);
     }
+
     if (shader.program.uses_control_barriers) {
         barrier_runtimes = try context.allocator.alloc(Runtime, context.local_count);
         statuses = try context.allocator.alloc(Runtime.Outcome, context.local_count);
@@ -168,10 +174,13 @@ fn runBarrierWorkgroup(context: Context, batch: Batch, runtimes: []Runtime, stat
 
 fn setupInputs(context: Context, batch: Batch, runtime: *Runtime, group_id: [3]u32, local_index: usize) !void {
     const program = &context.shader.program;
+
     if (context.num_workgroups) |variable|
         try runtime.writeInput(program, variable, &.{ @intCast(batch.group_count[0]), @intCast(batch.group_count[1]), @intCast(batch.group_count[2]) });
+
     if (context.workgroup_size) |variable|
         try runtime.writeInput(program, variable, &context.local_size);
+
     if (context.workgroup_id) |variable|
         try runtime.writeInput(program, variable, &group_id);
 
@@ -180,14 +189,17 @@ fn setupInputs(context: Context, batch: Batch, runtime: *Runtime, group_id: [3]u
     const local_y = local_remainder / context.local_size[0];
     const local_x = local_remainder - local_y * context.local_size[0];
     const local_id = [3]u32{ @intCast(local_x), @intCast(local_y), @intCast(local_z) };
+
     if (context.global_id) |variable|
         try runtime.writeInput(program, variable, &.{
             group_id[0] * context.local_size[0] + local_id[0],
             group_id[1] * context.local_size[1] + local_id[1],
             group_id[2] * context.local_size[2] + local_id[2],
         });
+
     if (context.local_id) |variable|
         try runtime.writeInput(program, variable, &local_id);
+
     if (context.local_index) |variable|
         try runtime.writeInput(program, variable, &.{@intCast(local_index)});
 }

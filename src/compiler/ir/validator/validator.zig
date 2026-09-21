@@ -329,6 +329,14 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                             return ValidationError.WrongOperandType;
                     }
                 },
+                .array => |array| {
+                    if (op.elements.len != array.length)
+                        return ValidationError.WrongOperandType;
+                    for (op.elements) |element| {
+                        if (try operandType(module, function_id, element) != array.element_type)
+                            return ValidationError.WrongOperandType;
+                    }
+                },
                 .structure => |structure| {
                     if (op.elements.len != structure.members.len)
                         return ValidationError.WrongOperandType;

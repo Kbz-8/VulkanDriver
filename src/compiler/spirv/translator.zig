@@ -36,6 +36,8 @@ pub const TranslationError = error{
     InvalidSpecialization,
     DuplicateSpecializationConstant,
     UnsupportedOpcode,
+    UnsupportedPrivateCrossFunction,
+    UnsupportedStoreDestination,
 };
 
 const EntryPoint = struct {
@@ -90,6 +92,23 @@ const AtomicAddress = union(enum) {
     workgroup: WorkgroupAddress,
 };
 
+const CompositeIndex = union(enum) {
+    constant: u32,
+    dynamic: struct { value: ir.id.ValueId, length: u32 },
+};
+
+const MemberInterface = struct {
+    structure_id: u32,
+    member: u32,
+    decoration: Decorations,
+};
+
+const InterfaceBlock = struct {
+    variable: u32,
+    structure_id: u32,
+    direction: ir.module.InterfaceDirection,
+};
+
 const CompositeAddress = struct {
     root: union(enum) {
         local: usize,
@@ -97,7 +116,7 @@ const CompositeAddress = struct {
     },
     root_type: u32,
     pointee_type: u32,
-    indices: []const u32,
+    indices: []const CompositeIndex,
 };
 
 const LocalVariable = struct {
@@ -139,6 +158,9 @@ const Context = struct {
     workgroup_addresses: []?WorkgroupAddress,
     composite_addresses: []?CompositeAddress,
     member_offsets: std.ArrayList(MemberOffset) = .empty,
+    member_interfaces: std.ArrayList(MemberInterface) = .empty,
+    interface_blocks: std.ArrayList(InterfaceBlock) = .empty,
+    member_bindings: std.AutoHashMapUnmanaged(u64, ir.id.InterfaceVariableId) = .empty,
     phi_infos: std.ArrayList(PhiInfo) = .empty,
 
     local_indices: []?usize,
@@ -534,6 +556,7 @@ pub fn instantiate(allocator: std.mem.Allocator, source: *const SourceModule, op
     try translateWorkgroupVariables(&context);
     try applyExecutionModes(&context, entry_point.function_id);
     try declareFunctions(&context, entry_point, options.entry_point);
+    try validatePrivateScope(&context);
     try translateFunctions(&context);
     try ir.validator.validate(&module);
     module.properties.valid_cfg = true;
@@ -669,8 +692,30 @@ fn collectMemberDecoration(context: *Context, operands: []const u32) !void {
         return TranslationError.InvalidInstruction;
 
     const decoration: spirv.Decoration = @enumFromInt(operands[2]);
-    if (decoration != .offset)
+    if (decoration != .offset) {
+        if (decoration != .built_in and decoration != .location and decoration != .component and decoration != .index)
+            return;
+        try expectOperandCount(operands, 4);
+        var entry: ?*MemberInterface = null;
+        for (context.member_interfaces.items) |*member| {
+            if (member.structure_id == operands[0] and member.member == operands[1]) {
+                entry = member;
+                break;
+            }
+        }
+        if (entry == null) {
+            try context.member_interfaces.append(context.scratch, .{ .structure_id = operands[0], .member = operands[1], .decoration = .{} });
+            entry = &context.member_interfaces.items[context.member_interfaces.items.len - 1];
+        }
+        switch (decoration) {
+            .built_in => entry.?.decoration.builtin = operands[3],
+            .location => entry.?.decoration.location = operands[3],
+            .component => entry.?.decoration.component = std.math.cast(u8, operands[3]) orelse return TranslationError.InvalidInstruction,
+            .index => entry.?.decoration.index = std.math.cast(u8, operands[3]) orelse return TranslationError.InvalidInstruction,
+            else => unreachable,
+        }
         return;
+    }
 
     try expectOperandCount(operands, 4);
     _ = try context.idIndex(operands[0]);
@@ -708,6 +753,11 @@ fn translateInterfaces(context: *Context, interface_ids: []const u32) !void {
             return TranslationError.InvalidInstruction;
 
         const decoration = context.decorations[index];
+        const pointee = context.type_defs[try context.idIndex(pointer.operands[2])] orelse return TranslationError.MissingDefinition;
+        if (pointee.opcode == .type_struct and decoration.location == null and decoration.builtin == null) {
+            try context.interface_blocks.append(context.scratch, .{ .variable = spv_id, .structure_id = pointer.operands[2], .direction = direction });
+            continue;
+        }
 
         if (decoration.location != null and decoration.builtin != null)
             return TranslationError.InvalidInstruction;
@@ -725,7 +775,7 @@ fn translateInterfaces(context: *Context, interface_ids: []const u32) !void {
                 .builtin = try translateBuiltin(std.enums.fromInt(spirv.Builtin, builtin) orelse return TranslationError.UnsupportedOpcode),
             }
         else
-            return TranslationError.InvalidInstruction;
+            return TranslationError.UnsupportedOpcode;
 
         context.interfaces[index] = try context.builder.addInterfaceVariable(
             try context.translateType(pointer.operands[2]),
@@ -977,6 +1027,25 @@ fn declareFunctions(context: *Context, entry_point: EntryPoint, entry_name: []co
         return TranslationError.MissingFunction;
 }
 
+// Private memory lives for an invocation, not a function call. Until the IR
+// models that memory (or promotion happens after inlining), only promote it in
+// single-function modules. Even a global used by only one helper could retain
+// state between calls, so counting its users is not sufficient.
+fn validatePrivateScope(context: *Context) !void {
+    var function_count: usize = 0;
+    for (context.functions) |function| {
+        if (function != null) function_count += 1;
+    }
+    if (function_count <= 1) return;
+    for (context.variable_defs) |definition| {
+        const variable = definition orelse continue;
+        if (variable.operands[2] == @intFromEnum(spirv.StorageClass.private)) {
+            std.log.scoped(.spirv_translator).warn("Private variable %{d} requires invocation-scoped memory in a multi-function module", .{variable.operands[1]});
+            return TranslationError.UnsupportedPrivateCrossFunction;
+        }
+    }
+}
+
 fn translateFunctions(context: *Context) !void {
     var iterator = context.parser.iterator();
     while (try iterator.next()) |instruction| {
@@ -997,6 +1066,8 @@ fn translateFunction(context: *Context, spv_function: u32) !void {
 
     const function = try context.function(spv_function);
     context.locals.clearRetainingCapacity();
+    @memset(context.local_indices, null);
+    @memset(context.composite_addresses, null);
     context.entry_label = null;
     try collectFunctionLocals(context, spv_function);
     try predeclareFunction(context, spv_function, function, function_type.operands[2..]);
@@ -1012,17 +1083,18 @@ fn collectFunctionLocals(context: *Context, spv_function: u32) !void {
             active = instruction.operands.len >= 2 and instruction.operands[1] == spv_function;
             continue;
         }
-        if (!active)
-            continue;
-        if (instruction.opcode == .function_end)
+        if (instruction.opcode == .function_end and active)
             break;
         if (instruction.opcode != .variable)
+            continue;
+        const is_private = instruction.operands.len >= 3 and instruction.operands[2] == @intFromEnum(spirv.StorageClass.private);
+        if (!active and !is_private)
             continue;
 
         if (instruction.operands.len < 3 or instruction.operands.len > 4)
             return TranslationError.InvalidInstruction;
         const storage_class: spirv.StorageClass = @enumFromInt(instruction.operands[2]);
-        if (storage_class != .function)
+        if (storage_class != .function and storage_class != .private)
             return TranslationError.UnsupportedOpcode;
 
         const pointer = context.type_defs[try context.idIndex(instruction.operands[0])] orelse return TranslationError.MissingDefinition;
@@ -1209,6 +1281,30 @@ fn saveBlockLocals(context: *Context, label: u32) !void {
         context.block_local_outputs[try context.blockLocalIndex(label, local_index)] = value;
 }
 
+fn unsupportedStoreDestination(context: *Context, destination: u32) TranslationError {
+    // Locate the result type even for pointer-producing operations that are not
+    // represented in the translator's address tables.
+    var storage: ?u32 = null;
+    var iterator = context.parser.iterator();
+    while (iterator.next() catch null) |instruction| {
+        const operands = instruction.operands;
+        if (operands.len < 2 or operands[1] != destination) continue;
+        if (operands[0] == 0 or operands[0] >= context.bound) continue;
+        const pointer = context.type_defs[operands[0]] orelse continue;
+        if (pointer.opcode == .type_pointer and pointer.operands.len == 3) {
+            storage = pointer.operands[1];
+            break;
+        }
+    }
+    if (storage) |value| {
+        const name = std.enums.tagName(spirv.StorageClass, @enumFromInt(value)) orelse "unknown";
+        std.log.scoped(.spirv_translator).warn("unsupported OpStore destination %{d}, storage class {s} ({d})", .{ destination, name, value });
+    } else {
+        std.log.scoped(.spirv_translator).warn("unsupported OpStore destination %{d}, storage class unknown", .{destination});
+    }
+    return TranslationError.UnsupportedStoreDestination;
+}
+
 fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Parser.Instruction) !void {
     const operands = instruction.operands;
     switch (instruction.opcode) {
@@ -1268,12 +1364,9 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                         null,
                     )).?,
                 };
-                const result = (try context.builder.appendInstruction(block, result_type, .{
-                    .composite_extract = .{
-                        .composite = composite,
-                        .indices = address.indices,
-                    },
-                }, context.nameOf(operands[1]))).?;
+                const result = try extractCompositeAddress(context, block, composite, address.indices, context.nameOf(operands[1]));
+                if (context.module.typeOf(result) != result_type)
+                    return TranslationError.InvalidInstruction;
                 try context.setValue(operands[1], result);
             } else {
                 const result = (try context.builder.appendInstruction(block, result_type, .{
@@ -1309,12 +1402,18 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                         .value = value,
                     },
                 }, null);
-            } else if (try context.compositeAddress(operands[0]) != null) {
-                return TranslationError.UnsupportedOpcode;
+            } else if (try context.compositeAddress(operands[0])) |address| {
+                if (address.indices.len != 0 or address.root != .interface)
+                    return unsupportedStoreDestination(context, operands[0]);
+                if (context.module.typeOf(value) != try context.translateType(address.pointee_type))
+                    return TranslationError.InvalidInstruction;
+                _ = try context.builder.appendInstruction(block, null, .{ .store_interface = .{ .variable = address.root.interface, .value = value } }, null);
             } else {
+                const variable = context.interfaces[try context.idIndex(operands[0])] orelse
+                    return unsupportedStoreDestination(context, operands[0]);
                 _ = try context.builder.appendInstruction(block, null, .{
                     .store_interface = .{
-                        .variable = try context.interfaceVariable(operands[0]),
+                        .variable = variable,
                         .value = value,
                     },
                 }, null);
@@ -1963,7 +2062,39 @@ fn translateWorkgroupAccessChain(context: *Context, block: ir.id.BlockId, operan
 }
 
 fn translateCompositeAccessChain(context: *Context, operands: []const u32) !void {
-    var address: CompositeAddress = if (try context.compositeAddress(operands[2])) |base|
+    var first_index: usize = 3;
+    var member_address: ?CompositeAddress = null;
+    for (context.interface_blocks.items) |interface_block| {
+        if (interface_block.variable != operands[2]) continue;
+        const member = try constantIndex(context, operands[3]);
+        const structure = context.type_defs[try context.idIndex(interface_block.structure_id)].?;
+        if (member >= structure.operands.len - 1) return TranslationError.InvalidInstruction;
+        const member_type = structure.operands[member + 1];
+        const key = (@as(u64, operands[2]) << 32) | member;
+        const binding = context.member_bindings.get(key) orelse binding: {
+            for (context.member_interfaces.items) |info| {
+                if (info.structure_id != interface_block.structure_id or info.member != member) continue;
+                const decoration = info.decoration;
+                if (decoration.location != null and decoration.builtin != null) return TranslationError.InvalidInstruction;
+                const semantic: ir.module.InterfaceSemantic = if (decoration.builtin) |builtin|
+                    .{ .builtin = try translateBuiltin(std.enums.fromInt(spirv.Builtin, builtin) orelse return TranslationError.UnsupportedOpcode) }
+                else if (decoration.location) |location|
+                    .{ .location = .{ .location = location, .component = decoration.component, .index = decoration.index } }
+                else
+                    return TranslationError.UnsupportedOpcode;
+                const variable = try context.builder.addInterfaceVariable(try context.translateType(member_type), interface_block.direction, semantic, null);
+                try context.member_bindings.put(context.scratch, key, variable);
+                break :binding variable;
+            }
+            return TranslationError.UnsupportedOpcode;
+        };
+        member_address = .{ .root = .{ .interface = binding }, .root_type = member_type, .pointee_type = member_type, .indices = &.{} };
+        first_index = 4;
+        break;
+    }
+    var address: CompositeAddress = if (member_address) |base|
+        base
+    else if (try context.compositeAddress(operands[2])) |base|
         base
     else if (try context.localIndex(operands[2])) |local_index| blk: {
         const pointee_type = try variablePointeeType(context, operands[2]);
@@ -1983,35 +2114,42 @@ fn translateCompositeAccessChain(context: *Context, operands: []const u32) !void
         };
     };
 
-    var indices = std.ArrayList(u32).empty;
+    var indices = std.ArrayList(CompositeIndex).empty;
     defer indices.deinit(context.scratch);
     try indices.appendSlice(context.scratch, address.indices);
 
-    for (operands[3..]) |index_id| {
+    for (operands[first_index..]) |index_id| {
         const type_definition = context.type_defs[try context.idIndex(address.pointee_type)] orelse return TranslationError.MissingDefinition;
-        const index = try constantIndex(context, index_id);
+        const value = try context.resolveValue(index_id);
+        const value_type = context.module.types.get(context.module.typeOf(value).?).?;
+        if (value_type.* != .integer) return TranslationError.InvalidInstruction;
+        const is_constant = context.module.values.get(value).?.definition == .constant;
+        const index = if (is_constant) try constantIndex(context, index_id) else 0;
+        var length: u32 = 0;
         address.pointee_type = switch (type_definition.opcode) {
             .type_struct => blk: {
-                if (index + 1 >= type_definition.operands.len)
+                if (!is_constant) return TranslationError.InvalidInstruction;
+                if (index >= type_definition.operands.len - 1)
                     return TranslationError.InvalidInstruction;
                 break :blk type_definition.operands[index + 1];
             },
             .type_vector, .type_matrix => blk: {
                 try expectOperandCount(type_definition.operands, 3);
-                if (index >= type_definition.operands[2])
+                length = type_definition.operands[2];
+                if (index >= length)
                     return TranslationError.InvalidInstruction;
                 break :blk type_definition.operands[1];
             },
             .type_array => blk: {
                 try expectOperandCount(type_definition.operands, 3);
-                const length = try constantIndex(context, type_definition.operands[2]);
+                length = try constantIndex(context, type_definition.operands[2]);
                 if (index >= length)
                     return TranslationError.InvalidInstruction;
                 break :blk type_definition.operands[1];
             },
             else => return TranslationError.UnsupportedType,
         };
-        try indices.append(context.scratch, index);
+        try indices.append(context.scratch, if (is_constant) .{ .constant = index } else .{ .dynamic = .{ .value = value, .length = length } });
     }
 
     const result_pointer = context.type_defs[try context.idIndex(operands[0])] orelse return TranslationError.MissingDefinition;
@@ -2024,8 +2162,41 @@ fn translateCompositeAccessChain(context: *Context, operands: []const u32) !void
     const result_index = try context.idIndex(operands[1]);
     if (context.composite_addresses[result_index] != null)
         return TranslationError.DuplicateId;
-    address.indices = try context.scratch.dupe(u32, indices.items);
+    address.indices = try context.scratch.dupe(CompositeIndex, indices.items);
     context.composite_addresses[result_index] = address;
+}
+
+// Keep addresses symbolic until the load so stores to the promoted local between
+// OpAccessChain and OpLoad are observed. Out-of-range dynamic reads are undefined.
+fn extractCompositeAddress(context: *Context, block: ir.id.BlockId, composite: ir.id.ValueId, indices: []const CompositeIndex, name: ?[]const u8) !ir.id.ValueId {
+    if (indices.len == 0) return composite;
+    const ty = context.module.types.get(context.module.typeOf(composite).?).?.*;
+    const element_type = switch (ty) {
+        .vector => |v| v.element_type,
+        .array => |a| a.element_type,
+        .structure => |s| s.members[indices[0].constant],
+        else => return TranslationError.UnsupportedType,
+    };
+    var selected: ?ir.id.ValueId = null;
+    const count = switch (indices[0]) {
+        .constant => @as(u32, 1),
+        .dynamic => |d| d.length,
+    };
+    for (0..count) |i| {
+        const index: u32 = switch (indices[0]) {
+            .constant => |c| c,
+            .dynamic => @intCast(i),
+        };
+        const path = try context.scratch.dupe(u32, &.{index});
+        const element = (try context.builder.appendInstruction(block, element_type, .{ .composite_extract = .{ .composite = composite, .indices = path } }, if (indices.len == 1 and indices[0] == .constant) name else null)).?;
+        if (selected) |previous| {
+            const dynamic = indices[0].dynamic;
+            const literal = try context.builder.internConstant(context.module.typeOf(dynamic.value).?, .{ .integer_bits = i });
+            const condition = (try context.builder.appendInstruction(block, try context.builder.internType(.boolean), .{ .compare = .{ .opcode = .equal, .lhs = dynamic.value, .rhs = literal } }, null)).?;
+            selected = (try context.builder.appendInstruction(block, element_type, .{ .select = .{ .condition = condition, .true_value = element, .false_value = previous } }, null)).?;
+        } else selected = element;
+    }
+    return extractCompositeAddress(context, block, selected orelse return TranslationError.InvalidInstruction, indices[1..], name);
 }
 
 fn variablePointeeType(context: *Context, spv_id: u32) !u32 {
@@ -3444,6 +3615,43 @@ fn findNamedConstant(module: *const ir.module.Module, name: []const u8) ?ir.cons
         return module.constants.get(value.definition.constant).?.value;
     }
     return null;
+}
+
+test "SPIR-V: reject Private memory with helper functions" {
+    // A shared read must not see a fresh undef/initializer in the helper.
+    // Repeated calls to a sole owning helper must not reset its globals either.
+    for ([_][]const u8{ "OpStore %global %initial\n", "" }) |main_store| {
+        const assembly = try std.fmt.allocPrint(std.testing.allocator,
+            \\OpCapability Shader
+            \\OpMemoryModel Logical GLSL450
+            \\OpEntryPoint Vertex %main "main"
+            \\%void = OpTypeVoid
+            \\%fn = OpTypeFunction %void
+            \\%uint = OpTypeInt 32 0
+            \\%one = OpConstant %uint 1
+            \\%array = OpTypeArray %uint %one
+            \\%initial = OpConstantComposite %array %one
+            \\%ptr = OpTypePointer Private %array
+            \\%global = OpVariable %ptr Private %initial
+            \\%main = OpFunction %void None %fn
+            \\%entry = OpLabel
+            \\{s}%call1 = OpFunctionCall %void %helper
+            \\%call2 = OpFunctionCall %void %helper
+            \\OpReturn
+            \\OpFunctionEnd
+            \\%helper = OpFunction %void None %fn
+            \\%helper_entry = OpLabel
+            \\%read = OpLoad %array %global
+            \\OpStore %global %read
+            \\OpReturn
+            \\OpFunctionEnd
+            \\
+        , .{main_store});
+        defer std.testing.allocator.free(assembly);
+        const words = try assembleSpirv(std.testing.allocator, assembly);
+        defer std.testing.allocator.free(words);
+        try std.testing.expectError(TranslationError.UnsupportedPrivateCrossFunction, translate(std.testing.allocator, words, .{ .entry_point = "main" }));
+    }
 }
 
 fn assembleSpirv(allocator: std.mem.Allocator, assembly: []const u8) ![]u32 {

@@ -101,7 +101,6 @@ pub fn deinit(self: *Self) void {
 pub fn interfaceBinding(self: *const Self, variable: ids.InterfaceVariableId) ?InterfaceBinding {
     if (variable.index() >= self.interfaces.len)
         return null;
-
     return self.interfaces[variable.index()];
 }
 
@@ -150,8 +149,10 @@ const Lowerer = struct {
 
         const values = try allocator.alloc(?bc.Span, module.values.entries.items.len);
         @memset(values, null);
+
         const interfaces = try allocator.alloc(?InterfaceBinding, module.interface_variables.entries.items.len);
         @memset(interfaces, null);
+
         const resources = try allocator.alloc(?ResourceBinding, module.resources.entries.items.len);
         for (module.resources.entries.items, resources) |entry, *binding| {
             binding.* = if (entry) |resource| .{
@@ -161,19 +162,25 @@ const Lowerer = struct {
                 .array_element = resource.array_element,
             } else null;
         }
+
         const workgroup_variables = try allocator.alloc(?WorkgroupBinding, module.workgroup_variables.entries.items.len);
         @memset(workgroup_variables, null);
+
         var workgroup_memory_size: usize = 0;
         for (module.workgroup_variables.entries.items, workgroup_variables) |entry, *binding| {
             const variable = entry orelse continue;
             const byte_size = try typeByteSize(module, variable.type);
+
             if (byte_size == 0)
                 return CompileError.UnsupportedType;
+
             if (workgroup_memory_size > std.math.maxInt(u32) or byte_size > std.math.maxInt(u32))
                 return CompileError.TooMuchWorkgroupMemory;
+
             binding.* = .{ .byte_offset = @intCast(workgroup_memory_size), .byte_size = @intCast(byte_size) };
             workgroup_memory_size = std.math.add(usize, workgroup_memory_size, byte_size) catch return CompileError.TooMuchWorkgroupMemory;
         }
+
         const block_pcs = try allocator.alloc(?u32, module.blocks.entries.items.len);
         @memset(block_pcs, null);
 
@@ -225,7 +232,7 @@ const Lowerer = struct {
         self.entry_pc = self.block_pcs[self.entry_block.index()] orelse return CompileError.InvalidControlFlow;
     }
 
-    fn allocate(self: *Lowerer, type_id: ids.TypeId) !bc.Span {
+    fn shape(self: *Lowerer, type_id: ids.TypeId) CompileError!bc.Span {
         const ty = self.module.types.get(type_id) orelse return CompileError.UnsupportedType;
         var components: u8 = 1;
         const kind: bc.ValueKind = switch (ty.*) {
@@ -251,14 +258,28 @@ const Lowerer = struct {
                     else => return CompileError.UnsupportedType,
                 };
             },
+            .array => |array| blk: {
+                const element = try self.shape(array.element_type);
+                const length = std.math.cast(u8, array.length) orelse return CompileError.UnsupportedType;
+                components = std.math.mul(u8, element.components, length) catch return CompileError.UnsupportedType;
+                if (components == 0) return CompileError.UnsupportedType;
+                break :blk element.kind;
+            },
             else => return CompileError.UnsupportedType,
         };
+        return .{ .base = .invalid_register, .components = components, .kind = kind };
+    }
+
+    fn allocate(self: *Lowerer, type_id: ids.TypeId) !bc.Span {
+        const layout = try self.shape(type_id);
+        const components = layout.components;
+        const kind = layout.kind;
         const end = std.math.add(usize, self.register_count, components) catch return CompileError.TooManyRegisters;
 
-        if (end > @as(usize, std.math.maxInt(bc.Register)) + 1)
+        if (end > @as(usize, @intFromEnum(bc.Register.invalid_register)) + 1)
             return CompileError.TooManyRegisters;
 
-        const allocated: bc.Span = .{ .base = @intCast(self.register_count), .components = components, .kind = kind };
+        const allocated: bc.Span = .{ .base = @enumFromInt(self.register_count), .components = components, .kind = kind };
         self.register_count = end;
         return allocated;
     }
@@ -289,16 +310,17 @@ const Lowerer = struct {
             .null, .undef => for (0..destination.components) |component|
                 try self.initializers.append(self.allocator, .{ .register = try offset(destination.base, component), .value = 0 }),
             .composite => |elements| {
-                if (elements.len != destination.components)
-                    return CompileError.InvalidConstant;
-
-                for (elements, 0..) |element, component| {
-                    try self.initializeConstant(.{
-                        .base = try offset(destination.base, component),
-                        .components = 1,
-                        .kind = destination.kind,
-                    }, element);
+                var component: usize = 0;
+                for (elements) |element| {
+                    const child = self.module.constants.get(element) orelse return CompileError.InvalidConstant;
+                    var layout = try self.shape(child.type);
+                    if (layout.kind != destination.kind or component + layout.components > destination.components)
+                        return CompileError.InvalidConstant;
+                    layout.base = try offset(destination.base, component);
+                    try self.initializeConstant(layout, element);
+                    component += layout.components;
                 }
+                if (component != destination.components) return CompileError.InvalidConstant;
             },
         }
     }
@@ -325,7 +347,7 @@ const Lowerer = struct {
                         else => return CompileError.InvalidOperation,
                     },
                 };
-                try self.emit(opcode, dst.components, dst.base, src.base, bc.invalid_register, bc.invalid_register, 0);
+                try self.emit(opcode, dst.components, dst.base, src.base, .invalid_register, .invalid_register, 0);
             },
             .binary => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;
@@ -341,7 +363,7 @@ const Lowerer = struct {
                     return CompileError.InvalidOperation;
                 }
 
-                try self.emit(try binaryOpcode(op.opcode, dst.kind), dst.components, dst.base, lhs.base, rhs.base, bc.invalid_register, 0);
+                try self.emit(try binaryOpcode(op.opcode, dst.kind), dst.components, dst.base, lhs.base, rhs.base, .invalid_register, 0);
             },
             .compare => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;
@@ -351,7 +373,7 @@ const Lowerer = struct {
                 if (dst.kind != .boolean or dst.components != 1 or lhs.components != 1 or !lhs.sameShape(rhs))
                     return CompileError.UnsupportedOperation;
 
-                try self.emit(try compareOpcode(op.opcode, lhs.kind), 1, dst.base, lhs.base, rhs.base, bc.invalid_register, 0);
+                try self.emit(try compareOpcode(op.opcode, lhs.kind), 1, dst.base, lhs.base, rhs.base, .invalid_register, 0);
             },
             .select => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;
@@ -376,26 +398,38 @@ const Lowerer = struct {
             .composite_construct => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;
 
-                if (dst.components != op.elements.len)
-                    return CompileError.UnsupportedOperation;
-
-                for (op.elements, 0..) |id, component| {
+                var component: usize = 0;
+                for (op.elements) |id| {
                     const src = try self.span(id);
-
-                    if (src.components != 1)
-                        return CompileError.UnsupportedOperation;
-
-                    try self.emit(.copy, 1, try offset(dst.base, component), src.base, bc.invalid_register, bc.invalid_register, 0);
+                    if (src.kind != dst.kind or component + src.components > dst.components)
+                        return CompileError.InvalidOperation;
+                    try self.emit(.copy, src.components, try offset(dst.base, component), src.base, .invalid_register, .invalid_register, 0);
+                    component += src.components;
                 }
+                if (component != dst.components) return CompileError.InvalidOperation;
             },
             .composite_extract => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;
                 const src = try self.span(op.composite);
 
-                if (dst.components != 1 or op.indices.len != 1 or op.indices[0] >= src.components)
-                    return CompileError.UnsupportedOperation;
-
-                try self.emit(.copy, 1, dst.base, try offset(src.base, op.indices[0]), bc.invalid_register, bc.invalid_register, 0);
+                var type_id = self.module.typeOf(op.composite) orelse return CompileError.InvalidValue;
+                var component: usize = 0;
+                for (op.indices) |index| {
+                    const ty = self.module.types.get(type_id) orelse return CompileError.UnsupportedType;
+                    const element_type, const length = switch (ty.*) {
+                        .vector => |v| .{ v.element_type, @as(u32, v.length) },
+                        .array => |a| .{ a.element_type, a.length },
+                        else => return CompileError.UnsupportedType,
+                    };
+                    if (index >= length) return CompileError.InvalidOperation;
+                    const layout = try self.shape(element_type);
+                    component += @as(usize, index) * layout.components;
+                    type_id = element_type;
+                }
+                const layout = try self.shape(type_id);
+                if (!dst.sameShape(layout) or component + dst.components > src.components)
+                    return CompileError.InvalidOperation;
+                try self.emit(.copy, dst.components, dst.base, try offset(src.base, component), .invalid_register, .invalid_register, 0);
             },
             .load_interface => |op| {
                 if (op.element_index != null)
@@ -425,54 +459,60 @@ const Lowerer = struct {
                 const dst = result orelse return CompileError.InvalidOperation;
                 const byte_offset = try self.bufferOffset(op.byte_offset);
                 _ = try self.bufferResource(op.resource, false);
-                try self.emit(.load_buffer, dst.components, dst.base, byte_offset, bc.invalid_register, bc.invalid_register, @intFromEnum(op.resource));
+                try self.emit(.load_buffer, dst.components, dst.base, byte_offset, .invalid_register, .invalid_register, @intFromEnum(op.resource));
             },
             .store_buffer => |op| {
                 if (result != null)
                     return CompileError.InvalidOperation;
+
                 const src = try self.span(op.value);
                 const byte_offset = try self.bufferOffset(op.byte_offset);
                 _ = try self.bufferResource(op.resource, true);
-                try self.emit(.store_buffer, src.components, src.base, byte_offset, bc.invalid_register, bc.invalid_register, @intFromEnum(op.resource));
+                try self.emit(.store_buffer, src.components, src.base, byte_offset, .invalid_register, .invalid_register, @intFromEnum(op.resource));
             },
             .load_workgroup => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;
                 const byte_offset = try self.bufferOffset(op.byte_offset);
                 _ = try self.workgroupVariable(op.variable);
-                try self.emit(.load_workgroup, dst.components, dst.base, byte_offset, bc.invalid_register, bc.invalid_register, @intFromEnum(op.variable));
+                try self.emit(.load_workgroup, dst.components, dst.base, byte_offset, .invalid_register, .invalid_register, @intFromEnum(op.variable));
             },
             .store_workgroup => |op| {
                 if (result != null)
                     return CompileError.InvalidOperation;
+
                 const src = try self.span(op.value);
                 const byte_offset = try self.bufferOffset(op.byte_offset);
                 _ = try self.workgroupVariable(op.variable);
-                try self.emit(.store_workgroup, src.components, src.base, byte_offset, bc.invalid_register, bc.invalid_register, @intFromEnum(op.variable));
+                try self.emit(.store_workgroup, src.components, src.base, byte_offset, .invalid_register, .invalid_register, @intFromEnum(op.variable));
             },
             .image_read => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;
                 const coordinate = try self.span(op.coordinate);
                 _ = try self.storageImage(op.resource);
-                if (dst.kind != .unsigned_integer or dst.components != 4 or
-                    coordinate.kind != .signed_integer or coordinate.components != 2)
+
+                if (dst.kind != .unsigned_integer or dst.components != 4 or coordinate.kind != .signed_integer or coordinate.components != 2)
                     return CompileError.InvalidOperation;
-                try self.emit(.image_read, 4, dst.base, coordinate.base, bc.invalid_register, bc.invalid_register, @intFromEnum(op.resource));
+
+                try self.emit(.image_read, 4, dst.base, coordinate.base, .invalid_register, .invalid_register, @intFromEnum(op.resource));
             },
             .image_write => |op| {
                 if (result != null)
                     return CompileError.InvalidOperation;
+
                 const coordinate = try self.span(op.coordinate);
                 const value = try self.span(op.value);
                 _ = try self.storageImage(op.resource);
+
                 if (value.kind != .unsigned_integer or value.components != 4 or
                     coordinate.kind != .signed_integer or coordinate.components != 2)
                     return CompileError.InvalidOperation;
-                try self.emit(.image_write, 4, value.base, coordinate.base, bc.invalid_register, bc.invalid_register, @intFromEnum(op.resource));
+
+                try self.emit(.image_write, 4, value.base, coordinate.base, .invalid_register, .invalid_register, @intFromEnum(op.resource));
             },
             .control_barrier => {
                 if (result != null)
                     return CompileError.InvalidOperation;
-                try self.emit(.control_barrier, 1, bc.invalid_register, bc.invalid_register, bc.invalid_register, bc.invalid_register, 0);
+                try self.emit(.control_barrier, 1, .invalid_register, .invalid_register, .invalid_register, .invalid_register, 0);
             },
             .call => return CompileError.UnsupportedOperation,
             .array_length => |op| {
@@ -489,7 +529,7 @@ const Lowerer = struct {
                     .stride = op.stride,
                 });
 
-                try self.emit(.array_length, 1, dst.base, byte_offset, bc.invalid_register, bc.invalid_register, metadata_index);
+                try self.emit(.array_length, 1, dst.base, byte_offset, .invalid_register, .invalid_register, metadata_index);
             },
         }
     }
@@ -510,38 +550,46 @@ const Lowerer = struct {
     fn bufferResource(self: *const Lowerer, id: ids.ResourceId, writable: bool) !ResourceBinding {
         if (id.index() >= self.resources.len)
             return CompileError.InvalidOperation;
+
         const resource = self.resources[id.index()] orelse return CompileError.InvalidOperation;
         if (resource.kind != .storage_buffer and (writable or resource.kind != .uniform_buffer))
             return CompileError.InvalidOperation;
+
         return resource;
     }
 
     fn storageImage(self: *const Lowerer, id: ids.ResourceId) !ResourceBinding {
         if (id.index() >= self.resources.len)
             return CompileError.InvalidOperation;
+
         const resource = self.resources[id.index()] orelse return CompileError.InvalidOperation;
         if (resource.kind != .storage_image)
             return CompileError.InvalidOperation;
+
         return resource;
     }
 
     fn lowerTerminator(self: *Lowerer, terminator: module_ir.Terminator) !void {
         switch (terminator) {
-            .branch => |edge| try self.emit(.jump_edge, 1, bc.invalid_register, bc.invalid_register, bc.invalid_register, bc.invalid_register, try self.addEdge(edge)),
+            .branch => |edge| try self.emit(.jump_edge, 1, .invalid_register, .invalid_register, .invalid_register, .invalid_register, try self.addEdge(edge)),
             .conditional_branch => |branch| {
                 const condition = try self.span(branch.condition);
-                if (condition.kind != .boolean or condition.components != 1) return CompileError.InvalidControlFlow;
+
+                if (condition.kind != .boolean or condition.components != 1)
+                    return CompileError.InvalidControlFlow;
+
                 const index = try u32Index(self.branches.items.len);
                 try self.branches.append(self.allocator, .{
                     .true_edge = try self.addEdge(branch.true_edge),
                     .false_edge = try self.addEdge(branch.false_edge),
                 });
-                try self.emit(.branch, 1, condition.base, bc.invalid_register, bc.invalid_register, bc.invalid_register, index);
+
+                try self.emit(.branch, 1, condition.base, .invalid_register, .invalid_register, .invalid_register, index);
             },
-            .return_void => try self.emit(.return_void, 1, bc.invalid_register, bc.invalid_register, bc.invalid_register, bc.invalid_register, 0),
+            .return_void => try self.emit(.return_void, 1, .invalid_register, .invalid_register, .invalid_register, .invalid_register, 0),
             .return_value => return CompileError.UnsupportedOperation,
-            .discard => try self.emit(.discard, 1, bc.invalid_register, bc.invalid_register, bc.invalid_register, bc.invalid_register, 0),
-            .@"unreachable" => try self.emit(.@"unreachable", 1, bc.invalid_register, bc.invalid_register, bc.invalid_register, bc.invalid_register, 0),
+            .discard => try self.emit(.discard, 1, .invalid_register, .invalid_register, .invalid_register, .invalid_register, 0),
+            .@"unreachable" => try self.emit(.@"unreachable", 1, .invalid_register, .invalid_register, .invalid_register, .invalid_register, 0),
         }
     }
 
@@ -556,18 +604,23 @@ const Lowerer = struct {
         for (edge.arguments, target.parameters.items) |source_id, destination_id| {
             const source = try self.span(source_id);
             const destination = try self.span(destination_id);
-            if (!source.sameShape(destination)) return CompileError.InvalidControlFlow;
-            if (source.base == destination.base) continue;
+
+            if (!source.sameShape(destination))
+                return CompileError.InvalidControlFlow;
+
+            if (source.base == destination.base)
+                continue;
+
             try self.copies.append(self.allocator, .{
                 .destination = destination.base,
                 .source = source.base,
                 .components = source.components,
-                .scratch_base = @intCast(scratch),
+                .scratch_base = @enumFromInt(scratch),
             });
             scratch += source.components;
         }
 
-        if (scratch > std.math.maxInt(bc.Register))
+        if (scratch > @intFromEnum(bc.Register.invalid_register))
             return CompileError.TooManyRegisters;
 
         self.scratch_count = @max(self.scratch_count, scratch);
@@ -588,7 +641,7 @@ const Lowerer = struct {
     fn emitCopy(self: *Lowerer, dst: bc.Span, src: bc.Span) !void {
         if (dst.components != src.components)
             return CompileError.InvalidOperation;
-        try self.emit(.copy, dst.components, dst.base, src.base, bc.invalid_register, bc.invalid_register, 0);
+        try self.emit(.copy, dst.components, dst.base, src.base, .invalid_register, .invalid_register, 0);
     }
 
     fn emit(self: *Lowerer, opcode: bc.Opcode, components: u16, a: bc.Register, b: bc.Register, c: bc.Register, d: bc.Register, immediate: u32) !void {
@@ -670,10 +723,10 @@ fn compareOpcode(op: inst_ir.CompareOpcode, kind: bc.ValueKind) !bc.Opcode {
 }
 
 fn offset(base: bc.Register, component: usize) !bc.Register {
-    const value = @as(usize, base) + component;
-    if (value > std.math.maxInt(bc.Register))
+    const value = @as(usize, @intFromEnum(base)) + component;
+    if (value > @intFromEnum(bc.Register.invalid_register))
         return CompileError.TooManyRegisters;
-    return @intCast(value);
+    return @enumFromInt(value);
 }
 
 fn u32Index(value: usize) !u32 {

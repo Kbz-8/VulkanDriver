@@ -20,16 +20,13 @@ const Self = @This();
 program: Program,
 runtimes: []RuntimeSlot,
 workgroup_size: ?[3]u32,
+early_fragment_tests: bool = false,
 
 pub fn compile(allocator: std.mem.Allocator, module: *SoftShaderModule, stage: *const vk.PipelineShaderStageCreateInfo, runtime_count: usize) VkError!Self {
     const expected_stage = commonStage(stage.stage) orelse {
         std.log.scoped(.IrInterpreter).err("unsupported shader stage", .{});
         return VkError.ValidationFailed;
     };
-    if (expected_stage == .fragment) {
-        std.log.scoped(.IrInterpreter).err("fragment shaders are not supported", .{});
-        return VkError.ValidationFailed;
-    }
 
     const specializations = try specializationValues(allocator, stage.p_specialization_info);
     defer if (specializations.len != 0) allocator.free(specializations);
@@ -79,6 +76,7 @@ pub fn compile(allocator: std.mem.Allocator, module: *SoftShaderModule, stage: *
         .program = program,
         .runtimes = runtimes,
         .workgroup_size = module_ir.execution_modes.workgroup_size,
+        .early_fragment_tests = module_ir.execution_modes.early_fragment_tests,
     };
 }
 
@@ -121,7 +119,13 @@ fn hasCompatibleInterface(program: *const Program, stage: ir.module.Stage) bool 
                         return false,
                     else => return false,
                 },
-                .fragment => return false,
+                .fragment => switch (builtin) {
+                    .frag_coord => if (binding.direction != .input or binding.span.kind != .floating or binding.span.components != 4)
+                        return false,
+                    .frag_depth => if (binding.direction != .output or binding.span.kind != .floating or binding.span.components != 1)
+                        return false,
+                    else => return false,
+                },
             },
         }
     }
