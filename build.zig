@@ -43,12 +43,6 @@ const implementations = [_]ImplementationDesc{
         .vulkan_version = .{ .major = 1, .minor = 0, .patch = 0 },
         .custom = customPhi,
     },
-    .{
-        .name = "ape",
-        .icd_name = "ape",
-        .root_source_file = "src/ape/lib.zig",
-        .vulkan_version = .{ .major = 1, .minor = 0, .patch = 0 },
-    },
 };
 
 const RunningMode = enum {
@@ -172,12 +166,8 @@ pub fn build(b: *std.Build) !void {
 
         options.addOption(std.SemanticVersion, b.fmt("{s}_vulkan_version", .{impl.name}), impl.vulkan_version);
 
-        if (std.mem.eql(u8, impl.name, "ape")) {
-            for (implementations[0..impl_index], implementation_modules[0..impl_index]) |child_impl, child_mod|
-                lib_mod.addImport(child_impl.name, child_mod);
-        } else if (impl.custom) |func| {
+        if (impl.custom) |func|
             func(b, options, lib, lib_mod, base_mod, vulkan, base_c_mod, ir_mod, target, optimize, use_llvm) catch continue;
-        }
 
         const icd_file = b.addWriteFile(
             b.getInstallPath(
