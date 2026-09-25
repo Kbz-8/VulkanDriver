@@ -15,7 +15,7 @@ const SoftPipeline = @import("../SoftPipeline.zig");
 const SoftRenderPass = @import("../SoftRenderPass.zig");
 
 const rasterizer = @import("rasterizer.zig");
-const vertex_dispatcher = @import("vertex_dispatcher.zig");
+const vertex_dispatcher = @import("vertex/dispatcher.zig");
 
 const VkError = base.VkError;
 const F32x4 = zm.F32x4;

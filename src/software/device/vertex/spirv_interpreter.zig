@@ -9,7 +9,7 @@ const SpvRuntimeError = spv.Runtime.RuntimeError;
 
 const Renderer = @import("../Renderer.zig");
 const blitter = @import("../blitter.zig");
-const RunData = @import("../vertex_dispatcher.zig").RunData;
+const RunData = @import("dispatcher.zig").RunData;
 
 const VkError = base.VkError;
 const interface_blob_padding = @sizeOf(F32x4);

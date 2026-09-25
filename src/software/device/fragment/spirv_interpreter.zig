@@ -14,7 +14,7 @@ const SpvRuntimeError = spv.Runtime.RuntimeError;
 const interface_blob_padding = @sizeOf(zm.F32x4);
 const processed_inputs_stack_capacity = 4096;
 
-const common = @import("../fragment.zig");
+const common = @import("dispatcher.zig");
 const InvocationResult = common.InvocationResult;
 const DerivativeInputs = common.DerivativeInputs;
 const freeOwnedInputs = common.freeOwnedInputs;

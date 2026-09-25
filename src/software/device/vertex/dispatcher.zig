@@ -1,12 +1,13 @@
 const std = @import("std");
 const base = @import("base");
 
-const Renderer = @import("Renderer.zig");
-const SoftPipeline = @import("../SoftPipeline.zig");
+const Renderer = @import("../Renderer.zig");
+const SoftPipeline = @import("../../SoftPipeline.zig");
+
 const backend = if (base.config.soft_ir_interpreter)
-    @import("vertex/ir_interpreter.zig")
+    @import("ir_interpreter.zig")
 else
-    @import("vertex/spirv_interpreter.zig");
+    @import("spirv_interpreter.zig");
 
 pub const RunData = struct {
     allocator: std.mem.Allocator,

@@ -11,7 +11,7 @@ const SoftDevice = @import("../SoftDevice.zig");
 const SoftImageView = @import("../SoftImageView.zig");
 const SoftPipeline = @import("../SoftPipeline.zig");
 
-const ComputeDispatcher = @import("compute/ComputeDispatcher.zig");
+const ComputeDispatcher = @import("compute/Dispatcher.zig");
 const Renderer = @import("Renderer.zig");
 
 const Self = @This();

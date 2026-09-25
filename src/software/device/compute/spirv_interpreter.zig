@@ -5,7 +5,7 @@ const SpvRuntimeError = spv.Runtime.RuntimeError;
 
 const ExecutionDevice = @import("../Device.zig");
 const SoftPipeline = @import("../../SoftPipeline.zig");
-const Dispatcher = @import("ComputeDispatcher.zig");
+const Dispatcher = @import("Dispatcher.zig");
 const Batch = Dispatcher.Batch;
 
 pub const SpvContext = struct {

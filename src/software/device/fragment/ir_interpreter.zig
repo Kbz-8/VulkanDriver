@@ -9,7 +9,7 @@ const Program = @import("../../interpreter/Program.zig");
 const Runtime = @import("../../interpreter/Runtime.zig");
 const SoftImageView = @import("../../SoftImageView.zig");
 const VertexInterpolationLocation = @import("../rasterizer/common.zig").VertexInterpolationLocation;
-const common = @import("../fragment.zig");
+const common = @import("dispatcher.zig");
 const SpvRuntimeError = common.SpvRuntimeError;
 const InterfaceVariableId = shader_ir.ir.id.InterfaceVariableId;
 

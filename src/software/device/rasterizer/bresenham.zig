@@ -5,7 +5,7 @@ const vk = @import("vulkan");
 const zm = base.zm;
 
 const common = @import("common.zig");
-const fragment = @import("../fragment.zig");
+const fragment = @import("../fragment/dispatcher.zig");
 
 const Renderer = @import("../Renderer.zig");
 

@@ -9,7 +9,7 @@ const clip = @import("clip.zig");
 const bresenham = @import("rasterizer/bresenham.zig");
 const edge_function = @import("rasterizer/edge_function.zig");
 const common = @import("rasterizer/common.zig");
-const fragment = @import("fragment.zig");
+const fragment = @import("fragment/dispatcher.zig");
 
 const Renderer = @import("Renderer.zig");
 const Vertex = Renderer.Vertex;

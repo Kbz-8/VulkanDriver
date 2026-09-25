@@ -9,7 +9,7 @@ const Renderer = @import("../Renderer.zig");
 const ExecutionDevice = @import("../Device.zig");
 const SoftImageView = @import("../../SoftImageView.zig");
 const blitter = @import("../blitter.zig");
-const RunData = @import("../vertex_dispatcher.zig").RunData;
+const RunData = @import("dispatcher.zig").RunData;
 
 const VkError = base.VkError;
 const ir = shader_ir.ir;

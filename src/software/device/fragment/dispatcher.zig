@@ -4,12 +4,12 @@ const base = @import("base");
 const zm = base.zm;
 const spv = @import("spv");
 
-const VertexInterpolationLocation = @import("rasterizer/common.zig").VertexInterpolationLocation;
-const Renderer = @import("Renderer.zig");
+const VertexInterpolationLocation = @import("../rasterizer/common.zig").VertexInterpolationLocation;
+const Renderer = @import("../Renderer.zig");
 const backend = if (base.config.soft_ir_interpreter)
-    @import("fragment/ir_interpreter.zig")
+    @import("ir_interpreter.zig")
 else
-    @import("fragment/spirv_interpreter.zig");
+    @import("spirv_interpreter.zig");
 
 pub const SpvRuntimeError = spv.Runtime.RuntimeError;
 pub const InvocationResult = struct {

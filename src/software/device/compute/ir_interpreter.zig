@@ -4,7 +4,7 @@ const shader_ir = @import("shader_ir");
 
 const ExecutionDevice = @import("../Device.zig");
 const PipelineState = ExecutionDevice.PipelineState;
-const Batch = @import("ComputeDispatcher.zig").Batch;
+const Batch = @import("Dispatcher.zig").Batch;
 const Shader = @import("../../interpreter/Shader.zig");
 const Program = @import("../../interpreter/Program.zig");
 const Runtime = @import("../../interpreter/Runtime.zig");
