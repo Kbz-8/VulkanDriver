@@ -634,6 +634,22 @@ Assume thou that functions lacking in this array are, for now, not intended to b
 
 [herein](https://vulkan-driver.kbz8.me/cts/flint/) is the reckoning of the vulkan 1.0 conformance trials laid bare. judge it as thou wilt.
 
+## PSVK (PlayStation Vita)
+
+Psvk is an implementation of Vulkan wrought for the PS Vita. Beneath its guise doth lie the SceGxm graphics API, bound and wrapped that Vulkan’s ways might yet be imitated upon this ancient machine.
+
+Much shall it strive to bring forth, though not all things may be summoned so easily. Certain features may prove beyond mortal effort, their making too arduous, or their nature ill-suited to the vessel.
+
+From its forging cometh a .suprx file, fit to be taken up and used by homebrew creations.
+
+### Build
+
+Yet heed this: ere thou wouldst build it, the [Vita SDK](https://vitasdk.org/) must first be installed, and the path unto it made known through the `VITASDK` environment variable.
+
+```
+zig build psvk --release=[fast|safe|small]
+```
+
 ## License
 
 Released unto the world as MIT for study, experimentation, and the occasional horrified whisper.

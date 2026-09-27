@@ -1,10 +1,22 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const drm = @import("drm");
 
 const Instance = @import("Instance.zig");
 const VkError = @import("error_set.zig").VkError;
 
 pub fn enumerateDrmPhysicalDevices(allocator: std.mem.Allocator, instance: *Instance) VkError![]drm.Card {
+    // Vita has no DRM device filesystem. Keep the POSIX directory APIs out of
+    // the Vita compilation entirely; the Vita backend also sets
+    // `enumerate_drm_devices` to false, so this is only a defensive fallback.
+    if (comptime builtin.target.os.tag == .vita) {
+        return allocator.alloc(drm.Card, 0) catch VkError.OutOfHostMemory;
+    } else {
+        return enumerateDrmPhysicalDevicesWithIo(allocator, instance);
+    }
+}
+
+fn enumerateDrmPhysicalDevicesWithIo(allocator: std.mem.Allocator, instance: *Instance) VkError![]drm.Card {
     const io = instance.io();
 
     var devices: std.ArrayList(drm.Card) = .empty;

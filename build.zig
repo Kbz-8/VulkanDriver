@@ -4,11 +4,59 @@ const builtin = @import("builtin");
 
 const driver_version: std.SemanticVersion = .{ .major = 26, .minor = 0, .patch = 0 };
 
+const InstallFn = *const fn (*std.Build, *const ImplementationDesc, *Step.Compile) *Step;
+
+const TargetProfile = enum {
+    native,
+    vita,
+};
+
+const TargetContext = struct {
+    target: std.Build.ResolvedTarget,
+    ir_mod: *std.Build.Module,
+    base_mod: *std.Build.Module,
+    base_c_mod: *std.Build.Module,
+    linkage: std.builtin.LinkMode = .dynamic,
+    use_llvm: ?bool = null,
+    link_libc: bool = false,
+    pic: ?bool = null,
+};
+
+const TargetContextOptions = struct {
+    target: std.Build.ResolvedTarget,
+    linkage: std.builtin.LinkMode = .dynamic,
+    use_llvm: ?bool = null,
+    translate_c_link_libc: bool = false,
+    link_libc: bool = false,
+    pic: ?bool = null,
+};
+
+const SharedDependencies = struct {
+    vulkan: *std.Build.Module,
+    zmath: *std.Build.Module,
+    vulkan_headers: *std.Build.Dependency,
+    vulkan_utility_libraries: *std.Build.Dependency,
+    options: *Step.Options,
+};
+
+const TargetContexts = struct {
+    native: TargetContext,
+    vita: TargetContext,
+
+    fn get(self: *const TargetContexts, profile: TargetProfile) *const TargetContext {
+        return switch (profile) {
+            .native => &self.native,
+            .vita => &self.vita,
+        };
+    }
+};
+
 const ImplementationDesc = struct {
     name: []const u8,
     icd_name: ?[]const u8 = null,
     root_source_file: []const u8,
     vulkan_version: std.SemanticVersion,
+    target_profile: TargetProfile = .native,
     custom: ?*const fn (
         *std.Build,
         *Step.Options,
@@ -21,7 +69,8 @@ const ImplementationDesc = struct {
         std.Build.ResolvedTarget,
         std.builtin.OptimizeMode,
         bool,
-    ) anyerror!void = null,
+    ) anyerror!void,
+    install: InstallFn = installSharedLibrary,
 };
 
 const implementations = [_]ImplementationDesc{
@@ -43,6 +92,14 @@ const implementations = [_]ImplementationDesc{
         .vulkan_version = .{ .major = 1, .minor = 0, .patch = 0 },
         .custom = customPhi,
     },
+    .{
+        .name = "psvk",
+        .root_source_file = "src/vita/lib.zig",
+        .vulkan_version = .{ .major = 1, .minor = 0, .patch = 0 },
+        .target_profile = .vita,
+        .custom = null,
+        .install = installPsvk,
+    },
 };
 
 const RunningMode = enum {
@@ -62,14 +119,52 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const ir_mod = b.createModule(.{
-        .root_source_file = b.path("src/compiler/root.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
+    const vulkan_headers = b.dependency("vulkan_headers", .{});
+    const vulkan_utility_libraries = b.dependency("vulkan_utility_libraries", .{});
+    const vulkan = b.dependency("vulkan_zig", .{ .registry = vulkan_headers.path("registry/vk.xml") }).module("vulkan-zig");
+
+    const zmath = b.dependency("zmath", .{}).module("root");
+
+    const logs_option: LogType = b.option(LogType, "logs", "Driver logs") orelse .none;
+    const debug_allocator_option = b.option(bool, "device-debug-allocator", "Debug device allocator") orelse false;
+
+    const options = b.addOptions();
+    options.addOption(std.SemanticVersion, "driver_version", driver_version);
+    options.addOption(LogType, "logs", logs_option);
+    options.addOption(bool, "device_debug_allocator", debug_allocator_option);
+
+    const shared_dependencies = SharedDependencies{
+        .vulkan = vulkan,
+        .zmath = zmath,
+        .vulkan_headers = vulkan_headers,
+        .vulkan_utility_libraries = vulkan_utility_libraries,
+        .options = options,
+    };
+
+    const use_llvm = b.option(bool, "use-llvm", "LLVM build") orelse (b.release_mode != .off);
+
+    const target_contexts = TargetContexts{
+        .native = createTargetContext(b, optimize, shared_dependencies, .{
+            .target = target,
+            .translate_c_link_libc = target.result.os.tag == .linux,
+        }),
+        .vita = createTargetContext(b, optimize, shared_dependencies, .{
+            .target = b.resolveTargetQuery(.{
+                .cpu_arch = .arm,
+                .os_tag = .vita,
+                .abi = .eabihf,
+            }),
+            .linkage = .static,
+            .use_llvm = true,
+            .translate_c_link_libc = true,
+            .link_libc = true,
+            .pic = false,
+        }),
+    };
+    const native_context = target_contexts.get(.native);
 
     const ir_tests = b.addTest(.{
-        .root_module = ir_mod,
+        .root_module = native_context.ir_mod,
         .test_runner = .{
             .path = b.path("test/test_runner.zig"),
             .mode = .simple,
@@ -81,7 +176,7 @@ pub fn build(b: *std.Build) !void {
 
     const ir_autodoc_test = b.addObject(.{
         .name = "lib",
-        .root_module = ir_mod,
+        .root_module = native_context.ir_mod,
     });
 
     const ir_install_docs = b.addInstallDirectory(.{
@@ -93,107 +188,41 @@ pub fn build(b: *std.Build) !void {
     const ir_docs_step = b.step("docs-ir", "Build and install the documentation or shader IR");
     ir_docs_step.dependOn(&ir_install_docs.step);
 
-    const base_mod = b.createModule(.{
-        .root_source_file = b.path("src/vulkan/lib.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const vulkan_headers = b.dependency("vulkan_headers", .{});
-    const vulkan_utility_libraries = b.dependency("vulkan_utility_libraries", .{});
-
-    const vulkan = b.dependency("vulkan_zig", .{
-        .registry = vulkan_headers.path("registry/vk.xml"),
-    }).module("vulkan-zig");
-
-    const zmath = b.dependency("zmath", .{}).module("root");
-    const drm = b.dependency("drm", .{}).module("drm");
-
-    const logs_option: LogType = b.option(LogType, "logs", "Driver logs") orelse .none;
-    const debug_allocator_option = b.option(bool, "device-debug-allocator", "Debug device allocator") orelse false;
-
-    const options = b.addOptions();
-    options.addOption(std.SemanticVersion, "driver_version", driver_version);
-    options.addOption(LogType, "logs", logs_option);
-    options.addOption(bool, "device_debug_allocator", debug_allocator_option);
-
-    base_mod.addImport("vulkan", vulkan);
-    base_mod.addImport("zmath", zmath);
-    base_mod.addImport("drm", drm);
-    base_mod.addImport("shader_ir", ir_mod);
-
-    const base_c_includes = b.addTranslateC(.{
-        .root_source_file = b.path("src/vulkan/c_includes.h"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = false,
-    });
-
-    base_c_includes.addIncludePath(vulkan_headers.path("include"));
-    base_c_includes.addIncludePath(vulkan_utility_libraries.path("include"));
-
-    if (builtin.target.os.tag == .linux) {
-        base_c_includes.link_libc = true;
-    }
-
-    const base_c_mod = base_c_includes.createModule();
-    base_mod.addImport("base_c", base_c_mod);
-
-    const use_llvm = b.option(bool, "use-llvm", "LLVM build") orelse (b.release_mode != .off);
-
     var implementation_modules: [implementations.len]*std.Build.Module = undefined;
     for (implementations, 0..) |impl, impl_index| {
+        const context = target_contexts.get(impl.target_profile);
+        const impl_use_llvm = context.use_llvm orelse use_llvm;
         const lib_mod = b.createModule(.{
             .root_source_file = b.path(impl.root_source_file),
-            .target = target,
+            .target = context.target,
             .optimize = optimize,
             //.error_tracing = true,
             .imports = &.{
-                .{ .name = "base", .module = base_mod },
+                .{ .name = "base", .module = context.base_mod },
                 .{ .name = "vulkan", .module = vulkan },
             },
         });
 
         implementation_modules[impl_index] = lib_mod;
         lib_mod.addSystemIncludePath(vulkan_headers.path("include"));
+        lib_mod.link_libc = context.link_libc;
+        lib_mod.pic = context.pic;
 
         const lib = b.addLibrary(.{
             .name = b.fmt("vulkan_{s}", .{impl.name}),
             .root_module = lib_mod,
-            .linkage = .dynamic,
-            .use_llvm = use_llvm,
+            .linkage = context.linkage,
+            .use_llvm = impl_use_llvm,
         });
 
         options.addOption(std.SemanticVersion, b.fmt("{s}_vulkan_version", .{impl.name}), impl.vulkan_version);
 
         if (impl.custom) |func|
-            func(b, options, lib, lib_mod, base_mod, vulkan, base_c_mod, ir_mod, target, optimize, use_llvm) catch continue;
+            func(b, options, lib, lib_mod, context.base_mod, vulkan, context.base_c_mod, context.ir_mod, context.target, optimize, impl_use_llvm) catch continue;
 
-        const icd_file = b.addWriteFile(
-            b.getInstallPath(
-                .lib,
-                if (impl.icd_name) |icd_name|
-                    b.fmt("vk_{s}.json", .{icd_name})
-                else
-                    b.fmt("vk_ape_{s}.json", .{impl.name}),
-            ),
-            b.fmt(
-                \\{{
-                \\    "file_format_version": "1.0.1",
-                \\    "ICD": {{
-                \\        "library_path": "{s}",
-                \\        "api_version": "{}.{}.{}",
-                \\        "library_arch": "64",
-                \\        "is_portability_driver": false
-                \\    }}
-                \\}}
-            , .{ lib.out_lib_filename, impl.vulkan_version.major, impl.vulkan_version.minor, impl.vulkan_version.patch }),
-        );
-
-        lib.step.dependOn(&icd_file.step);
-        const lib_install = b.addInstallArtifact(lib, .{});
+        const implementation_install_step = impl.install(b, &impl, lib);
         const install_step = b.step(impl.name, b.fmt("Build libvulkan_{s}", .{impl.name}));
-        install_step.dependOn(&lib_install.step);
+        install_step.dependOn(implementation_install_step);
 
         const lib_tests = b.addTest(.{
             .root_module = lib_mod,
@@ -208,10 +237,10 @@ pub fn build(b: *std.Build) !void {
         test_step.dependOn(&run_tests.step);
 
         inline for (std.enums.values(RunningMode)) |mode| {
-            if (addCTS(b, target, &impl, lib, mode) catch null) |step|
-                step.dependOn(&lib_install.step);
-            if (addMultithreadedCTS(b, target, &impl, lib, mode) catch null) |step|
-                step.dependOn(&lib_install.step);
+            if (addCTS(b, context.target, &impl, lib, mode) catch null) |step|
+                step.dependOn(implementation_install_step);
+            if (addMultithreadedCTS(b, context.target, &impl, lib, mode) catch null) |step|
+                step.dependOn(implementation_install_step);
         }
 
         const impl_autodoc_test = b.addObject(.{
@@ -229,11 +258,9 @@ pub fn build(b: *std.Build) !void {
         impl_docs_step.dependOn(&impl_install_docs.step);
     }
 
-    base_mod.addOptions("config", options);
-
     const autodoc_test = b.addObject(.{
         .name = "lib",
-        .root_module = base_mod,
+        .root_module = native_context.base_mod,
     });
 
     const install_docs = b.addInstallDirectory(.{
@@ -244,6 +271,79 @@ pub fn build(b: *std.Build) !void {
 
     const docs_step = b.step("docs", "Build and install the documentation");
     docs_step.dependOn(&install_docs.step);
+}
+
+fn createTargetContext(b: *std.Build, optimize: std.builtin.OptimizeMode, deps: SharedDependencies, config: TargetContextOptions) TargetContext {
+    const ir_mod = b.createModule(.{
+        .root_source_file = b.path("src/compiler/root.zig"),
+        .target = config.target,
+        .optimize = optimize,
+    });
+
+    const drm = b.dependency("drm", .{
+        .target = config.target,
+        .optimize = optimize,
+    }).module("drm");
+
+    const base_mod = b.createModule(.{
+        .root_source_file = b.path("src/vulkan/lib.zig"),
+        .target = config.target,
+        .optimize = optimize,
+    });
+    base_mod.addImport("vulkan", deps.vulkan);
+    base_mod.addImport("zmath", deps.zmath);
+    base_mod.addImport("drm", drm);
+    base_mod.addImport("shader_ir", ir_mod);
+    base_mod.addOptions("config", deps.options);
+
+    const base_c_includes = b.addTranslateC(.{
+        .root_source_file = b.path("src/vulkan/c_includes.h"),
+        .target = config.target,
+        .optimize = optimize,
+        .link_libc = config.translate_c_link_libc,
+    });
+    base_c_includes.addIncludePath(deps.vulkan_headers.path("include"));
+    base_c_includes.addIncludePath(deps.vulkan_utility_libraries.path("include"));
+
+    const base_c_mod = base_c_includes.createModule();
+    base_mod.addImport("base_c", base_c_mod);
+
+    return .{
+        .target = config.target,
+        .ir_mod = ir_mod,
+        .base_mod = base_mod,
+        .base_c_mod = base_c_mod,
+        .linkage = config.linkage,
+        .use_llvm = config.use_llvm,
+        .link_libc = config.link_libc,
+        .pic = config.pic,
+    };
+}
+
+fn installSharedLibrary(b: *std.Build, impl: *const ImplementationDesc, lib: *Step.Compile) *Step {
+    const icd_file = b.addWriteFile(
+        b.getInstallPath(
+            .lib,
+            if (impl.icd_name) |icd_name|
+                b.fmt("vk_{s}.json", .{icd_name})
+            else
+                b.fmt("vk_ape_{s}.json", .{impl.name}),
+        ),
+        b.fmt(
+            \\{{
+            \\    "file_format_version": "1.0.1",
+            \\    "ICD": {{
+            \\        "library_path": "{s}",
+            \\        "api_version": "{}.{}.{}",
+            \\        "library_arch": "64",
+            \\        "is_portability_driver": false
+            \\    }}
+            \\}}
+        , .{ lib.out_lib_filename, impl.vulkan_version.major, impl.vulkan_version.minor, impl.vulkan_version.patch }),
+    );
+
+    lib.step.dependOn(&icd_file.step);
+    return &b.addInstallArtifact(lib, .{}).step;
 }
 
 fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *Step.Compile, comptime mode: RunningMode) !*Step {
@@ -573,12 +673,7 @@ fn customPhi(
     });
 }
 
-fn addPhiDaemonCompilerArgs(
-    cmd: *Step.Run,
-    b: *std.Build,
-    optimize: std.builtin.OptimizeMode,
-    sysroot: ?[]const u8,
-) void {
+fn addPhiDaemonCompilerArgs(cmd: *Step.Run, b: *std.Build, optimize: std.builtin.OptimizeMode, sysroot: ?[]const u8) void {
     cmd.addArgs(&.{
         "-std=c11",
         "-Wall",
@@ -666,4 +761,82 @@ fn addEmbeddedPhiDaemon(b: *std.Build, daemon: std.Build.LazyPath) std.Build.Laz
     return wf.add("phi_daemon.zig",
         \\pub const data = @embedFile("phi_device.mic");
     );
+}
+
+// Psvk specialized functions
+
+fn installPsvk(b: *std.Build, _: *const ImplementationDesc, lib: *Step.Compile) *Step {
+    const vitasdk = b.graph.environ_map.get("VITASDK");
+    const tool = struct {
+        fn path(bld: *std.Build, sdk: ?[]const u8, name: []const u8) []const u8 {
+            return if (sdk) |root| bld.pathJoin(&.{ root, "bin", name }) else name;
+        }
+    }.path;
+
+    const link_elf = b.addSystemCommand(&.{tool(b, vitasdk, "arm-vita-eabi-gcc")});
+    link_elf.addArgs(&.{
+        "-O2",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-fno-builtin",
+        "-nostdlib",
+        "-Wl,-q",
+        "-Wl,-z,nocopyreloc",
+        "-Wl,--gc-sections",
+
+        // vita-elf-create appends import/export and relocation metadata to the
+        // RX segment. Reserve one Vita page before the RW segment so Debug
+        // builds cannot collide with it when the RX segment nearly fills its
+        // default 64 KiB alignment gap
+        "-Wl,--defsym=__sce_headroom=0x10000",
+        "-Wl,-e,module_start",
+
+        // vita-elf-create resolves these names after the ELF link. Make them
+        // linker roots so --gc-sections does not discard the uncalled hooks
+        "-Wl,-u,module_stop",
+        "-Wl,-u,module_exit",
+    });
+    link_elf.addFileArg(b.path("src/vita/module_bootstrap.c"));
+    link_elf.addArg("-o");
+
+    const elf = link_elf.addOutputFileArg("vulkan_psvk.elf");
+    link_elf.addArg("-Wl,--whole-archive");
+    link_elf.addFileArg(lib.getEmittedBin());
+    link_elf.addArgs(&.{
+        "-Wl,--no-whole-archive",
+        // Allocation is supplied by the host through module_bootstrap.c.
+        // Resolve compiler runtime and unwind helpers from libgcc before the
+        // Vita import stubs, leaving SceLibKernel as the module's sole import
+        "-Wl,--start-group",
+        "-lgcc",
+        "-lSceLibKernel_stub",
+        "-Wl,--end-group",
+    });
+
+    // vita-elf-create's internal `-s` path can fail with "overlapping
+    // sections" on Zig's compact ReleaseSmall ELF layout. Normalize section
+    // offsets with GNU strip first, as used by VitaSDK's sample pipeline, and
+    // leave the original ELF available in Zig's cache for debugging
+    const strip_elf = b.addSystemCommand(&.{tool(b, vitasdk, "arm-vita-eabi-strip")});
+    strip_elf.addArgs(&.{ "-g", "-o" });
+
+    const stripped_elf = strip_elf.addOutputFileArg("vulkan_psvk.stripped.elf");
+    strip_elf.addFileArg(elf);
+
+    const create_velf = b.addSystemCommand(&.{tool(b, vitasdk, "vita-elf-create")});
+    if (b.option(bool, "psvk-vita-tools-verbose", "Enable verbose VitaSDK conversion diagnostics") orelse false)
+        create_velf.addArg("-v");
+    create_velf.addArg("-e");
+    create_velf.addFileArg(b.path("src/vita/module.yml"));
+    create_velf.addFileArg(stripped_elf);
+
+    const velf = create_velf.addOutputFileArg("vulkan_psvk.velf");
+
+    const create_suprx = b.addSystemCommand(&.{tool(b, vitasdk, "vita-make-fself")});
+    create_suprx.addArg("-c");
+    create_suprx.addFileArg(velf);
+
+    const suprx = create_suprx.addOutputFileArg("vulkan_psvk.suprx");
+
+    return &b.addInstallLibFile(suprx, "vulkan_psvk.suprx").step;
 }

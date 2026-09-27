@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const vk = @import("vulkan");
 
 const VkError = @import("error_set.zig").VkError;
@@ -150,7 +151,14 @@ fn writeResultsImpl(self: *Self, first: u32, count: u32, bytes: []u8, stride: vk
         const query = &self.queries[first + i];
         if (flags.wait_bit) {
             while (!query.available) {
-                std.Thread.yield() catch std.atomic.spinLoopHint();
+                if (comptime builtin.target.os.tag == .vita) {
+                    // Zig's std.Thread POSIX backend is not implemented for
+                    // Vita. Query completion is currently synchronous there,
+                    // so a CPU-relax instruction is sufficient defensively.
+                    std.atomic.spinLoopHint();
+                } else {
+                    std.Thread.yield() catch std.atomic.spinLoopHint();
+                }
             }
         }
 

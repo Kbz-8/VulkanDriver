@@ -39,7 +39,7 @@ pub fn init(allocator: std.mem.Allocator, instance: *Instance) VkError!Self {
     return .{
         .props = .{
             .api_version = 0,
-            .driver_version = 0,
+            .driver_version = @bitCast(root.driver_version),
             .vendor_id = root.vulkan_vendor_id,
             .device_id = 0,
             .device_type = .other,

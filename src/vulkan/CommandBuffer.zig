@@ -113,7 +113,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Comma
     };
 }
 
-inline fn transitionState(self: *Self, target: State, from_allowed: []const State) error{NotAllowed}!void {
+fn transitionState(self: *Self, target: State, from_allowed: []const State) error{NotAllowed}!void {
     if (!std.EnumSet(State).initMany(from_allowed).contains(self.state)) {
         return error.NotAllowed;
     }

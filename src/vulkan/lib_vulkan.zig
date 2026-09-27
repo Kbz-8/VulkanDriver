@@ -101,7 +101,7 @@ const global_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkCreateInstance"),
     functionMapEntryPoint("vkEnumerateInstanceExtensionProperties"),
     functionMapEntryPoint("vkEnumerateInstanceLayerProperties"),
-    //functionMapEntryPoint("vkEnumerateInstanceVersion"),
+    functionMapEntryPoint("vkEnumerateInstanceVersion"),
     functionMapEntryPoint("vkGetInstanceProcAddr"),
 });
 
@@ -409,7 +409,8 @@ pub export fn apeEnumerateInstanceExtensionProperties(p_layer_name: ?[*:0]const 
     return .success;
 }
 
-/// Do not make it available to GetProcAddr until Vulkan 1.1 is implemented
+/// Vulkan 1.0 implementations may expose this loader-facing query and report
+/// version 1.0. The CTS requires a callable platform entry point.
 pub export fn apeEnumerateInstanceVersion(version: *u32) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkEnumerateInstanceVersion);
     defer entryPointEndLogTrace();

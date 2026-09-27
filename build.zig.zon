@@ -37,11 +37,6 @@
             .hash = "SPIRV_Interpreter-1.0.0-ajmpnwSKCQDjTAGgiw6N0rWdZiD3VdEMAE352RSpN4vl",
             .lazy = true,
         },
-        //.SPIRV_Interpreter = .{
-        //    // For development
-        //    .path = "../SPIRV-Interpreter",
-        //    .lazy = true,
-        //},
 
         // Phi dependencies
         .miclib = .{

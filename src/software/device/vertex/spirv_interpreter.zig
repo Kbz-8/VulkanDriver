@@ -7,6 +7,8 @@ const F32x4 = base.zm.F32x4;
 
 const SpvRuntimeError = spv.Runtime.RuntimeError;
 
+const Device = @import("../Device.zig");
+
 const Renderer = @import("../Renderer.zig");
 const blitter = @import("../blitter.zig");
 const RunData = @import("dispatcher.zig").RunData;
@@ -38,7 +40,7 @@ pub fn run(data: RunData) !void {
         rt.resetInvocation(data.allocator);
         if (rt.specialization_constants.count() != 0)
             try rt.applySpecializationInvocationLayout(data.allocator);
-        try @import("../Device.zig").writeDescriptorSets(data.draw_call.renderer.state, rt);
+        try Device.writeDescriptorSets(data.draw_call.renderer.state, rt);
         try rt.populatePushConstants(data.draw_call.renderer.state.push_constant_blob[0..]);
 
         const vertex_index_u32: u32 = if (data.indices) |indices| indices[invocation_index] else @intCast(data.first_vertex + invocation_index);
