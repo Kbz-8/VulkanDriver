@@ -35,6 +35,7 @@ pub fn create(allocator: std.mem.Allocator, info: *const vk.InstanceCreateInfo) 
 
     self.* = .{
         .interface = interface,
+        // SAFETY: FIXME
         .io_impl = undefined,
     };
 
