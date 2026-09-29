@@ -39,11 +39,21 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 }
 
 pub fn getMemoryRequirements(_: *Interface, requirements: *vk.MemoryRequirements) VkError!void {
-    requirements.* = .{ .size = 0, .alignment = 1, .memory_type_bits = 0 };
+    requirements.* = .{
+        .size = 1,
+        .alignment = 1,
+        .memory_type_bits = 1,
+    };
 }
 
 pub fn getSubresourceLayout(_: *const Interface, _: vk.ImageSubresource) VkError!vk.SubresourceLayout {
-    return .{ .offset = 0, .size = 0, .row_pitch = 0, .array_pitch = 0, .depth_pitch = 0 };
+    return .{
+        .offset = 0,
+        .size = 0,
+        .row_pitch = 0,
+        .array_pitch = 0,
+        .depth_pitch = 0,
+    };
 }
 
 pub fn getTotalSizeForAspect(_: *const Interface, _: vk.ImageAspectFlags) VkError!usize {

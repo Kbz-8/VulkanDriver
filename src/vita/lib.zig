@@ -4,6 +4,7 @@ pub const base = @import("base");
 
 pub const config = base.config;
 
+pub const Io = @import("Io/Io.zig");
 pub const PsvkBinarySemaphore = @import("PsvkBinarySemaphore.zig");
 pub const PsvkBuffer = @import("PsvkBuffer.zig");
 pub const PsvkBufferView = @import("PsvkBufferView.zig");
@@ -53,6 +54,7 @@ comptime {
 }
 
 test {
+    std.testing.refAllDecls(Io);
     std.testing.refAllDecls(PsvkBinarySemaphore);
     std.testing.refAllDecls(PsvkBuffer);
     std.testing.refAllDecls(PsvkBufferView);

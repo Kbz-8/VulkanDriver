@@ -763,13 +763,11 @@ pub export fn apeAllocateDescriptorSets(p_device: vk.Device, info: *const vk.Des
         return .error_validation_failed;
     }
 
-    const allocator = VulkanAllocator.init(null, .command).allocator();
-
     const pool = NonDispatchable(DescriptorPool).fromHandleObject(info.descriptor_pool) catch |err| return toVkResult(err);
     for (0..info.descriptor_set_count) |i| {
         const layout = NonDispatchable(DescriptorSetLayout).fromHandleObject(info.p_set_layouts[i]) catch |err| return toVkResult(err);
         const set = pool.allocateDescriptorSet(layout) catch |err| return toVkResult(err);
-        p_sets[i] = (NonDispatchable(DescriptorSet).wrap(allocator, set) catch |err| return toVkResult(err)).toVkHandle(vk.DescriptorSet);
+        p_sets[i] = set.toVkHandle(vk.DescriptorSet);
     }
 
     return .success;
@@ -1400,20 +1398,18 @@ pub export fn apeFreeCommandBuffers(p_device: vk.Device, p_pool: vk.CommandPool,
     pool.freeCommandBuffers(cmds[0..count]) catch |err| return errorLogger(err);
 }
 
-pub export fn apeFreeDescriptorSets(p_device: vk.Device, p_pool: vk.CommandPool, count: u32, p_sets: [*]const vk.DescriptorSet) callconv(vk.vulkan_call_conv) void {
+pub export fn apeFreeDescriptorSets(p_device: vk.Device, p_pool: vk.DescriptorPool, count: u32, p_sets: [*]const vk.DescriptorSet) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkFreeDescriptorSets);
     defer entryPointEndLogTrace();
 
-    const allocator = VulkanAllocator.init(null, .command).allocator();
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
 
-    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
-
-    const pool = NonDispatchable(DescriptorPool).fromHandleObject(p_pool) catch |err| return errorLogger(err);
-    for (p_sets[0..], 0..count) |p_set, _| {
-        const non_dispatchable_set = NonDispatchable(DescriptorSet).fromHandle(p_set) catch |err| return errorLogger(err);
-        pool.freeDescriptorSet(non_dispatchable_set.object) catch |err| return errorLogger(err);
-        non_dispatchable_set.destroy(allocator);
+    const pool = NonDispatchable(DescriptorPool).fromHandleObject(p_pool) catch |err| return toVkResult(err);
+    for (p_sets[0..count]) |p_set| {
+        const non_dispatchable_set = NonDispatchable(DescriptorSet).fromHandle(p_set) catch |err| return toVkResult(err);
+        pool.freeDescriptorSet(non_dispatchable_set) catch |err| return toVkResult(err);
     }
+    return .success;
 }
 
 pub export fn apeFreeMemory(p_device: vk.Device, p_memory: vk.DeviceMemory, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {

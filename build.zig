@@ -806,10 +806,12 @@ fn installPsvk(b: *std.Build, _: *const ImplementationDesc, lib: *Step.Compile) 
         "-Wl,--no-whole-archive",
         // Allocation is supplied by the host through module_bootstrap.c.
         // Resolve compiler runtime and unwind helpers from libgcc before the
-        // Vita import stubs, leaving SceLibKernel as the module's sole import
+        // Vita import stubs. Thread lifecycle cleanup, timing, and signaling
+        // are exported by SceKernelThreadMgr rather than SceLibKernel.
         "-Wl,--start-group",
         "-lgcc",
         "-lSceLibKernel_stub",
+        "-lSceKernelThreadMgr_stub",
         "-Wl,--end-group",
     });
 

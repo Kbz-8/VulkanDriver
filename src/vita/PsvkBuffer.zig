@@ -34,5 +34,9 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 }
 
 pub fn getMemoryRequirements(_: *Interface, requirements: *vk.MemoryRequirements) void {
-    requirements.* = .{ .size = 0, .alignment = 1, .memory_type_bits = 0 };
+    requirements.* = .{
+        .size = 1,
+        .alignment = 1,
+        .memory_type_bits = 1,
+    };
 }

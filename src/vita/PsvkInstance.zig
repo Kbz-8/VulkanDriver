@@ -2,6 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 
+const Io = @import("Io/Io.zig");
 const PsvkPhysicalDevice = @import("PsvkPhysicalDevice.zig");
 
 const Dispatchable = base.Dispatchable;
@@ -14,11 +15,20 @@ pub const Interface = base.Instance;
 pub const extensions = [_]vk.ExtensionProperties{};
 
 interface: Interface,
+host_allocator: base.VulkanAllocator,
+threaded: Io.Threaded,
 io_impl: std.Io,
 
 pub fn create(allocator: std.mem.Allocator, info: *const vk.InstanceCreateInfo) VkError!*Interface {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);
+
+    self.host_allocator = base.VulkanAllocator.from(allocator).clone();
+
+    self.threaded = Io.Threaded.init(self.host_allocator.allocator(), .{}) catch return VkError.InitializationFailed;
+    errdefer self.threaded.deinit();
+
+    self.io_impl = self.threaded.io();
 
     var interface = try Interface.init(allocator, info);
 
@@ -33,17 +43,14 @@ pub fn create(allocator: std.mem.Allocator, info: *const vk.InstanceCreateInfo) 
         .enumerate_drm_devices = false,
     };
 
-    self.* = .{
-        .interface = interface,
-        // SAFETY: FIXME
-        .io_impl = undefined,
-    };
+    self.interface = interface;
 
     return &self.interface;
 }
 
 fn destroy(interface: *Interface, allocator: std.mem.Allocator) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    self.threaded.deinit();
     allocator.destroy(self);
 }
 
@@ -71,6 +78,7 @@ fn releasePhysicalDevices(interface: *Interface, allocator: std.mem.Allocator) V
     interface.physical_devices = .empty;
 }
 
-fn io(_: *Interface) std.Io {
-    @panic("Io is unsupported for the PSVita");
+fn io(interface: *Interface) std.Io {
+    const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
+    return self.io_impl;
 }
