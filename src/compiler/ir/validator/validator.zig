@@ -238,13 +238,18 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
 
     switch (instruction.operation) {
         .unary => |op| {
-            const operand_type =
-                try operandType(module, function_id, op.operand);
-
-            const result =
-                result_type orelse return ValidationError.WrongResultPresence;
+            const result = result_type orelse return ValidationError.WrongResultPresence;
+            const operand_type = try operandType(module, function_id, op.operand);
 
             switch (op.opcode) {
+                .all => {
+                    if (!isBoolean(module, result))
+                        return ValidationError.WrongResultType;
+
+                    if (!isBooleanVector(module, operand_type))
+                        return ValidationError.WrongOperandType;
+                },
+
                 .bitwise_not => {
                     if (!isIntegerScalarOrVector(module, operand_type))
                         return ValidationError.WrongOperandType;
@@ -296,7 +301,7 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                 return ValidationError.WrongOperandType;
 
             const result = result_type orelse return ValidationError.WrongResultPresence;
-            if (!isBoolean(module, result))
+            if (!isBoolean(module, result) and !isBooleanVector(module, result))
                 return ValidationError.WrongResultType;
         },
         .select => |op| {
@@ -600,6 +605,17 @@ fn isUnsignedInteger(module: *const module_ir.Module, type_id: ids.TypeId) bool 
     const ty = module.types.get(type_id) orelse return false;
     return switch (ty.*) {
         .integer => |integer| integer.signedness == .unsigned,
+        else => false,
+    };
+}
+
+fn isBooleanVector(module: *const module_ir.Module, type_id: ids.TypeId) bool {
+    const ty = module.types.get(type_id) orelse return false;
+    return switch (ty.*) {
+        .vector => |vector| {
+            const element_type = module.types.get(vector.element_type) orelse return false;
+            return element_type.* == .boolean;
+        },
         else => false,
     };
 }

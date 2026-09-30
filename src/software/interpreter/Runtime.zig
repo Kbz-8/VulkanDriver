@@ -114,6 +114,7 @@ pub fn run(self: *Self, program: *const Program, options: RunOptions) RuntimeErr
 pub fn continueExecution(self: *Self, program: *const Program, options: RunOptions) RuntimeError!Outcome {
     if (self.state != .barrier)
         return RuntimeError.InvalidResume;
+
     self.state = .running;
     return self.execute(program, options);
 }
@@ -133,6 +134,7 @@ fn execute(self: *Self, program: *const Program, options: RunOptions) RuntimeErr
 
         switch (instruction.opcode) {
             .@"unreachable" => return RuntimeError.UnreachableExecuted,
+            .all => try self.all(instruction),
             .array_length => try self.arrayLength(program, options.resource_buffers, instruction),
             .arithmetic_shift_right => try self.binaryInt(instruction, .arithmetic_shift_right),
             .bitwise_and => try self.binaryInt(instruction, .bitwise_and),
@@ -222,6 +224,16 @@ const BinaryInt = enum {
 const BinaryFloat = enum { add, subtract, multiply, divide, modulo };
 const CompareInt = enum { equal, not_equal, unsigned_less, signed_less };
 const CompareFloat = enum { ordered_equal, unordered_equal, ordered_not_equal, unordered_not_equal, ordered_less, unordered_less };
+
+fn all(self: *Self, instruction: bc.Instruction) RuntimeError!void {
+    self.registers[@intFromEnum(instruction.a)] = blk: {
+        for (0..instruction.components) |component| {
+            if (self.registers[@intFromEnum(instruction.b) + component] == 0)
+                break :blk 0;
+        }
+        break :blk 1;
+    };
+}
 
 fn arrayLength(self: *Self, program: *const Program, resource_buffers: []const ?[]u8, instruction: bc.Instruction) RuntimeError!void {
     if (instruction.components != 1)
@@ -336,28 +348,34 @@ fn binaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Bin
 }
 
 fn compareInt(self: *Self, instruction: bc.Instruction, comptime operation: CompareInt) void {
-    const lhs = self.registers[@intFromEnum(instruction.b)];
-    const rhs = self.registers[@intFromEnum(instruction.c)];
-    self.registers[@intFromEnum(instruction.a)] = @intFromBool(switch (operation) {
-        .equal => lhs == rhs,
-        .not_equal => lhs != rhs,
-        .unsigned_less => lhs < rhs,
-        .signed_less => @as(i32, @bitCast(lhs)) < @as(i32, @bitCast(rhs)),
-    });
+    for (0..instruction.components) |component| {
+        const lhs = self.registers[@intFromEnum(instruction.b) + component];
+        const rhs = self.registers[@intFromEnum(instruction.c) + component];
+
+        self.registers[@intFromEnum(instruction.a) + component] = @intFromBool(switch (operation) {
+            .equal => lhs == rhs,
+            .not_equal => lhs != rhs,
+            .unsigned_less => lhs < rhs,
+            .signed_less => @as(i32, @bitCast(lhs)) < @as(i32, @bitCast(rhs)),
+        });
+    }
 }
 
 fn compareFloat(self: *Self, instruction: bc.Instruction, comptime operation: CompareFloat) void {
-    const lhs: f32 = @bitCast(self.registers[@intFromEnum(instruction.b)]);
-    const rhs: f32 = @bitCast(self.registers[@intFromEnum(instruction.c)]);
-    const unordered = std.math.isNan(lhs) or std.math.isNan(rhs);
-    self.registers[@intFromEnum(instruction.a)] = @intFromBool(switch (operation) {
-        .ordered_equal => !unordered and lhs == rhs,
-        .unordered_equal => unordered or lhs == rhs,
-        .ordered_not_equal => !unordered and lhs != rhs,
-        .unordered_not_equal => unordered or lhs != rhs,
-        .ordered_less => !unordered and lhs < rhs,
-        .unordered_less => unordered or lhs < rhs,
-    });
+    for (0..instruction.components) |component| {
+        const lhs: f32 = @bitCast(self.registers[@intFromEnum(instruction.b) + component]);
+        const rhs: f32 = @bitCast(self.registers[@intFromEnum(instruction.c) + component]);
+
+        const unordered = std.math.isNan(lhs) or std.math.isNan(rhs);
+        self.registers[@intFromEnum(instruction.a) + component] = @intFromBool(switch (operation) {
+            .ordered_equal => !unordered and lhs == rhs,
+            .unordered_equal => unordered or lhs == rhs,
+            .ordered_not_equal => !unordered and lhs != rhs,
+            .unordered_not_equal => unordered or lhs != rhs,
+            .ordered_less => !unordered and lhs < rhs,
+            .unordered_less => unordered or lhs < rhs,
+        });
+    }
 }
 
 fn select(self: *Self, instruction: bc.Instruction) void {

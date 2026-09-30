@@ -17,27 +17,28 @@ pub const Options = struct {
 };
 
 pub const TranslationError = error{
-    EntryPointNotFound,
     AmbiguousEntryPoint,
-    UnsupportedExecutionModel,
-    InvalidInstruction,
-    InvalidId,
     DuplicateId,
+    DuplicateSpecializationConstant,
+    EntryPointNotFound,
+    InvalidBlock,
+    InvalidFunctionParameter,
+    InvalidFunctionType,
+    InvalidId,
+    InvalidInstruction,
+    InvalidPhi,
+    InvalidSpecialization,
     MissingDefinition,
     MissingFunction,
-    InvalidFunctionType,
-    InvalidFunctionParameter,
-    InvalidBlock,
-    InvalidPhi,
     MissingPhiIncomingValue,
-    UnsupportedType,
-    UnsupportedConstant,
     SpecializationConstantsNotApplied,
-    InvalidSpecialization,
-    DuplicateSpecializationConstant,
+    UnsupportedBuiltin,
+    UnsupportedConstant,
+    UnsupportedExecutionModel,
     UnsupportedOpcode,
     UnsupportedPrivateCrossFunction,
     UnsupportedStoreDestination,
+    UnsupportedType,
 };
 
 const EntryPoint = struct {
@@ -772,7 +773,7 @@ fn translateInterfaces(context: *Context, interface_ids: []const u32) !void {
             }
         else if (decoration.builtin) |builtin|
             .{
-                .builtin = try translateBuiltin(std.enums.fromInt(spirv.Builtin, builtin) orelse return TranslationError.UnsupportedOpcode),
+                .builtin = try translateBuiltin(std.enums.fromInt(spirv.Builtin, builtin) orelse return TranslationError.UnsupportedBuiltin),
             }
         else
             return TranslationError.UnsupportedOpcode;
@@ -1312,7 +1313,9 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             try expectOperandCount(operands, 2);
             _ = try context.translateValue(operands[1]);
         },
+
         .ext_inst => try translateExtendedInstruction(context, block, operands),
+
         .copy_object => {
             try expectOperandCount(operands, 3);
             const source = try context.resolveValue(operands[2]);
@@ -1322,6 +1325,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
 
             try context.setValue(operands[1], source);
         },
+
         .load => {
             if (operands.len < 3)
                 return TranslationError.InvalidInstruction;
@@ -1330,11 +1334,14 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                 context.image_resources[try context.idIndex(operands[1])] = resource;
                 return;
             }
+
             const result_type = try context.translateType(operands[0]);
             if (try context.localIndex(operands[2])) |local_index| {
                 const value = context.current_locals[local_index] orelse return TranslationError.InvalidInstruction;
+
                 if (context.module.typeOf(value) != result_type)
                     return TranslationError.InvalidInstruction;
+
                 try context.setValue(operands[1], value);
             } else if (try context.bufferAddress(operands[2])) |address| {
                 const result = (try context.builder.appendInstruction(block, result_type, .{
@@ -1343,16 +1350,19 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                         .byte_offset = try bufferByteOffset(context, address),
                     },
                 }, context.nameOf(operands[1]))).?;
+
                 try context.setValue(operands[1], result);
             } else if (try context.workgroupAddress(operands[2])) |address| {
                 if (result_type != try context.translateType(address.pointee_type))
                     return TranslationError.InvalidInstruction;
+
                 const result = (try context.builder.appendInstruction(block, result_type, .{
                     .load_workgroup = .{
                         .variable = address.variable,
                         .byte_offset = try workgroupByteOffset(context, address),
                     },
                 }, context.nameOf(operands[1]))).?;
+
                 try context.setValue(operands[1], result);
             } else if (try context.compositeAddress(operands[2])) |address| {
                 const composite = switch (address.root) {
@@ -1364,9 +1374,12 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                         null,
                     )).?,
                 };
+
                 const result = try extractCompositeAddress(context, block, composite, address.indices, context.nameOf(operands[1]));
+
                 if (context.module.typeOf(result) != result_type)
                     return TranslationError.InvalidInstruction;
+
                 try context.setValue(operands[1], result);
             } else {
                 const result = (try context.builder.appendInstruction(block, result_type, .{
@@ -1375,14 +1388,17 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                 try context.setValue(operands[1], result);
             }
         },
+
         .store => {
             if (operands.len < 2)
                 return TranslationError.InvalidInstruction;
 
             const value = try context.resolveValue(operands[1]);
+
             if (try context.localIndex(operands[0])) |local_index| {
                 if (context.module.typeOf(value) != context.locals.items[local_index].type)
                     return TranslationError.InvalidInstruction;
+
                 context.current_locals[local_index] = value;
             } else if (try context.bufferAddress(operands[0])) |address| {
                 _ = try context.builder.appendInstruction(block, null, .{
@@ -1395,6 +1411,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             } else if (try context.workgroupAddress(operands[0])) |address| {
                 if (context.module.typeOf(value) != try context.translateType(address.pointee_type))
                     return TranslationError.InvalidInstruction;
+
                 _ = try context.builder.appendInstruction(block, null, .{
                     .store_workgroup = .{
                         .variable = address.variable,
@@ -1405,8 +1422,10 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             } else if (try context.compositeAddress(operands[0])) |address| {
                 if (address.indices.len != 0 or address.root != .interface)
                     return unsupportedStoreDestination(context, operands[0]);
+
                 if (context.module.typeOf(value) != try context.translateType(address.pointee_type))
                     return TranslationError.InvalidInstruction;
+
                 _ = try context.builder.appendInstruction(block, null, .{ .store_interface = .{ .variable = address.root.interface, .value = value } }, null);
             } else {
                 const variable = context.interfaces[try context.idIndex(operands[0])] orelse
@@ -1419,20 +1438,26 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                 }, null);
             }
         },
+
         .access_chain => try translateAccessChain(context, block, operands),
         .vector_shuffle => try translateVectorShuffle(context, block, operands),
+
         .image_read => {
             if (operands.len < 4)
                 return TranslationError.InvalidInstruction;
+
             const resource = (try context.imageResource(operands[2])) orelse return TranslationError.UnsupportedOpcode;
             const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
                 .image_read = .{ .resource = resource, .coordinate = try context.resolveValue(operands[3]) },
             }, context.nameOf(operands[1]))).?;
+
             try context.setValue(operands[1], result);
         },
+
         .image_write => {
             if (operands.len < 3)
                 return TranslationError.InvalidInstruction;
+
             const resource = (try context.imageResource(operands[0])) orelse return TranslationError.UnsupportedOpcode;
             _ = try context.builder.appendInstruction(block, null, .{ .image_write = .{
                 .resource = resource,
@@ -1440,19 +1465,25 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                 .value = try context.resolveValue(operands[2]),
             } }, null);
         },
+
         .image_texel_pointer => {
             try expectOperandCount(operands, 5);
             const resource = (try context.imageResource(operands[2])) orelse return TranslationError.UnsupportedOpcode;
+
             if (try constantIndex(context, operands[4]) != 0)
                 return TranslationError.UnsupportedOpcode;
+
             const index = try context.idIndex(operands[1]);
+
             if (context.image_addresses[index] != null)
                 return TranslationError.DuplicateId;
+
             context.image_addresses[index] = .{
                 .resource = resource,
                 .coordinate = try context.resolveValue(operands[3]),
             };
         },
+
         .memory_barrier => {
             try expectOperandCount(operands, 2);
             _ = try constantIndex(context, operands[0]);
@@ -1468,22 +1499,26 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             _ = try context.builder.appendInstruction(block, null, .control_barrier, null);
             context.module.properties.uses_control_barriers = true;
         },
+
         .atomic_i_add => try translateAtomicIAdd(context, block, operands),
         .atomic_exchange => try translateAtomicExchange(context, block, operands),
-        .s_negate,
+
+        .all,
         .f_negate,
         .logical_not,
         .not,
+        .s_negate,
         => {
             try expectOperandCount(operands, 3);
 
             const opcode: ir.instruction.UnaryOpcode = switch (instruction.opcode) {
-                .s_negate,
-                .f_negate,
-                => .negate,
-
+                .all => .all,
                 .logical_not => .logical_not,
                 .not => .bitwise_not,
+
+                .f_negate,
+                .s_negate,
+                => .negate,
 
                 else => unreachable,
             };
@@ -1502,6 +1537,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
 
             try context.setValue(operands[1], result);
         },
+
         .vector_times_scalar => {
             try expectOperandCount(operands, 4);
 
@@ -1514,6 +1550,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             }, context.nameOf(operands[1]))).?;
             try context.setValue(operands[1], result);
         },
+
         .i_add,
         .i_sub,
         .i_mul,
@@ -1548,6 +1585,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
 
             try context.setValue(operands[1], result);
         },
+
         .u_greater_than_equal => {
             try expectOperandCount(operands, 4);
             const result_type = try context.translateType(operands[0]);
@@ -1562,6 +1600,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             } }, context.nameOf(operands[1]))).?;
             try context.setValue(operands[1], result);
         },
+
         .logical_equal,
         .logical_not_equal,
         .i_equal,
@@ -1587,6 +1626,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
 
             try context.setValue(operands[1], result);
         },
+
         .select => {
             try expectOperandCount(operands, 5);
 
@@ -1600,6 +1640,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
 
             try context.setValue(operands[1], result);
         },
+
         .bitcast => {
             try expectOperandCount(operands, 3);
 
@@ -1609,6 +1650,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
 
             try context.setValue(operands[1], result);
         },
+
         .composite_construct => {
             if (operands.len < 2)
                 return TranslationError.InvalidInstruction;
@@ -1626,6 +1668,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
 
             try context.setValue(operands[1], result);
         },
+
         .composite_extract => {
             if (operands.len < 4)
                 return TranslationError.InvalidInstruction;
@@ -1639,18 +1682,26 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
 
             try context.setValue(operands[1], result);
         },
+
         .function_call => {
             if (operands.len < 3)
                 return TranslationError.InvalidInstruction;
+
             const arguments = try context.scratch.alloc(ir.id.ValueId, operands.len - 3);
+
             for (operands[3..], arguments) |argument, *translated|
                 translated.* = try context.resolveValue(argument);
-            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{ .call = .{
-                .function = try context.function(operands[2]),
-                .arguments = arguments,
-            } }, context.nameOf(operands[1]))).?;
+
+            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+                .call = .{
+                    .function = try context.function(operands[2]),
+                    .arguments = arguments,
+                },
+            }, context.nameOf(operands[1]))).?;
+
             try context.setValue(operands[1], result);
         },
+
         .array_length => try translateArrayLength(context, block, operands),
 
         else => {
@@ -2578,19 +2629,20 @@ fn translateStorageClass(storage_class: spirv.StorageClass) TranslationError!ir.
 
 fn translateBuiltin(builtin: spirv.Builtin) TranslationError!ir.module.Builtin {
     return switch (builtin) {
-        .position => .position,
+        .device_index => .device_index,
         .frag_coord => .frag_coord,
         .frag_depth => .frag_depth,
         .global_invocation_id => .global_invocation_id,
+        .instance_index => .instance_index,
         .local_invocation_id => .local_invocation_id,
         .local_invocation_index => .local_invocation_index,
+        .num_workgroups => .num_workgroups,
+        .position => .position,
+        .vertex_index => .vertex_index,
         .workgroup_id => .workgroup_id,
         .workgroup_size => .workgroup_size,
-        .num_workgroups => .num_workgroups,
-        .vertex_index => .vertex_index,
-        .instance_index => .instance_index,
 
-        else => TranslationError.UnsupportedOpcode,
+        else => TranslationError.UnsupportedBuiltin,
     };
 }
 

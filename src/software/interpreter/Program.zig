@@ -332,10 +332,14 @@ const Lowerer = struct {
                 const dst = result orelse return CompileError.InvalidOperation;
                 const src = try self.span(op.operand);
 
-                if (!dst.sameShape(src))
-                    return CompileError.InvalidOperation;
+                //if (!dst.sameShape(src))
+                //    return CompileError.InvalidOperation;
 
                 const opcode: bc.Opcode = switch (op.opcode) {
+                    .all => {
+                        try self.emit(.all, src.components, dst.base, src.base, .invalid_register, .invalid_register, 0);
+                        return;
+                    },
                     .negate => switch (dst.kind) {
                         .signed_integer => .negate_i32,
                         .floating => .negate_f32,
@@ -370,10 +374,10 @@ const Lowerer = struct {
                 const lhs = try self.span(op.lhs);
                 const rhs = try self.span(op.rhs);
 
-                if (dst.kind != .boolean or dst.components != 1 or lhs.components != 1 or !lhs.sameShape(rhs))
-                    return CompileError.UnsupportedOperation;
+                //if (dst.kind != .boolean or dst.components != 1 or lhs.components != 1 or !lhs.sameShape(rhs))
+                //    return CompileError.UnsupportedOperation;
 
-                try self.emit(try compareOpcode(op.opcode, lhs.kind), 1, dst.base, lhs.base, rhs.base, .invalid_register, 0);
+                try self.emit(try compareOpcode(op.opcode, lhs.kind), dst.components, dst.base, lhs.base, rhs.base, .invalid_register, 0);
             },
             .select => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;

@@ -91,16 +91,17 @@ pub const InterfaceDirection = enum {
 };
 
 pub const Builtin = enum {
-    position,
-    vertex_index,
-    instance_index,
+    device_index,
     frag_coord,
     frag_depth,
     global_invocation_id,
+    instance_index,
     local_invocation_id,
     local_invocation_index,
-    workgroup_id,
     num_workgroups,
+    position,
+    vertex_index,
+    workgroup_id,
     workgroup_size,
 };
 

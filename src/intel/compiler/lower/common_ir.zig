@@ -475,6 +475,7 @@ const LoweringState = struct {
             if (source_component.type != result_component.type)
                 return Error.InvalidModule;
             switch (operation.opcode) {
+                .all => unreachable,
                 .negate => {
                     if (source_component.type != .i32 and source_component.type != .f32)
                         return Error.UnsupportedOperation;

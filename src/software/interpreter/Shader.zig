@@ -108,6 +108,7 @@ fn hasCompatibleInterface(program: *const Program, stage: ir.module.Stage) bool 
                     else => return false,
                 },
                 .compute => switch (builtin) {
+                    .device_index => return true,
                     .global_invocation_id,
                     .local_invocation_id,
                     .workgroup_id,

@@ -39,6 +39,7 @@ comptime {
 
 pub const Opcode = enum(u16) {
     @"unreachable",
+    all,
     arithmetic_shift_right,
     array_length,
     bitwise_and,
