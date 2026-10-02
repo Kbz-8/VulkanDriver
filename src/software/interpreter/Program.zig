@@ -43,6 +43,20 @@ pub const RegisterInit = struct {
     value: u32,
 };
 
+pub const ImageSamplerPair = struct {
+    image: ids.ResourceId,
+    sampler: ids.ResourceId,
+};
+
+pub const DescriptorCandidate = struct {
+    array_element: u32,
+    resource: ids.ResourceId,
+};
+
+pub const DescriptorArray = struct {
+    candidates: []const DescriptorCandidate,
+};
+
 const Self = @This();
 
 arena: std.heap.ArenaAllocator,
@@ -54,6 +68,8 @@ entry_pc: u32,
 register_count: usize,
 scratch_count: usize,
 array_lengths: []const bc.ArrayLength,
+descriptor_arrays: []const DescriptorArray,
+image_sampler_pairs: []const ImageSamplerPair,
 code: []const bc.Instruction,
 edges: []const bc.Edge,
 copies: []const bc.Copy,
@@ -82,6 +98,8 @@ pub fn compile(backing_allocator: std.mem.Allocator, module: *const module_ir.Mo
         .register_count = lowerer.register_count,
         .scratch_count = lowerer.scratch_count,
         .array_lengths = lowerer.array_lengths.items,
+        .descriptor_arrays = lowerer.descriptor_arrays.items,
+        .image_sampler_pairs = lowerer.image_sampler_pairs.items,
         .code = lowerer.code.items,
         .edges = lowerer.edges.items,
         .copies = lowerer.copies.items,
@@ -133,6 +151,8 @@ const Lowerer = struct {
     entry_pc: u32 = 0,
     workgroup_memory_size: usize = 0,
     array_lengths: std.ArrayList(bc.ArrayLength) = .empty,
+    descriptor_arrays: std.ArrayList(DescriptorArray) = .empty,
+    image_sampler_pairs: std.ArrayList(ImageSamplerPair) = .empty,
     code: std.ArrayList(bc.Instruction) = .empty,
     edges: std.ArrayList(bc.Edge) = .empty,
     copies: std.ArrayList(bc.Copy) = .empty,
@@ -462,8 +482,13 @@ const Lowerer = struct {
             .load_buffer => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;
                 const byte_offset = try self.bufferOffset(op.byte_offset);
-                _ = try self.bufferResource(op.resource, false);
-                try self.emit(.load_buffer, dst.components, dst.base, byte_offset, .invalid_register, .invalid_register, @intFromEnum(op.resource));
+                const descriptor_index, const resource = try self.bufferAccess(op.resource, op.descriptor_index, false);
+                try self.emit(.load_buffer, dst.components, dst.base, byte_offset, descriptor_index, .invalid_register, resource);
+            },
+            .load_push_constant => |op| {
+                const dst = result orelse return CompileError.InvalidOperation;
+                const byte_offset = try self.bufferOffset(op.byte_offset);
+                try self.emit(.load_push_constant, dst.components, dst.base, byte_offset, .invalid_register, .invalid_register, 0);
             },
             .store_buffer => |op| {
                 if (result != null)
@@ -471,8 +496,8 @@ const Lowerer = struct {
 
                 const src = try self.span(op.value);
                 const byte_offset = try self.bufferOffset(op.byte_offset);
-                _ = try self.bufferResource(op.resource, true);
-                try self.emit(.store_buffer, src.components, src.base, byte_offset, .invalid_register, .invalid_register, @intFromEnum(op.resource));
+                const descriptor_index, const resource = try self.bufferAccess(op.resource, op.descriptor_index, true);
+                try self.emit(.store_buffer, src.components, src.base, byte_offset, descriptor_index, .invalid_register, resource);
             },
             .load_workgroup => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;
@@ -494,10 +519,30 @@ const Lowerer = struct {
                 const coordinate = try self.span(op.coordinate);
                 _ = try self.storageImage(op.resource);
 
-                if (dst.kind != .unsigned_integer or dst.components != 4 or coordinate.kind != .signed_integer or coordinate.components != 2)
+                if ((dst.kind != .floating and dst.kind != .signed_integer and dst.kind != .unsigned_integer) or
+                    dst.components != 4 or coordinate.kind != .signed_integer or coordinate.components != 2)
                     return CompileError.InvalidOperation;
 
-                try self.emit(.image_read, 4, dst.base, coordinate.base, .invalid_register, .invalid_register, @intFromEnum(op.resource));
+                try self.emit(if (dst.kind == .floating) .image_read_float else .image_read, 4, dst.base, coordinate.base, .invalid_register, .invalid_register, @intFromEnum(op.resource));
+            },
+            .image_sample_explicit_lod => |op| {
+                const dst = result orelse return CompileError.InvalidOperation;
+                const coordinate = try self.span(op.coordinate);
+                const lod = try self.span(op.lod);
+                _ = try self.sampledImage(op.image);
+                _ = try self.sampler(op.sampler);
+
+                if (dst.kind != .floating or dst.components != 4 or
+                    coordinate.kind != .floating or coordinate.components != 2 or
+                    lod.kind != .floating or lod.components != 1)
+                    return CompileError.InvalidOperation;
+
+                const pair_index = try u32Index(self.image_sampler_pairs.items.len);
+                try self.image_sampler_pairs.append(self.allocator, .{
+                    .image = op.image,
+                    .sampler = op.sampler,
+                });
+                try self.emit(.image_sample_explicit_lod, 4, dst.base, coordinate.base, lod.base, .invalid_register, pair_index);
             },
             .image_write => |op| {
                 if (result != null)
@@ -507,11 +552,11 @@ const Lowerer = struct {
                 const value = try self.span(op.value);
                 _ = try self.storageImage(op.resource);
 
-                if (value.kind != .unsigned_integer or value.components != 4 or
-                    coordinate.kind != .signed_integer or coordinate.components != 2)
+                if ((value.kind != .floating and value.kind != .signed_integer and value.kind != .unsigned_integer) or
+                    value.components != 4 or coordinate.kind != .signed_integer or coordinate.components != 2)
                     return CompileError.InvalidOperation;
 
-                try self.emit(.image_write, 4, value.base, coordinate.base, .invalid_register, .invalid_register, @intFromEnum(op.resource));
+                try self.emit(if (value.kind == .floating) .image_write_float else .image_write, 4, value.base, coordinate.base, .invalid_register, .invalid_register, @intFromEnum(op.resource));
             },
             .control_barrier => {
                 if (result != null)
@@ -523,6 +568,8 @@ const Lowerer = struct {
                 const dst = result orelse return CompileError.InvalidOperation;
                 const byte_offset = try self.bufferOffset(op.byte_offset);
                 _ = try self.bufferResource(op.resource, true);
+                if (op.descriptor_index != null)
+                    return CompileError.UnsupportedOperation;
 
                 if (dst.components != 1 or dst.kind != .unsigned_integer)
                     return CompileError.InvalidOperation;
@@ -562,12 +609,82 @@ const Lowerer = struct {
         return resource;
     }
 
+    fn bufferAccess(self: *Lowerer, resource_id: ids.ResourceId, optional_descriptor_index: ?ids.ValueId, writable: bool) !struct { bc.Register, u32 } {
+        const resource = try self.bufferResource(resource_id, writable);
+        if (optional_descriptor_index) |descriptor_index_id| {
+            const descriptor_index = try self.span(descriptor_index_id);
+            if (descriptor_index.components != 1 or descriptor_index.kind != .unsigned_integer)
+                return CompileError.InvalidOperation;
+
+            return .{ descriptor_index.base, try self.addDescriptorArray(resource) };
+        }
+
+        return .{ .invalid_register, @intFromEnum(resource_id) };
+    }
+
+    fn addDescriptorArray(self: *Lowerer, base: ResourceBinding) !u32 {
+        var candidate_count: usize = 0;
+        for (self.resources) |optional_candidate| {
+            const candidate = optional_candidate orelse continue;
+            if (sameDescriptorArray(base, candidate))
+                candidate_count += 1;
+        }
+
+        const candidates = try self.allocator.alloc(DescriptorCandidate, candidate_count);
+        var next: usize = 0;
+        for (self.resources, 0..) |optional_candidate, resource_index| {
+            const candidate = optional_candidate orelse continue;
+            if (!sameDescriptorArray(base, candidate))
+                continue;
+
+            candidates[next] = .{
+                .array_element = candidate.array_element,
+                .resource = ids.ResourceId.fromIndex(resource_index),
+            };
+            next += 1;
+        }
+
+        std.mem.sort(DescriptorCandidate, candidates, {}, descriptorCandidateLessThan);
+        if (candidates.len > 1) {
+            for (candidates[1..], candidates[0 .. candidates.len - 1]) |candidate, previous| {
+                if (candidate.array_element == previous.array_element)
+                    return CompileError.InvalidOperation;
+            }
+        }
+
+        const metadata_index = try u32Index(self.descriptor_arrays.items.len);
+        try self.descriptor_arrays.append(self.allocator, .{ .candidates = candidates });
+        return metadata_index;
+    }
+
     fn storageImage(self: *const Lowerer, id: ids.ResourceId) !ResourceBinding {
         if (id.index() >= self.resources.len)
             return CompileError.InvalidOperation;
 
         const resource = self.resources[id.index()] orelse return CompileError.InvalidOperation;
         if (resource.kind != .storage_image)
+            return CompileError.InvalidOperation;
+
+        return resource;
+    }
+
+    fn sampledImage(self: *const Lowerer, id: ids.ResourceId) !ResourceBinding {
+        if (id.index() >= self.resources.len)
+            return CompileError.InvalidOperation;
+
+        const resource = self.resources[id.index()] orelse return CompileError.InvalidOperation;
+        if (resource.kind != .sampled_image)
+            return CompileError.InvalidOperation;
+
+        return resource;
+    }
+
+    fn sampler(self: *const Lowerer, id: ids.ResourceId) !ResourceBinding {
+        if (id.index() >= self.resources.len)
+            return CompileError.InvalidOperation;
+
+        const resource = self.resources[id.index()] orelse return CompileError.InvalidOperation;
+        if (resource.kind != .sampler)
             return CompileError.InvalidOperation;
 
         return resource;
@@ -666,6 +783,14 @@ const Lowerer = struct {
         return self.interfaces[id.index()];
     }
 };
+
+fn sameDescriptorArray(a: ResourceBinding, b: ResourceBinding) bool {
+    return a.kind == b.kind and a.set == b.set and a.binding == b.binding;
+}
+
+fn descriptorCandidateLessThan(_: void, a: DescriptorCandidate, b: DescriptorCandidate) bool {
+    return a.array_element < b.array_element;
+}
 
 fn typeByteSize(module: *const module_ir.Module, type_id: ids.TypeId) !usize {
     const ty = module.types.get(type_id) orelse return CompileError.UnsupportedType;

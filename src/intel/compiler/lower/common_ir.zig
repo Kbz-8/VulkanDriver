@@ -429,11 +429,13 @@ const LoweringState = struct {
             .store_interface => |operation| try self.lowerStoreInterface(block_id, source_instruction.result, operation),
             .composite_construct => |operation| try self.lowerCompositeConstruct(source_instruction.result, operation),
             .composite_extract => |operation| try self.lowerCompositeExtract(source_instruction.result, operation),
+            .load_push_constant => return Error.UnsupportedOperation,
             .load_buffer => |operation| try self.lowerLoadBuffer(block_id, source_instruction.result, operation),
             .store_buffer => |operation| try self.lowerStoreBuffer(block_id, source_instruction.result, operation),
             .load_workgroup,
             .store_workgroup,
             .image_read,
+            .image_sample_explicit_lod,
             .image_write,
             .control_barrier,
             => return Error.UnsupportedOperation,
@@ -837,6 +839,8 @@ const LoweringState = struct {
     }
 
     fn lowerLoadBuffer(self: *LoweringState, block_id: ids.BlockId, result: ?shader_ir.id.ValueId, operation: shader_ir.instruction.LoadBuffer) Error!void {
+        if (operation.descriptor_index != null)
+            return Error.UnsupportedOperation;
         const result_id = try requireResult(result);
         const byte_offset = try self.source(operation.byte_offset);
         if (byte_offset.type != .u32)
@@ -856,6 +860,8 @@ const LoweringState = struct {
     }
 
     fn lowerStoreBuffer(self: *LoweringState, block_id: ids.BlockId, result: ?shader_ir.id.ValueId, operation: shader_ir.instruction.StoreBuffer) Error!void {
+        if (operation.descriptor_index != null)
+            return Error.UnsupportedOperation;
         try requireNoResult(result);
         const byte_offset = try self.source(operation.byte_offset);
         if (byte_offset.type != .u32)
@@ -875,6 +881,8 @@ const LoweringState = struct {
     }
 
     fn lowerArrayLength(self: *LoweringState, block_id: ids.BlockId, result: ?shader_ir.id.ValueId, operation: shader_ir.instruction.ArrayLength) Error!void {
+        if (operation.descriptor_index != null)
+            return Error.UnsupportedOperation;
         const result_id = try requireResult(result);
         const byte_offset = try self.source(operation.byte_offset);
         if (byte_offset.type != .u32)
@@ -1490,6 +1498,67 @@ test "[ir] Lower: runtime array length" {
     }, &.{});
 }
 
+test "[ir] Lower: reject push constants and dynamic buffer descriptors" {
+    try expectLoweringError(
+        \\shader compute @main
+        \\{
+        \\    %offset: constant u32 = 0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %value: u32 = load_push_constant %offset
+        \\            return
+        \\    }
+        \\}
+    , Error.UnsupportedOperation);
+
+    try expectLoweringError(
+        \\shader compute @main
+        \\{
+        \\    @storage: u32 = storage_buffer[set(0), binding(0)]
+        \\    %offset: constant u32 = 0
+        \\    %descriptor_index: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %value: u32 = load_buffer @storage, %offset, descriptor_index %descriptor_index
+        \\            return
+        \\    }
+        \\}
+    , Error.UnsupportedOperation);
+
+    try expectLoweringError(
+        \\shader compute @main
+        \\{
+        \\    @storage: u32 = storage_buffer[set(0), binding(0)]
+        \\    %offset: constant u32 = 0
+        \\    %descriptor_index: constant u32 = 1
+        \\    %value: constant u32 = 7
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            store_buffer @storage, %offset, %value, descriptor_index %descriptor_index
+        \\            return
+        \\    }
+        \\}
+    , Error.UnsupportedOperation);
+
+    try expectLoweringError(
+        \\shader compute @main
+        \\{
+        \\    @storage: runtime_array[u32] = storage_buffer[set(0), binding(0)]
+        \\    %offset: constant u32 = 0
+        \\    %descriptor_index: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %length: u32 = array_length @storage, %offset, stride 4, descriptor_index %descriptor_index
+        \\            return
+        \\    }
+        \\}
+    , Error.UnsupportedOperation);
+}
+
 test "[ir] Lower: vector block parameter" {
     const source =
         \\shader compute @main
@@ -1621,6 +1690,22 @@ test "[ir] Lower: unsupported operations" {
         \\    }
         \\}
     , Error.UnsupportedType);
+
+    try expectLoweringError(
+        \\shader compute @main
+        \\{
+        \\    @image: f32 = sampled_image[set(0), binding(0)]
+        \\    @sampler: resourceHandle[sampler] = sampler[set(0), binding(1)]
+        \\    %coordinate: constant vec2[f32] = null
+        \\    %lod: constant f32 = 0.0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec4[f32] = image_sample_explicit_lod @image, @sampler, %coordinate, %lod
+        \\            return
+        \\    }
+        \\}
+    , Error.UnsupportedOperation);
 }
 
 test "[ir] Lower: unreachable terminator" {

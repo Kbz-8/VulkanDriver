@@ -5,6 +5,7 @@ const bc = @import("bytecode.zig");
 const Program = @import("Program.zig");
 const SoftImage = @import("../SoftImage.zig");
 const SoftImageView = @import("../SoftImageView.zig");
+const SoftSampler = @import("../SoftSampler.zig");
 
 const ids = shader_ir.ir.id;
 
@@ -34,8 +35,10 @@ pub const Outcome = enum {
 
 pub const RunOptions = struct {
     max_steps: usize = 1_000_000,
+    push_constants: []const u8 = &.{},
     resource_buffers: []const ?[]u8 = &.{},
     resource_images: []const ?*SoftImageView = &.{},
+    resource_samplers: []const ?*SoftSampler = &.{},
     workgroup_memory: ?[]u8 = null,
 };
 
@@ -173,9 +176,13 @@ fn execute(self: *Self, program: *const Program, options: RunOptions) RuntimeErr
             .integer_multiply => try self.binaryInt(instruction, .multiply),
             .integer_subtract => try self.binaryInt(instruction, .subtract),
             .image_read => try self.imageRead(program, options.resource_images, instruction),
+            .image_read_float => try self.imageReadFloat(program, options.resource_images, instruction),
+            .image_sample_explicit_lod => try self.imageSampleExplicitLod(program, options.resource_images, options.resource_samplers, instruction),
             .image_write => try self.imageWrite(program, options.resource_images, instruction),
+            .image_write_float => try self.imageWriteFloat(program, options.resource_images, instruction),
             .jump_edge => self.pc = try self.applyEdge(program, instruction.immediate),
             .load_buffer => try self.loadBuffer(program, options.resource_buffers, instruction),
+            .load_push_constant => try self.loadPushConstant(options.push_constants, instruction),
             .load_workgroup => try self.loadWorkgroup(program, options.workgroup_memory, instruction),
             .logical_and => try self.binaryInt(instruction, .logical_and),
             .logical_not => self.unaryInt(instruction, .logical_not),
@@ -386,8 +393,19 @@ fn select(self: *Self, instruction: bc.Instruction) void {
 
 fn loadBuffer(self: *Self, program: *const Program, resource_buffers: []const ?[]u8, instruction: bc.Instruction) RuntimeError!void {
     try self.validateRegisterSpan(instruction);
-    const buffer = try resourceBuffer(program, resource_buffers, instruction.immediate);
+    const resource = try self.selectBufferResource(program, instruction);
+    const buffer = try resourceBuffer(program, resource_buffers, resource);
     const bytes = try self.bufferRange(buffer, instruction);
+    self.loadWords(instruction, bytes);
+}
+
+fn loadPushConstant(self: *Self, push_constants: []const u8, instruction: bc.Instruction) RuntimeError!void {
+    try self.validateRegisterSpan(instruction);
+    const bytes = try self.pushConstantRange(push_constants, instruction);
+    self.loadWords(instruction, bytes);
+}
+
+fn loadWords(self: *Self, instruction: bc.Instruction, bytes: []const u8) void {
     for (0..instruction.components) |component| {
         const offset = component * @sizeOf(u32);
         self.registers[@as(usize, @intFromEnum(instruction.a)) + component] = std.mem.readInt(u32, bytes[offset..][0..@sizeOf(u32)], .little);
@@ -396,7 +414,8 @@ fn loadBuffer(self: *Self, program: *const Program, resource_buffers: []const ?[
 
 fn storeBuffer(self: *const Self, program: *const Program, resource_buffers: []const ?[]u8, instruction: bc.Instruction) RuntimeError!void {
     try self.validateRegisterSpan(instruction);
-    const buffer = try resourceBuffer(program, resource_buffers, instruction.immediate);
+    const resource = try self.selectBufferResource(program, instruction);
+    const buffer = try resourceBuffer(program, resource_buffers, resource);
     const bytes = try self.bufferRange(buffer, instruction);
     for (0..instruction.components) |component| {
         const offset = component * @sizeOf(u32);
@@ -413,6 +432,44 @@ fn imageRead(self: *Self, program: *const Program, resource_images: []const ?*So
     @memcpy(self.registers[@intFromEnum(instruction.a)..][0..4], &components);
 }
 
+fn imageReadFloat(self: *Self, program: *const Program, resource_images: []const ?*SoftImageView, instruction: bc.Instruction) RuntimeError!void {
+    try self.validateImageInstruction(instruction);
+    const view = try resourceImage(program, resource_images, instruction.immediate);
+    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
+    const pixel = image.readFloat4(imageOffset(self, instruction), imageSubresource(view), view.interface.format) catch return RuntimeError.InvalidResource;
+    const components: [4]u32 = @bitCast(pixel);
+    @memcpy(self.registers[@intFromEnum(instruction.a)..][0..4], &components);
+}
+
+fn imageSampleExplicitLod(
+    self: *Self,
+    program: *const Program,
+    resource_images: []const ?*SoftImageView,
+    resource_samplers: []const ?*SoftSampler,
+    instruction: bc.Instruction,
+) RuntimeError!void {
+    if (instruction.components != 4)
+        return RuntimeError.InvalidBytecode;
+    try self.validateRegisterSpan(instruction);
+
+    const coordinate_end = std.math.add(usize, @intFromEnum(instruction.b), 2) catch return RuntimeError.InvalidBytecode;
+    if (coordinate_end > self.registers.len or @intFromEnum(instruction.c) >= self.registers.len)
+        return RuntimeError.InvalidBytecode;
+    if (instruction.immediate >= program.image_sampler_pairs.len)
+        return RuntimeError.InvalidBytecode;
+
+    const pair = program.image_sampler_pairs[instruction.immediate];
+    const view = try sampledImage(program, resource_images, pair.image);
+    const sampler = try resourceSampler(program, resource_samplers, pair.sampler);
+    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
+    const x: f32 = @bitCast(self.registers[@intFromEnum(instruction.b)]);
+    const y: f32 = @bitCast(self.registers[@as(usize, @intFromEnum(instruction.b)) + 1]);
+    const lod: f32 = @bitCast(self.registers[@intFromEnum(instruction.c)]);
+    const pixel = SoftSampler.sampleImageFloat4(image, view, sampler, .@"2D", x, y, 0, lod, .{}) catch return RuntimeError.InvalidResource;
+    const components: [4]u32 = @bitCast(pixel);
+    @memcpy(self.registers[@intFromEnum(instruction.a)..][0..4], &components);
+}
+
 fn imageWrite(self: *const Self, program: *const Program, resource_images: []const ?*SoftImageView, instruction: bc.Instruction) RuntimeError!void {
     try self.validateImageInstruction(instruction);
     const view = try resourceImage(program, resource_images, instruction.immediate);
@@ -420,6 +477,15 @@ fn imageWrite(self: *const Self, program: *const Program, resource_images: []con
     const components: [4]u32 = self.registers[@intFromEnum(instruction.a)..][0..4].*;
     const pixel: @Vector(4, u32) = @bitCast(components);
     image.writeInt4(imageOffset(self, instruction), imageSubresource(view), view.interface.format, pixel) catch return RuntimeError.InvalidResource;
+}
+
+fn imageWriteFloat(self: *const Self, program: *const Program, resource_images: []const ?*SoftImageView, instruction: bc.Instruction) RuntimeError!void {
+    try self.validateImageInstruction(instruction);
+    const view = try resourceImage(program, resource_images, instruction.immediate);
+    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
+    const components: [4]u32 = self.registers[@intFromEnum(instruction.a)..][0..4].*;
+    const pixel: @Vector(4, f32) = @bitCast(components);
+    image.writeFloat4(imageOffset(self, instruction), imageSubresource(view), view.interface.format, pixel) catch return RuntimeError.InvalidResource;
 }
 
 fn validateImageInstruction(self: *const Self, instruction: bc.Instruction) RuntimeError!void {
@@ -497,15 +563,43 @@ fn validateRegisterSpan(self: *const Self, instruction: bc.Instruction) RuntimeE
 }
 
 fn bufferRange(self: *const Self, buffer: []u8, instruction: bc.Instruction) RuntimeError![]u8 {
+    const byte_offset, const end = try self.memoryRange(buffer.len, instruction);
+    return buffer[byte_offset..end];
+}
+
+fn pushConstantRange(self: *const Self, push_constants: []const u8, instruction: bc.Instruction) RuntimeError![]const u8 {
+    const byte_offset, const end = try self.memoryRange(push_constants.len, instruction);
+    return push_constants[byte_offset..end];
+}
+
+fn memoryRange(self: *const Self, memory_len: usize, instruction: bc.Instruction) RuntimeError!struct { usize, usize } {
     if (@intFromEnum(instruction.b) >= self.registers.len)
         return RuntimeError.InvalidBytecode;
 
     const byte_offset: usize = self.registers[@intFromEnum(instruction.b)];
     const byte_count = std.math.mul(usize, instruction.components, @sizeOf(u32)) catch return RuntimeError.BufferOutOfBounds;
     const end = std.math.add(usize, byte_offset, byte_count) catch return RuntimeError.BufferOutOfBounds;
-    if (end > buffer.len)
+    if (end > memory_len)
         return RuntimeError.BufferOutOfBounds;
-    return buffer[byte_offset..end];
+    return .{ byte_offset, end };
+}
+
+fn selectBufferResource(self: *const Self, program: *const Program, instruction: bc.Instruction) RuntimeError!u32 {
+    if (instruction.c == .invalid_register)
+        return instruction.immediate;
+
+    if (@intFromEnum(instruction.c) >= self.registers.len)
+        return RuntimeError.InvalidBytecode;
+    if (instruction.immediate >= program.descriptor_arrays.len)
+        return RuntimeError.InvalidBytecode;
+
+    const array_element = self.registers[@intFromEnum(instruction.c)];
+    for (program.descriptor_arrays[instruction.immediate].candidates) |candidate| {
+        if (candidate.array_element == array_element)
+            return @intFromEnum(candidate.resource);
+    }
+
+    return RuntimeError.InvalidResource;
 }
 
 fn resourceBuffer(program: *const Program, resource_buffers: []const ?[]u8, resource_index: u32) RuntimeError![]u8 {
@@ -524,6 +618,24 @@ fn resourceImage(program: *const Program, resource_images: []const ?*SoftImageVi
     if (resource.index() >= resource_images.len)
         return RuntimeError.ResourceNotBound;
     return resource_images[resource.index()] orelse RuntimeError.ResourceNotBound;
+}
+
+fn sampledImage(program: *const Program, resource_images: []const ?*SoftImageView, resource: ids.ResourceId) RuntimeError!*SoftImageView {
+    const binding = program.resourceBinding(resource) orelse return RuntimeError.InvalidResource;
+    if (binding.kind != .sampled_image)
+        return RuntimeError.InvalidResource;
+    if (resource.index() >= resource_images.len)
+        return RuntimeError.ResourceNotBound;
+    return resource_images[resource.index()] orelse RuntimeError.ResourceNotBound;
+}
+
+fn resourceSampler(program: *const Program, resource_samplers: []const ?*SoftSampler, resource: ids.ResourceId) RuntimeError!*SoftSampler {
+    const binding = program.resourceBinding(resource) orelse return RuntimeError.InvalidResource;
+    if (binding.kind != .sampler)
+        return RuntimeError.InvalidResource;
+    if (resource.index() >= resource_samplers.len)
+        return RuntimeError.ResourceNotBound;
+    return resource_samplers[resource.index()] orelse RuntimeError.ResourceNotBound;
 }
 
 fn applyEdge(self: *Self, program: *const Program, edge_index: u32) RuntimeError!u32 {

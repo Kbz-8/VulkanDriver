@@ -269,15 +269,29 @@ fn lowerOperation(
                 .inferred_type = null,
             };
         },
+        .load_push_constant => |op| blk: {
+            const byte_offset = resolveValue(values, op.byte_offset) orelse return error.UnknownValue;
+            break :blk .{
+                .operation = .{ .load_push_constant = .{ .byte_offset = byte_offset } },
+                .inferred_type = null,
+            };
+        },
         .load_buffer => |op| blk: {
             const resource_id = resources.get(op.resource_name) orelse return error.UnknownResource;
             const byte_offset = resolveValue(values, op.byte_offset) orelse return error.UnknownValue;
+            const descriptor_index = if (op.descriptor_index) |index|
+                resolveValue(values, index) orelse return error.UnknownValue
+            else
+                null;
 
             break :blk .{
-                .operation = .{ .load_buffer = .{
-                    .resource = resource_id,
-                    .byte_offset = byte_offset,
-                } },
+                .operation = .{
+                    .load_buffer = .{
+                        .resource = resource_id,
+                        .byte_offset = byte_offset,
+                        .descriptor_index = descriptor_index,
+                    },
+                },
                 .inferred_type = null,
             };
         },
@@ -285,13 +299,20 @@ fn lowerOperation(
             const resource_id = resources.get(op.resource_name) orelse return error.UnknownResource;
             const byte_offset = resolveValue(values, op.byte_offset) orelse return error.UnknownValue;
             const value = resolveValue(values, op.value) orelse return error.UnknownValue;
+            const descriptor_index = if (op.descriptor_index) |index|
+                resolveValue(values, index) orelse return error.UnknownValue
+            else
+                null;
 
             break :blk .{
-                .operation = .{ .store_buffer = .{
-                    .resource = resource_id,
-                    .byte_offset = byte_offset,
-                    .value = value,
-                } },
+                .operation = .{
+                    .store_buffer = .{
+                        .resource = resource_id,
+                        .byte_offset = byte_offset,
+                        .value = value,
+                        .descriptor_index = descriptor_index,
+                    },
+                },
                 .inferred_type = null,
             };
         },
@@ -319,17 +340,42 @@ fn lowerOperation(
                 .inferred_type = null,
             };
         },
+        .image_sample_explicit_lod => |op| blk: {
+            const image = resources.get(op.image_name) orelse return error.UnknownResource;
+            const sampler = resources.get(op.sampler_name) orelse return error.UnknownResource;
+            const coordinate = resolveValue(values, op.coordinate) orelse return error.UnknownValue;
+            const lod = resolveValue(values, op.lod) orelse return error.UnknownValue;
+
+            break :blk .{
+                .operation = .{
+                    .image_sample_explicit_lod = .{
+                        .image = image,
+                        .sampler = sampler,
+                        .coordinate = coordinate,
+                        .lod = lod,
+                    },
+                },
+                .inferred_type = null,
+            };
+        },
         .control_barrier => .{ .operation = .control_barrier, .inferred_type = null },
         .array_length => |op| blk: {
             const resource_id = resources.get(op.resource_name) orelse return error.UnknownResource;
             const byte_offset = resolveValue(values, op.byte_offset) orelse return error.UnknownValue;
+            const descriptor_index = if (op.descriptor_index) |index|
+                resolveValue(values, index) orelse return error.UnknownValue
+            else
+                null;
 
             break :blk .{
-                .operation = .{ .array_length = .{
-                    .resource = resource_id,
-                    .byte_offset = byte_offset,
-                    .stride = op.stride,
-                } },
+                .operation = .{
+                    .array_length = .{
+                        .resource = resource_id,
+                        .byte_offset = byte_offset,
+                        .stride = op.stride,
+                        .descriptor_index = descriptor_index,
+                    },
+                },
                 .inferred_type = null,
             };
         },

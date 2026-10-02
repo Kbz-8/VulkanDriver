@@ -102,15 +102,21 @@ pub const StoreInterface = struct {
     element_index: ?ValueId = null,
 };
 
+pub const LoadPushConstant = struct {
+    byte_offset: ValueId,
+};
+
 pub const LoadBuffer = struct {
     resource: ResourceId,
     byte_offset: ValueId,
+    descriptor_index: ?ValueId = null,
 };
 
 pub const StoreBuffer = struct {
     resource: ResourceId,
     byte_offset: ValueId,
     value: ValueId,
+    descriptor_index: ?ValueId = null,
 };
 
 pub const LoadWorkgroup = struct {
@@ -121,6 +127,13 @@ pub const LoadWorkgroup = struct {
 pub const ImageRead = struct {
     resource: ResourceId,
     coordinate: ValueId,
+};
+
+pub const ImageSampleExplicitLod = struct {
+    image: ResourceId,
+    sampler: ResourceId,
+    coordinate: ValueId,
+    lod: ValueId,
 };
 
 pub const ImageWrite = struct {
@@ -144,6 +157,7 @@ pub const ArrayLength = struct {
     resource: ResourceId,
     byte_offset: ValueId,
     stride: u32,
+    descriptor_index: ?ValueId = null,
 };
 
 pub const Operation = union(enum) {
@@ -156,11 +170,13 @@ pub const Operation = union(enum) {
     composite_extract: CompositeExtract,
     load_interface: LoadInterface,
     store_interface: StoreInterface,
+    load_push_constant: LoadPushConstant,
     load_buffer: LoadBuffer,
     store_buffer: StoreBuffer,
     load_workgroup: LoadWorkgroup,
     store_workgroup: StoreWorkgroup,
     image_read: ImageRead,
+    image_sample_explicit_lod: ImageSampleExplicitLod,
     image_write: ImageWrite,
     control_barrier,
     call: Call,
@@ -191,10 +207,17 @@ pub const Operation = union(enum) {
                 if (op.element_index) |index|
                     visitor(context, index);
             },
-            .load_buffer => |op| visitor(context, op.byte_offset),
+            .load_push_constant => |op| visitor(context, op.byte_offset),
+            .load_buffer => |op| {
+                visitor(context, op.byte_offset);
+                if (op.descriptor_index) |index|
+                    visitor(context, index);
+            },
             .store_buffer => |op| {
                 visitor(context, op.byte_offset);
                 visitor(context, op.value);
+                if (op.descriptor_index) |index|
+                    visitor(context, index);
             },
             .load_workgroup => |op| visitor(context, op.byte_offset),
             .store_workgroup => |op| {
@@ -202,6 +225,10 @@ pub const Operation = union(enum) {
                 visitor(context, op.value);
             },
             .image_read => |op| visitor(context, op.coordinate),
+            .image_sample_explicit_lod => |op| {
+                visitor(context, op.coordinate);
+                visitor(context, op.lod);
+            },
             .image_write => |op| {
                 visitor(context, op.coordinate);
                 visitor(context, op.value);
@@ -211,7 +238,11 @@ pub const Operation = union(enum) {
                 for (op.arguments) |argument|
                     visitor(context, argument);
             },
-            .array_length => |op| visitor(context, op.byte_offset),
+            .array_length => |op| {
+                visitor(context, op.byte_offset);
+                if (op.descriptor_index) |index|
+                    visitor(context, index);
+            },
         }
     }
 
@@ -244,10 +275,17 @@ pub const Operation = union(enum) {
                 if (op.element_index) |*index|
                     replaceOne(index, old, replacement, &count);
             },
-            .load_buffer => |*op| replaceOne(&op.byte_offset, old, replacement, &count),
+            .load_push_constant => |*op| replaceOne(&op.byte_offset, old, replacement, &count),
+            .load_buffer => |*op| {
+                replaceOne(&op.byte_offset, old, replacement, &count);
+                if (op.descriptor_index) |*index|
+                    replaceOne(index, old, replacement, &count);
+            },
             .store_buffer => |*op| {
                 replaceOne(&op.byte_offset, old, replacement, &count);
                 replaceOne(&op.value, old, replacement, &count);
+                if (op.descriptor_index) |*index|
+                    replaceOne(index, old, replacement, &count);
             },
             .load_workgroup => |*op| replaceOne(&op.byte_offset, old, replacement, &count),
             .store_workgroup => |*op| {
@@ -255,13 +293,21 @@ pub const Operation = union(enum) {
                 replaceOne(&op.value, old, replacement, &count);
             },
             .image_read => |*op| replaceOne(&op.coordinate, old, replacement, &count),
+            .image_sample_explicit_lod => |*op| {
+                replaceOne(&op.coordinate, old, replacement, &count);
+                replaceOne(&op.lod, old, replacement, &count);
+            },
             .image_write => |*op| {
                 replaceOne(&op.coordinate, old, replacement, &count);
                 replaceOne(&op.value, old, replacement, &count);
             },
             .control_barrier => {},
             .call => |*op| op.arguments = try replaceSlice(allocator, op.arguments, old, replacement, &count),
-            .array_length => |*op| replaceOne(&op.byte_offset, old, replacement, &count),
+            .array_length => |*op| {
+                replaceOne(&op.byte_offset, old, replacement, &count);
+                if (op.descriptor_index) |*index|
+                    replaceOne(index, old, replacement, &count);
+            },
         }
         return count;
     }

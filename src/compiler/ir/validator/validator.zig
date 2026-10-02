@@ -388,6 +388,14 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             if (op.element_index) |index|
                 _ = try operandType(module, function_id, index);
         },
+        .load_push_constant => |op| {
+            if (!isUnsignedInteger(module, try operandType(module, function_id, op.byte_offset)))
+                return ValidationError.WrongOperandType;
+
+            const result = result_type orelse return ValidationError.WrongResultPresence;
+            if (!isBufferAccessibleType(module, result))
+                return ValidationError.WrongResultType;
+        },
         .load_buffer => |op| {
             const resource = module.resources.get(op.resource) orelse return ValidationError.InvalidValue;
             if (resource.kind != .storage_buffer and resource.kind != .uniform_buffer)
@@ -395,6 +403,10 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
 
             if (!isUnsignedInteger(module, try operandType(module, function_id, op.byte_offset)))
                 return ValidationError.WrongOperandType;
+            if (op.descriptor_index) |index| {
+                if (!isUnsignedInteger(module, try operandType(module, function_id, index)))
+                    return ValidationError.WrongOperandType;
+            }
 
             const result = result_type orelse return ValidationError.WrongResultPresence;
             if (!isBufferAccessibleType(module, result))
@@ -410,6 +422,10 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
 
             if (!isUnsignedInteger(module, try operandType(module, function_id, op.byte_offset)))
                 return ValidationError.WrongOperandType;
+            if (op.descriptor_index) |index| {
+                if (!isUnsignedInteger(module, try operandType(module, function_id, index)))
+                    return ValidationError.WrongOperandType;
+            }
 
             if (!isBufferAccessibleType(module, try operandType(module, function_id, op.value)))
                 return ValidationError.WrongOperandType;
@@ -438,6 +454,37 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             _ = try operandType(module, function_id, op.coordinate);
             if (result_type == null)
                 return ValidationError.WrongResultPresence;
+        },
+        .image_sample_explicit_lod => |op| {
+            const image = module.resources.get(op.image) orelse return ValidationError.InvalidValue;
+            if (image.kind != .sampled_image)
+                return ValidationError.WrongResourceKind;
+
+            const sampler = module.resources.get(op.sampler) orelse return ValidationError.InvalidValue;
+            if (sampler.kind != .sampler)
+                return ValidationError.WrongResourceKind;
+
+            const image_type = module.types.get(image.type) orelse return ValidationError.InvalidType;
+            const sampled_type = switch (image_type.*) {
+                .resource_handle => |handle| blk: {
+                    if (handle.kind != .sampled_image)
+                        return ValidationError.WrongResourceKind;
+                    break :blk handle.data_type orelse return ValidationError.WrongOperandType;
+                },
+                else => image.type,
+            };
+            if (!isFloat(module, sampled_type, 32))
+                return ValidationError.WrongOperandType;
+
+            if (!isFloatVector(module, try operandType(module, function_id, op.coordinate), 32, 2))
+                return ValidationError.WrongOperandType;
+
+            if (!isFloat(module, try operandType(module, function_id, op.lod), 32))
+                return ValidationError.WrongOperandType;
+
+            const result = result_type orelse return ValidationError.WrongResultPresence;
+            if (!isFloatVector(module, result, 32, 4))
+                return ValidationError.WrongResultType;
         },
         .image_write => |op| {
             if (result_type != null)
@@ -481,6 +528,10 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
 
             if (!isUnsignedInteger(module, try operandType(module, function_id, op.byte_offset)))
                 return ValidationError.WrongOperandType;
+            if (op.descriptor_index) |index| {
+                if (!isUnsignedInteger(module, try operandType(module, function_id, index)))
+                    return ValidationError.WrongOperandType;
+            }
 
             if (op.stride == 0)
                 return ValidationError.InvalidInstruction;
@@ -605,6 +656,22 @@ fn isUnsignedInteger(module: *const module_ir.Module, type_id: ids.TypeId) bool 
     const ty = module.types.get(type_id) orelse return false;
     return switch (ty.*) {
         .integer => |integer| integer.signedness == .unsigned,
+        else => false,
+    };
+}
+
+fn isFloat(module: *const module_ir.Module, type_id: ids.TypeId, bits: u16) bool {
+    const ty = module.types.get(type_id) orelse return false;
+    return switch (ty.*) {
+        .floating => |float| float.bits == bits,
+        else => false,
+    };
+}
+
+fn isFloatVector(module: *const module_ir.Module, type_id: ids.TypeId, bits: u16, length: u8) bool {
+    const ty = module.types.get(type_id) orelse return false;
+    return switch (ty.*) {
+        .vector => |vector| vector.length == length and isFloat(module, vector.element_type, bits),
         else => false,
     };
 }
@@ -1129,6 +1196,201 @@ test "Validator: check buffer resources, offsets, and value types" {
         \\    {
         \\        .entry():
         \\            %result: u32 = store_buffer @storage, %offset, %value
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Validator: check push-constant loads and dynamic descriptor indices" {
+    const parser = @import("../parser/parser.zig");
+
+    var module = try parser.parseString(std.testing.allocator,
+        \\shader compute @main
+        \\{
+        \\    @storage: runtime_array[u32] = storage_buffer[set(0), binding(0)]
+        \\    %offset: constant u32 = 0
+        \\    %descriptor_index: constant u32 = 1
+        \\    %value: constant u32 = 7
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %push: u32 = load_push_constant %offset
+        \\            %loaded: u32 = load_buffer @storage, %offset, descriptor_index %descriptor_index
+        \\            store_buffer @storage, %offset, %value, descriptor_index %descriptor_index
+        \\            %length: u32 = array_length @storage, %offset, stride 4, descriptor_index %descriptor_index
+        \\            return
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+    try validate(&module);
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    %offset: constant i32 = 0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %value: u32 = load_push_constant %offset
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultType,
+        \\shader compute @main
+        \\{
+        \\    %offset: constant u32 = 0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %value: struct[u32, u32] = load_push_constant %offset
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    @storage: u32 = storage_buffer[set(0), binding(0)]
+        \\    %offset: constant u32 = 0
+        \\    %descriptor_index: constant i32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %value: u32 = load_buffer @storage, %offset, descriptor_index %descriptor_index
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    @storage: u32 = storage_buffer[set(0), binding(0)]
+        \\    %offset: constant u32 = 0
+        \\    %descriptor_index: constant vec2[u32] = null
+        \\    %value: constant u32 = 7
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            store_buffer @storage, %offset, %value, descriptor_index %descriptor_index
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    @storage: runtime_array[u32] = storage_buffer[set(0), binding(0)]
+        \\    %offset: constant u32 = 0
+        \\    %descriptor_index: constant i32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %length: u32 = array_length @storage, %offset, stride 4, descriptor_index %descriptor_index
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Validator: check explicit-LOD image sampling resources and types" {
+    try expectValidationError(Error.WrongResourceKind,
+        \\shader fragment @main
+        \\{
+        \\    @image: f32 = storage_image[set(0), binding(0)]
+        \\    @sampler: resourceHandle[sampler] = sampler[set(0), binding(1)]
+        \\    %coordinate: constant vec2[f32] = null
+        \\    %lod: constant f32 = 0.0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec4[f32] = image_sample_explicit_lod @image, @sampler, %coordinate, %lod
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResourceKind,
+        \\shader fragment @main
+        \\{
+        \\    @image: f32 = sampled_image[set(0), binding(0)]
+        \\    @sampler: resourceHandle[sampler] = sampled_image[set(0), binding(1)]
+        \\    %coordinate: constant vec2[f32] = null
+        \\    %lod: constant f32 = 0.0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec4[f32] = image_sample_explicit_lod @image, @sampler, %coordinate, %lod
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader fragment @main
+        \\{
+        \\    @image: u32 = sampled_image[set(0), binding(0)]
+        \\    @sampler: resourceHandle[sampler] = sampler[set(0), binding(1)]
+        \\    %coordinate: constant vec2[f32] = null
+        \\    %lod: constant f32 = 0.0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec4[f32] = image_sample_explicit_lod @image, @sampler, %coordinate, %lod
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader fragment @main
+        \\{
+        \\    @image: f32 = sampled_image[set(0), binding(0)]
+        \\    @sampler: resourceHandle[sampler] = sampler[set(0), binding(1)]
+        \\    %coordinate: constant vec2[u32] = null
+        \\    %lod: constant f32 = 0.0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec4[f32] = image_sample_explicit_lod @image, @sampler, %coordinate, %lod
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader fragment @main
+        \\{
+        \\    @image: f32 = sampled_image[set(0), binding(0)]
+        \\    @sampler: resourceHandle[sampler] = sampler[set(0), binding(1)]
+        \\    %coordinate: constant vec2[f32] = null
+        \\    %lod: constant u32 = 0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec4[f32] = image_sample_explicit_lod @image, @sampler, %coordinate, %lod
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultType,
+        \\shader fragment @main
+        \\{
+        \\    @image: f32 = sampled_image[set(0), binding(0)]
+        \\    @sampler: resourceHandle[sampler] = sampler[set(0), binding(1)]
+        \\    %coordinate: constant vec2[f32] = null
+        \\    %lod: constant f32 = 0.0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec4[u32] = image_sample_explicit_lod @image, @sampler, %coordinate, %lod
         \\            return
         \\    }
         \\}

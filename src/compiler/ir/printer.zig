@@ -242,12 +242,20 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             try writer.writeAll(", ");
             try writeValueRef(module, writer, op.value);
         },
+        .load_push_constant => |op| {
+            try writer.writeAll("load_push_constant ");
+            try writeValueRef(module, writer, op.byte_offset);
+        },
         .load_buffer => |op| {
             try writer.writeAll("load_buffer ");
             const resource = module.resources.get(op.resource);
             try writeNamedRef(writer, if (resource) |r| r.name else null, "resource", op.resource.index());
             try writer.writeAll(", ");
             try writeValueRef(module, writer, op.byte_offset);
+            if (op.descriptor_index) |index| {
+                try writer.writeAll(", descriptor_index ");
+                try writeValueRef(module, writer, index);
+            }
         },
         .store_buffer => |op| {
             try writer.writeAll("store_buffer ");
@@ -257,6 +265,10 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             try writeValueRef(module, writer, op.byte_offset);
             try writer.writeAll(", ");
             try writeValueRef(module, writer, op.value);
+            if (op.descriptor_index) |index| {
+                try writer.writeAll(", descriptor_index ");
+                try writeValueRef(module, writer, index);
+            }
         },
         .load_workgroup => |op| {
             try writer.writeAll("load_workgroup ");
@@ -280,6 +292,18 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             try writeNamedRef(writer, if (resource) |r| r.name else null, "resource", op.resource.index());
             try writer.writeAll(", ");
             try writeValueRef(module, writer, op.coordinate);
+        },
+        .image_sample_explicit_lod => |op| {
+            try writer.writeAll("image_sample_explicit_lod ");
+            const image = module.resources.get(op.image);
+            try writeNamedRef(writer, if (image) |r| r.name else null, "resource", op.image.index());
+            try writer.writeAll(", ");
+            const sampler = module.resources.get(op.sampler);
+            try writeNamedRef(writer, if (sampler) |r| r.name else null, "resource", op.sampler.index());
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.coordinate);
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.lod);
         },
         .image_write => |op| {
             try writer.writeAll("image_write ");
@@ -305,6 +329,10 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             try writer.writeAll(", ");
             try writeValueRef(module, writer, op.byte_offset);
             try writer.print(", stride {}", .{op.stride});
+            if (op.descriptor_index) |index| {
+                try writer.writeAll(", descriptor_index ");
+                try writeValueRef(module, writer, index);
+            }
         },
     }
 }

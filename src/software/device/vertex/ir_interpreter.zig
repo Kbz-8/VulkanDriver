@@ -8,6 +8,7 @@ const SoftPipeline = @import("../../SoftPipeline.zig");
 const Renderer = @import("../Renderer.zig");
 const ExecutionDevice = @import("../Device.zig");
 const SoftImageView = @import("../../SoftImageView.zig");
+const SoftSampler = @import("../../SoftSampler.zig");
 const blitter = @import("../blitter.zig");
 const RunData = @import("dispatcher.zig").RunData;
 
@@ -52,8 +53,21 @@ pub fn run(data: RunData) VkError!void {
 
     for (shader.program.resources, resource_images) |optional_resource, *image| {
         const resource = optional_resource orelse continue;
-        if (resource.kind == .storage_image)
-            image.* = try ExecutionDevice.mapStorageImage(draw_call.renderer.state, resource.set, resource.binding, resource.array_element);
+        image.* = switch (resource.kind) {
+            .sampled_image => try ExecutionDevice.mapSampledImage(draw_call.renderer.state, resource.set, resource.binding, resource.array_element),
+            .storage_image => try ExecutionDevice.mapStorageImage(draw_call.renderer.state, resource.set, resource.binding, resource.array_element),
+            else => null,
+        };
+    }
+
+    const resource_samplers = allocator.alloc(?*SoftSampler, shader.program.resources.len) catch return VkError.OutOfDeviceMemory;
+    defer allocator.free(resource_samplers);
+    @memset(resource_samplers, null);
+
+    for (shader.program.resources, resource_samplers) |optional_resource, *sampler| {
+        const resource = optional_resource orelse continue;
+        if (resource.kind == .sampler)
+            sampler.* = try ExecutionDevice.mapSampler(draw_call.renderer.state, resource.set, resource.binding, resource.array_element);
     }
 
     var invocation_index = batch_id;
@@ -79,6 +93,8 @@ pub fn run(data: RunData) VkError!void {
         const outcome = slot.runtime.run(&shader.program, .{
             .resource_buffers = resource_buffers,
             .resource_images = resource_images,
+            .resource_samplers = resource_samplers,
+            .push_constants = draw_call.renderer.state.push_constant_blob[0..],
         }) catch return VkError.Unknown;
         if (outcome == .discarded)
             continue;

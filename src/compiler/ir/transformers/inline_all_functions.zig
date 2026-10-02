@@ -339,82 +339,122 @@ fn cloneCallee(
     return mappedBlock(block_map, callee_entry) orelse return Error.InvalidModule;
 }
 
-fn remapOperation(
-    module: *module_ir.Module,
-    value_map: []const ?ids.ValueId,
-    operation: instruction_ir.Operation,
-) Error!instruction_ir.Operation {
+fn remapOperation(module: *module_ir.Module, value_map: []const ?ids.ValueId, operation: instruction_ir.Operation) Error!instruction_ir.Operation {
     return switch (operation) {
-        .unary => |op| .{ .unary = .{
-            .opcode = op.opcode,
-            .operand = try mappedValue(module, value_map, op.operand),
-        } },
-        .binary => |op| .{ .binary = .{
-            .opcode = op.opcode,
-            .lhs = try mappedValue(module, value_map, op.lhs),
-            .rhs = try mappedValue(module, value_map, op.rhs),
-        } },
-        .compare => |op| .{ .compare = .{
-            .opcode = op.opcode,
-            .lhs = try mappedValue(module, value_map, op.lhs),
-            .rhs = try mappedValue(module, value_map, op.rhs),
-        } },
-        .select => |op| .{ .select = .{
-            .condition = try mappedValue(module, value_map, op.condition),
-            .true_value = try mappedValue(module, value_map, op.true_value),
-            .false_value = try mappedValue(module, value_map, op.false_value),
-        } },
+        .unary => |op| .{
+            .unary = .{
+                .opcode = op.opcode,
+                .operand = try mappedValue(module, value_map, op.operand),
+            },
+        },
+        .binary => |op| .{
+            .binary = .{
+                .opcode = op.opcode,
+                .lhs = try mappedValue(module, value_map, op.lhs),
+                .rhs = try mappedValue(module, value_map, op.rhs),
+            },
+        },
+        .compare => |op| .{
+            .compare = .{
+                .opcode = op.opcode,
+                .lhs = try mappedValue(module, value_map, op.lhs),
+                .rhs = try mappedValue(module, value_map, op.rhs),
+            },
+        },
+        .select => |op| .{
+            .select = .{
+                .condition = try mappedValue(module, value_map, op.condition),
+                .true_value = try mappedValue(module, value_map, op.true_value),
+                .false_value = try mappedValue(module, value_map, op.false_value),
+            },
+        },
         .bitcast => |operand| .{ .bitcast = try mappedValue(module, value_map, operand) },
-        .composite_construct => |op| .{ .composite_construct = .{
-            .elements = try remapValues(module, value_map, op.elements),
-        } },
-        .composite_extract => |op| .{ .composite_extract = .{
-            .composite = try mappedValue(module, value_map, op.composite),
-            .indices = op.indices,
-        } },
-        .load_interface => |op| .{ .load_interface = .{
-            .variable = op.variable,
-            .element_index = if (op.element_index) |index| try mappedValue(module, value_map, index) else null,
-        } },
-        .store_interface => |op| .{ .store_interface = .{
-            .variable = op.variable,
-            .value = try mappedValue(module, value_map, op.value),
-            .element_index = if (op.element_index) |index| try mappedValue(module, value_map, index) else null,
-        } },
-        .load_buffer => |op| .{ .load_buffer = .{
-            .resource = op.resource,
-            .byte_offset = try mappedValue(module, value_map, op.byte_offset),
-        } },
-        .store_buffer => |op| .{ .store_buffer = .{
-            .resource = op.resource,
-            .byte_offset = try mappedValue(module, value_map, op.byte_offset),
-            .value = try mappedValue(module, value_map, op.value),
-        } },
+        .composite_construct => |op| .{
+            .composite_construct = .{
+                .elements = try remapValues(module, value_map, op.elements),
+            },
+        },
+        .composite_extract => |op| .{
+            .composite_extract = .{
+                .composite = try mappedValue(module, value_map, op.composite),
+                .indices = op.indices,
+            },
+        },
+        .load_interface => |op| .{
+            .load_interface = .{
+                .variable = op.variable,
+                .element_index = if (op.element_index) |index| try mappedValue(module, value_map, index) else null,
+            },
+        },
+        .store_interface => |op| .{
+            .store_interface = .{
+                .variable = op.variable,
+                .value = try mappedValue(module, value_map, op.value),
+                .element_index = if (op.element_index) |index| try mappedValue(module, value_map, index) else null,
+            },
+        },
+        .load_push_constant => |op| .{
+            .load_push_constant = .{
+                .byte_offset = try mappedValue(module, value_map, op.byte_offset),
+            },
+        },
+        .load_buffer => |op| .{
+            .load_buffer = .{
+                .resource = op.resource,
+                .byte_offset = try mappedValue(module, value_map, op.byte_offset),
+                .descriptor_index = if (op.descriptor_index) |index| try mappedValue(module, value_map, index) else null,
+            },
+        },
+        .store_buffer => |op| .{
+            .store_buffer = .{
+                .resource = op.resource,
+                .byte_offset = try mappedValue(module, value_map, op.byte_offset),
+                .value = try mappedValue(module, value_map, op.value),
+                .descriptor_index = if (op.descriptor_index) |index| try mappedValue(module, value_map, index) else null,
+            },
+        },
         .load_workgroup => |op| .{ .load_workgroup = .{
             .variable = op.variable,
             .byte_offset = try mappedValue(module, value_map, op.byte_offset),
         } },
-        .store_workgroup => |op| .{ .store_workgroup = .{
-            .variable = op.variable,
-            .byte_offset = try mappedValue(module, value_map, op.byte_offset),
-            .value = try mappedValue(module, value_map, op.value),
-        } },
-        .image_read => |op| .{ .image_read = .{
-            .resource = op.resource,
-            .coordinate = try mappedValue(module, value_map, op.coordinate),
-        } },
-        .image_write => |op| .{ .image_write = .{
-            .resource = op.resource,
-            .coordinate = try mappedValue(module, value_map, op.coordinate),
-            .value = try mappedValue(module, value_map, op.value),
-        } },
+        .store_workgroup => |op| .{
+            .store_workgroup = .{
+                .variable = op.variable,
+                .byte_offset = try mappedValue(module, value_map, op.byte_offset),
+                .value = try mappedValue(module, value_map, op.value),
+            },
+        },
+        .image_read => |op| .{
+            .image_read = .{
+                .resource = op.resource,
+                .coordinate = try mappedValue(module, value_map, op.coordinate),
+            },
+        },
+        .image_sample_explicit_lod => |op| .{
+            .image_sample_explicit_lod = .{
+                .image = op.image,
+                .sampler = op.sampler,
+                .coordinate = try mappedValue(module, value_map, op.coordinate),
+                .lod = try mappedValue(module, value_map, op.lod),
+            },
+        },
+        .image_write => |op| .{
+            .image_write = .{
+                .resource = op.resource,
+                .coordinate = try mappedValue(module, value_map, op.coordinate),
+                .value = try mappedValue(module, value_map, op.value),
+            },
+        },
         .control_barrier => .control_barrier,
         .call => Error.InvalidModule,
-        .array_length => |op| .{ .array_length = .{
-            .resource = op.resource,
-            .byte_offset = try mappedValue(module, value_map, op.byte_offset),
-            .stride = op.stride,
-        } },
+        .array_length => |op| .{
+            .array_length = .{
+                .resource = op.resource,
+                .byte_offset = try mappedValue(module, value_map, op.byte_offset),
+                .stride = op.stride,
+                .descriptor_index = if (op.descriptor_index) |index| try mappedValue(module, value_map, index) else null,
+            },
+        },
     };
 }
 

@@ -9,6 +9,7 @@ const Shader = @import("../../interpreter/Shader.zig");
 const Program = @import("../../interpreter/Program.zig");
 const Runtime = @import("../../interpreter/Runtime.zig");
 const SoftImageView = @import("../../SoftImageView.zig");
+const SoftSampler = @import("../../SoftSampler.zig");
 
 const VkError = base.VkError;
 const ir = shader_ir.ir;
@@ -28,10 +29,13 @@ pub const Context = struct {
     workgroup_size: ?ir.id.InterfaceVariableId,
     resource_buffers: []?[]u8,
     resource_images: []?*SoftImageView,
+    resource_samplers: []?*SoftSampler,
+    push_constants: []const u8,
 
     pub fn deinit(self: *Context, allocator: std.mem.Allocator) void {
         allocator.free(self.resource_buffers);
         allocator.free(self.resource_images);
+        allocator.free(self.resource_samplers);
         self.* = undefined;
     }
 };
@@ -60,8 +64,21 @@ pub fn prepare(allocator: std.mem.Allocator, shader: *Shader, state: *const Pipe
 
     for (shader.program.resources, resource_images) |optional_resource, *image| {
         const resource = optional_resource orelse continue;
-        if (resource.kind == .storage_image)
-            image.* = try ExecutionDevice.mapStorageImage(state, resource.set, resource.binding, resource.array_element);
+        image.* = switch (resource.kind) {
+            .sampled_image => try ExecutionDevice.mapSampledImage(state, resource.set, resource.binding, resource.array_element),
+            .storage_image => try ExecutionDevice.mapStorageImage(state, resource.set, resource.binding, resource.array_element),
+            else => null,
+        };
+    }
+
+    const resource_samplers = allocator.alloc(?*SoftSampler, shader.program.resources.len) catch return VkError.OutOfDeviceMemory;
+    errdefer allocator.free(resource_samplers);
+    @memset(resource_samplers, null);
+
+    for (shader.program.resources, resource_samplers) |optional_resource, *sampler| {
+        const resource = optional_resource orelse continue;
+        if (resource.kind == .sampler)
+            sampler.* = try ExecutionDevice.mapSampler(state, resource.set, resource.binding, resource.array_element);
     }
 
     return .{
@@ -79,6 +96,8 @@ pub fn prepare(allocator: std.mem.Allocator, shader: *Shader, state: *const Pipe
         .workgroup_size = findInputBuiltin(&shader.program, .workgroup_size),
         .resource_buffers = resource_buffers,
         .resource_images = resource_images,
+        .resource_samplers = resource_samplers,
+        .push_constants = state.push_constant_blob[0..],
     };
 }
 
@@ -136,7 +155,7 @@ fn runSimpleWorkgroup(context: Context, batch: Batch, runtime: *Runtime, group_i
     for (0..context.local_count) |local_index| {
         runtime.resetInvocation(program);
         try setupInputs(context, batch, runtime, group_id, local_index);
-        const outcome = try runtime.run(program, .{ .resource_buffers = context.resource_buffers, .resource_images = context.resource_images, .workgroup_memory = memory });
+        const outcome = try runtime.run(program, .{ .resource_buffers = context.resource_buffers, .resource_images = context.resource_images, .resource_samplers = context.resource_samplers, .push_constants = context.push_constants, .workgroup_memory = memory });
         if (outcome != .returned)
             return Runtime.RuntimeError.BarrierDivergence;
     }
@@ -151,7 +170,7 @@ fn runBarrierWorkgroup(context: Context, batch: Batch, runtimes: []Runtime, stat
     for (runtimes, statuses, 0..) |*runtime, *status, local_index| {
         runtime.resetInvocation(program);
         try setupInputs(context, batch, runtime, group_id, local_index);
-        status.* = try runtime.run(program, .{ .resource_buffers = context.resource_buffers, .resource_images = context.resource_images, .workgroup_memory = memory });
+        status.* = try runtime.run(program, .{ .resource_buffers = context.resource_buffers, .resource_images = context.resource_images, .resource_samplers = context.resource_samplers, .push_constants = context.push_constants, .workgroup_memory = memory });
     }
 
     while (true) {
@@ -168,7 +187,7 @@ fn runBarrierWorkgroup(context: Context, batch: Batch, runtimes: []Runtime, stat
             return Runtime.RuntimeError.BarrierDivergence;
 
         for (runtimes, statuses) |*runtime, *status|
-            status.* = try runtime.continueExecution(program, .{ .resource_buffers = context.resource_buffers, .resource_images = context.resource_images, .workgroup_memory = memory });
+            status.* = try runtime.continueExecution(program, .{ .resource_buffers = context.resource_buffers, .resource_images = context.resource_images, .resource_samplers = context.resource_samplers, .push_constants = context.push_constants, .workgroup_memory = memory });
     }
 }
 

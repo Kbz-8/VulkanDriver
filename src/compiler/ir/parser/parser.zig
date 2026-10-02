@@ -407,13 +407,21 @@ const Parser = struct {
             };
         }
 
+        if (std.mem.eql(u8, name, "load_push_constant"))
+            return .{ .load_push_constant = .{ .byte_offset = try self.parseValueRef() } };
+
         if (std.mem.eql(u8, name, "load_buffer")) {
             const resource_name = (try self.expect(.at_name)).text;
             try self.expectDiscard(.comma);
-            return .{ .load_buffer = .{
-                .resource_name = resource_name,
-                .byte_offset = try self.parseValueRef(),
-            } };
+            const byte_offset = try self.parseValueRef();
+
+            return .{
+                .load_buffer = .{
+                    .resource_name = resource_name,
+                    .byte_offset = byte_offset,
+                    .descriptor_index = try self.parseOptionalDescriptorIndex(),
+                },
+            };
         }
 
         if (std.mem.eql(u8, name, "store_buffer")) {
@@ -421,11 +429,16 @@ const Parser = struct {
             try self.expectDiscard(.comma);
             const byte_offset = try self.parseValueRef();
             try self.expectDiscard(.comma);
-            return .{ .store_buffer = .{
-                .resource_name = resource_name,
-                .byte_offset = byte_offset,
-                .value = try self.parseValueRef(),
-            } };
+            const value = try self.parseValueRef();
+
+            return .{
+                .store_buffer = .{
+                    .resource_name = resource_name,
+                    .byte_offset = byte_offset,
+                    .value = value,
+                    .descriptor_index = try self.parseOptionalDescriptorIndex(),
+                },
+            };
         }
 
         if (std.mem.eql(u8, name, "load_workgroup")) {
@@ -449,6 +462,26 @@ const Parser = struct {
             } };
         }
 
+        if (std.mem.eql(u8, name, "image_sample_explicit_lod")) {
+            const image_name = (try self.expect(.at_name)).text;
+            try self.expectDiscard(.comma);
+
+            const sampler_name = (try self.expect(.at_name)).text;
+            try self.expectDiscard(.comma);
+
+            const coordinate = try self.parseValueRef();
+            try self.expectDiscard(.comma);
+
+            return .{
+                .image_sample_explicit_lod = .{
+                    .image_name = image_name,
+                    .sampler_name = sampler_name,
+                    .coordinate = coordinate,
+                    .lod = try self.parseValueRef(),
+                },
+            };
+        }
+
         if (std.mem.eql(u8, name, "control_barrier"))
             return .control_barrier;
 
@@ -458,11 +491,16 @@ const Parser = struct {
             const byte_offset = try self.parseValueRef();
             try self.expectDiscard(.comma);
             try self.expectIdentifier("stride");
-            return .{ .array_length = .{
-                .resource_name = resource_name,
-                .byte_offset = byte_offset,
-                .stride = try self.parseUnsigned(u32, .number),
-            } };
+            const stride = try self.parseUnsigned(u32, .number);
+
+            return .{
+                .array_length = .{
+                    .resource_name = resource_name,
+                    .byte_offset = byte_offset,
+                    .stride = stride,
+                    .descriptor_index = try self.parseOptionalDescriptorIndex(),
+                },
+            };
         }
 
         if (std.mem.eql(u8, name, "call")) {
@@ -481,6 +519,13 @@ const Parser = struct {
         }
 
         return Error.InvalidOpcode;
+    }
+
+    fn parseOptionalDescriptorIndex(self: *Parser) !?ValueRef {
+        if (!try self.consume(.comma))
+            return null;
+        try self.expectIdentifier("descriptor_index");
+        return try self.parseValueRef();
     }
 
     fn parseTerminator(self: *Parser) !ParsedTerminator {
@@ -917,17 +962,24 @@ test "Parser: resources and buffer operations" {
         \\     @uniforms: u32 = uniform_buffer[set(0), binding(1)]
         \\     @storage: struct[u32, f32] = storage_buffer[set(2), binding(3)]
         \\     @arrayed_storage: u32 = storage_buffer[set(2), binding(4), array_element(2)]
-        \\     @texture: vec4[f32] = sampled_image[set(4), binding(5)]
+        \\     @texture: f32 = sampled_image[set(4), binding(5)]
         \\     @image: vec4[f32] = storage_image[set(6), binding(7)]
         \\     @linear_sampler: resourceHandle[sampler] = sampler[set(8), binding(9)]
         \\     %offset: constant u32 = 4
+        \\     %descriptor_index: constant u32 = 2
         \\     %value: constant u32 = 7
+        \\     %coordinate: constant vec2[f32] = null
+        \\     %lod: constant f32 = 0.0
         \\
         \\     fn @main() -> void
         \\     {
         \\         .entry():
+        \\             %push_value: u32 = load_push_constant %offset
         \\             %storage_value: vec2[f32] = load_buffer @storage, %offset
-        \\             store_buffer @storage, %offset, %value
+        \\             %dynamic_storage_value: u32 = load_buffer @storage, %offset, descriptor_index %descriptor_index
+        \\             store_buffer @storage, %offset, %value, descriptor_index %descriptor_index
+        \\             %length: u32 = array_length @storage, %offset, stride 4, descriptor_index %descriptor_index
+        \\             %sample: vec4[f32] = image_sample_explicit_lod @texture, @linear_sampler, %coordinate, %lod
         \\             return
         \\     }
         \\ }
@@ -941,11 +993,15 @@ test "Parser: resources and buffer operations" {
     try std.testing.expect(std.mem.indexOf(u8, printed, "@uniforms: u32 = uniform_buffer[set(0), binding(1)]") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "@storage: struct[u32, f32] = storage_buffer[set(2), binding(3)]") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "@arrayed_storage: u32 = storage_buffer[set(2), binding(4), array_element(2)]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, printed, "@texture: vec4[f32] = sampled_image[set(4), binding(5)]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "@texture: f32 = sampled_image[set(4), binding(5)]") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "@image: vec4[f32] = storage_image[set(6), binding(7)]") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "@linear_sampler: resourceHandle[sampler] = sampler[set(8), binding(9)]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%push_value: u32 = load_push_constant %offset") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "%storage_value: vec2[f32] = load_buffer @storage, %offset") != null);
-    try std.testing.expect(std.mem.indexOf(u8, printed, "store_buffer @storage, %offset, %value") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%dynamic_storage_value: u32 = load_buffer @storage, %offset, descriptor_index %descriptor_index") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "store_buffer @storage, %offset, %value, descriptor_index %descriptor_index") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%length: u32 = array_length @storage, %offset, stride 4, descriptor_index %descriptor_index") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%sample: vec4[f32] = image_sample_explicit_lod @texture, @linear_sampler, %coordinate, %lod") != null);
 
     var reparsed = try parseString(std.testing.allocator, printed);
     defer reparsed.deinit();

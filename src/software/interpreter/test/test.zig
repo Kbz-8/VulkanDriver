@@ -10,6 +10,7 @@ comptime {
     _ = @import("arithmetic.zig");
     _ = @import("branching.zig");
     _ = @import("loops.zig");
+    _ = @import("resources.zig");
     _ = @import("storage_buffers.zig");
     _ = @import("termination.zig");
 }

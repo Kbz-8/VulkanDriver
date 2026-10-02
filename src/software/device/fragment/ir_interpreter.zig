@@ -8,6 +8,7 @@ const Renderer = @import("../Renderer.zig");
 const Program = @import("../../interpreter/Program.zig");
 const Runtime = @import("../../interpreter/Runtime.zig");
 const SoftImageView = @import("../../SoftImageView.zig");
+const SoftSampler = @import("../../SoftSampler.zig");
 const VertexInterpolationLocation = @import("../rasterizer/common.zig").VertexInterpolationLocation;
 const common = @import("dispatcher.zig");
 const SpvRuntimeError = common.SpvRuntimeError;
@@ -57,17 +58,21 @@ pub fn shaderInvocation(
     const images = allocator.alloc(?*SoftImageView, program.resources.len) catch return SpvRuntimeError.OutOfMemory;
     defer allocator.free(images);
     @memset(images, null);
-    for (program.resources, buffers, images) |optional_resource, *buffer, *image| {
+    const samplers = allocator.alloc(?*SoftSampler, program.resources.len) catch return SpvRuntimeError.OutOfMemory;
+    defer allocator.free(samplers);
+    @memset(samplers, null);
+    for (program.resources, buffers, images, samplers) |optional_resource, *buffer, *image, *sampler| {
         const resource = optional_resource orelse continue;
         switch (resource.kind) {
             .uniform_buffer, .storage_buffer => buffer.* = ExecutionDevice.mapBuffer(state, resource.set, resource.binding, resource.array_element) catch |err| return mapError(err),
+            .sampled_image => image.* = ExecutionDevice.mapSampledImage(state, resource.set, resource.binding, resource.array_element) catch |err| return mapError(err),
             .storage_image => image.* = ExecutionDevice.mapStorageImage(state, resource.set, resource.binding, resource.array_element) catch |err| return mapError(err),
-            else => return SpvRuntimeError.InvalidSpirV,
+            .sampler => sampler.* = ExecutionDevice.mapSampler(state, resource.set, resource.binding, resource.array_element) catch |err| return mapError(err),
         }
     }
     // RunOptions currently has no push-constant or derivative storage.
     try writeInputs(program, runtime, position, inputs);
-    switch (runtime.run(program, .{ .resource_buffers = buffers, .resource_images = images }) catch |err| return mapError(err)) {
+    switch (runtime.run(program, .{ .resource_buffers = buffers, .resource_images = images, .resource_samplers = samplers, .push_constants = state.push_constant_blob[0..] }) catch |err| return mapError(err)) {
         .returned => {},
         .discarded => return SpvRuntimeError.Killed,
         .barrier => return SpvRuntimeError.InvalidSpirV,
