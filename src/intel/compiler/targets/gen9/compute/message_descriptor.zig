@@ -42,7 +42,7 @@ pub fn encode(message: instruction.SurfaceMessage) Descriptor {
 fn makeDescriptor(binding_table: u8, message_control: u8, message_type: MessageType, message_length: u8, response_length: u8) u32 {
     return @as(u32, binding_table) |
         (@as(u32, message_control) << 8) |
-        (@as(u32, @intFromEnum(message_type)) << 14) |
+        (@as(u32, @backingInt(message_type)) << 14) |
         (@as(u32, response_length) << 20) |
         (@as(u32, message_length) << 25);
 }

@@ -67,8 +67,8 @@ pub fn encodeEndThread(header: operand.PhysicalGrf) Error![2]EncodedInstruction 
     var copy = try instructionHeader(.mov, .simd8);
     copy.setBits(34, 34, 1); // NoMask
     setDestination(&copy, .grf, .unsigned_dword, .{ .number = eot_payload_grf, .byte_offset = 0 }, 1);
-    copy.setBits(42, 41, @intFromEnum(RegisterFile.grf));
-    copy.setBits(46, 43, @intFromEnum(HardwareType.unsigned_dword));
+    copy.setBits(42, 41, @backingInt(RegisterFile.grf));
+    copy.setBits(46, 43, @backingInt(HardwareType.unsigned_dword));
     copy.setBits(76, 69, header.number);
     copy.setBits(81, 80, 1);
     copy.setBits(84, 82, 3);
@@ -77,14 +77,14 @@ pub fn encodeEndThread(header: operand.PhysicalGrf) Error![2]EncodedInstruction 
     var send = try instructionHeader(.send, .simd8);
     send.setBits(34, 34, 1); // NoMask
     setDestination(&send, .architecture, .unsigned_word, .{ .number = 0, .byte_offset = 0 }, 1);
-    send.setBits(42, 41, @intFromEnum(RegisterFile.grf));
-    send.setBits(46, 43, @intFromEnum(HardwareType.unsigned_word));
+    send.setBits(42, 41, @backingInt(RegisterFile.grf));
+    send.setBits(46, 43, @backingInt(HardwareType.unsigned_word));
     send.setBits(76, 69, eot_payload_grf);
     send.setBits(81, 80, 1);
     send.setBits(84, 82, 3);
     send.setBits(88, 85, 4);
-    send.setBits(90, 89, @intFromEnum(RegisterFile.immediate));
-    send.setBits(94, 91, @intFromEnum(HardwareType.unsigned_dword));
+    send.setBits(90, 89, @backingInt(RegisterFile.immediate));
+    send.setBits(94, 91, @backingInt(HardwareType.unsigned_dword));
     send.setBits(124, 96, 0x02000010); // mlen=1, no response, do not dereference URB
     send.setBits(27, 24, 7); // Thread Spawner
     send.setBits(127, 127, 1);
@@ -108,15 +108,15 @@ pub fn encodeSurfaceMessage(execution_size: device.ExecutionSize, message: ir_in
         setDestination(&encoded, .architecture, .unsigned_word, .{ .number = 0, .byte_offset = 0 }, 1);
     }
 
-    encoded.setBits(42, 41, @intFromEnum(RegisterFile.grf));
-    encoded.setBits(46, 43, @intFromEnum(HardwareType.unsigned_dword));
+    encoded.setBits(42, 41, @backingInt(RegisterFile.grf));
+    encoded.setBits(46, 43, @backingInt(HardwareType.unsigned_dword));
     encoded.setBits(76, 69, payload.number);
     encoded.setBits(68, 64, payload.byte_offset);
     encoded.setBits(81, 80, 1); // horizontal stride 1
     encoded.setBits(84, 82, 3); // width 8
     encoded.setBits(88, 85, 4); // vertical stride 8
-    encoded.setBits(90, 89, @intFromEnum(RegisterFile.immediate));
-    encoded.setBits(94, 91, @intFromEnum(HardwareType.unsigned_dword));
+    encoded.setBits(90, 89, @backingInt(RegisterFile.immediate));
+    encoded.setBits(94, 91, @backingInt(HardwareType.unsigned_dword));
     encoded.setBits(124, 96, descriptor.value);
     encoded.setBits(27, 24, descriptor.sfid);
     return encoded;
@@ -136,8 +136,8 @@ fn encodeJumpWithPredicate(displacement_bytes: i32, predicate: ?operand.Predicat
 
     // JMPI updates the instruction pointer: IP = IP + displacement.
     setDestination(&encoded, .architecture, .signed_dword, .{ .number = 0xa0, .byte_offset = 0 }, 1);
-    encoded.setBits(42, 41, @intFromEnum(RegisterFile.architecture));
-    encoded.setBits(46, 43, @intFromEnum(HardwareType.signed_dword));
+    encoded.setBits(42, 41, @backingInt(RegisterFile.architecture));
+    encoded.setBits(46, 43, @backingInt(HardwareType.signed_dword));
     encoded.setBits(76, 69, 0xa0);
     encoded.setBits(81, 80, 0);
     encoded.setBits(84, 82, 0);
@@ -169,7 +169,7 @@ pub fn patchJump(encoded_bytes: []u8, displacement_bytes: i32) Error!void {
         std.mem.readInt(u64, encoded_bytes[0..8], .little),
         std.mem.readInt(u64, encoded_bytes[8..16], .little),
     } };
-    if (encoded.bits(6, 0) != @intFromEnum(eu.Opcode.jmpi))
+    if (encoded.bits(6, 0) != @backingInt(eu.Opcode.jmpi))
         return Error.UnsupportedOperand;
     encoded.setBits(127, 96, @as(u32, @bitCast(displacement_bytes)));
     std.mem.writeInt(u64, encoded_bytes[0..8], encoded.words[0], .little);
@@ -214,7 +214,7 @@ pub fn encodeCompare(execution_size: device.ExecutionSize, compare: ir_instructi
         .less_or_equal => .less_or_equal,
     };
 
-    encoded.setBits(27, 24, @intFromEnum(condition));
+    encoded.setBits(27, 24, @backingInt(condition));
     encoded.setBits(33, 33, flag.register);
     encoded.setBits(32, 32, flag.subregister);
     return encoded;
@@ -235,29 +235,29 @@ pub fn encodeMath(execution_size: device.ExecutionSize, math: ir_instruction.Mat
         .integer_quotient => .idiv,
     };
 
-    encoded.setBits(27, 24, @intFromEnum(function));
+    encoded.setBits(27, 24, @backingInt(function));
 
     return encoded;
 }
 
 fn instructionHeader(opcode: eu.Opcode, execution_size: device.ExecutionSize) Error!EncodedInstruction {
     var encoded: EncodedInstruction = .{};
-    encoded.setBits(6, 0, @intFromEnum(opcode));
+    encoded.setBits(6, 0, @backingInt(opcode));
     encoded.setBits(23, 21, try executionSize(execution_size));
     return encoded;
 }
 
 fn setDestination(encoded: *EncodedInstruction, file: RegisterFile, data_type: HardwareType, register: Grf, horizontal_stride: u2) void {
-    encoded.setBits(36, 35, @intFromEnum(file));
-    encoded.setBits(40, 37, @intFromEnum(data_type));
+    encoded.setBits(36, 35, @backingInt(file));
+    encoded.setBits(40, 37, @backingInt(data_type));
     encoded.setBits(52, 48, register.byte_offset);
     encoded.setBits(60, 53, register.number);
     encoded.setBits(62, 61, horizontal_stride);
 }
 
 fn setSource0Register(encoded: *EncodedInstruction, source: operand.Source, register: Grf) Error!void {
-    encoded.setBits(42, 41, @intFromEnum(RegisterFile.grf));
-    encoded.setBits(46, 43, @intFromEnum(try hardwareType(source.type)));
+    encoded.setBits(42, 41, @backingInt(RegisterFile.grf));
+    encoded.setBits(46, 43, @backingInt(try hardwareType(source.type)));
     encoded.setBits(68, 64, register.byte_offset);
     encoded.setBits(76, 69, register.number);
     encoded.setBits(77, 77, @intFromBool(source.absolute));
@@ -268,10 +268,10 @@ fn setSource0Register(encoded: *EncodedInstruction, source: operand.Source, regi
 }
 
 fn setSource0Immediate(encoded: *EncodedInstruction, data_type: HardwareType, immediate: operand.Immediate) void {
-    encoded.setBits(42, 41, @intFromEnum(RegisterFile.immediate));
-    encoded.setBits(46, 43, @intFromEnum(data_type));
-    encoded.setBits(90, 89, @intFromEnum(RegisterFile.architecture));
-    encoded.setBits(94, 91, @intFromEnum(data_type));
+    encoded.setBits(42, 41, @backingInt(RegisterFile.immediate));
+    encoded.setBits(46, 43, @backingInt(data_type));
+    encoded.setBits(90, 89, @backingInt(RegisterFile.architecture));
+    encoded.setBits(94, 91, @backingInt(data_type));
     encoded.setBits(127, 96, switch (immediate) {
         .u32 => |value| value,
         .i32 => |value| @as(u32, @bitCast(value)),
@@ -294,8 +294,8 @@ fn setSource0(encoded: *EncodedInstruction, source: operand.Source) Error!void {
 }
 
 fn setSource1Register(encoded: *EncodedInstruction, source: operand.Source, register: Grf) Error!void {
-    encoded.setBits(90, 89, @intFromEnum(RegisterFile.grf));
-    encoded.setBits(94, 91, @intFromEnum(try hardwareType(source.type)));
+    encoded.setBits(90, 89, @backingInt(RegisterFile.grf));
+    encoded.setBits(94, 91, @backingInt(try hardwareType(source.type)));
 
     // Direct addressing.
     encoded.setBits(100, 96, register.byte_offset);
@@ -315,9 +315,9 @@ fn setSource1Register(encoded: *EncodedInstruction, source: operand.Source, regi
 }
 
 fn setSource1Immediate(encoded: *EncodedInstruction, data_type: HardwareType, immediate: operand.Immediate) void {
-    encoded.setBits(90, 89, @intFromEnum(RegisterFile.immediate));
+    encoded.setBits(90, 89, @backingInt(RegisterFile.immediate));
 
-    encoded.setBits(94, 91, @intFromEnum(data_type));
+    encoded.setBits(94, 91, @backingInt(data_type));
 
     encoded.setBits(127, 96, switch (immediate) {
         .u32 => |value| value,
@@ -516,7 +516,7 @@ test "[gen9] EU encoder: encode predicated jump" {
         .inverse = true,
     });
 
-    try std.testing.expectEqual(@as(u64, @intFromEnum(eu.Opcode.jmpi)), encoded.bits(6, 0));
+    try std.testing.expectEqual(@as(u64, @backingInt(eu.Opcode.jmpi)), encoded.bits(6, 0));
     try std.testing.expectEqual(@as(u64, 1), encoded.bits(19, 16));
     try std.testing.expectEqual(@as(u64, 1), encoded.bits(20, 20));
     try std.testing.expectEqual(@as(u64, 1), encoded.bits(32, 32));

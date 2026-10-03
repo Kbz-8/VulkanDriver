@@ -63,7 +63,7 @@ pub fn init(allocator: std.mem.Allocator, program: *const Program) !Self {
     @memset(scratch, 0);
 
     for (program.initializers) |initializer|
-        registers[@intFromEnum(initializer.register)] = initializer.value;
+        registers[@backingInt(initializer.register)] = initializer.value;
 
     return .{ .allocator = allocator, .registers = registers, .scratch = scratch };
 }
@@ -78,7 +78,7 @@ pub fn resetInvocation(self: *Self, program: *const Program) void {
     @memset(self.registers, 0);
     @memset(self.scratch, 0);
     for (program.initializers) |initializer|
-        self.registers[@intFromEnum(initializer.register)] = initializer.value;
+        self.registers[@backingInt(initializer.register)] = initializer.value;
     self.pc = 0;
     self.steps = 0;
     self.state = .idle;
@@ -93,7 +93,7 @@ pub fn writeInput(self: *Self, program: *const Program, variable: ids.InterfaceV
     if (binding.span.components != values.len)
         return RuntimeError.WrongInterfaceType;
 
-    @memcpy(self.registers[@intFromEnum(binding.span.base)..][0..values.len], values);
+    @memcpy(self.registers[@backingInt(binding.span.base)..][0..values.len], values);
 }
 
 pub fn readOutput(self: *const Self, program: *const Program, variable: ids.InterfaceVariableId, values: []u32) RuntimeError!void {
@@ -105,7 +105,7 @@ pub fn readOutput(self: *const Self, program: *const Program, variable: ids.Inte
     if (binding.span.components != values.len)
         return RuntimeError.WrongInterfaceType;
 
-    @memcpy(values, self.registers[@intFromEnum(binding.span.base)..][0..values.len]);
+    @memcpy(values, self.registers[@backingInt(binding.span.base)..][0..values.len]);
 }
 
 pub fn run(self: *Self, program: *const Program, options: RunOptions) RuntimeError!Outcome {
@@ -150,7 +150,7 @@ fn execute(self: *Self, program: *const Program, options: RunOptions) RuntimeErr
                     return RuntimeError.InvalidBytecode;
 
                 const branch = program.branches[instruction.immediate];
-                self.pc = try self.applyEdge(program, if (self.registers[@intFromEnum(instruction.a)] != 0) branch.true_edge else branch.false_edge);
+                self.pc = try self.applyEdge(program, if (self.registers[@backingInt(instruction.a)] != 0) branch.true_edge else branch.false_edge);
             },
             .compare_equal => self.compareInt(instruction, .equal),
             .compare_not_equal => self.compareInt(instruction, .not_equal),
@@ -237,9 +237,9 @@ const CompareInt = enum { equal, not_equal, unsigned_less, signed_less };
 const CompareFloat = enum { ordered_equal, unordered_equal, ordered_not_equal, unordered_not_equal, ordered_less, unordered_less };
 
 fn all(self: *Self, instruction: bc.Instruction) RuntimeError!void {
-    self.registers[@intFromEnum(instruction.a)] = blk: {
+    self.registers[@backingInt(instruction.a)] = blk: {
         for (0..instruction.components) |component| {
-            if (self.registers[@intFromEnum(instruction.b) + component] == 0)
+            if (self.registers[@backingInt(instruction.b) + component] == 0)
                 break :blk 0;
         }
         break :blk 1;
@@ -250,7 +250,7 @@ fn arrayLength(self: *Self, program: *const Program, resource_buffers: []const ?
     if (instruction.components != 1)
         return RuntimeError.InvalidBytecode;
 
-    if (@intFromEnum(instruction.a) >= self.registers.len or @intFromEnum(instruction.b) >= self.registers.len)
+    if (@backingInt(instruction.a) >= self.registers.len or @backingInt(instruction.b) >= self.registers.len)
         return RuntimeError.InvalidBytecode;
 
     if (instruction.immediate >= program.array_lengths.len)
@@ -262,7 +262,7 @@ fn arrayLength(self: *Self, program: *const Program, resource_buffers: []const ?
         return RuntimeError.InvalidBytecode;
 
     const buffer = try resourceBuffer(program, resource_buffers, metadata.resource);
-    const byte_offset: usize = self.registers[@intFromEnum(instruction.b)];
+    const byte_offset: usize = self.registers[@backingInt(instruction.b)];
 
     if (byte_offset > buffer.len)
         return RuntimeError.BufferOutOfBounds;
@@ -270,18 +270,18 @@ fn arrayLength(self: *Self, program: *const Program, resource_buffers: []const ?
     const byte_length = buffer.len - byte_offset;
     const element_count = byte_length / metadata.stride;
 
-    self.registers[@intFromEnum(instruction.a)] = std.math.cast(u32, element_count) orelse return RuntimeError.IntegerOverflow;
+    self.registers[@backingInt(instruction.a)] = std.math.cast(u32, element_count) orelse return RuntimeError.IntegerOverflow;
 }
 
 fn copy(self: *Self, instruction: bc.Instruction) void {
     for (0..instruction.components) |component|
-        self.registers[@as(usize, @intFromEnum(instruction.a)) + component] = self.registers[@as(usize, @intFromEnum(instruction.b)) + component];
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = self.registers[@as(usize, @backingInt(instruction.b)) + component];
 }
 
 fn unaryInt(self: *Self, instruction: bc.Instruction, comptime operation: UnaryInt) void {
     for (0..instruction.components) |component| {
-        const value = self.registers[@as(usize, @intFromEnum(instruction.b)) + component];
-        self.registers[@as(usize, @intFromEnum(instruction.a)) + component] = switch (operation) {
+        const value = self.registers[@as(usize, @backingInt(instruction.b)) + component];
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = switch (operation) {
             .negate => 0 -% value,
             .logical_not => @intFromBool(value == 0),
             .bitwise_not => ~value,
@@ -291,32 +291,32 @@ fn unaryInt(self: *Self, instruction: bc.Instruction, comptime operation: UnaryI
 
 fn unaryFloat(self: *Self, instruction: bc.Instruction) void {
     for (0..instruction.components) |component| {
-        const value: f32 = @bitCast(self.registers[@as(usize, @intFromEnum(instruction.b)) + component]);
-        self.registers[@as(usize, @intFromEnum(instruction.a)) + component] = @bitCast(-value);
+        const value: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = @bitCast(-value);
     }
 }
 
 fn intToFloat(self: *Self, instruction: bc.Instruction, comptime signed: bool) RuntimeError!void {
     try self.validateRegisterSpan(instruction);
-    const source_end = std.math.add(usize, @intFromEnum(instruction.b), instruction.components) catch return RuntimeError.InvalidBytecode;
+    const source_end = std.math.add(usize, @backingInt(instruction.b), instruction.components) catch return RuntimeError.InvalidBytecode;
     if (source_end > self.registers.len)
         return RuntimeError.InvalidBytecode;
 
     for (0..instruction.components) |component| {
-        const source = self.registers[@as(usize, @intFromEnum(instruction.b)) + component];
+        const source = self.registers[@as(usize, @backingInt(instruction.b)) + component];
         const converted: f32 = if (signed)
             @floatFromInt(@as(i32, @bitCast(source)))
         else
             @floatFromInt(source);
-        self.registers[@as(usize, @intFromEnum(instruction.a)) + component] = @bitCast(converted);
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = @bitCast(converted);
     }
 }
 
 fn binaryInt(self: *Self, instruction: bc.Instruction, comptime operation: BinaryInt) RuntimeError!void {
     for (0..instruction.components) |component| {
-        const lhs = self.registers[@as(usize, @intFromEnum(instruction.b)) + component];
-        const rhs = self.registers[@as(usize, @intFromEnum(instruction.c)) + component];
-        self.registers[@as(usize, @intFromEnum(instruction.a)) + component] = switch (operation) {
+        const lhs = self.registers[@as(usize, @backingInt(instruction.b)) + component];
+        const rhs = self.registers[@as(usize, @backingInt(instruction.c)) + component];
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = switch (operation) {
             .add => lhs +% rhs,
             .subtract => lhs -% rhs,
             .multiply => lhs *% rhs,
@@ -360,9 +360,9 @@ fn binaryInt(self: *Self, instruction: bc.Instruction, comptime operation: Binar
 
 fn binaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: BinaryFloat, comptime broadcast_rhs: bool) void {
     for (0..instruction.components) |component| {
-        const lhs: f32 = @bitCast(self.registers[@as(usize, @intFromEnum(instruction.b)) + component]);
+        const lhs: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
         const rhs_component = if (broadcast_rhs) 0 else component;
-        const rhs: f32 = @bitCast(self.registers[@as(usize, @intFromEnum(instruction.c)) + rhs_component]);
+        const rhs: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.c)) + rhs_component]);
         const result = switch (operation) {
             .add => lhs + rhs,
             .subtract => lhs - rhs,
@@ -370,16 +370,16 @@ fn binaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Bin
             .divide => lhs / rhs,
             .modulo => lhs - rhs * @floor(lhs / rhs),
         };
-        self.registers[@as(usize, @intFromEnum(instruction.a)) + component] = @bitCast(result);
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = @bitCast(result);
     }
 }
 
 fn compareInt(self: *Self, instruction: bc.Instruction, comptime operation: CompareInt) void {
     for (0..instruction.components) |component| {
-        const lhs = self.registers[@intFromEnum(instruction.b) + component];
-        const rhs = self.registers[@intFromEnum(instruction.c) + component];
+        const lhs = self.registers[@backingInt(instruction.b) + component];
+        const rhs = self.registers[@backingInt(instruction.c) + component];
 
-        self.registers[@intFromEnum(instruction.a) + component] = @intFromBool(switch (operation) {
+        self.registers[@backingInt(instruction.a) + component] = @intFromBool(switch (operation) {
             .equal => lhs == rhs,
             .not_equal => lhs != rhs,
             .unsigned_less => lhs < rhs,
@@ -390,11 +390,11 @@ fn compareInt(self: *Self, instruction: bc.Instruction, comptime operation: Comp
 
 fn compareFloat(self: *Self, instruction: bc.Instruction, comptime operation: CompareFloat) void {
     for (0..instruction.components) |component| {
-        const lhs: f32 = @bitCast(self.registers[@intFromEnum(instruction.b) + component]);
-        const rhs: f32 = @bitCast(self.registers[@intFromEnum(instruction.c) + component]);
+        const lhs: f32 = @bitCast(self.registers[@backingInt(instruction.b) + component]);
+        const rhs: f32 = @bitCast(self.registers[@backingInt(instruction.c) + component]);
 
         const unordered = std.math.isNan(lhs) or std.math.isNan(rhs);
-        self.registers[@intFromEnum(instruction.a) + component] = @intFromBool(switch (operation) {
+        self.registers[@backingInt(instruction.a) + component] = @intFromBool(switch (operation) {
             .ordered_equal => !unordered and lhs == rhs,
             .unordered_equal => unordered or lhs == rhs,
             .ordered_not_equal => !unordered and lhs != rhs,
@@ -406,9 +406,9 @@ fn compareFloat(self: *Self, instruction: bc.Instruction, comptime operation: Co
 }
 
 fn select(self: *Self, instruction: bc.Instruction) void {
-    const selected = if (self.registers[@intFromEnum(instruction.b)] != 0) @intFromEnum(instruction.c) else @intFromEnum(instruction.d);
+    const selected = if (self.registers[@backingInt(instruction.b)] != 0) @backingInt(instruction.c) else @backingInt(instruction.d);
     for (0..instruction.components) |component|
-        self.registers[@as(usize, @intFromEnum(instruction.a)) + component] = self.registers[@as(usize, selected) + component];
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = self.registers[@as(usize, selected) + component];
 }
 
 fn loadBuffer(self: *Self, program: *const Program, resource_buffers: []const ?[]u8, instruction: bc.Instruction) RuntimeError!void {
@@ -428,7 +428,7 @@ fn loadPushConstant(self: *Self, push_constants: []const u8, instruction: bc.Ins
 fn loadWords(self: *Self, instruction: bc.Instruction, bytes: []const u8) void {
     for (0..instruction.components) |component| {
         const offset = component * @sizeOf(u32);
-        self.registers[@as(usize, @intFromEnum(instruction.a)) + component] = std.mem.readInt(u32, bytes[offset..][0..@sizeOf(u32)], .little);
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = std.mem.readInt(u32, bytes[offset..][0..@sizeOf(u32)], .little);
     }
 }
 
@@ -439,7 +439,7 @@ fn storeBuffer(self: *const Self, program: *const Program, resource_buffers: []c
     const bytes = try self.bufferRange(buffer, instruction);
     for (0..instruction.components) |component| {
         const offset = component * @sizeOf(u32);
-        std.mem.writeInt(u32, bytes[offset..][0..@sizeOf(u32)], self.registers[@as(usize, @intFromEnum(instruction.a)) + component], .little);
+        std.mem.writeInt(u32, bytes[offset..][0..@sizeOf(u32)], self.registers[@as(usize, @backingInt(instruction.a)) + component], .little);
     }
 }
 
@@ -449,7 +449,7 @@ fn imageRead(self: *Self, program: *const Program, resource_images: []const ?*So
     const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
     const pixel = image.readInt4(imageOffset(self, instruction), imageSubresource(view), view.interface.format) catch return RuntimeError.InvalidResource;
     const components: [4]u32 = @bitCast(pixel);
-    @memcpy(self.registers[@intFromEnum(instruction.a)..][0..4], &components);
+    @memcpy(self.registers[@backingInt(instruction.a)..][0..4], &components);
 }
 
 fn imageReadFloat(self: *Self, program: *const Program, resource_images: []const ?*SoftImageView, instruction: bc.Instruction) RuntimeError!void {
@@ -458,7 +458,7 @@ fn imageReadFloat(self: *Self, program: *const Program, resource_images: []const
     const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
     const pixel = image.readFloat4(imageOffset(self, instruction), imageSubresource(view), view.interface.format) catch return RuntimeError.InvalidResource;
     const components: [4]u32 = @bitCast(pixel);
-    @memcpy(self.registers[@intFromEnum(instruction.a)..][0..4], &components);
+    @memcpy(self.registers[@backingInt(instruction.a)..][0..4], &components);
 }
 
 fn imageSample(
@@ -478,14 +478,14 @@ fn imageSample(
         return RuntimeError.InvalidBytecode;
 
     const coordinate_count = Program.imageCoordinateComponents(pair.dimension, pair.arrayed);
-    const coordinate_end = std.math.add(usize, @intFromEnum(instruction.b), coordinate_count) catch return RuntimeError.InvalidBytecode;
+    const coordinate_end = std.math.add(usize, @backingInt(instruction.b), coordinate_count) catch return RuntimeError.InvalidBytecode;
     if (coordinate_end > self.registers.len)
         return RuntimeError.InvalidBytecode;
 
     const lod: ?f32 = if (explicit_lod) blk: {
-        if (instruction.c == .invalid_register or @intFromEnum(instruction.c) >= self.registers.len)
+        if (instruction.c == .invalid_register or @backingInt(instruction.c) >= self.registers.len)
             return RuntimeError.InvalidBytecode;
-        break :blk @bitCast(self.registers[@intFromEnum(instruction.c)]);
+        break :blk @bitCast(self.registers[@backingInt(instruction.c)]);
     } else blk: {
         if (instruction.c != .invalid_register)
             return RuntimeError.InvalidBytecode;
@@ -495,7 +495,7 @@ fn imageSample(
     const view = try sampledImage(program, resource_images, pair.image);
     const sampler = try resourceSampler(program, resource_samplers, pair.sampler);
     const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
-    const coordinate_base: usize = @intFromEnum(instruction.b);
+    const coordinate_base: usize = @backingInt(instruction.b);
     const x: f32 = @bitCast(self.registers[coordinate_base]);
     const y: f32 = if (coordinate_count >= 2) @bitCast(self.registers[coordinate_base + 1]) else 0.0;
     const z: f32 = if (coordinate_count >= 3) @bitCast(self.registers[coordinate_base + 2]) else 0.0;
@@ -511,14 +511,14 @@ fn imageSample(
         .signed_integer, .unsigned_integer => @bitCast(SoftSampler.sampleImageInt4(image, view, sampler, dimension, x, y, z, lod, .{}) catch return RuntimeError.InvalidResource),
         .boolean => return RuntimeError.InvalidBytecode,
     };
-    @memcpy(self.registers[@intFromEnum(instruction.a)..][0..4], &components);
+    @memcpy(self.registers[@backingInt(instruction.a)..][0..4], &components);
 }
 
 fn imageWrite(self: *const Self, program: *const Program, resource_images: []const ?*SoftImageView, instruction: bc.Instruction) RuntimeError!void {
     try self.validateImageInstruction(instruction);
     const view = try resourceImage(program, resource_images, instruction.immediate);
     const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
-    const components: [4]u32 = self.registers[@intFromEnum(instruction.a)..][0..4].*;
+    const components: [4]u32 = self.registers[@backingInt(instruction.a)..][0..4].*;
     const pixel: @Vector(4, u32) = @bitCast(components);
     image.writeInt4(imageOffset(self, instruction), imageSubresource(view), view.interface.format, pixel) catch return RuntimeError.InvalidResource;
 }
@@ -527,7 +527,7 @@ fn imageWriteFloat(self: *const Self, program: *const Program, resource_images: 
     try self.validateImageInstruction(instruction);
     const view = try resourceImage(program, resource_images, instruction.immediate);
     const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
-    const components: [4]u32 = self.registers[@intFromEnum(instruction.a)..][0..4].*;
+    const components: [4]u32 = self.registers[@backingInt(instruction.a)..][0..4].*;
     const pixel: @Vector(4, f32) = @bitCast(components);
     image.writeFloat4(imageOffset(self, instruction), imageSubresource(view), view.interface.format, pixel) catch return RuntimeError.InvalidResource;
 }
@@ -536,15 +536,15 @@ fn validateImageInstruction(self: *const Self, instruction: bc.Instruction) Runt
     if (instruction.components != 4)
         return RuntimeError.InvalidBytecode;
     try self.validateRegisterSpan(instruction);
-    const coordinate_end = std.math.add(usize, @intFromEnum(instruction.b), 2) catch return RuntimeError.InvalidBytecode;
+    const coordinate_end = std.math.add(usize, @backingInt(instruction.b), 2) catch return RuntimeError.InvalidBytecode;
     if (coordinate_end > self.registers.len)
         return RuntimeError.InvalidBytecode;
 }
 
 fn imageOffset(self: *const Self, instruction: bc.Instruction) vk.Offset3D {
     return .{
-        .x = @bitCast(self.registers[@intFromEnum(instruction.b)]),
-        .y = @bitCast(self.registers[@as(usize, @intFromEnum(instruction.b)) + 1]),
+        .x = @bitCast(self.registers[@backingInt(instruction.b)]),
+        .y = @bitCast(self.registers[@as(usize, @backingInt(instruction.b)) + 1]),
         .z = 0,
     };
 }
@@ -563,7 +563,7 @@ fn loadWorkgroup(self: *Self, program: *const Program, optional_memory: ?[]u8, i
     const bytes = try self.workgroupRange(program, optional_memory, instruction);
     for (0..instruction.components) |component| {
         const offset = component * @sizeOf(u32);
-        self.registers[@as(usize, @intFromEnum(instruction.a)) + component] = std.mem.readInt(u32, bytes[offset..][0..@sizeOf(u32)], .little);
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = std.mem.readInt(u32, bytes[offset..][0..@sizeOf(u32)], .little);
     }
 }
 
@@ -572,19 +572,19 @@ fn storeWorkgroup(self: *const Self, program: *const Program, optional_memory: ?
     const bytes = try self.workgroupRange(program, optional_memory, instruction);
     for (0..instruction.components) |component| {
         const offset = component * @sizeOf(u32);
-        std.mem.writeInt(u32, bytes[offset..][0..@sizeOf(u32)], self.registers[@as(usize, @intFromEnum(instruction.a)) + component], .little);
+        std.mem.writeInt(u32, bytes[offset..][0..@sizeOf(u32)], self.registers[@as(usize, @backingInt(instruction.a)) + component], .little);
     }
 }
 
 fn workgroupRange(self: *const Self, program: *const Program, optional_memory: ?[]u8, instruction: bc.Instruction) RuntimeError![]u8 {
     const memory = optional_memory orelse return RuntimeError.WorkgroupMemoryUnavailable;
 
-    if (@intFromEnum(instruction.b) >= self.registers.len)
+    if (@backingInt(instruction.b) >= self.registers.len)
         return RuntimeError.InvalidBytecode;
 
     const variable = ids.WorkgroupVariableId.fromIndex(instruction.immediate);
     const binding = program.workgroupBinding(variable) orelse return RuntimeError.InvalidBytecode;
-    const relative_offset: usize = self.registers[@intFromEnum(instruction.b)];
+    const relative_offset: usize = self.registers[@backingInt(instruction.b)];
     const byte_count = std.math.mul(usize, instruction.components, @sizeOf(u32)) catch return RuntimeError.BufferOutOfBounds;
     const relative_end = std.math.add(usize, relative_offset, byte_count) catch return RuntimeError.BufferOutOfBounds;
 
@@ -601,7 +601,7 @@ fn workgroupRange(self: *const Self, program: *const Program, optional_memory: ?
 }
 
 fn validateRegisterSpan(self: *const Self, instruction: bc.Instruction) RuntimeError!void {
-    const register_end = std.math.add(usize, @intFromEnum(instruction.a), instruction.components) catch return RuntimeError.InvalidBytecode;
+    const register_end = std.math.add(usize, @backingInt(instruction.a), instruction.components) catch return RuntimeError.InvalidBytecode;
     if (register_end > self.registers.len)
         return RuntimeError.InvalidBytecode;
 }
@@ -617,10 +617,10 @@ fn pushConstantRange(self: *const Self, push_constants: []const u8, instruction:
 }
 
 fn memoryRange(self: *const Self, memory_len: usize, instruction: bc.Instruction) RuntimeError!struct { usize, usize } {
-    if (@intFromEnum(instruction.b) >= self.registers.len)
+    if (@backingInt(instruction.b) >= self.registers.len)
         return RuntimeError.InvalidBytecode;
 
-    const byte_offset: usize = self.registers[@intFromEnum(instruction.b)];
+    const byte_offset: usize = self.registers[@backingInt(instruction.b)];
     const byte_count = std.math.mul(usize, instruction.components, @sizeOf(u32)) catch return RuntimeError.BufferOutOfBounds;
     const end = std.math.add(usize, byte_offset, byte_count) catch return RuntimeError.BufferOutOfBounds;
     if (end > memory_len)
@@ -632,15 +632,15 @@ fn selectBufferResource(self: *const Self, program: *const Program, instruction:
     if (instruction.c == .invalid_register)
         return instruction.immediate;
 
-    if (@intFromEnum(instruction.c) >= self.registers.len)
+    if (@backingInt(instruction.c) >= self.registers.len)
         return RuntimeError.InvalidBytecode;
     if (instruction.immediate >= program.descriptor_arrays.len)
         return RuntimeError.InvalidBytecode;
 
-    const array_element = self.registers[@intFromEnum(instruction.c)];
+    const array_element = self.registers[@backingInt(instruction.c)];
     for (program.descriptor_arrays[instruction.immediate].candidates) |candidate| {
         if (candidate.array_element == array_element)
-            return @intFromEnum(candidate.resource);
+            return @backingInt(candidate.resource);
     }
 
     return RuntimeError.InvalidResource;
@@ -695,12 +695,12 @@ fn applyEdge(self: *Self, program: *const Program, edge_index: u32) RuntimeError
     const copies = program.copies[edge.first_copy..end];
     for (copies) |item| {
         for (0..item.components) |component| {
-            self.scratch[@as(usize, @intFromEnum(item.scratch_base)) + component] = self.registers[@as(usize, @intFromEnum(item.source)) + component];
+            self.scratch[@as(usize, @backingInt(item.scratch_base)) + component] = self.registers[@as(usize, @backingInt(item.source)) + component];
         }
     }
     for (copies) |item| {
         for (0..item.components) |component| {
-            self.registers[@as(usize, @intFromEnum(item.destination)) + component] = self.scratch[@as(usize, @intFromEnum(item.scratch_base)) + component];
+            self.registers[@as(usize, @backingInt(item.destination)) + component] = self.scratch[@as(usize, @backingInt(item.scratch_base)) + component];
         }
     }
 

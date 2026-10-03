@@ -130,7 +130,7 @@ fn rewriteEdge(
 }
 
 fn executionSize(dispatch_width: device.DispatchWidth) device.ExecutionSize {
-    return @enumFromInt(@intFromEnum(dispatch_width));
+    return @fromBackingInt(@intCast(@backingInt(dispatch_width)));
 }
 
 fn mapBuilderError(err: anyerror) Error {

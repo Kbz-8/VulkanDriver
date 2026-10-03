@@ -44,5 +44,5 @@ pub fn ioctlErrno(file: std.Io.File, io: std.Io, request: u32, arg: ?*anyopaque)
     } });
 
     const rc = result.device_io_control;
-    return if (rc < 0) @enumFromInt(-rc) else .SUCCESS;
+    return if (rc < 0) @fromBackingInt(@intCast(-rc)) else .SUCCESS;
 }

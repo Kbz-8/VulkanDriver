@@ -270,7 +270,7 @@ const Analysis = struct {
 
     fn instructionAccess(self: *Analysis, inst: instruction.Instruction) Error!Access {
         var access = Access{};
-        const lanes: usize = @intFromEnum(inst.execution_size);
+        const lanes: usize = @backingInt(inst.execution_size);
         const predicated = inst.predicate != null;
         switch (inst.operation) {
             .load_global_invocation_id, .load_num_workgroups => |op| try self.write(&access, op.destination, lanes, predicated),

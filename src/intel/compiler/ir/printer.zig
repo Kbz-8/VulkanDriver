@@ -101,7 +101,7 @@ pub fn allocPrint(allocator: std.mem.Allocator, program: *const program_ir.Progr
 }
 
 fn writeInstruction(program: *const program_ir.Program, writer: *std.Io.Writer, instruction: inst_ir.Instruction) !void {
-    try writer.print("[simd{d}] ", .{@intFromEnum(instruction.execution_size)});
+    try writer.print("[simd{d}] ", .{@backingInt(instruction.execution_size)});
     if (instruction.predicate) |predicate| {
         try writePredicate(program, writer, predicate);
         try writer.writeByte(' ');
@@ -265,7 +265,7 @@ fn writeEdge(program: *const program_ir.Program, writer: *std.Io.Writer, edge: i
     if (edge.arguments.len == 0)
         return;
 
-    const execution_size: device.ExecutionSize = @enumFromInt(@intFromEnum(program.dispatch_width));
+    const execution_size: device.ExecutionSize = @fromBackingInt(@intCast(@backingInt(program.dispatch_width)));
     try writer.writeByte('(');
     for (edge.arguments, 0..) |argument, index| {
         if (index != 0)
@@ -305,7 +305,7 @@ fn writeDestination(program: *const program_ir.Program, writer: *std.Io.Writer, 
 
 fn writeSourceRegion(writer: *std.Io.Writer, execution_size: device.ExecutionSize, register: operand.RegisterRef, region: operand.Region) !void {
     const byte_offset = registerByteOffset(register) + region.byte_offset;
-    const execution_width: u8 = @intFromEnum(execution_size);
+    const execution_width: u8 = @backingInt(execution_size);
     const is_default = region.vertical_stride == execution_width and
         region.width == execution_width and
         region.horizontal_stride == 1;

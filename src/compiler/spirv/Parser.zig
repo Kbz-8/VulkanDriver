@@ -57,7 +57,7 @@ pub const Iterator = struct {
             return error.TruncatedInstruction;
 
         const instruction: Instruction = .{
-            .opcode = @enumFromInt(@as(u16, @truncate(first_word))),
+            .opcode = @fromBackingInt(@intCast(@as(u16, @truncate(first_word)))),
             .operands = self.words[self.cursor + 1 .. self.cursor + word_count],
             .word_offset = self.cursor,
         };
@@ -284,5 +284,5 @@ fn validHeader(version: u32) [spirv.header_word_count]u32 {
 }
 
 fn instructionWord(opcode: spirv.Opcode, word_count: u16) u32 {
-    return (@as(u32, word_count) << 16) | @intFromEnum(opcode);
+    return (@as(u32, word_count) << 16) | @backingInt(opcode);
 }

@@ -83,8 +83,8 @@ pub fn setup(self: *Self, device: *SoftDevice) void {
         };
     }
     self.active_occlusion_queries = .empty;
-    self.compute = .init(device, &self.pipeline_states[@intFromEnum(vk.PipelineBindPoint.compute)]);
-    self.renderer = .init(device, &self.pipeline_states[@intFromEnum(vk.PipelineBindPoint.graphics)], &self.active_occlusion_queries);
+    self.compute = .init(device, &self.pipeline_states[@backingInt(vk.PipelineBindPoint.compute)]);
+    self.renderer = .init(device, &self.pipeline_states[@backingInt(vk.PipelineBindPoint.graphics)], &self.active_occlusion_queries);
 }
 
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {

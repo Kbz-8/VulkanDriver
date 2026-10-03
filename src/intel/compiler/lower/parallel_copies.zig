@@ -194,10 +194,10 @@ fn snapshotFlagSources(
             .constant => |constant| .{ .constant = constant },
             .dynamic => |predicate| value: {
                 const temporary = builder.addVirtualRegister(.{
-                    .size_bytes = @as(u32, @intFromEnum(execution_size)) * @sizeOf(u32),
+                    .size_bytes = @as(u32, @backingInt(execution_size)) * @sizeOf(u32),
                     .alignment_bytes = builder.program.device_info.grf_size_bytes,
                     .element_type = .u32,
-                    .lane_count = @intFromEnum(execution_size),
+                    .lane_count = @backingInt(execution_size),
                     .class = .temporary,
                 }) catch |err| return mapBuilderError(err);
                 const destination: operand.Destination = .{

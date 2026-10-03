@@ -109,7 +109,7 @@ pub const Region = struct {
     }
 
     pub fn contiguous(execution_size: device.ExecutionSize) Region {
-        const width: u8 = @intFromEnum(execution_size);
+        const width: u8 = @backingInt(execution_size);
         return .{
             .vertical_stride = width,
             .width = width,

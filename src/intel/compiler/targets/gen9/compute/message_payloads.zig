@@ -91,7 +91,7 @@ fn addPayloadRegister(builder: *Builder, execution_size: device.ExecutionSize, r
         .size_bytes = @as(u32, register_count) * 32,
         .alignment_bytes = 32,
         .element_type = .u32,
-        .lane_count = @intFromEnum(execution_size),
+        .lane_count = @backingInt(execution_size),
         .class = .temporary,
         .spillable = false,
     }) catch |err| return mapBuilderError(err);

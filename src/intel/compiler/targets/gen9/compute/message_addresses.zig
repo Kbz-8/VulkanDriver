@@ -63,7 +63,7 @@ pub fn run(program: *program_ir.Program) Error!void {
                 .physical_grf,
                 .architecture,
                 => {
-                    const execution_width: u32 = @intFromEnum(inst.execution_size);
+                    const execution_width: u32 = @backingInt(inst.execution_size);
                     const size_bytes = execution_width * @sizeOf(u32);
                     const address_register = builder.addVirtualRegister(.{
                         .size_bytes = size_bytes,

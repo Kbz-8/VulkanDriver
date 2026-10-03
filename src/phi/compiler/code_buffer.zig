@@ -45,13 +45,13 @@ pub const CodeBuffer = struct {
     }
 
     pub fn createLabel(self: *CodeBuffer) std.mem.Allocator.Error!Label {
-        const label: Label = @enumFromInt(self.label_offsets.items.len);
+        const label: Label = @fromBackingInt(@intCast(self.label_offsets.items.len));
         try self.label_offsets.append(self.allocator, null);
         return label;
     }
 
     pub fn bindLabel(self: *CodeBuffer, label: Label) Error!void {
-        const index = @intFromEnum(label);
+        const index = @backingInt(label);
         if (index >= self.label_offsets.items.len or self.label_offsets.items[index] != null)
             return error.EncodingFailed;
         self.label_offsets.items[index] = self.offset();

@@ -52,7 +52,7 @@ pub const ShaderModule = @import("ShaderModule.zig");
 pub const SurfaceKHR = @import("wsi/SurfaceKHR.zig");
 pub const SwapchainKHR = @import("wsi/SwapchainKHR.zig");
 
-pub const vulkan_vendor_id: i32 = @intFromEnum(vk.VendorId.ape);
+pub const vulkan_vendor_id: i32 = @backingInt(vk.VendorId.ape);
 
 /// Default driver name
 pub const driver_name = "Unnamed Ape Driver";

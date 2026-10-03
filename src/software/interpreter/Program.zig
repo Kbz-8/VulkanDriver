@@ -301,10 +301,10 @@ const Lowerer = struct {
         const kind = layout.kind;
         const end = std.math.add(usize, self.register_count, components) catch return CompileError.TooManyRegisters;
 
-        if (end > @as(usize, @intFromEnum(bc.Register.invalid_register)) + 1)
+        if (end > @as(usize, @backingInt(bc.Register.invalid_register)) + 1)
             return CompileError.TooManyRegisters;
 
-        const allocated: bc.Span = .{ .base = @enumFromInt(self.register_count), .components = components, .kind = kind };
+        const allocated: bc.Span = .{ .base = @fromBackingInt(@intCast(self.register_count)), .components = components, .kind = kind };
         self.register_count = end;
         return allocated;
     }
@@ -520,7 +520,7 @@ const Lowerer = struct {
                 const dst = result orelse return CompileError.InvalidOperation;
                 const byte_offset = try self.bufferOffset(op.byte_offset);
                 _ = try self.workgroupVariable(op.variable);
-                try self.emit(.load_workgroup, dst.components, dst.base, byte_offset, .invalid_register, .invalid_register, @intFromEnum(op.variable));
+                try self.emit(.load_workgroup, dst.components, dst.base, byte_offset, .invalid_register, .invalid_register, @backingInt(op.variable));
             },
             .store_workgroup => |op| {
                 if (result != null)
@@ -529,7 +529,7 @@ const Lowerer = struct {
                 const src = try self.span(op.value);
                 const byte_offset = try self.bufferOffset(op.byte_offset);
                 _ = try self.workgroupVariable(op.variable);
-                try self.emit(.store_workgroup, src.components, src.base, byte_offset, .invalid_register, .invalid_register, @intFromEnum(op.variable));
+                try self.emit(.store_workgroup, src.components, src.base, byte_offset, .invalid_register, .invalid_register, @backingInt(op.variable));
             },
             .image_read => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;
@@ -540,7 +540,7 @@ const Lowerer = struct {
                     dst.components != 4 or coordinate.kind != .signed_integer or coordinate.components != 2)
                     return CompileError.InvalidOperation;
 
-                try self.emit(if (dst.kind == .floating) .image_read_float else .image_read, 4, dst.base, coordinate.base, .invalid_register, .invalid_register, @intFromEnum(op.resource));
+                try self.emit(if (dst.kind == .floating) .image_read_float else .image_read, 4, dst.base, coordinate.base, .invalid_register, .invalid_register, @backingInt(op.resource));
             },
             .image_sample_explicit_lod => |op| {
                 try self.lowerImageSample(
@@ -578,7 +578,7 @@ const Lowerer = struct {
                     value.components != 4 or coordinate.kind != .signed_integer or coordinate.components != 2)
                     return CompileError.InvalidOperation;
 
-                try self.emit(if (value.kind == .floating) .image_write_float else .image_write, 4, value.base, coordinate.base, .invalid_register, .invalid_register, @intFromEnum(op.resource));
+                try self.emit(if (value.kind == .floating) .image_write_float else .image_write, 4, value.base, coordinate.base, .invalid_register, .invalid_register, @backingInt(op.resource));
             },
             .control_barrier => {
                 if (result != null)
@@ -598,7 +598,7 @@ const Lowerer = struct {
 
                 const metadata_index = try u32Index(self.array_lengths.items.len);
                 try self.array_lengths.append(self.allocator, .{
-                    .resource = @intFromEnum(op.resource),
+                    .resource = @backingInt(op.resource),
                     .stride = op.stride,
                 });
 
@@ -681,7 +681,7 @@ const Lowerer = struct {
             return .{ descriptor_index.base, try self.addDescriptorArray(resource) };
         }
 
-        return .{ .invalid_register, @intFromEnum(resource_id) };
+        return .{ .invalid_register, @backingInt(resource_id) };
     }
 
     fn addDescriptorArray(self: *Lowerer, base: ResourceBinding) !u32 {
@@ -798,12 +798,12 @@ const Lowerer = struct {
                 .destination = destination.base,
                 .source = source.base,
                 .components = source.components,
-                .scratch_base = @enumFromInt(scratch),
+                .scratch_base = @fromBackingInt(@intCast(scratch)),
             });
             scratch += source.components;
         }
 
-        if (scratch > @intFromEnum(bc.Register.invalid_register))
+        if (scratch > @backingInt(bc.Register.invalid_register))
             return CompileError.TooManyRegisters;
 
         self.scratch_count = @max(self.scratch_count, scratch);
@@ -814,7 +814,7 @@ const Lowerer = struct {
 
         const index = try u32Index(self.edges.items.len);
         try self.edges.append(self.allocator, .{
-            .target_block = @intFromEnum(edge.target),
+            .target_block = @backingInt(edge.target),
             .first_copy = first,
             .copy_count = @intCast(copy_count),
         });
@@ -923,10 +923,10 @@ fn compareOpcode(op: inst_ir.CompareOpcode, kind: bc.ValueKind) !bc.Opcode {
 }
 
 fn offset(base: bc.Register, component: usize) !bc.Register {
-    const value = @as(usize, @intFromEnum(base)) + component;
-    if (value > @intFromEnum(bc.Register.invalid_register))
+    const value = @as(usize, @backingInt(base)) + component;
+    if (value > @backingInt(bc.Register.invalid_register))
         return CompileError.TooManyRegisters;
-    return @enumFromInt(value);
+    return @fromBackingInt(@intCast(value));
 }
 
 fn u32Index(value: usize) !u32 {

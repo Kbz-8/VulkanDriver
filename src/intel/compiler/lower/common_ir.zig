@@ -122,17 +122,17 @@ const LoweringState = struct {
 
     fn addRegister(self: *LoweringState, data_type: operand.DataType, class: operand.RegisterClass, name: ?[]const u8) Error!ids.VirtualRegisterId {
         return self.builder.addVirtualRegister(.{
-            .size_bytes = @as(u32, data_type.sizeBytes()) * @intFromEnum(self.lowerer.options.dispatch_width),
+            .size_bytes = @as(u32, data_type.sizeBytes()) * @backingInt(self.lowerer.options.dispatch_width),
             .alignment_bytes = self.lowerer.device_info.grf_size_bytes,
             .element_type = data_type,
-            .lane_count = @intFromEnum(self.lowerer.options.dispatch_width),
+            .lane_count = @backingInt(self.lowerer.options.dispatch_width),
             .class = class,
             .name = name,
         }) catch |err| return mapProgramError(err);
     }
 
     fn executionSize(self: *const LoweringState) device.ExecutionSize {
-        return @enumFromInt(@intFromEnum(self.lowerer.options.dispatch_width));
+        return @fromBackingInt(@intCast(@backingInt(self.lowerer.options.dispatch_width)));
     }
 
     fn registerSource(self: *const LoweringState, register_id: ids.VirtualRegisterId, data_type: operand.DataType) operand.Source {

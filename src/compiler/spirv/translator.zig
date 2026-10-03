@@ -351,7 +351,7 @@ const Context = struct {
                 try expectOperandCount(operands, 3);
                 break :blk try self.builder.internType(.{
                     .pointer = .{
-                        .address_space = try translateStorageClass(@enumFromInt(operands[1])),
+                        .address_space = try translateStorageClass(@fromBackingInt(@intCast(operands[1]))),
                         .pointee_type = try self.translateType(operands[2]),
                     },
                 });
@@ -723,7 +723,7 @@ fn collectDeclarations(context: *Context) !void {
 fn collectDecoration(context: *Context, operands: []const u32) !void {
     if (operands.len < 2) return TranslationError.InvalidInstruction;
     const index = try context.idIndex(operands[0]);
-    const decoration: spirv.Decoration = @enumFromInt(operands[1]);
+    const decoration: spirv.Decoration = @fromBackingInt(@intCast(operands[1]));
     switch (decoration) {
         .spec_id => {
             try expectOperandCount(operands, 3);
@@ -777,7 +777,7 @@ fn collectMemberDecoration(context: *Context, operands: []const u32) !void {
     if (operands.len < 3)
         return TranslationError.InvalidInstruction;
 
-    const decoration: spirv.Decoration = @enumFromInt(operands[2]);
+    const decoration: spirv.Decoration = @fromBackingInt(@intCast(operands[2]));
     if (decoration != .offset) {
         if (decoration != .built_in and decoration != .location and decoration != .component and decoration != .index)
             return;
@@ -820,7 +820,7 @@ fn translateInterfaces(context: *Context, interface_ids: []const u32) !void {
         if (variable.operands.len < 3 or variable.operands.len > 4)
             return TranslationError.InvalidInstruction;
 
-        const storage_class: spirv.StorageClass = @enumFromInt(variable.operands[2]);
+        const storage_class: spirv.StorageClass = @fromBackingInt(@intCast(variable.operands[2]));
         const direction: ir.module.InterfaceDirection = switch (storage_class) {
             .input => .input,
             .output => .output,
@@ -878,7 +878,7 @@ fn translateResources(context: *Context) !void {
         if (variable.operands.len < 3 or variable.operands.len > 4)
             return TranslationError.InvalidInstruction;
 
-        const storage_class: spirv.StorageClass = @enumFromInt(variable.operands[2]);
+        const storage_class: spirv.StorageClass = @fromBackingInt(@intCast(variable.operands[2]));
         if (storage_class != .uniform and storage_class != .storage_buffer and storage_class != .uniform_constant)
             continue;
 
@@ -1000,7 +1000,7 @@ fn translatePushConstantVariables(context: *Context) !void {
         const variable = optional_variable orelse continue;
         if (variable.operands.len < 3 or variable.operands.len > 4)
             return TranslationError.InvalidInstruction;
-        if (variable.operands[2] != @intFromEnum(spirv.StorageClass.push_constant))
+        if (variable.operands[2] != @backingInt(spirv.StorageClass.push_constant))
             continue;
         if (variable.operands.len != 3)
             return TranslationError.UnsupportedOpcode;
@@ -1026,7 +1026,7 @@ fn translateWorkgroupVariables(context: *Context) !void {
         if (variable.operands.len < 3 or variable.operands.len > 4)
             return TranslationError.InvalidInstruction;
 
-        const storage_class: spirv.StorageClass = @enumFromInt(variable.operands[2]);
+        const storage_class: spirv.StorageClass = @fromBackingInt(@intCast(variable.operands[2]));
         if (storage_class != .workgroup)
             continue;
         if (variable.operands.len != 3)
@@ -1072,7 +1072,7 @@ fn findEntryPoint(parser: Parser, requested_name: []const u8, requested_stage: ?
         if (!try Parser.literalStringEquals(instruction.operands[2 .. 2 + string_words], requested_name))
             continue;
 
-        const model: spirv.ExecutionModel = @enumFromInt(instruction.operands[0]);
+        const model: spirv.ExecutionModel = @fromBackingInt(@intCast(instruction.operands[0]));
         if (requested_stage) |stage| {
             const candidate_stage = translateStage(model) catch |err| switch (err) {
                 TranslationError.UnsupportedExecutionModel => continue,
@@ -1106,7 +1106,7 @@ fn applyExecutionModes(context: *Context, entry_function: u32) !void {
         if (instruction.operands[0] != entry_function)
             continue;
 
-        const mode: spirv.ExecutionMode = @enumFromInt(instruction.operands[1]);
+        const mode: spirv.ExecutionMode = @fromBackingInt(@intCast(instruction.operands[1]));
 
         switch (mode) {
             .early_fragment_tests => context.module.execution_modes.early_fragment_tests = true,
@@ -1131,7 +1131,7 @@ fn applyExecutionModes(context: *Context, entry_function: u32) !void {
     }
 
     for (context.decorations, 0..) |decoration, spv_id| {
-        if (decoration.builtin != @intFromEnum(spirv.Builtin.workgroup_size))
+        if (decoration.builtin != @backingInt(spirv.Builtin.workgroup_size))
             continue;
         const definition = context.value_defs[spv_id] orelse continue;
         if (definition.opcode != .spec_constant_composite and definition.opcode != .constant_composite)
@@ -1182,7 +1182,7 @@ fn validatePrivateScope(context: *Context) !void {
     if (function_count <= 1) return;
     for (context.variable_defs) |definition| {
         const variable = definition orelse continue;
-        if (variable.operands[2] == @intFromEnum(spirv.StorageClass.private)) {
+        if (variable.operands[2] == @backingInt(spirv.StorageClass.private)) {
             std.log.scoped(.spirv_translator).warn("Private variable %{d} requires invocation-scoped memory in a multi-function module", .{variable.operands[1]});
             return TranslationError.UnsupportedPrivateCrossFunction;
         }
@@ -1230,13 +1230,13 @@ fn collectFunctionLocals(context: *Context, spv_function: u32) !void {
             break;
         if (instruction.opcode != .variable)
             continue;
-        const is_private = instruction.operands.len >= 3 and instruction.operands[2] == @intFromEnum(spirv.StorageClass.private);
+        const is_private = instruction.operands.len >= 3 and instruction.operands[2] == @backingInt(spirv.StorageClass.private);
         if (!active and !is_private)
             continue;
 
         if (instruction.operands.len < 3 or instruction.operands.len > 4)
             return TranslationError.InvalidInstruction;
-        const storage_class: spirv.StorageClass = @enumFromInt(instruction.operands[2]);
+        const storage_class: spirv.StorageClass = @fromBackingInt(@intCast(instruction.operands[2]));
         if (storage_class != .function and storage_class != .private)
             return TranslationError.UnsupportedOpcode;
 
@@ -1304,7 +1304,7 @@ fn predeclareFunction(context: *Context, spv_function: u32, function: ir.id.Func
                 const translated_type = if (parameter_type.opcode == .type_pointer) blk: {
                     try expectOperandCount(parameter_type.operands, 3);
 
-                    if (parameter_type.operands[1] != @intFromEnum(spirv.StorageClass.function))
+                    if (parameter_type.operands[1] != @backingInt(spirv.StorageClass.function))
                         break :blk try context.translateType(parameter_type_id);
 
                     context.function_parameter_pointees[try context.idIndex(instruction.operands[1])] = parameter_type.operands[2];
@@ -1452,7 +1452,7 @@ fn unsupportedStoreDestination(context: *Context, destination: u32) TranslationE
         }
     }
     if (storage) |value| {
-        const name = std.enums.tagName(spirv.StorageClass, @enumFromInt(value)) orelse "unknown";
+        const name = std.enums.tagName(spirv.StorageClass, @fromBackingInt(@intCast(value))) orelse "unknown";
         std.log.scoped(.spirv_translator).warn("unsupported OpStore destination %{d}, storage class {s} ({d})", .{ destination, name, value });
     } else {
         std.log.scoped(.spirv_translator).warn("unsupported OpStore destination %{d}, storage class unknown", .{destination});
@@ -2467,7 +2467,7 @@ fn translatePushConstantAccessChain(context: *Context, block: ir.id.BlockId, ope
     if (result_pointer.opcode != .type_pointer)
         return TranslationError.InvalidInstruction;
     try expectOperandCount(result_pointer.operands, 3);
-    if (result_pointer.operands[1] != @intFromEnum(spirv.StorageClass.push_constant) or result_pointer.operands[2] != current_type)
+    if (result_pointer.operands[1] != @backingInt(spirv.StorageClass.push_constant) or result_pointer.operands[2] != current_type)
         return TranslationError.InvalidInstruction;
 
     const result_index = try context.idIndex(operands[1]);
@@ -2522,7 +2522,7 @@ fn translateWorkgroupAccessChain(context: *Context, block: ir.id.BlockId, operan
     if (result_pointer.opcode != .type_pointer)
         return TranslationError.InvalidInstruction;
     try expectOperandCount(result_pointer.operands, 3);
-    if (result_pointer.operands[1] != @intFromEnum(spirv.StorageClass.workgroup) or result_pointer.operands[2] != current_type)
+    if (result_pointer.operands[1] != @backingInt(spirv.StorageClass.workgroup) or result_pointer.operands[2] != current_type)
         return TranslationError.InvalidInstruction;
 
     const result_index = try context.idIndex(operands[1]);
@@ -4050,7 +4050,7 @@ test "SPIR-V: unknown opcode reports an error without formatting the enum" {
     const words = try assembleSpirv(std.testing.allocator, assembly);
     defer std.testing.allocator.free(words);
 
-    const nop_word: u32 = (@as(u32, 1) << 16) | @intFromEnum(spirv.Opcode.nop);
+    const nop_word: u32 = (@as(u32, 1) << 16) | @backingInt(spirv.Opcode.nop);
     for (words[spirv.header_word_count..]) |*word| {
         if (word.* != nop_word)
             continue;

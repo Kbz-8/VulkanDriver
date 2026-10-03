@@ -209,7 +209,7 @@ pub fn registerHostMemory(self: *Self, memory: []u8) VkError!u64 {
         memory.ptr,
         memory.len,
         0,
-        @intFromEnum(scif.Prot.read) | @intFromEnum(scif.Prot.write),
+        @backingInt(scif.Prot.read) | @backingInt(scif.Prot.write),
         0,
     );
     if (offset < 0) {

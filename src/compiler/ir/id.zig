@@ -28,11 +28,11 @@ pub fn Id(comptime Tag: type) type {
 
         pub fn fromIndex(item_index: usize) @This() {
             std.debug.assert(item_index <= std.math.maxInt(u32));
-            return @enumFromInt(item_index);
+            return @fromBackingInt(@intCast(item_index));
         }
 
         pub fn index(self: @This()) usize {
-            return @intFromEnum(self);
+            return @backingInt(self);
         }
     };
 }
