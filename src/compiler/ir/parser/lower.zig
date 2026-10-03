@@ -212,6 +212,13 @@ fn lowerOperation(
             const operand = resolveValue(values, printed_operand) orelse return error.UnknownValue;
             break :blk .{ .operation = .{ .bitcast = operand }, .inferred_type = module.typeOf(operand) };
         },
+        .convert => |op| blk: {
+            const operand = resolveValue(values, op.operand) orelse return error.UnknownValue;
+            break :blk .{
+                .operation = .{ .convert = .{ .opcode = op.opcode, .operand = operand } },
+                .inferred_type = null,
+            };
+        },
         .composite_construct => |printed_elements| blk: {
             var elements: std.ArrayList(ids.ValueId) = .empty;
             var element_types: std.ArrayList(ids.TypeId) = .empty;
@@ -353,6 +360,26 @@ fn lowerOperation(
                         .sampler = sampler,
                         .coordinate = coordinate,
                         .lod = lod,
+                        .dimension = op.dimension,
+                        .arrayed = op.arrayed,
+                    },
+                },
+                .inferred_type = null,
+            };
+        },
+        .image_sample_implicit_lod => |op| blk: {
+            const image = resources.get(op.image_name) orelse return error.UnknownResource;
+            const sampler = resources.get(op.sampler_name) orelse return error.UnknownResource;
+            const coordinate = resolveValue(values, op.coordinate) orelse return error.UnknownValue;
+
+            break :blk .{
+                .operation = .{
+                    .image_sample_implicit_lod = .{
+                        .image = image,
+                        .sampler = sampler,
+                        .coordinate = coordinate,
+                        .dimension = op.dimension,
+                        .arrayed = op.arrayed,
                     },
                 },
                 .inferred_type = null,

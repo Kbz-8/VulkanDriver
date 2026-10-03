@@ -43,9 +43,14 @@ pub const RegisterInit = struct {
     value: u32,
 };
 
+pub const ImageDimension = ir.types.ImageDimension;
+
 pub const ImageSamplerPair = struct {
     image: ids.ResourceId,
     sampler: ids.ResourceId,
+    dimension: ImageDimension,
+    arrayed: bool,
+    destination_kind: bc.ValueKind,
 };
 
 pub const DescriptorCandidate = struct {
@@ -419,6 +424,18 @@ const Lowerer = struct {
 
                 try self.emitCopy(dst, src);
             },
+            .convert => |op| {
+                const dst = result orelse return CompileError.InvalidOperation;
+                const src = try self.span(op.operand);
+                if (dst.kind != .floating or dst.components != src.components)
+                    return CompileError.InvalidOperation;
+
+                const opcode: bc.Opcode = switch (op.opcode) {
+                    .signed_to_float => if (src.kind == .signed_integer) .signed_to_float else return CompileError.InvalidOperation,
+                    .unsigned_to_float => if (src.kind == .unsigned_integer) .unsigned_to_float else return CompileError.InvalidOperation,
+                };
+                try self.emit(opcode, dst.components, dst.base, src.base, .invalid_register, .invalid_register, 0);
+            },
             .composite_construct => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;
 
@@ -526,23 +543,28 @@ const Lowerer = struct {
                 try self.emit(if (dst.kind == .floating) .image_read_float else .image_read, 4, dst.base, coordinate.base, .invalid_register, .invalid_register, @intFromEnum(op.resource));
             },
             .image_sample_explicit_lod => |op| {
-                const dst = result orelse return CompileError.InvalidOperation;
-                const coordinate = try self.span(op.coordinate);
-                const lod = try self.span(op.lod);
-                _ = try self.sampledImage(op.image);
-                _ = try self.sampler(op.sampler);
-
-                if (dst.kind != .floating or dst.components != 4 or
-                    coordinate.kind != .floating or coordinate.components != 2 or
-                    lod.kind != .floating or lod.components != 1)
-                    return CompileError.InvalidOperation;
-
-                const pair_index = try u32Index(self.image_sampler_pairs.items.len);
-                try self.image_sampler_pairs.append(self.allocator, .{
-                    .image = op.image,
-                    .sampler = op.sampler,
-                });
-                try self.emit(.image_sample_explicit_lod, 4, dst.base, coordinate.base, lod.base, .invalid_register, pair_index);
+                try self.lowerImageSample(
+                    result orelse return CompileError.InvalidOperation,
+                    op.image,
+                    op.sampler,
+                    op.coordinate,
+                    op.lod,
+                    op.dimension,
+                    op.arrayed,
+                    .image_sample_explicit_lod,
+                );
+            },
+            .image_sample_implicit_lod => |op| {
+                try self.lowerImageSample(
+                    result orelse return CompileError.InvalidOperation,
+                    op.image,
+                    op.sampler,
+                    op.coordinate,
+                    null,
+                    op.dimension,
+                    op.arrayed,
+                    .image_sample_implicit_lod,
+                );
             },
             .image_write => |op| {
                 if (result != null)
@@ -583,6 +605,46 @@ const Lowerer = struct {
                 try self.emit(.array_length, 1, dst.base, byte_offset, .invalid_register, .invalid_register, metadata_index);
             },
         }
+    }
+
+    fn lowerImageSample(
+        self: *Lowerer,
+        dst: bc.Span,
+        image: ids.ResourceId,
+        sampler_id: ids.ResourceId,
+        coordinate_id: ids.ValueId,
+        lod_id: ?ids.ValueId,
+        dimension: ImageDimension,
+        arrayed: bool,
+        opcode: bc.Opcode,
+    ) !void {
+        if (dimension == .cube and arrayed)
+            return CompileError.UnsupportedOperation;
+
+        const coordinate = try self.span(coordinate_id);
+        _ = try self.sampledImage(image);
+        _ = try self.sampler(sampler_id);
+
+        if ((dst.kind != .floating and dst.kind != .signed_integer and dst.kind != .unsigned_integer) or
+            dst.components != 4 or coordinate.kind != .floating or
+            coordinate.components != imageCoordinateComponents(dimension, arrayed))
+            return CompileError.InvalidOperation;
+
+        const lod = if (lod_id) |id| try self.span(id) else null;
+        if (lod) |lod_span| {
+            if (lod_span.kind != .floating or lod_span.components != 1)
+                return CompileError.InvalidOperation;
+        }
+
+        const pair_index = try u32Index(self.image_sampler_pairs.items.len);
+        try self.image_sampler_pairs.append(self.allocator, .{
+            .image = image,
+            .sampler = sampler_id,
+            .dimension = dimension,
+            .arrayed = arrayed,
+            .destination_kind = dst.kind,
+        });
+        try self.emit(opcode, 4, dst.base, coordinate.base, if (lod) |lod_span| lod_span.base else .invalid_register, .invalid_register, pair_index);
     }
 
     fn bufferOffset(self: *const Lowerer, id: ids.ValueId) !bc.Register {
@@ -783,6 +845,15 @@ const Lowerer = struct {
         return self.interfaces[id.index()];
     }
 };
+
+pub fn imageCoordinateComponents(dimension: ImageDimension, arrayed: bool) u8 {
+    const dimension_components: u8 = switch (dimension) {
+        .one_d => 1,
+        .two_d => 2,
+        .three_d, .cube => 3,
+    };
+    return dimension_components + @intFromBool(arrayed);
+}
 
 fn sameDescriptorArray(a: ResourceBinding, b: ResourceBinding) bool {
     return a.kind == b.kind and a.set == b.set and a.binding == b.binding;

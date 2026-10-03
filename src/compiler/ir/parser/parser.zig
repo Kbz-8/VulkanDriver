@@ -49,6 +49,11 @@ const ParsedOperation = ast.ParsedOperation;
 const Token = Lexer.Token;
 const TokenTag = Lexer.TokenTag;
 
+const ParsedImageOptions = struct {
+    dimension: type_ir.ImageDimension,
+    arrayed: bool,
+};
+
 const ParsedDeclaration = union(enum) {
     interface: ParsedInterface,
     resource: ParsedResource,
@@ -369,6 +374,12 @@ const Parser = struct {
         if (std.mem.eql(u8, name, "bitcast"))
             return .{ .bitcast = try self.parseValueRef() };
 
+        if (std.mem.eql(u8, name, "convert")) {
+            const opcode_name = (try self.expect(.identifier)).text;
+            const opcode = std.meta.stringToEnum(inst_ir.ConvertOpcode, opcode_name) orelse return Error.InvalidOpcode;
+            return .{ .convert = .{ .opcode = opcode, .operand = try self.parseValueRef() } };
+        }
+
         if (std.mem.eql(u8, name, "composite_construct"))
             return .{ .composite_construct = try self.parseTrailingValueList() };
 
@@ -471,13 +482,38 @@ const Parser = struct {
 
             const coordinate = try self.parseValueRef();
             try self.expectDiscard(.comma);
+            const lod = try self.parseValueRef();
+            const options = try self.parseImageOptions();
 
             return .{
                 .image_sample_explicit_lod = .{
                     .image_name = image_name,
                     .sampler_name = sampler_name,
                     .coordinate = coordinate,
-                    .lod = try self.parseValueRef(),
+                    .lod = lod,
+                    .dimension = options.dimension,
+                    .arrayed = options.arrayed,
+                },
+            };
+        }
+
+        if (std.mem.eql(u8, name, "image_sample_implicit_lod")) {
+            const image_name = (try self.expect(.at_name)).text;
+            try self.expectDiscard(.comma);
+
+            const sampler_name = (try self.expect(.at_name)).text;
+            try self.expectDiscard(.comma);
+
+            const coordinate = try self.parseValueRef();
+            const options = try self.parseImageOptions();
+
+            return .{
+                .image_sample_implicit_lod = .{
+                    .image_name = image_name,
+                    .sampler_name = sampler_name,
+                    .coordinate = coordinate,
+                    .dimension = options.dimension,
+                    .arrayed = options.arrayed,
                 },
             };
         }
@@ -519,6 +555,27 @@ const Parser = struct {
         }
 
         return Error.InvalidOpcode;
+    }
+
+    fn parseImageOptions(self: *Parser) !ParsedImageOptions {
+        if (!try self.consume(.comma))
+            return .{ .dimension = .two_d, .arrayed = false };
+
+        try self.expectIdentifier("dimension");
+        const dimension_name = (try self.expect(.identifier)).text;
+        const dimension = std.meta.stringToEnum(type_ir.ImageDimension, dimension_name) orelse return Error.InvalidOpcode;
+
+        try self.expectDiscard(.comma);
+        try self.expectIdentifier("arrayed");
+        const arrayed_name = (try self.expect(.identifier)).text;
+        const arrayed = if (std.mem.eql(u8, arrayed_name, "true"))
+            true
+        else if (std.mem.eql(u8, arrayed_name, "false"))
+            false
+        else
+            return Error.UnexpectedToken;
+
+        return .{ .dimension = dimension, .arrayed = arrayed };
     }
 
     fn parseOptionalDescriptorIndex(self: *Parser) !?ValueRef {
@@ -969,6 +1026,7 @@ test "Parser: resources and buffer operations" {
         \\     %descriptor_index: constant u32 = 2
         \\     %value: constant u32 = 7
         \\     %coordinate: constant vec2[f32] = null
+        \\     %arrayed_coordinate: constant vec3[f32] = null
         \\     %lod: constant f32 = 0.0
         \\
         \\     fn @main() -> void
@@ -979,7 +1037,9 @@ test "Parser: resources and buffer operations" {
         \\             %dynamic_storage_value: u32 = load_buffer @storage, %offset, descriptor_index %descriptor_index
         \\             store_buffer @storage, %offset, %value, descriptor_index %descriptor_index
         \\             %length: u32 = array_length @storage, %offset, stride 4, descriptor_index %descriptor_index
-        \\             %sample: vec4[f32] = image_sample_explicit_lod @texture, @linear_sampler, %coordinate, %lod
+        \\             %converted: f32 = convert unsigned_to_float %value
+        \\             %sample: vec4[f32] = image_sample_explicit_lod @texture, @linear_sampler, %coordinate, %lod, dimension two_d, arrayed false
+        \\             %implicit_sample: vec4[f32] = image_sample_implicit_lod @texture, @linear_sampler, %arrayed_coordinate, dimension two_d, arrayed true
         \\             return
         \\     }
         \\ }
@@ -1001,7 +1061,9 @@ test "Parser: resources and buffer operations" {
     try std.testing.expect(std.mem.indexOf(u8, printed, "%dynamic_storage_value: u32 = load_buffer @storage, %offset, descriptor_index %descriptor_index") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "store_buffer @storage, %offset, %value, descriptor_index %descriptor_index") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "%length: u32 = array_length @storage, %offset, stride 4, descriptor_index %descriptor_index") != null);
-    try std.testing.expect(std.mem.indexOf(u8, printed, "%sample: vec4[f32] = image_sample_explicit_lod @texture, @linear_sampler, %coordinate, %lod") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%converted: f32 = convert unsigned_to_float %value") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%sample: vec4[f32] = image_sample_explicit_lod @texture, @linear_sampler, %coordinate, %lod, dimension two_d, arrayed false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%implicit_sample: vec4[f32] = image_sample_implicit_lod @texture, @linear_sampler, %arrayed_coordinate, dimension two_d, arrayed true") != null);
 
     var reparsed = try parseString(std.testing.allocator, printed);
     defer reparsed.deinit();

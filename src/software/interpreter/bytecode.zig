@@ -68,6 +68,7 @@ pub const Opcode = enum(u16) {
     image_read,
     image_read_float,
     image_sample_explicit_lod,
+    image_sample_implicit_lod,
     image_write,
     image_write_float,
     integer_add,
@@ -88,10 +89,12 @@ pub const Opcode = enum(u16) {
     shift_left,
     signed_divide,
     signed_modulo,
+    signed_to_float,
     store_buffer,
     store_workgroup,
     unsigned_divide,
     unsigned_modulo,
+    unsigned_to_float,
     vector_times_scalar,
 };
 

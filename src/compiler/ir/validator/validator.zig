@@ -39,6 +39,12 @@ const IntegerShape = struct {
     components: u8,
 };
 
+const ConversionIntegerShape = struct {
+    bits: u16,
+    signedness: type_ir.Signedness,
+    components: u8,
+};
+
 pub const Error = ValidationError || std.mem.Allocator.Error;
 
 pub fn validate(module: *const module_ir.Module) Error!void {
@@ -320,6 +326,21 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             if (result_type == null)
                 return ValidationError.WrongResultPresence;
         },
+        .convert => |op| {
+            const operand_type = try operandType(module, function_id, op.operand);
+            const operand_shape = conversionIntegerShape(module, operand_type) orelse return ValidationError.WrongOperandType;
+            const expected_signedness: type_ir.Signedness = switch (op.opcode) {
+                .signed_to_float => .signed,
+                .unsigned_to_float => .unsigned,
+            };
+            if (operand_shape.bits != 32 or operand_shape.signedness != expected_signedness)
+                return ValidationError.WrongOperandType;
+
+            const result = result_type orelse return ValidationError.WrongResultPresence;
+            const result_components = floatComponentCount(module, result, 32) orelse return ValidationError.WrongResultType;
+            if (result_components != operand_shape.components)
+                return ValidationError.WrongResultType;
+        },
         .composite_construct => |op| {
             const result = result_type orelse return ValidationError.WrongResultPresence;
             const ty = module.types.get(result) orelse return ValidationError.InvalidType;
@@ -456,36 +477,30 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                 return ValidationError.WrongResultPresence;
         },
         .image_sample_explicit_lod => |op| {
-            const image = module.resources.get(op.image) orelse return ValidationError.InvalidValue;
-            if (image.kind != .sampled_image)
-                return ValidationError.WrongResourceKind;
-
-            const sampler = module.resources.get(op.sampler) orelse return ValidationError.InvalidValue;
-            if (sampler.kind != .sampler)
-                return ValidationError.WrongResourceKind;
-
-            const image_type = module.types.get(image.type) orelse return ValidationError.InvalidType;
-            const sampled_type = switch (image_type.*) {
-                .resource_handle => |handle| blk: {
-                    if (handle.kind != .sampled_image)
-                        return ValidationError.WrongResourceKind;
-                    break :blk handle.data_type orelse return ValidationError.WrongOperandType;
-                },
-                else => image.type,
-            };
-            if (!isFloat(module, sampled_type, 32))
-                return ValidationError.WrongOperandType;
-
-            if (!isFloatVector(module, try operandType(module, function_id, op.coordinate), 32, 2))
-                return ValidationError.WrongOperandType;
+            try validateImageSample(
+                module,
+                function_id,
+                result_type,
+                op.image,
+                op.sampler,
+                op.coordinate,
+                op.dimension,
+                op.arrayed,
+            );
 
             if (!isFloat(module, try operandType(module, function_id, op.lod), 32))
                 return ValidationError.WrongOperandType;
-
-            const result = result_type orelse return ValidationError.WrongResultPresence;
-            if (!isFloatVector(module, result, 32, 4))
-                return ValidationError.WrongResultType;
         },
+        .image_sample_implicit_lod => |op| try validateImageSample(
+            module,
+            function_id,
+            result_type,
+            op.image,
+            op.sampler,
+            op.coordinate,
+            op.dimension,
+            op.arrayed,
+        ),
         .image_write => |op| {
             if (result_type != null)
                 return ValidationError.WrongResultPresence;
@@ -541,6 +556,58 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             if (!isArrayLengthResultType(module, result))
                 return ValidationError.WrongResultType;
         },
+    }
+}
+
+fn validateImageSample(
+    module: *const module_ir.Module,
+    function_id: ids.FunctionId,
+    result_type: ?ids.TypeId,
+    image_id: ids.ResourceId,
+    sampler_id: ids.ResourceId,
+    coordinate_id: ids.ValueId,
+    dimension: type_ir.ImageDimension,
+    arrayed: bool,
+) ValidationError!void {
+    const image = module.resources.get(image_id) orelse return ValidationError.InvalidValue;
+    if (image.kind != .sampled_image)
+        return ValidationError.WrongResourceKind;
+
+    const sampler = module.resources.get(sampler_id) orelse return ValidationError.InvalidValue;
+    if (sampler.kind != .sampler)
+        return ValidationError.WrongResourceKind;
+
+    const image_type = module.types.get(image.type) orelse return ValidationError.InvalidType;
+    const sampled_type: ?ids.TypeId = switch (image_type.*) {
+        .resource_handle => |handle| blk: {
+            if (handle.kind != .sampled_image)
+                return ValidationError.WrongResourceKind;
+            break :blk handle.data_type;
+        },
+        else => image.type,
+    };
+
+    const base_components: u8 = switch (dimension) {
+        .one_d => 1,
+        .two_d => 2,
+        .three_d, .cube => 3,
+    };
+    const coordinate_components = base_components + @intFromBool(arrayed);
+    const coordinate_type = try operandType(module, function_id, coordinate_id);
+    if (floatComponentCount(module, coordinate_type, 32) != coordinate_components)
+        return ValidationError.WrongOperandType;
+
+    const result = result_type orelse return ValidationError.WrongResultPresence;
+    const result_ir_type = module.types.get(result) orelse return ValidationError.InvalidType;
+    const result_vector = switch (result_ir_type.*) {
+        .vector => |vector| vector,
+        else => return ValidationError.WrongResultType,
+    };
+    if (result_vector.length != 4)
+        return ValidationError.WrongResultType;
+    if (sampled_type) |expected_element| {
+        if (result_vector.element_type != expected_element)
+            return ValidationError.WrongResultType;
     }
 }
 
@@ -668,6 +735,15 @@ fn isFloat(module: *const module_ir.Module, type_id: ids.TypeId, bits: u16) bool
     };
 }
 
+fn floatComponentCount(module: *const module_ir.Module, type_id: ids.TypeId, bits: u16) ?u8 {
+    const ty = module.types.get(type_id) orelse return null;
+    return switch (ty.*) {
+        .floating => |float| if (float.bits == bits) 1 else null,
+        .vector => |vector| if (isFloat(module, vector.element_type, bits)) vector.length else null,
+        else => null,
+    };
+}
+
 fn isFloatVector(module: *const module_ir.Module, type_id: ids.TypeId, bits: u16, length: u8) bool {
     const ty = module.types.get(type_id) orelse return false;
     return switch (ty.*) {
@@ -733,6 +809,30 @@ fn integerShape(module: *const module_ir.Module, type_id: ids.TypeId) ?IntegerSh
             };
         },
 
+        else => null,
+    };
+}
+
+fn conversionIntegerShape(module: *const module_ir.Module, type_id: ids.TypeId) ?ConversionIntegerShape {
+    const ty = module.types.get(type_id) orelse return null;
+    return switch (ty.*) {
+        .integer => |integer| .{
+            .bits = integer.bits,
+            .signedness = integer.signedness,
+            .components = 1,
+        },
+        .vector => |vector| blk: {
+            const element = module.types.get(vector.element_type) orelse return null;
+            const integer = switch (element.*) {
+                .integer => |integer| integer,
+                else => return null,
+            };
+            break :blk .{
+                .bits = integer.bits,
+                .signedness = integer.signedness,
+                .components = vector.length,
+            };
+        },
         else => null,
     };
 }
@@ -1332,7 +1432,7 @@ test "Validator: check explicit-LOD image sampling resources and types" {
         \\}
     );
 
-    try expectValidationError(Error.WrongOperandType,
+    try expectValidationError(Error.WrongResultType,
         \\shader fragment @main
         \\{
         \\    @image: u32 = sampled_image[set(0), binding(0)]
@@ -1391,6 +1491,122 @@ test "Validator: check explicit-LOD image sampling resources and types" {
         \\    {
         \\        .entry():
         \\            %result: vec4[u32] = image_sample_explicit_lod @image, @sampler, %coordinate, %lod
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Validator: image sampling dimensions, arrayed coordinates, and result type" {
+    const parser = @import("../parser/parser.zig");
+
+    var module = try parser.parseString(std.testing.allocator,
+        \\shader fragment @main
+        \\{
+        \\    @image: u32 = sampled_image[set(0), binding(0)]
+        \\    @sampler: resourceHandle[sampler] = sampler[set(0), binding(1)]
+        \\    %one_d: constant f32 = 0.0
+        \\    %two_d: constant vec2[f32] = null
+        \\    %three_d: constant vec3[f32] = null
+        \\    %arrayed_three_d: constant vec4[f32] = null
+        \\    %lod: constant f32 = 0.0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %one_d_result: vec4[u32] = image_sample_implicit_lod @image, @sampler, %one_d, dimension one_d, arrayed false
+        \\            %two_d_result: vec4[u32] = image_sample_explicit_lod @image, @sampler, %two_d, %lod, dimension two_d, arrayed false
+        \\            %three_d_result: vec4[u32] = image_sample_implicit_lod @image, @sampler, %arrayed_three_d, dimension three_d, arrayed true
+        \\            %cube_result: vec4[u32] = image_sample_implicit_lod @image, @sampler, %three_d, dimension cube, arrayed false
+        \\            return
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader fragment @main
+        \\{
+        \\    @image: f32 = sampled_image[set(0), binding(0)]
+        \\    @sampler: resourceHandle[sampler] = sampler[set(0), binding(1)]
+        \\    %coordinate: constant vec2[f32] = null
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec4[f32] = image_sample_implicit_lod @image, @sampler, %coordinate, dimension two_d, arrayed true
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultType,
+        \\shader fragment @main
+        \\{
+        \\    @image: u32 = sampled_image[set(0), binding(0)]
+        \\    @sampler: resourceHandle[sampler] = sampler[set(0), binding(1)]
+        \\    %coordinate: constant vec2[f32] = null
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec4[f32] = image_sample_implicit_lod @image, @sampler, %coordinate, dimension two_d, arrayed false
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Validator: integer-to-float conversions" {
+    const parser = @import("../parser/parser.zig");
+
+    var module = try parser.parseString(std.testing.allocator,
+        \\shader compute @main
+        \\{
+        \\    %signed: constant i32 = -1
+        \\    %unsigned: constant vec3[u32] = null
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %signed_float: f32 = convert signed_to_float %signed
+        \\            %unsigned_float: vec3[f32] = convert unsigned_to_float %unsigned
+        \\            return
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    %value: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: f32 = convert signed_to_float %value
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    %value: constant u16 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: f32 = convert unsigned_to_float %value
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultType,
+        \\shader compute @main
+        \\{
+        \\    %value: constant vec2[u32] = null
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: f32 = convert unsigned_to_float %value
         \\            return
         \\    }
         \\}

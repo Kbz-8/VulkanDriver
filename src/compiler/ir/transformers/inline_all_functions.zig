@@ -369,6 +369,12 @@ fn remapOperation(module: *module_ir.Module, value_map: []const ?ids.ValueId, op
             },
         },
         .bitcast => |operand| .{ .bitcast = try mappedValue(module, value_map, operand) },
+        .convert => |op| .{
+            .convert = .{
+                .opcode = op.opcode,
+                .operand = try mappedValue(module, value_map, op.operand),
+            },
+        },
         .composite_construct => |op| .{
             .composite_construct = .{
                 .elements = try remapValues(module, value_map, op.elements),
@@ -436,6 +442,17 @@ fn remapOperation(module: *module_ir.Module, value_map: []const ?ids.ValueId, op
                 .sampler = op.sampler,
                 .coordinate = try mappedValue(module, value_map, op.coordinate),
                 .lod = try mappedValue(module, value_map, op.lod),
+                .dimension = op.dimension,
+                .arrayed = op.arrayed,
+            },
+        },
+        .image_sample_implicit_lod => |op| .{
+            .image_sample_implicit_lod = .{
+                .image = op.image,
+                .sampler = op.sampler,
+                .coordinate = try mappedValue(module, value_map, op.coordinate),
+                .dimension = op.dimension,
+                .arrayed = op.arrayed,
             },
         },
         .image_write => |op| .{
@@ -734,6 +751,50 @@ test "Inline All Functions: nested calls and multiple returns" {
         const inst = entry orelse continue;
         try std.testing.expect(inst.operation != .call);
     }
+}
+
+test "Inline All Functions: remap conversion and image sampling" {
+    const parser = @import("../parser/parser.zig");
+    const validator = @import("../validator/validator.zig");
+
+    var module = try parser.parseString(std.testing.allocator,
+        \\shader fragment @main
+        \\{
+        \\    @image: f32 = sampled_image[set(0), binding(0)]
+        \\    @sampler: resourceHandle[sampler] = sampler[set(0), binding(1)]
+        \\    %coordinate: constant vec2[u32] = null
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %sample: vec4[f32] = call @sample(%coordinate)
+        \\            return
+        \\    }
+        \\    fn @sample(%integer_coordinate: vec2[u32]) -> vec4[f32]
+        \\    {
+        \\        .entry():
+        \\            %float_coordinate: vec2[f32] = convert unsigned_to_float %integer_coordinate
+        \\            %result: vec4[f32] = image_sample_implicit_lod @image, @sampler, %float_coordinate, dimension two_d, arrayed false
+        \\            return %result
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+
+    try std.testing.expect(try runForTest(&module));
+    try validator.validate(&module);
+
+    var found_convert = false;
+    var found_sample = false;
+    for (module.instructions.entries.items) |entry| {
+        const inst = entry orelse continue;
+        switch (inst.operation) {
+            .convert => found_convert = true,
+            .image_sample_implicit_lod => found_sample = true,
+            else => {},
+        }
+    }
+    try std.testing.expect(found_convert);
+    try std.testing.expect(found_sample);
 }
 
 test "Inline All Functions: reject reachable recursion" {

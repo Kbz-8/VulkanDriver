@@ -97,6 +97,12 @@ const ImageAddress = struct {
 const SampledImage = struct {
     image: ir.id.ResourceId,
     sampler: ir.id.ResourceId,
+    image_type: u32,
+};
+
+const ImageTypeInfo = struct {
+    dimension: ir.types.ImageDimension,
+    arrayed: bool,
 };
 
 const AtomicAddress = union(enum) {
@@ -306,12 +312,21 @@ const Context = struct {
                 });
             },
             .type_image => blk: {
-                if (operands.len < 8 or operands.len > 9 or operands[2] != 1 or operands[4] != 0 or operands[5] != 0)
+                if (operands.len < 8 or operands.len > 9)
                     return TranslationError.UnsupportedType;
 
+                const image_info = try imageTypeInfo(self, spv_id);
                 const kind: ir.types.ResourceKind = switch (operands[6]) {
-                    1 => .sampled_image,
-                    2 => .storage_image,
+                    1 => sampled: {
+                        if (operands[5] != 0)
+                            return TranslationError.UnsupportedType;
+                        break :sampled .sampled_image;
+                    },
+                    2 => storage: {
+                        if (image_info.dimension != .two_d or image_info.arrayed or operands[5] != 0)
+                            return TranslationError.UnsupportedType;
+                        break :storage .storage_image;
+                    },
                     else => return TranslationError.UnsupportedType,
                 };
                 break :blk try self.builder.internType(.{
@@ -545,6 +560,26 @@ const Context = struct {
         return std.math.add(usize, base, local_index) catch return TranslationError.InvalidInstruction;
     }
 };
+
+fn imageTypeInfo(context: *const Context, image_type: u32) TranslationError!ImageTypeInfo {
+    const definition = context.type_defs[try context.idIndex(image_type)] orelse return TranslationError.MissingDefinition;
+    if (definition.opcode != .type_image or definition.operands.len < 8 or definition.operands.len > 9)
+        return TranslationError.UnsupportedType;
+
+    const dimension: ir.types.ImageDimension = switch (definition.operands[2]) {
+        0 => .one_d,
+        1 => .two_d,
+        2 => .three_d,
+        3 => .cube,
+        else => return TranslationError.UnsupportedType,
+    };
+    const arrayed = switch (definition.operands[4]) {
+        0 => false,
+        1 => true,
+        else => return TranslationError.UnsupportedType,
+    };
+    return .{ .dimension = dimension, .arrayed = arrayed };
+}
 
 /// Translates one entry point from a retained SPIR-V source into an independent
 /// common IR module. The returned module does not borrow from `source`.
@@ -858,6 +893,28 @@ fn translateResources(context: *Context) !void {
         const pointee = context.type_defs[try context.idIndex(pointee_id)] orelse return TranslationError.MissingDefinition;
         const variable_decoration = context.decorations[spv_index];
         if (storage_class == .uniform_constant) {
+            if (pointee.opcode == .type_sampled_image) {
+                try expectOperandCount(pointee.operands, 2);
+                const image_type_id = pointee.operands[1];
+                const image_type = try context.translateType(image_type_id);
+                const image_type_data = context.module.types.get(image_type) orelse return TranslationError.InvalidId;
+                if (image_type_data.* != .resource_handle or image_type_data.resource_handle.kind != .sampled_image)
+                    return TranslationError.UnsupportedType;
+
+                const set = variable_decoration.descriptor_set orelse return TranslationError.InvalidInstruction;
+                const binding = variable_decoration.binding orelse return TranslationError.InvalidInstruction;
+                const name = context.nameOf(@intCast(spv_index));
+                const image = try context.builder.addResource(image_type, .sampled_image, set, binding, name);
+                const sampler_type = try context.builder.internType(.{ .resource_handle = .{ .kind = .sampler } });
+                const sampler_name = if (name) |base| try std.fmt.allocPrint(context.scratch, "{s}_sampler", .{base}) else null;
+                const sampler = try context.builder.addResource(sampler_type, .sampler, set, binding, sampler_name);
+                context.sampled_images[spv_index] = .{
+                    .image = image,
+                    .sampler = sampler,
+                    .image_type = image_type_id,
+                };
+                continue;
+            }
             if (pointee.opcode != .type_image and pointee.opcode != .type_sampler)
                 continue;
             const resource_type = try context.translateType(pointee_id);
@@ -1447,6 +1504,21 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             if (operands.len < 3)
                 return TranslationError.InvalidInstruction;
 
+            if (try context.sampledImage(operands[2])) |sampled_image| {
+                const result_type_definition = context.type_defs[try context.idIndex(operands[0])] orelse return TranslationError.MissingDefinition;
+                if (result_type_definition.opcode != .type_sampled_image)
+                    return TranslationError.InvalidInstruction;
+                try expectOperandCount(result_type_definition.operands, 2);
+                if (result_type_definition.operands[1] != sampled_image.image_type)
+                    return TranslationError.InvalidInstruction;
+
+                const result_index = try context.idIndex(operands[1]);
+                if (context.sampled_images[result_index] != null)
+                    return TranslationError.DuplicateId;
+                context.sampled_images[result_index] = sampled_image;
+                return;
+            }
+
             const result_type = try context.translateType(operands[0]);
             if (try context.resource(operands[2])) |resource| {
                 const resource_data = context.module.resources.get(resource) orelse return TranslationError.InvalidId;
@@ -1608,7 +1680,29 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             if (context.sampled_images[result_index] != null)
                 return TranslationError.DuplicateId;
 
-            context.sampled_images[result_index] = .{ .image = image_id, .sampler = sampler_id };
+            context.sampled_images[result_index] = .{
+                .image = image_id,
+                .sampler = sampler_id,
+                .image_type = result_type.operands[1],
+            };
+        },
+
+        .image_sample_implicit_lod => {
+            if (operands.len != 4)
+                return TranslationError.UnsupportedOpcode;
+
+            const sampled_image = (try context.sampledImage(operands[2])) orelse return TranslationError.UnsupportedOpcode;
+            const image_info = try imageTypeInfo(context, sampled_image.image_type);
+            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+                .image_sample_implicit_lod = .{
+                    .image = sampled_image.image,
+                    .sampler = sampled_image.sampler,
+                    .coordinate = try context.resolveValue(operands[3]),
+                    .dimension = image_info.dimension,
+                    .arrayed = image_info.arrayed,
+                },
+            }, context.nameOf(operands[1]))).?;
+            try context.setValue(operands[1], result);
         },
 
         .image_sample_explicit_lod => {
@@ -1616,12 +1710,15 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                 return TranslationError.UnsupportedOpcode;
 
             const sampled_image = (try context.sampledImage(operands[2])) orelse return TranslationError.UnsupportedOpcode;
+            const image_info = try imageTypeInfo(context, sampled_image.image_type);
             const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
                 .image_sample_explicit_lod = .{
                     .image = sampled_image.image,
                     .sampler = sampled_image.sampler,
                     .coordinate = try context.resolveValue(operands[3]),
                     .lod = try context.resolveValue(operands[5]),
+                    .dimension = image_info.dimension,
+                    .arrayed = image_info.arrayed,
                 },
             }, context.nameOf(operands[1]))).?;
             try context.setValue(operands[1], result);
@@ -1820,6 +1917,25 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                     .condition = try context.resolveValue(operands[2]),
                     .true_value = try context.resolveValue(operands[3]),
                     .false_value = try context.resolveValue(operands[4]),
+                },
+            }, context.nameOf(operands[1]))).?;
+
+            try context.setValue(operands[1], result);
+        },
+
+        .convert_s_to_f,
+        .convert_u_to_f,
+        => {
+            try expectOperandCount(operands, 3);
+
+            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+                .convert = .{
+                    .opcode = switch (instruction.opcode) {
+                        .convert_s_to_f => .signed_to_float,
+                        .convert_u_to_f => .unsigned_to_float,
+                        else => unreachable,
+                    },
+                    .operand = try context.resolveValue(operands[2]),
                 },
             }, context.nameOf(operands[1]))).?;
 
@@ -3800,12 +3916,14 @@ test "SPIR-V: operation mappings to backend-agnostic IR" {
         \\%void = OpTypeVoid
         \\%bool = OpTypeBool
         \\%uint = OpTypeInt 32 0
+        \\%int = OpTypeInt 32 1
         \\%float = OpTypeFloat 32
         \\%vec2 = OpTypeVector %uint 2
         \\%fn_void = OpTypeFunction %void
         \\%true = OpConstantTrue %bool
         \\%one = OpConstant %uint 1
         \\%two = OpConstant %uint 2
+        \\%negative_one = OpConstant %int -1
         \\%main = OpFunction %void None %fn_void
         \\    %entry = OpLabel
         \\    %not = OpLogicalNot %bool %true
@@ -3813,6 +3931,8 @@ test "SPIR-V: operation mappings to backend-agnostic IR" {
         \\    %less = OpULessThan %bool %one %two
         \\    %selected = OpSelect %uint %less %one %two
         \\    %cast = OpBitcast %float %one
+        \\    %unsigned_float = OpConvertUToF %float %one
+        \\    %signed_float = OpConvertSToF %float %negative_one
         \\    %vector = OpCompositeConstruct %vec2 %one %two
         \\    %element = OpCompositeExtract %uint %vector 1
         \\    OpReturn
@@ -3826,7 +3946,7 @@ test "SPIR-V: operation mappings to backend-agnostic IR" {
 
     const function = module.functions.get(module.entry_point.?).?;
     const block = module.blocks.get(function.entry_block.?).?;
-    try std.testing.expectEqual(@as(usize, 7), block.instructions.items.len);
+    try std.testing.expectEqual(@as(usize, 9), block.instructions.items.len);
 
     const logical_not = module.instructions.get(block.instructions.items[0]).?;
     try std.testing.expectEqual(ir.instruction.UnaryOpcode.logical_not, logical_not.operation.unary.opcode);
@@ -3843,11 +3963,74 @@ test "SPIR-V: operation mappings to backend-agnostic IR" {
     const bitcast = module.instructions.get(block.instructions.items[4]).?;
     try std.testing.expect(bitcast.operation == .bitcast);
 
-    const construct = module.instructions.get(block.instructions.items[5]).?;
+    const unsigned_float = module.instructions.get(block.instructions.items[5]).?;
+    try std.testing.expectEqual(ir.instruction.ConvertOpcode.unsigned_to_float, unsigned_float.operation.convert.opcode);
+
+    const signed_float = module.instructions.get(block.instructions.items[6]).?;
+    try std.testing.expectEqual(ir.instruction.ConvertOpcode.signed_to_float, signed_float.operation.convert.opcode);
+
+    const construct = module.instructions.get(block.instructions.items[7]).?;
     try std.testing.expectEqual(@as(usize, 2), construct.operation.composite_construct.elements.len);
 
-    const extract = module.instructions.get(block.instructions.items[6]).?;
+    const extract = module.instructions.get(block.instructions.items[8]).?;
     try std.testing.expectEqualSlices(u32, &.{1}, extract.operation.composite_extract.indices);
+}
+
+test "SPIR-V: combined cube-array descriptor and implicit-LOD sampling" {
+    const assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint Fragment %main "main"
+        \\OpExecutionMode %main OriginUpperLeft
+        \\OpName %descriptor "texture"
+        \\OpDecorate %descriptor DescriptorSet 2
+        \\OpDecorate %descriptor Binding 3
+        \\%void = OpTypeVoid
+        \\%float = OpTypeFloat 32
+        \\%vec4 = OpTypeVector %float 4
+        \\%image = OpTypeImage %float Cube 0 1 0 1 Unknown
+        \\%sampled_image = OpTypeSampledImage %image
+        \\%ptr_sampled_image = OpTypePointer UniformConstant %sampled_image
+        \\%fn_void = OpTypeFunction %void
+        \\%zero = OpConstant %float 0
+        \\%coordinate = OpConstantComposite %vec4 %zero %zero %zero %zero
+        \\%descriptor = OpVariable %ptr_sampled_image UniformConstant
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    %loaded = OpLoad %sampled_image %descriptor
+        \\    %implicit = OpImageSampleImplicitLod %vec4 %loaded %coordinate
+        \\    %explicit = OpImageSampleExplicitLod %vec4 %loaded %coordinate Lod %zero
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), module.resources.entries.items.len);
+    const image = module.resources.get(ir.id.ResourceId.fromIndex(0)).?;
+    const sampler = module.resources.get(ir.id.ResourceId.fromIndex(1)).?;
+    try std.testing.expectEqual(ir.types.ResourceKind.sampled_image, image.kind);
+    try std.testing.expectEqual(ir.types.ResourceKind.sampler, sampler.kind);
+    try std.testing.expectEqual(image.set, sampler.set);
+    try std.testing.expectEqual(image.binding, sampler.binding);
+    try std.testing.expectEqual(@as(u32, 2), image.set);
+    try std.testing.expectEqual(@as(u32, 3), image.binding);
+
+    const function = module.functions.get(module.entry_point.?).?;
+    const block = module.blocks.get(function.entry_block.?).?;
+    try std.testing.expectEqual(@as(usize, 2), block.instructions.items.len);
+    const implicit = module.instructions.get(block.instructions.items[0]).?.operation.image_sample_implicit_lod;
+    try std.testing.expectEqual(ir.types.ImageDimension.cube, implicit.dimension);
+    try std.testing.expect(implicit.arrayed);
+    try std.testing.expectEqual(ir.id.ResourceId.fromIndex(0), implicit.image);
+    try std.testing.expectEqual(ir.id.ResourceId.fromIndex(1), implicit.sampler);
+
+    const explicit = module.instructions.get(block.instructions.items[1]).?.operation.image_sample_explicit_lod;
+    try std.testing.expectEqual(ir.types.ImageDimension.cube, explicit.dimension);
+    try std.testing.expect(explicit.arrayed);
 }
 
 test "SPIR-V: unknown opcode reports an error without formatting the enum" {

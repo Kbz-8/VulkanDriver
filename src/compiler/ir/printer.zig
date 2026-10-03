@@ -221,6 +221,10 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             try writer.writeAll("bitcast ");
             try writeValueRef(module, writer, value);
         },
+        .convert => |op| {
+            try writer.print("convert {t} ", .{op.opcode});
+            try writeValueRef(module, writer, op.operand);
+        },
         .composite_construct => |op| {
             try writer.writeAll("composite_construct ");
             try writeValueList(module, writer, op.elements);
@@ -304,6 +308,18 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             try writeValueRef(module, writer, op.coordinate);
             try writer.writeAll(", ");
             try writeValueRef(module, writer, op.lod);
+            try writer.print(", dimension {t}, arrayed {}", .{ op.dimension, op.arrayed });
+        },
+        .image_sample_implicit_lod => |op| {
+            try writer.writeAll("image_sample_implicit_lod ");
+            const image = module.resources.get(op.image);
+            try writeNamedRef(writer, if (image) |r| r.name else null, "resource", op.image.index());
+            try writer.writeAll(", ");
+            const sampler = module.resources.get(op.sampler);
+            try writeNamedRef(writer, if (sampler) |r| r.name else null, "resource", op.sampler.index());
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.coordinate);
+            try writer.print(", dimension {t}, arrayed {}", .{ op.dimension, op.arrayed });
         },
         .image_write => |op| {
             try writer.writeAll("image_write ");

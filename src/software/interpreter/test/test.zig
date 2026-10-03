@@ -9,6 +9,8 @@ test "[interpreter] bytecode instruction size" {
 comptime {
     _ = @import("arithmetic.zig");
     _ = @import("branching.zig");
+    _ = @import("conversion.zig");
+    _ = @import("image_sampling.zig");
     _ = @import("loops.zig");
     _ = @import("resources.zig");
     _ = @import("storage_buffers.zig");

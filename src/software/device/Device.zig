@@ -40,6 +40,16 @@ pub const PipelineState = struct {
     },
 };
 
+const SampledImageDescriptor = struct {
+    image: usize,
+    sampler: usize,
+};
+
+const DescriptorPayload = union(enum) {
+    raw: []const u8,
+    sampled_image: SampledImageDescriptor,
+};
+
 compute: ComputeDispatcher,
 renderer: Renderer,
 
@@ -77,16 +87,6 @@ pub fn setup(self: *Self, device: *SoftDevice) void {
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     self.active_occlusion_queries.deinit(allocator);
 }
-
-const SampledImageDescriptor = struct {
-    image: usize,
-    sampler: usize,
-};
-
-const DescriptorPayload = union(enum) {
-    raw: []const u8,
-    sampled_image: SampledImageDescriptor,
-};
 
 fn writeDescriptorValue(value: anytype, payload: DescriptorPayload, descriptor_index: u32) spv.Runtime.RuntimeError!void {
     const dst = switch (value.*) {
@@ -313,19 +313,18 @@ pub fn mapSampledImage(state: *const PipelineState, set: u32, binding: u32, arra
     if (binding_index >= descriptor_set.descriptors.len or binding_index >= descriptor_set.interface.layout.bindings.len)
         return null;
 
-    if (descriptor_set.interface.layout.bindings[binding_index].descriptor_type != .sampled_image)
-        return null;
-
-    const descriptors = switch (descriptor_set.descriptors[binding_index]) {
-        .image => |descriptors| descriptors,
-        else => return null,
-    };
-
     const descriptor_index: usize = array_element;
-    if (descriptor_index >= descriptors.len)
-        return null;
-
-    return descriptors[descriptor_index].object;
+    return switch (descriptor_set.interface.layout.bindings[binding_index].descriptor_type) {
+        .sampled_image => switch (descriptor_set.descriptors[binding_index]) {
+            .image => |descriptors| if (descriptor_index < descriptors.len) descriptors[descriptor_index].object else null,
+            else => null,
+        },
+        .combined_image_sampler => switch (descriptor_set.descriptors[binding_index]) {
+            .texture => |descriptors| if (descriptor_index < descriptors.len) descriptors[descriptor_index].view else null,
+            else => null,
+        },
+        else => null,
+    };
 }
 
 pub fn mapSampler(state: *const PipelineState, set: u32, binding: u32, array_element: u32) VkError!?*SoftSampler {
@@ -339,19 +338,18 @@ pub fn mapSampler(state: *const PipelineState, set: u32, binding: u32, array_ele
     if (binding_index >= descriptor_set.descriptors.len or binding_index >= descriptor_set.interface.layout.bindings.len)
         return null;
 
-    if (descriptor_set.interface.layout.bindings[binding_index].descriptor_type != .sampler)
-        return null;
-
-    const descriptors = switch (descriptor_set.descriptors[binding_index]) {
-        .sampler => |descriptors| descriptors,
-        else => return null,
-    };
-
     const descriptor_index: usize = array_element;
-    if (descriptor_index >= descriptors.len)
-        return null;
-
-    return descriptors[descriptor_index].object;
+    return switch (descriptor_set.interface.layout.bindings[binding_index].descriptor_type) {
+        .sampler => switch (descriptor_set.descriptors[binding_index]) {
+            .sampler => |descriptors| if (descriptor_index < descriptors.len) descriptors[descriptor_index].object else null,
+            else => null,
+        },
+        .combined_image_sampler => switch (descriptor_set.descriptors[binding_index]) {
+            .texture => |descriptors| if (descriptor_index < descriptors.len) descriptors[descriptor_index].sampler else null,
+            else => null,
+        },
+        else => null,
+    };
 }
 
 pub fn mapStorageImage(state: *const PipelineState, set: u32, binding: u32, array_element: u32) VkError!?*SoftImageView {

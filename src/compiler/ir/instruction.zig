@@ -1,5 +1,6 @@
 const std = @import("std");
 const ids = @import("id.zig");
+const type_ir = @import("type.zig");
 
 pub const TypeId = ids.TypeId;
 pub const ValueId = ids.ValueId;
@@ -46,6 +47,11 @@ pub const BinaryOpcode = enum {
     vector_times_scalar,
 };
 
+pub const ConvertOpcode = enum {
+    signed_to_float,
+    unsigned_to_float,
+};
+
 pub const CompareOpcode = enum {
     equal,
     not_equal,
@@ -74,6 +80,11 @@ pub const Compare = struct {
     opcode: CompareOpcode,
     lhs: ValueId,
     rhs: ValueId,
+};
+
+pub const Convert = struct {
+    opcode: ConvertOpcode,
+    operand: ValueId,
 };
 
 pub const Select = struct {
@@ -134,6 +145,16 @@ pub const ImageSampleExplicitLod = struct {
     sampler: ResourceId,
     coordinate: ValueId,
     lod: ValueId,
+    dimension: type_ir.ImageDimension = .two_d,
+    arrayed: bool = false,
+};
+
+pub const ImageSampleImplicitLod = struct {
+    image: ResourceId,
+    sampler: ResourceId,
+    coordinate: ValueId,
+    dimension: type_ir.ImageDimension,
+    arrayed: bool,
 };
 
 pub const ImageWrite = struct {
@@ -166,6 +187,7 @@ pub const Operation = union(enum) {
     compare: Compare,
     select: Select,
     bitcast: ValueId,
+    convert: Convert,
     composite_construct: CompositeConstruct,
     composite_extract: CompositeExtract,
     load_interface: LoadInterface,
@@ -177,6 +199,7 @@ pub const Operation = union(enum) {
     store_workgroup: StoreWorkgroup,
     image_read: ImageRead,
     image_sample_explicit_lod: ImageSampleExplicitLod,
+    image_sample_implicit_lod: ImageSampleImplicitLod,
     image_write: ImageWrite,
     control_barrier,
     call: Call,
@@ -199,6 +222,7 @@ pub const Operation = union(enum) {
                 visitor(context, op.false_value);
             },
             .bitcast => |operand| visitor(context, operand),
+            .convert => |op| visitor(context, op.operand),
             .composite_construct => |op| for (op.elements) |element| visitor(context, element),
             .composite_extract => |op| visitor(context, op.composite),
             .load_interface => |op| if (op.element_index) |index| visitor(context, index),
@@ -229,6 +253,7 @@ pub const Operation = union(enum) {
                 visitor(context, op.coordinate);
                 visitor(context, op.lod);
             },
+            .image_sample_implicit_lod => |op| visitor(context, op.coordinate),
             .image_write => |op| {
                 visitor(context, op.coordinate);
                 visitor(context, op.value);
@@ -264,6 +289,7 @@ pub const Operation = union(enum) {
                 replaceOne(&op.false_value, old, replacement, &count);
             },
             .bitcast => |*operand| replaceOne(operand, old, replacement, &count),
+            .convert => |*op| replaceOne(&op.operand, old, replacement, &count),
             .composite_construct => |*op| op.elements = try replaceSlice(allocator, op.elements, old, replacement, &count),
             .composite_extract => |*op| replaceOne(&op.composite, old, replacement, &count),
             .load_interface => |*op| {
@@ -297,6 +323,7 @@ pub const Operation = union(enum) {
                 replaceOne(&op.coordinate, old, replacement, &count);
                 replaceOne(&op.lod, old, replacement, &count);
             },
+            .image_sample_implicit_lod => |*op| replaceOne(&op.coordinate, old, replacement, &count),
             .image_write => |*op| {
                 replaceOne(&op.coordinate, old, replacement, &count);
                 replaceOne(&op.value, old, replacement, &count);

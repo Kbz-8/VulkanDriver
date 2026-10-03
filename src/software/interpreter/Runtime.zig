@@ -1,5 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
+const spv = @import("spv");
 const shader_ir = @import("shader_ir");
 const bc = @import("bytecode.zig");
 const Program = @import("Program.zig");
@@ -177,7 +178,8 @@ fn execute(self: *Self, program: *const Program, options: RunOptions) RuntimeErr
             .integer_subtract => try self.binaryInt(instruction, .subtract),
             .image_read => try self.imageRead(program, options.resource_images, instruction),
             .image_read_float => try self.imageReadFloat(program, options.resource_images, instruction),
-            .image_sample_explicit_lod => try self.imageSampleExplicitLod(program, options.resource_images, options.resource_samplers, instruction),
+            .image_sample_explicit_lod => try self.imageSample(program, options.resource_images, options.resource_samplers, instruction, true),
+            .image_sample_implicit_lod => try self.imageSample(program, options.resource_images, options.resource_samplers, instruction, false),
             .image_write => try self.imageWrite(program, options.resource_images, instruction),
             .image_write_float => try self.imageWriteFloat(program, options.resource_images, instruction),
             .jump_edge => self.pc = try self.applyEdge(program, instruction.immediate),
@@ -198,6 +200,7 @@ fn execute(self: *Self, program: *const Program, options: RunOptions) RuntimeErr
             .shift_left => try self.binaryInt(instruction, .shift_left),
             .signed_divide => try self.binaryInt(instruction, .signed_divide),
             .signed_modulo => try self.binaryInt(instruction, .signed_modulo),
+            .signed_to_float => try self.intToFloat(instruction, true),
             .store_buffer => try self.storeBuffer(program, options.resource_buffers, instruction),
             .store_workgroup => try self.storeWorkgroup(program, options.workgroup_memory, instruction),
             .control_barrier => {
@@ -206,6 +209,7 @@ fn execute(self: *Self, program: *const Program, options: RunOptions) RuntimeErr
             },
             .unsigned_divide => try self.binaryInt(instruction, .unsigned_divide),
             .unsigned_modulo => try self.binaryInt(instruction, .unsigned_modulo),
+            .unsigned_to_float => try self.intToFloat(instruction, false),
         }
     }
 }
@@ -289,6 +293,22 @@ fn unaryFloat(self: *Self, instruction: bc.Instruction) void {
     for (0..instruction.components) |component| {
         const value: f32 = @bitCast(self.registers[@as(usize, @intFromEnum(instruction.b)) + component]);
         self.registers[@as(usize, @intFromEnum(instruction.a)) + component] = @bitCast(-value);
+    }
+}
+
+fn intToFloat(self: *Self, instruction: bc.Instruction, comptime signed: bool) RuntimeError!void {
+    try self.validateRegisterSpan(instruction);
+    const source_end = std.math.add(usize, @intFromEnum(instruction.b), instruction.components) catch return RuntimeError.InvalidBytecode;
+    if (source_end > self.registers.len)
+        return RuntimeError.InvalidBytecode;
+
+    for (0..instruction.components) |component| {
+        const source = self.registers[@as(usize, @intFromEnum(instruction.b)) + component];
+        const converted: f32 = if (signed)
+            @floatFromInt(@as(i32, @bitCast(source)))
+        else
+            @floatFromInt(source);
+        self.registers[@as(usize, @intFromEnum(instruction.a)) + component] = @bitCast(converted);
     }
 }
 
@@ -441,32 +461,56 @@ fn imageReadFloat(self: *Self, program: *const Program, resource_images: []const
     @memcpy(self.registers[@intFromEnum(instruction.a)..][0..4], &components);
 }
 
-fn imageSampleExplicitLod(
+fn imageSample(
     self: *Self,
     program: *const Program,
     resource_images: []const ?*SoftImageView,
     resource_samplers: []const ?*SoftSampler,
     instruction: bc.Instruction,
+    explicit_lod: bool,
 ) RuntimeError!void {
-    if (instruction.components != 4)
+    if (instruction.components != 4 or instruction.immediate >= program.image_sampler_pairs.len)
         return RuntimeError.InvalidBytecode;
     try self.validateRegisterSpan(instruction);
 
-    const coordinate_end = std.math.add(usize, @intFromEnum(instruction.b), 2) catch return RuntimeError.InvalidBytecode;
-    if (coordinate_end > self.registers.len or @intFromEnum(instruction.c) >= self.registers.len)
-        return RuntimeError.InvalidBytecode;
-    if (instruction.immediate >= program.image_sampler_pairs.len)
+    const pair = program.image_sampler_pairs[instruction.immediate];
+    if (pair.dimension == .cube and pair.arrayed)
         return RuntimeError.InvalidBytecode;
 
-    const pair = program.image_sampler_pairs[instruction.immediate];
+    const coordinate_count = Program.imageCoordinateComponents(pair.dimension, pair.arrayed);
+    const coordinate_end = std.math.add(usize, @intFromEnum(instruction.b), coordinate_count) catch return RuntimeError.InvalidBytecode;
+    if (coordinate_end > self.registers.len)
+        return RuntimeError.InvalidBytecode;
+
+    const lod: ?f32 = if (explicit_lod) blk: {
+        if (instruction.c == .invalid_register or @intFromEnum(instruction.c) >= self.registers.len)
+            return RuntimeError.InvalidBytecode;
+        break :blk @bitCast(self.registers[@intFromEnum(instruction.c)]);
+    } else blk: {
+        if (instruction.c != .invalid_register)
+            return RuntimeError.InvalidBytecode;
+        break :blk null;
+    };
+
     const view = try sampledImage(program, resource_images, pair.image);
     const sampler = try resourceSampler(program, resource_samplers, pair.sampler);
     const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
-    const x: f32 = @bitCast(self.registers[@intFromEnum(instruction.b)]);
-    const y: f32 = @bitCast(self.registers[@as(usize, @intFromEnum(instruction.b)) + 1]);
-    const lod: f32 = @bitCast(self.registers[@intFromEnum(instruction.c)]);
-    const pixel = SoftSampler.sampleImageFloat4(image, view, sampler, .@"2D", x, y, 0, lod, .{}) catch return RuntimeError.InvalidResource;
-    const components: [4]u32 = @bitCast(pixel);
+    const coordinate_base: usize = @intFromEnum(instruction.b);
+    const x: f32 = @bitCast(self.registers[coordinate_base]);
+    const y: f32 = if (coordinate_count >= 2) @bitCast(self.registers[coordinate_base + 1]) else 0.0;
+    const z: f32 = if (coordinate_count >= 3) @bitCast(self.registers[coordinate_base + 2]) else 0.0;
+    const dimension: spv.SpvDim = switch (pair.dimension) {
+        .one_d => .@"1D",
+        .two_d => .@"2D",
+        .three_d => .@"3D",
+        .cube => .Cube,
+    };
+
+    const components: [4]u32 = switch (pair.destination_kind) {
+        .floating => @bitCast(SoftSampler.sampleImageFloat4(image, view, sampler, dimension, x, y, z, lod, .{}) catch return RuntimeError.InvalidResource),
+        .signed_integer, .unsigned_integer => @bitCast(SoftSampler.sampleImageInt4(image, view, sampler, dimension, x, y, z, lod, .{}) catch return RuntimeError.InvalidResource),
+        .boolean => return RuntimeError.InvalidBytecode,
+    };
     @memcpy(self.registers[@intFromEnum(instruction.a)..][0..4], &components);
 }
 

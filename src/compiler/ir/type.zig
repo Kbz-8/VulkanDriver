@@ -5,6 +5,13 @@ pub const TypeId = ids.TypeId;
 
 pub const Signedness = enum { signed, unsigned };
 
+pub const ImageDimension = enum {
+    one_d,
+    two_d,
+    three_d,
+    cube,
+};
+
 pub const IntegerType = struct {
     bits: u16,
     signedness: Signedness,

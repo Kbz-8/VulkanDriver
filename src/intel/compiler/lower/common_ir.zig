@@ -425,6 +425,7 @@ const LoweringState = struct {
             .compare => |operation| try self.lowerCompare(block_id, source_instruction.result, operation),
             .select => |operation| try self.lowerSelect(block_id, source_instruction.result, operation),
             .bitcast => |value_id| try self.lowerBitcast(block_id, source_instruction.result, value_id),
+            .convert => return Error.UnsupportedOperation,
             .load_interface => |operation| try self.lowerLoadInterface(block_id, source_instruction.result, operation),
             .store_interface => |operation| try self.lowerStoreInterface(block_id, source_instruction.result, operation),
             .composite_construct => |operation| try self.lowerCompositeConstruct(source_instruction.result, operation),
@@ -436,6 +437,7 @@ const LoweringState = struct {
             .store_workgroup,
             .image_read,
             .image_sample_explicit_lod,
+            .image_sample_implicit_lod,
             .image_write,
             .control_barrier,
             => return Error.UnsupportedOperation,
@@ -1701,7 +1703,35 @@ test "[ir] Lower: unsupported operations" {
         \\    fn @main() -> void
         \\    {
         \\        .entry():
-        \\            %result: vec4[f32] = image_sample_explicit_lod @image, @sampler, %coordinate, %lod
+        \\            %result: vec4[f32] = image_sample_explicit_lod @image, @sampler, %coordinate, %lod, dimension two_d, arrayed false
+        \\            return
+        \\    }
+        \\}
+    , Error.UnsupportedOperation);
+
+    try expectLoweringError(
+        \\shader compute @main
+        \\{
+        \\    @image: f32 = sampled_image[set(0), binding(0)]
+        \\    @sampler: resourceHandle[sampler] = sampler[set(0), binding(1)]
+        \\    %coordinate: constant vec3[f32] = null
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec4[f32] = image_sample_implicit_lod @image, @sampler, %coordinate, dimension cube, arrayed false
+        \\            return
+        \\    }
+        \\}
+    , Error.UnsupportedOperation);
+
+    try expectLoweringError(
+        \\shader compute @main
+        \\{
+        \\    %value: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: f32 = convert unsigned_to_float %value
         \\            return
         \\    }
         \\}

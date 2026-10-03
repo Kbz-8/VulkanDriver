@@ -56,6 +56,7 @@ shader <stage> @<entry-point>
 {
     <interface declarations>
     <resource declarations>
+    <workgroup variable declarations>
     <constant declarations>
 
     fn @<name>(<parameters>) -> <type>
@@ -129,9 +130,24 @@ accept storage buffers, and byte offsets must have a scalar unsigned integer
 type. Access values may be integer or floating-point scalars or vectors thereof.
 
 ```text
-%value: TYPE = load_buffer @name, %offset
-store_buffer @name, %offset, %value
+%value: u32 = load_buffer @data, %offset
+store_buffer @data, %offset, %value
 ```
+
+## Workgroup variables
+
+Workgroup variables are module-level declarations, distinct from resources. The
+printer emits them after the resource declarations and before the constant
+declarations:
+
+```text
+@name: TYPE = workgroup[]
+```
+
+`TYPE` is the variable's declared storage type (for example, `array[u32, 8]`);
+it does not constrain the type of each byte-addressed access, just as a
+resource's aggregate type does not. `load_workgroup` and `store_workgroup` are
+the only operations that use them.
 
 ## Constants
 
@@ -208,9 +224,10 @@ metadata. They are not terminators and do not create graph edges themselves.
 ## Common instruction rules
 
 An instruction belongs to one block, has zero or one result, and may carry a
-source location. Except for `store_interface`, `store_buffer`, and `call`, current
-operations are treated as side-effect free by the rewriter. A block's terminator is stored
-separately from its ordinary instructions.
+source location. Except for `store_interface`, `store_buffer`, `store_workgroup`,
+`image_write`, `control_barrier`, and `call`, current operations are treated as
+side-effect free by the rewriter. A block's terminator is stored separately from
+its ordinary instructions.
 
 Most arithmetic operations are intended for scalars or vectors of their named
 category and act component by component where vectors are allowed. The current
@@ -226,11 +243,12 @@ Form:
 %result: <type> = <opcode> %operand
 ```
 
-| Opcode        | Arity | Description                  | Usage                                                             | Small printed example       |
-| ------------- | ----: | ---------------------------- | ----------------------------------------------------------------- | --------------------------- |
-| `negate`      |     1 | Changes the arithmetic sign. | Signed integer or floating operand; the result has the same type. | `%2: i32 = negate %1`       |
-| `logical_not` |     1 | Inverts a boolean value.     | Boolean operand and boolean result.                               | `%2: bool = logical_not %1` |
-| `bitwise_not` |     1 | Inverts every bit.           | Integer operand; the result has the same type.                    | `%2: u32 = bitwise_not %1`  |
+| Opcode        | Arity | Description                                       | Usage                                                             | Small printed example       |
+| ------------- | ----: | ------------------------------------------------- | ----------------------------------------------------------------- | --------------------------- |
+| `negate`      |     1 | Changes the arithmetic sign.                      | Signed integer or floating operand; the result has the same type. | `%2: i32 = negate %1`       |
+| `logical_not` |     1 | Inverts a boolean value.                          | Boolean operand and boolean result.                               | `%2: bool = logical_not %1` |
+| `bitwise_not` |     1 | Inverts every bit.                                | Integer operand; the result has the same type.                    | `%2: u32 = bitwise_not %1`  |
+| `all`         |     1 | True when all components of the operand are true. | Boolean vector operand; scalar boolean result.                    | `%2: bool = all %1`         |
 
 `negate` is one normalized opcode: the operand type distinguishes integer
 negation from floating negation.
@@ -349,6 +367,20 @@ The intended source and destination have equal total bit width. The current
 validator only requires that both values exist; it does not yet prove equal
 width.
 
+### `convert`
+
+Converts a 32-bit integer to a floating-point value. The variant selects the
+operand's signedness: `signed_to_float` for signed integers and
+`unsigned_to_float` for unsigned integers.
+
+```text
+%2: f32 = convert signed_to_float %1
+```
+
+The operand must be an `i32`/`u32` scalar or a vector of one of those types,
+with the signedness matching the variant. The result is an `f32` scalar or a
+vector of `f32` with the same component count.
+
 ### `composite_construct`
 
 Constructs a vector or structure from its immediate elements.
@@ -399,6 +431,18 @@ The stored value must equal the interface variable's type. As with
 `load_interface`, an optional unprinted `element_index` is reserved for later
 arrayed-interface work. This operation has side effects.
 
+### `load_push_constant`
+
+Reads a value from the push-constant region at an explicit byte offset.
+
+```text
+%value: u32 = load_push_constant %offset
+```
+
+The byte offset must be a scalar unsigned integer. The result must be an
+integer or floating-point scalar, or a vector of such values. This operation
+is side-effect free.
+
 ### `load_buffer`
 
 Reads a numeric scalar or vector at an explicit byte offset. The resource must
@@ -421,6 +465,86 @@ resource's block or payload aggregate type. This operation has side effects.
 store_buffer @data, %offset, %value
 ```
 
+### `load_workgroup`
+
+Reads a numeric scalar or vector from a declared workgroup variable at an
+explicit byte offset.
+
+```text
+%value: u32 = load_workgroup @data, %offset
+```
+
+The byte offset must be a scalar unsigned integer. The result must be an
+integer or floating-point scalar, or a vector of such values.
+
+### `store_workgroup`
+
+Writes a numeric scalar or vector to a declared workgroup variable at an
+explicit byte offset. It produces no SSA result, and the value type is
+independent of the variable's declared type. This operation has side effects.
+
+```text
+store_workgroup @data, %offset, %value
+```
+
+### `image_read`
+
+Reads a value from a storage image at a coordinate.
+
+```text
+%value: vec4[f32] = image_read @img, %coord
+```
+
+The resource must be a `storage_image`. Semantically, the coordinate is a
+floating-point vector with one component per image dimension, and the result
+is the sampled pixel value. The current validator checks the resource kind and
+result presence only.
+
+### `image_sample_explicit_lod`
+
+Samples a sampled image through a sampler at an explicit level of detail.
+
+```text
+%value: vec4[f32] = image_sample_explicit_lod @img, @sampler, %coord, %lod, dimension two_d, arrayed false
+```
+
+The image must be a `sampled_image` resource and the sampler a `sampler`
+resource. The coordinate is a float vector with one component per image
+dimension, plus one more when `arrayed` is true. The level of detail is an
+`f32` value. The result is a four-component float vector; if the image carries
+a data type, its element type must match. The `dimension` is one of
+`one_d`, `two_d`, `three_d`, or `cube`.
+
+### `image_sample_implicit_lod`
+
+Samples a sampled image through a sampler using an implicit level of detail.
+
+```text
+%value: vec4[f32] = image_sample_implicit_lod @img, @sampler, %coord, dimension two_d, arrayed false
+```
+
+The same rules as `image_sample_explicit_lod` apply, except no level-of-detail
+operand is supplied.
+
+### `image_write`
+
+Writes a value to a storage image at a coordinate. It produces no SSA result.
+The resource must be a `storage_image`. This operation has side effects.
+
+```text
+image_write @img, %coord, %value
+```
+
+### `control_barrier`
+
+Performs a memory barrier between workgroup threads. It takes no operands and
+produces no result. This operation has side effects and is only allowed in a
+compute shader.
+
+```text
+control_barrier
+```
+
 ### `call`
 
 Invokes another IR function. Arguments must match the callee's parameters in
@@ -435,6 +559,21 @@ A non-void callee requires a result of its return type; a void callee forbids
 one. Calls are conservatively treated as side-effecting. The operation exists in
 the common IR, although the current SPIR-V translator rejects
 `OpFunctionCall`.
+
+### `array_length`
+
+Computes the number of elements in a storage buffer from an explicit byte
+offset.
+
+```text
+%count: u32 = array_length @arr, %offset, stride 4
+```
+
+The resource must be a `storage_buffer`. The byte offset must be a scalar
+unsigned integer, `stride` is a literal element size in bytes (non-zero), and
+the result must be `u32` or `u64`. An optional `descriptor_index` operand, like
+`load_buffer` and `store_buffer`, must be a scalar unsigned integer when
+present.
 
 ## Terminators
 
