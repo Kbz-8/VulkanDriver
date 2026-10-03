@@ -57,7 +57,7 @@ pub fn create(device: *Device, allocator: std.mem.Allocator, info: *const vk.Fen
     const flint_device: *FlintDevice = @alignCast(@fieldParentPtr("interface", device));
     var create_info = SyncObjCreate{
         .handle = 0,
-        .flags = if (info.flags.signaled_bit) syncobj_create_signaled else 0,
+        .flags = if (info.flags.signaled) syncobj_create_signaled else 0,
     };
 
     base.utils.ioctl(

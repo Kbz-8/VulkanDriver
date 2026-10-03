@@ -231,7 +231,7 @@ test "[gen9] target: reuse registers across conditional blocks and a carrying lo
     const PhysicalGrf = @import("../../ir/operand.zig").PhysicalGrf;
     var retained: ?PhysicalGrf = null;
     var last_rhs: ?PhysicalGrf = null;
-    var destinations = std.StaticBitSet(128).initEmpty();
+    var destinations = std.StaticBitSet(128).empty;
     var binary_count: usize = 0;
     var compare_count: usize = 0;
     var store_count: usize = 0;

@@ -62,8 +62,11 @@ pub fn setup(self: *Self, device: *SoftDevice) void {
     for (self.pipeline_states[0..], 0..) |*state, i| {
         state.* = .{
             .pipeline = null,
-            .sets = [_]?*SoftDescriptorSet{null} ** base.vulkan_max_descriptor_sets,
-            .dynamic_offsets = [_][max_dynamic_descriptors_per_set]u32{[_]u32{0} ** max_dynamic_descriptors_per_set} ** base.vulkan_max_descriptor_sets,
+            .sets = @as([base.vulkan_max_descriptor_sets]?*SoftDescriptorSet, @splat(null)),
+            .dynamic_offsets = @as(
+                [base.vulkan_max_descriptor_sets][max_dynamic_descriptors_per_set]u32,
+                @splat(@as([max_dynamic_descriptors_per_set]u32, @splat(0))),
+            ),
             .push_constant_blob = @splat(0),
             .data = switch (i) {
                 graphics_pipeline_state => .{

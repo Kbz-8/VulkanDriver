@@ -39,11 +39,11 @@ pub fn Dispatchable(comptime T: type) type {
         }
 
         pub inline fn toVkHandle(self: *Self, comptime VkT: type) VkT {
-            return @enumFromInt(@intFromPtr(self));
+            return @ptrCast(self);
         }
 
         pub fn fromHandle(vk_handle: anytype) VkError!*Self {
-            const handle = @intFromEnum(vk_handle);
+            const handle = @intFromPtr(vk_handle);
             if (handle == 0) {
                 return VkError.InvalidHandleDrv;
             }

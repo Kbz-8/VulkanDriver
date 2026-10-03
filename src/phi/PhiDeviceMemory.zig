@@ -39,7 +39,7 @@ pub fn create(device: *PhiDevice, allocator: std.mem.Allocator, size: vk.DeviceS
     const memory_type =
         device.interface.physical_device.mem_props.memory_types[memory_type_index];
 
-    const host_visible = memory_type.property_flags.host_visible_bit;
+    const host_visible = memory_type.property_flags.host_visible;
 
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
     errdefer allocator.destroy(self);

@@ -95,8 +95,8 @@ pub fn validateCreateInfo(self: *const Self, allocator: std.mem.Allocator, info:
     }
 
     if (info.p_enabled_features) |requested_features| {
-        inline for (std.meta.fields(vk.PhysicalDeviceFeatures)) |field| {
-            if (@field(requested_features, field.name) == .true and @field(self.features, field.name) == .false) {
+        inline for (@typeInfo(vk.PhysicalDeviceFeatures).@"struct".field_names) |field_name| {
+            if (@field(requested_features, field_name) == .true and @field(self.features, field_name) == .false) {
                 return VkError.FeatureNotPresent;
             }
         }

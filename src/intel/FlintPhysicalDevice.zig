@@ -162,16 +162,16 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, drm_device
         .max_framebuffer_width = 4096,
         .max_framebuffer_height = 4096,
         .max_framebuffer_layers = 256,
-        .framebuffer_color_sample_counts = .{ .@"1_bit" = true, .@"4_bit" = true },
-        .framebuffer_depth_sample_counts = .{ .@"1_bit" = true, .@"4_bit" = true },
-        .framebuffer_stencil_sample_counts = .{ .@"1_bit" = true, .@"4_bit" = true },
-        .framebuffer_no_attachments_sample_counts = .{ .@"1_bit" = true, .@"4_bit" = true },
+        .framebuffer_color_sample_counts = .{ .@"1" = true, .@"4" = true },
+        .framebuffer_depth_sample_counts = .{ .@"1" = true, .@"4" = true },
+        .framebuffer_stencil_sample_counts = .{ .@"1" = true, .@"4" = true },
+        .framebuffer_no_attachments_sample_counts = .{ .@"1" = true, .@"4" = true },
         .max_color_attachments = 4,
-        .sampled_image_color_sample_counts = .{ .@"1_bit" = true, .@"4_bit" = true },
-        .sampled_image_integer_sample_counts = .{ .@"1_bit" = true, .@"4_bit" = true },
-        .sampled_image_depth_sample_counts = .{ .@"1_bit" = true, .@"4_bit" = true },
-        .sampled_image_stencil_sample_counts = .{ .@"1_bit" = true, .@"4_bit" = true },
-        .storage_image_sample_counts = .{ .@"1_bit" = true, .@"4_bit" = true },
+        .sampled_image_color_sample_counts = .{ .@"1" = true, .@"4" = true },
+        .sampled_image_integer_sample_counts = .{ .@"1" = true, .@"4" = true },
+        .sampled_image_depth_sample_counts = .{ .@"1" = true, .@"4" = true },
+        .sampled_image_stencil_sample_counts = .{ .@"1" = true, .@"4" = true },
+        .storage_image_sample_counts = .{ .@"1" = true, .@"4" = true },
         .max_sample_mask_words = 1,
         .timestamp_compute_and_graphics = .false,
         .timestamp_period = 1.0,
@@ -194,16 +194,16 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, drm_device
     interface.mem_props.memory_types[0] = .{
         .heap_index = 0,
         .property_flags = .{
-            .device_local_bit = true,
-            .host_visible_bit = true,
-            .host_coherent_bit = true,
-            .host_cached_bit = true,
+            .device_local = true,
+            .host_visible = true,
+            .host_coherent = true,
+            .host_cached = true,
         },
     };
     interface.mem_props.memory_heap_count = 1;
     interface.mem_props.memory_heaps[0] = .{
         .size = std.process.totalSystemMemory() catch 0,
-        .flags = .{ .device_local_bit = true },
+        .flags = .{ .device_local = true },
     };
 
     interface.features = .{
@@ -215,7 +215,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance, drm_device
 
     var queue_family_props = [_]vk.QueueFamilyProperties{
         .{
-            .queue_flags = .{ .graphics_bit = true, .compute_bit = true, .transfer_bit = true },
+            .queue_flags = .{ .graphics = true, .compute = true, .transfer = true },
             .queue_count = 1,
             .timestamp_valid_bits = 0,
             .min_image_transfer_granularity = .{ .width = 1, .height = 1, .depth = 1 },
@@ -375,10 +375,10 @@ pub fn getFormatProperties(interface: *Interface, format: vk.Format) VkError!vk.
         .d32_sfloat,
         .d32_sfloat_s8_uint,
         => {
-            properties.optimal_tiling_features.blit_src_bit = true;
-            properties.optimal_tiling_features.sampled_image_bit = true;
-            properties.optimal_tiling_features.transfer_dst_bit = true;
-            properties.optimal_tiling_features.transfer_src_bit = true;
+            properties.optimal_tiling_features.blit_src = true;
+            properties.optimal_tiling_features.sampled_image = true;
+            properties.optimal_tiling_features.transfer_dst = true;
+            properties.optimal_tiling_features.transfer_src = true;
         },
 
         // Formats which can be sampled, but don't support filtering
@@ -406,10 +406,10 @@ pub fn getFormatProperties(interface: *Interface, format: vk.Format) VkError!vk.
         .r32g32b32a32_sint,
         .s8_uint,
         => {
-            properties.optimal_tiling_features.blit_src_bit = true;
-            properties.optimal_tiling_features.sampled_image_bit = true;
-            properties.optimal_tiling_features.transfer_dst_bit = true;
-            properties.optimal_tiling_features.transfer_src_bit = true;
+            properties.optimal_tiling_features.blit_src = true;
+            properties.optimal_tiling_features.sampled_image = true;
+            properties.optimal_tiling_features.transfer_dst = true;
+            properties.optimal_tiling_features.transfer_src = true;
         },
 
         // YCbCr formats
@@ -417,11 +417,11 @@ pub fn getFormatProperties(interface: *Interface, format: vk.Format) VkError!vk.
         .g8_b8r8_2plane_420_unorm,
         .g10x6_b10x6r10x6_2plane_420_unorm_3pack16,
         => {
-            properties.optimal_tiling_features.sampled_image_bit = true;
-            properties.optimal_tiling_features.sampled_image_ycbcr_conversion_linear_filter_bit = true;
-            properties.optimal_tiling_features.transfer_src_bit = true;
-            properties.optimal_tiling_features.transfer_dst_bit = true;
-            properties.optimal_tiling_features.cosited_chroma_samples_bit = true;
+            properties.optimal_tiling_features.sampled_image = true;
+            properties.optimal_tiling_features.sampled_image_ycbcr_conversion_linear_filter = true;
+            properties.optimal_tiling_features.transfer_src = true;
+            properties.optimal_tiling_features.transfer_dst = true;
+            properties.optimal_tiling_features.cosited_chroma_samples = true;
         },
         else => {},
     }
@@ -431,10 +431,10 @@ pub fn getFormatProperties(interface: *Interface, format: vk.Format) VkError!vk.
         .r32_uint,
         .r32_sint,
         => {
-            properties.buffer_features.storage_texel_buffer_bit = true;
-            properties.buffer_features.storage_texel_buffer_atomic_bit = true;
-            properties.optimal_tiling_features.storage_image_bit = true;
-            properties.optimal_tiling_features.storage_image_atomic_bit = true;
+            properties.buffer_features.storage_texel_buffer = true;
+            properties.buffer_features.storage_texel_buffer_atomic = true;
+            properties.optimal_tiling_features.storage_image = true;
+            properties.optimal_tiling_features.storage_image_atomic = true;
         },
         // vulkan 1.0 mandatory storage image formats
         .r8g8b8a8_unorm,
@@ -483,8 +483,8 @@ pub fn getFormatProperties(interface: *Interface, format: vk.Format) VkError!vk.
         .b8g8r8a8_unorm,
         .b8g8r8a8_srgb,
         => {
-            properties.optimal_tiling_features.storage_image_bit = true;
-            properties.buffer_features.storage_texel_buffer_bit = true;
+            properties.optimal_tiling_features.storage_image = true;
+            properties.buffer_features.storage_texel_buffer = true;
         },
 
         else => {},
@@ -543,22 +543,22 @@ pub fn getFormatProperties(interface: *Interface, format: vk.Format) VkError!vk.
         .r32g32b32a32_uint,
         .r32g32b32a32_sint,
         => {
-            properties.optimal_tiling_features.color_attachment_bit = true;
-            properties.optimal_tiling_features.blit_dst_bit = true;
+            properties.optimal_tiling_features.color_attachment = true;
+            properties.optimal_tiling_features.blit_dst = true;
         },
         .s8_uint,
         .d16_unorm,
         .d32_sfloat, // note: either vk_format_d32_sfloat or vk_format_x8_d24_unorm_pack32 must be supported
         .d32_sfloat_s8_uint,
         => { // note: either vk_format_d24_unorm_s8_uint or vk_format_d32_sfloat_s8_uint must be supported
-            properties.optimal_tiling_features.depth_stencil_attachment_bit = true;
+            properties.optimal_tiling_features.depth_stencil_attachment = true;
         },
 
         else => {},
     }
 
     if (base.format.supportsColorAttachemendBlend(format)) {
-        properties.optimal_tiling_features.color_attachment_blend_bit = true;
+        properties.optimal_tiling_features.color_attachment_blend = true;
     }
 
     switch (format) {
@@ -628,7 +628,7 @@ pub fn getFormatProperties(interface: *Interface, format: vk.Format) VkError!vk.
         .r32g32b32a32_uint,
         .r32g32b32a32_sint,
         .r32g32b32a32_sfloat,
-        => properties.buffer_features.vertex_buffer_bit = true,
+        => properties.buffer_features.vertex_buffer = true,
         else => {},
     }
 
@@ -675,7 +675,7 @@ pub fn getFormatProperties(interface: *Interface, format: vk.Format) VkError!vk.
         // optional
         .a2r10g10b10_unorm_pack32,
         .a2r10g10b10_uint_pack32,
-        => properties.buffer_features.uniform_texel_buffer_bit = true,
+        => properties.buffer_features.uniform_texel_buffer = true,
         else => {},
     }
 
@@ -683,13 +683,13 @@ pub fn getFormatProperties(interface: *Interface, format: vk.Format) VkError!vk.
         // "Formats that are required to support VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT must also support
         //  VK_FORMAT_FEATURE_TRANSFER_SRC_BIT and VK_FORMAT_FEATURE_TRANSFER_DST_BIT."
 
-        properties.linear_tiling_features.transfer_src_bit = true;
-        properties.linear_tiling_features.transfer_dst_bit = true;
+        properties.linear_tiling_features.transfer_src = true;
+        properties.linear_tiling_features.transfer_dst = true;
     }
 
-    if (properties.optimal_tiling_features.blit_src_bit or properties.optimal_tiling_features.blit_dst_bit) {
-        properties.optimal_tiling_features.blit_src_bit = true;
-        properties.optimal_tiling_features.blit_dst_bit = true;
+    if (properties.optimal_tiling_features.blit_src or properties.optimal_tiling_features.blit_dst) {
+        properties.optimal_tiling_features.blit_src = true;
+        properties.optimal_tiling_features.blit_dst = true;
     }
 
     return properties;
@@ -711,7 +711,7 @@ pub fn getImageFormatProperties(
         .max_extent = .{ .width = 1, .height = 1, .depth = 1 },
         .max_mip_levels = 1,
         .max_array_layers = interface.props.limits.max_image_array_layers,
-        .sample_counts = .{ .@"1_bit" = true },
+        .sample_counts = .{ .@"1" = true },
         .max_resource_size = std.math.maxInt(u32),
     };
 
@@ -721,7 +721,7 @@ pub fn getImageFormatProperties(
             properties.max_mip_levels = std.math.log2_int(u32, properties.max_extent.width) + 1;
         },
         .@"2d" => {
-            const dimension = if (flags.cube_compatible_bit)
+            const dimension = if (flags.cube_compatible)
                 interface.props.limits.max_image_dimension_cube
             else
                 interface.props.limits.max_image_dimension_2d;
@@ -804,21 +804,21 @@ fn isFormatSupported(
         return false;
 
     const all_recognized_usages: vk.ImageUsageFlags = .{
-        .sampled_bit = true,
-        .storage_bit = true,
-        .color_attachment_bit = true,
-        .depth_stencil_attachment_bit = true,
-        .input_attachment_bit = true,
-        .transfer_src_bit = true,
-        .transfer_dst_bit = true,
-        .transient_attachment_bit = true,
+        .sampled = true,
+        .storage = true,
+        .color_attachment = true,
+        .depth_stencil_attachment = true,
+        .input_attachment = true,
+        .transfer_src = true,
+        .transfer_dst = true,
+        .transient_attachment = true,
     };
 
     if (usage.subtract(all_recognized_usages).toInt() != 0)
         return false;
 
-    if (usage.sampled_bit) {
-        if (tiling != .linear and !format_features.sampled_image_bit)
+    if (usage.sampled) {
+        if (tiling != .linear and !format_features.sampled_image)
             return false;
     }
 
@@ -833,19 +833,19 @@ fn isFormatSupported(
 }
 
 fn checkFormatUsage(usage: vk.ImageUsageFlags, features: vk.FormatFeatureFlags) bool {
-    if (usage.sampled_bit and !features.sampled_image_bit)
+    if (usage.sampled and !features.sampled_image)
         return false;
-    if (usage.storage_bit and !features.storage_image_bit)
+    if (usage.storage and !features.storage_image)
         return false;
-    if (usage.color_attachment_bit and !features.color_attachment_bit)
+    if (usage.color_attachment and !features.color_attachment)
         return false;
-    if (usage.depth_stencil_attachment_bit and !features.depth_stencil_attachment_bit)
+    if (usage.depth_stencil_attachment and !features.depth_stencil_attachment)
         return false;
-    if (usage.input_attachment_bit and !(features.color_attachment_bit or features.depth_stencil_attachment_bit))
+    if (usage.input_attachment and !(features.color_attachment or features.depth_stencil_attachment))
         return false;
-    if (usage.transfer_src_bit and !features.transfer_src_bit)
+    if (usage.transfer_src and !features.transfer_src)
         return false;
-    if (usage.transfer_dst_bit and !features.transfer_dst_bit)
+    if (usage.transfer_dst and !features.transfer_dst)
         return false;
     return true;
 }

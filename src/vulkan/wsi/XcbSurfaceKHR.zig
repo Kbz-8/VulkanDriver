@@ -156,7 +156,7 @@ pub fn presentImage(interface: *Interface, _: std.mem.Allocator, image: *Present
         return VkError.OutOfDateKhr;
 
     try image.image.copyToMemory(xcb_image.data, .{
-        .aspect_mask = .{ .color_bit = true },
+        .aspect_mask = .{ .color = true },
         .mip_level = 0,
         .base_array_layer = 0,
         .layer_count = 1,

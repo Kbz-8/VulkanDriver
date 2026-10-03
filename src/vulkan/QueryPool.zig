@@ -141,15 +141,15 @@ fn writeResultsImpl(self: *Self, first: u32, count: u32, bytes: []u8, stride: vk
     if (count == 0)
         return;
 
-    const value_size: usize = if (flags.@"64_bit") 8 else 4;
-    const item_size = value_size * (1 + @as(usize, @intFromBool(flags.with_availability_bit)));
+    const value_size: usize = if (flags.@"64") 8 else 4;
+    const item_size = value_size * (1 + @as(usize, @intFromBool(flags.with_availability)));
     if (count > 1 and stride < item_size)
         return VkError.ValidationFailed;
 
     var not_ready = false;
     for (0..count) |i| {
         const query = &self.queries[first + i];
-        if (flags.wait_bit) {
+        if (flags.wait) {
             while (!query.available) {
                 if (comptime builtin.target.os.tag == .vita) {
                     // Zig's std.Thread POSIX backend is not implemented for
@@ -166,13 +166,13 @@ fn writeResultsImpl(self: *Self, first: u32, count: u32, bytes: []u8, stride: vk
         if (offset + item_size > bytes.len)
             return VkError.Incomplete;
 
-        if (query.available or flags.partial_bit) {
+        if (query.available or flags.partial) {
             writeInt(bytes[offset..][0..value_size], query.value.load(.seq_cst), flags);
         } else {
             not_ready = true;
         }
 
-        if (flags.with_availability_bit) {
+        if (flags.with_availability) {
             writeInt(bytes[offset + value_size ..][0..value_size], @intFromBool(query.available), flags);
         }
     }
@@ -182,7 +182,7 @@ fn writeResultsImpl(self: *Self, first: u32, count: u32, bytes: []u8, stride: vk
 }
 
 fn writeInt(bytes: []u8, value: u64, flags: vk.QueryResultFlags) void {
-    if (flags.@"64_bit") {
+    if (flags.@"64") {
         std.mem.writeInt(u64, bytes[0..8], value, .little);
     } else {
         std.mem.writeInt(u32, bytes[0..4], @truncate(value), .little);

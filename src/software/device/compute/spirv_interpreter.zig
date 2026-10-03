@@ -174,7 +174,7 @@ fn dumpResultsTable(allocator: std.mem.Allocator, io: std.Io, rt: *spv.Runtime, 
         .{ .truncate = true },
     );
     defer file.close(io);
-    var buffer = [_]u8{0} ** 1024;
+    var buffer: [1024]u8 = @splat(0);
     var writer = file.writer(io, buffer[0..]);
     try rt.dumpResultsTable(allocator, &writer.interface);
 }

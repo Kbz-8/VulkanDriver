@@ -127,7 +127,7 @@ pub fn end(interface: *Interface) VkError!void {
 pub fn reset(interface: *Interface, flags: vk.CommandBufferResetFlags) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     self.releaseGpuAllocations();
-    if (flags.release_resources_bit) {
+    if (flags.release_resources) {
         const command_allocator = self.interface.host_allocator.allocator();
         self.batch.clearAndFree(command_allocator);
         self.relocations.clearAndFree(command_allocator);
@@ -356,7 +356,7 @@ pub fn dispatchBase(interface: *Interface, base_group_x: u32, base_group_y: u32,
 
         const descriptor = try descriptor_set.getBuffer(resource.binding, 0);
         const buffer = descriptor.buffer orelse return VkError.ValidationFailed;
-        if (!buffer.usage.storage_buffer_bit or buffer.memory == null)
+        if (!buffer.usage.storage_buffer or buffer.memory == null)
             return VkError.ValidationFailed;
 
         const range = try MemoryRange.fromBuffer(buffer, descriptor.offset, descriptor.size);

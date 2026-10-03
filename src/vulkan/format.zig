@@ -4,9 +4,9 @@ const lib = @import("lib.zig");
 const zm = @import("zmath");
 
 pub fn fromAspect(format: vk.Format, aspect: vk.ImageAspectFlags) vk.Format {
-    if (aspect.color_bit or (aspect.depth_bit and aspect.stencil_bit)) {
+    if (aspect.color or (aspect.depth and aspect.stencil)) {
         return format;
-    } else if (aspect.depth_bit) {
+    } else if (aspect.depth) {
         if (format == .d16_unorm or format == .d16_unorm_s8_uint) {
             return .d16_unorm;
         } else if (format == .d24_unorm_s8_uint) {
@@ -14,7 +14,7 @@ pub fn fromAspect(format: vk.Format, aspect: vk.ImageAspectFlags) vk.Format {
         } else if (format == .d32_sfloat or format == .d32_sfloat_s8_uint) {
             return .d32_sfloat;
         }
-    } else if (aspect.stencil_bit) {
+    } else if (aspect.stencil) {
         if (format == .s8_uint or format == .d16_unorm_s8_uint or format == .d24_unorm_s8_uint or format == .d32_sfloat_s8_uint) {
             return .s8_uint;
         }
@@ -25,19 +25,19 @@ pub fn fromAspect(format: vk.Format, aspect: vk.ImageAspectFlags) vk.Format {
 
 pub fn toAspect(format: vk.Format) vk.ImageAspectFlags {
     var aspect: vk.ImageAspectFlags = .{};
-    if (lib.c.vkuFormatHasDepth(@intCast(@intFromEnum(format))))
-        aspect.depth_bit = true;
-    if (lib.c.vkuFormatHasStencil(@intCast(@intFromEnum(format))))
-        aspect.stencil_bit = true;
+    if (lib.c.vkuFormatHasDepth(@intCast(@backingInt(format))))
+        aspect.depth = true;
+    if (lib.c.vkuFormatHasStencil(@intCast(@backingInt(format))))
+        aspect.stencil = true;
 
     if (aspect.toInt() == 0)
-        aspect.color_bit = true;
+        aspect.color = true;
 
     return aspect;
 }
 
 pub inline fn texelSize(format: vk.Format) usize {
-    return lib.c.vkuFormatTexelBlockSize(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatTexelBlockSize(@intCast(@backingInt(format)));
 }
 
 pub inline fn isCompressed(format: vk.Format) bool {
@@ -72,39 +72,39 @@ pub inline fn blockWidth(format: vk.Format) usize {
         .etc2_r8g8b8a1_srgb_block,
         .etc2_r8g8b8a8_unorm_block,
         .etc2_r8g8b8a8_srgb_block,
-        .astc_4x_4_unorm_block,
-        .astc_4x_4_srgb_block,
+        .astc_4x4_unorm_block,
+        .astc_4x4_srgb_block,
         => 4,
-        .astc_5x_4_unorm_block,
-        .astc_5x_5_unorm_block,
-        .astc_5x_4_srgb_block,
-        .astc_5x_5_srgb_block,
+        .astc_5x4_unorm_block,
+        .astc_5x5_unorm_block,
+        .astc_5x4_srgb_block,
+        .astc_5x5_srgb_block,
         => 5,
-        .astc_6x_5_unorm_block,
-        .astc_6x_6_unorm_block,
-        .astc_6x_5_srgb_block,
-        .astc_6x_6_srgb_block,
+        .astc_6x5_unorm_block,
+        .astc_6x6_unorm_block,
+        .astc_6x5_srgb_block,
+        .astc_6x6_srgb_block,
         => 6,
-        .astc_8x_5_unorm_block,
-        .astc_8x_6_unorm_block,
-        .astc_8x_8_unorm_block,
-        .astc_8x_5_srgb_block,
-        .astc_8x_6_srgb_block,
-        .astc_8x_8_srgb_block,
+        .astc_8x5_unorm_block,
+        .astc_8x6_unorm_block,
+        .astc_8x8_unorm_block,
+        .astc_8x5_srgb_block,
+        .astc_8x6_srgb_block,
+        .astc_8x8_srgb_block,
         => 8,
-        .astc_1_0x_5_unorm_block,
-        .astc_1_0x_6_unorm_block,
-        .astc_1_0x_8_unorm_block,
-        .astc_1_0x_10_unorm_block,
-        .astc_1_0x_5_srgb_block,
-        .astc_1_0x_6_srgb_block,
-        .astc_1_0x_8_srgb_block,
-        .astc_1_0x_10_srgb_block,
+        .astc_10x5_unorm_block,
+        .astc_10x6_unorm_block,
+        .astc_10x8_unorm_block,
+        .astc_10x10_unorm_block,
+        .astc_10x5_srgb_block,
+        .astc_10x6_srgb_block,
+        .astc_10x8_srgb_block,
+        .astc_10x10_srgb_block,
         => 10,
-        .astc_1_2x_10_unorm_block,
-        .astc_1_2x_12_unorm_block,
-        .astc_1_2x_10_srgb_block,
-        .astc_1_2x_12_srgb_block,
+        .astc_12x10_unorm_block,
+        .astc_12x12_unorm_block,
+        .astc_12x10_srgb_block,
+        .astc_12x12_srgb_block,
         => 12,
         else => 1,
     };
@@ -138,39 +138,39 @@ pub inline fn blockHeight(format: vk.Format) usize {
         .etc2_r8g8b8a1_srgb_block,
         .etc2_r8g8b8a8_unorm_block,
         .etc2_r8g8b8a8_srgb_block,
-        .astc_4x_4_unorm_block,
-        .astc_5x_4_unorm_block,
-        .astc_4x_4_srgb_block,
-        .astc_5x_4_srgb_block,
+        .astc_4x4_unorm_block,
+        .astc_5x4_unorm_block,
+        .astc_4x4_srgb_block,
+        .astc_5x4_srgb_block,
         => 4,
-        .astc_5x_5_unorm_block,
-        .astc_6x_5_unorm_block,
-        .astc_8x_5_unorm_block,
-        .astc_1_0x_5_unorm_block,
-        .astc_5x_5_srgb_block,
-        .astc_6x_5_srgb_block,
-        .astc_8x_5_srgb_block,
-        .astc_1_0x_5_srgb_block,
+        .astc_5x5_unorm_block,
+        .astc_6x5_unorm_block,
+        .astc_8x5_unorm_block,
+        .astc_10x5_unorm_block,
+        .astc_5x5_srgb_block,
+        .astc_6x5_srgb_block,
+        .astc_8x5_srgb_block,
+        .astc_10x5_srgb_block,
         => 5,
-        .astc_6x_6_unorm_block,
-        .astc_8x_6_unorm_block,
-        .astc_1_0x_6_unorm_block,
-        .astc_6x_6_srgb_block,
-        .astc_8x_6_srgb_block,
-        .astc_1_0x_6_srgb_block,
+        .astc_6x6_unorm_block,
+        .astc_8x6_unorm_block,
+        .astc_10x6_unorm_block,
+        .astc_6x6_srgb_block,
+        .astc_8x6_srgb_block,
+        .astc_10x6_srgb_block,
         => 6,
-        .astc_8x_8_unorm_block,
-        .astc_1_0x_8_unorm_block,
-        .astc_8x_8_srgb_block,
-        .astc_1_0x_8_srgb_block,
+        .astc_8x8_unorm_block,
+        .astc_10x8_unorm_block,
+        .astc_8x8_srgb_block,
+        .astc_10x8_srgb_block,
         => 8,
-        .astc_1_0x_10_unorm_block,
-        .astc_1_2x_10_unorm_block,
-        .astc_1_0x_10_srgb_block,
-        .astc_1_2x_10_srgb_block,
+        .astc_10x10_unorm_block,
+        .astc_12x10_unorm_block,
+        .astc_10x10_srgb_block,
+        .astc_12x10_srgb_block,
         => 10,
-        .astc_1_2x_12_unorm_block,
-        .astc_1_2x_12_srgb_block,
+        .astc_12x12_unorm_block,
+        .astc_12x12_srgb_block,
         => 12,
         else => 1,
     };
@@ -185,7 +185,7 @@ pub inline fn blockCountY(format: vk.Format, height: usize) usize {
 }
 
 pub inline fn componentCount(format: vk.Format) usize {
-    return @intCast(lib.c.vkuFormatComponentCount(@intCast(@intFromEnum(format))));
+    return @intCast(lib.c.vkuFormatComponentCount(@intCast(@backingInt(format))));
 }
 
 pub fn supportsColorAttachemendBlend(format: vk.Format) bool {
@@ -235,43 +235,43 @@ pub inline fn sliceMemSize(format: vk.Format, width: usize, height: usize) usize
 }
 
 pub inline fn isDepthAndStencil(format: vk.Format) bool {
-    return lib.c.vkuFormatIsDepthAndStencil(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatIsDepthAndStencil(@intCast(@backingInt(format)));
 }
 
 pub inline fn isDepth(format: vk.Format) bool {
-    return lib.c.vkuFormatHasDepth(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatHasDepth(@intCast(@backingInt(format)));
 }
 
 pub inline fn isStencil(format: vk.Format) bool {
-    return lib.c.vkuFormatHasStencil(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatHasStencil(@intCast(@backingInt(format)));
 }
 
 pub inline fn isSrgb(format: vk.Format) bool {
-    return lib.c.vkuFormatIsSRGB(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatIsSRGB(@intCast(@backingInt(format)));
 }
 
 pub inline fn isSfloat(format: vk.Format) bool {
-    return lib.c.vkuFormatIsSFLOAT(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatIsSFLOAT(@intCast(@backingInt(format)));
 }
 
 pub inline fn isSint(format: vk.Format) bool {
-    return lib.c.vkuFormatIsSINT(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatIsSINT(@intCast(@backingInt(format)));
 }
 
 pub inline fn isSnorm(format: vk.Format) bool {
-    return lib.c.vkuFormatIsSNORM(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatIsSNORM(@intCast(@backingInt(format)));
 }
 
 pub inline fn isUfloat(format: vk.Format) bool {
-    return lib.c.vkuFormatIsUFLOAT(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatIsUFLOAT(@intCast(@backingInt(format)));
 }
 
 pub inline fn isUint(format: vk.Format) bool {
-    return lib.c.vkuFormatIsUINT(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatIsUINT(@intCast(@backingInt(format)));
 }
 
 pub inline fn isUnorm(format: vk.Format) bool {
-    return lib.c.vkuFormatIsUNORM(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatIsUNORM(@intCast(@backingInt(format)));
 }
 
 pub inline fn isFloat(format: vk.Format) bool {
@@ -575,26 +575,26 @@ pub inline fn isUnnormalizedInteger(format: vk.Format) bool {
 }
 
 pub inline fn isSscaled(format: vk.Format) bool {
-    return lib.c.vkuFormatIsSSCALED(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatIsSSCALED(@intCast(@backingInt(format)));
 }
 
 pub inline fn isUscaled(format: vk.Format) bool {
-    return lib.c.vkuFormatIsUSCALED(@intCast(@intFromEnum(format)));
+    return lib.c.vkuFormatIsUSCALED(@intCast(@backingInt(format)));
 }
 
 fn maxComponentBits(format: vk.Format) u32 {
-    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 64)) return 64;
-    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 32)) return 32;
-    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 24)) return 24;
-    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 16)) return 16;
-    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 11)) return 11;
-    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 10)) return 10;
-    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 8)) return 8;
-    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 6)) return 6;
-    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 5)) return 5;
-    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 4)) return 4;
-    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 2)) return 2;
-    if (lib.c.vkuFormatHasComponentSize(@intCast(@intFromEnum(format)), 1)) return 1;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@backingInt(format)), 64)) return 64;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@backingInt(format)), 32)) return 32;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@backingInt(format)), 24)) return 24;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@backingInt(format)), 16)) return 16;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@backingInt(format)), 11)) return 11;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@backingInt(format)), 10)) return 10;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@backingInt(format)), 8)) return 8;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@backingInt(format)), 6)) return 6;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@backingInt(format)), 5)) return 5;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@backingInt(format)), 4)) return 4;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@backingInt(format)), 2)) return 2;
+    if (lib.c.vkuFormatHasComponentSize(@intCast(@backingInt(format)), 1)) return 1;
 
     lib.unsupported("format component bits {any}", .{format});
     return 0;

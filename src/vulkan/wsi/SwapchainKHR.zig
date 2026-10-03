@@ -57,7 +57,7 @@ pub fn create(device: *Device, allocator: std.mem.Allocator, surface: *SurfaceKH
             },
             .mip_levels = 1,
             .array_layers = info.image_array_layers,
-            .samples = .{ .@"1_bit" = true },
+            .samples = .{ .@"1" = true },
             .tiling = .optimal,
             .usage = info.image_usage,
             .sharing_mode = info.image_sharing_mode,

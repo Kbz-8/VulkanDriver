@@ -367,8 +367,8 @@ pub fn copyImage(cmd: *PhiCommandBuffer, src: *base.Image, dst: *base.Image, reg
     const dst_memory = try remoteImageMemory(dst);
 
     const depth_stencil: vk.ImageAspectFlags = .{
-        .depth_bit = true,
-        .stencil_bit = true,
+        .depth = true,
+        .stencil = true,
     };
 
     if (region.src_subresource.aspect_mask == depth_stencil and
@@ -377,10 +377,10 @@ pub fn copyImage(cmd: *PhiCommandBuffer, src: *base.Image, dst: *base.Image, reg
         var single_aspect_region = region;
 
         single_aspect_region.src_subresource.aspect_mask = .{
-            .depth_bit = true,
+            .depth = true,
         };
         single_aspect_region.dst_subresource.aspect_mask = .{
-            .depth_bit = true,
+            .depth = true,
         };
         try copyImageSingleAspect(
             cmd,
@@ -392,10 +392,10 @@ pub fn copyImage(cmd: *PhiCommandBuffer, src: *base.Image, dst: *base.Image, reg
         );
 
         single_aspect_region.src_subresource.aspect_mask = .{
-            .stencil_bit = true,
+            .stencil = true,
         };
         single_aspect_region.dst_subresource.aspect_mask = .{
-            .stencil_bit = true,
+            .stencil = true,
         };
         try copyImageSingleAspect(
             cmd,
@@ -498,8 +498,8 @@ pub fn blitImage(cmd: *PhiCommandBuffer, src: *base.Image, dst: *base.Image, reg
             .dst_slice_pitch = dst_layout.depth_pitch,
             .dst_layer_pitch = dst_layout.array_pitch,
 
-            .dst_format = @intCast(@as(i32, @intFromEnum(dst_format))),
-            .src_format = @intCast(@as(i32, @intFromEnum(src_format))),
+            .dst_format = @intCast(@as(i32, @backingInt(dst_format))),
+            .src_format = @intCast(@as(i32, @backingInt(src_format))),
 
             .src_width = src_extent.width,
             .src_height = src_extent.height,
@@ -522,7 +522,7 @@ pub fn blitImage(cmd: *PhiCommandBuffer, src: *base.Image, dst: *base.Image, reg
 
             .layer_count = region.dst_subresource.layer_count,
 
-            .filter = @intCast(@intFromEnum(filter)),
+            .filter = @intCast(@backingInt(filter)),
             .clamp_to_edge = @intFromBool(clamp_to_edge),
             .allow_srgb_conversion = @intFromBool(allow_srgb_conversion),
 

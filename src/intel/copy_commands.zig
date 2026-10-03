@@ -92,15 +92,15 @@ pub fn copyBufferImage(cmd: *FlintCommandBuffer, buffer: *base.Buffer, image_int
 }
 
 pub fn copyImage(cmd: *FlintCommandBuffer, src_interface: *base.Image, dst_interface: *base.Image, region: vk.ImageCopy) VkError!void {
-    const depth_stencil: vk.ImageAspectFlags = .{ .depth_bit = true, .stencil_bit = true };
+    const depth_stencil: vk.ImageAspectFlags = .{ .depth = true, .stencil = true };
     if (region.src_subresource.aspect_mask == depth_stencil and region.dst_subresource.aspect_mask == depth_stencil) {
         var single_aspect_region = region;
-        single_aspect_region.src_subresource.aspect_mask = .{ .depth_bit = true };
-        single_aspect_region.dst_subresource.aspect_mask = .{ .depth_bit = true };
+        single_aspect_region.src_subresource.aspect_mask = .{ .depth = true };
+        single_aspect_region.dst_subresource.aspect_mask = .{ .depth = true };
         try copyImageSingleAspect(cmd, src_interface, dst_interface, single_aspect_region);
 
-        single_aspect_region.src_subresource.aspect_mask = .{ .stencil_bit = true };
-        single_aspect_region.dst_subresource.aspect_mask = .{ .stencil_bit = true };
+        single_aspect_region.src_subresource.aspect_mask = .{ .stencil = true };
+        single_aspect_region.dst_subresource.aspect_mask = .{ .stencil = true };
         try copyImageSingleAspect(cmd, src_interface, dst_interface, single_aspect_region);
         return;
     }

@@ -8,7 +8,7 @@ const Runtime = @import("../Runtime.zig");
 const ids = shader_ir.ir.id;
 
 fn reg(index: u16) bc.Register {
-    return @enumFromInt(index);
+    return @fromBackingInt(@intCast(index));
 }
 
 fn makeProgram(
@@ -61,7 +61,7 @@ test "[interpreter] push constant load is bounds-checked little-endian" {
     defer runtime.deinit();
 
     const push_constants = [_]u8{ 0xff, 0x78, 0x56, 0x34, 0x12, 0xef, 0xcd, 0xab, 0x90 };
-    var destination = [_]u8{0xcc} ** 8;
+    var destination: [8]u8 = @splat(0xcc);
     const resource_buffers = [_]?[]u8{destination[0..]};
 
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{
@@ -76,7 +76,7 @@ test "[interpreter] push constant load is bounds-checked little-endian" {
         .push_constants = push_constants[0..8],
         .resource_buffers = &resource_buffers,
     }));
-    try std.testing.expectEqualSlices(u8, &([_]u8{0xcc} ** 8), &destination);
+    try std.testing.expectEqualSlices(u8, &@as([8]u8, @splat(0xcc)), &destination);
 }
 
 const dynamic_code = [_]bc.Instruction{
@@ -138,7 +138,7 @@ test "[interpreter] dynamic buffer load and store select explicit array elements
     defer runtime.deinit();
 
     var source = [_]u8{ 0x78, 0x56, 0x34, 0x12 };
-    var destination = [_]u8{0} ** 4;
+    var destination: [4]u8 = @splat(0);
     const resource_buffers = [_]?[]u8{
         null,
         destination[0..],
@@ -158,7 +158,7 @@ test "[interpreter] dynamic buffer access fails only when selected descriptor is
     var runtime = try Runtime.init(std.testing.allocator, &program);
     defer runtime.deinit();
 
-    var destination = [_]u8{0} ** 4;
+    var destination: [4]u8 = @splat(0);
     const resource_buffers = [_]?[]u8{
         null,
         destination[0..],

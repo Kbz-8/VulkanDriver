@@ -136,7 +136,7 @@ pub fn create(allocator: std.mem.Allocator, device: *base.Device, index: u32, fa
         .executing_task_sequence = 0,
         .next_remote_sequence = 1,
         .completed_sequence = 0,
-        .pending = [_]?PendingCompletion{null} ** ring_capacity,
+        .pending = @splat(null),
         .error_state = null,
         .shutting_down = false,
         .completion_stopped = false,

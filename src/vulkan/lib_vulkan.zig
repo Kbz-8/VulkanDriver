@@ -321,7 +321,7 @@ pub export fn ape_icdNegotiateLoaderICDInterfaceVersion(p_version: *u32) callcon
     return .success;
 }
 
-pub export fn vk_icdGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
+pub export fn vk_icdGetInstanceProcAddr(p_instance: ?vk.Instance, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
     defer entryPointEndLogTrace();
 
     if (p_name == null) return null;
@@ -344,14 +344,14 @@ pub export fn ape_icdGetPhysicalDeviceProcAddr(_: vk.Instance, p_name: ?[*:0]con
 
 // Global functions ==========================================================================================================================================
 
-pub export fn vkGetInstanceProcAddr(p_instance: vk.Instance, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
+pub export fn vkGetInstanceProcAddr(p_instance: ?vk.Instance, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
     defer entryPointEndLogTrace();
 
     if (p_name == null) return null;
     const name = std.mem.span(p_name.?);
 
     if (global_pfn_map.get(name)) |pfn| return pfn;
-    if (p_instance != .null_handle) {
+    if (p_instance != null) {
         if (instance_pfn_map.get(name)) |pfn| return pfn;
         if (physical_device_pfn_map.get(name)) |pfn| return pfn;
         if (device_pfn_map.get(name)) |pfn| return pfn;
@@ -421,12 +421,13 @@ pub export fn apeEnumerateInstanceVersion(version: *u32) callconv(vk.vulkan_call
 
 // Instance functions ========================================================================================================================================
 
-pub export fn apeDestroyInstance(p_instance: vk.Instance, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+pub export fn apeDestroyInstance(p_instance: ?vk.Instance, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkDestroyInstance);
     defer entryPointEndLogTrace();
 
+    const instance = p_instance orelse return;
     const allocator = VulkanAllocator.init(callbacks, .instance).allocator();
-    const dispatchable = Dispatchable(Instance).fromHandle(p_instance) catch |err| return errorLogger(err);
+    const dispatchable = Dispatchable(Instance).fromHandle(instance) catch |err| return errorLogger(err);
     dispatchable.object.deinit(allocator) catch |err| return errorLogger(err);
     dispatchable.destroy(allocator);
 }
@@ -447,7 +448,6 @@ pub export fn apeEnumeratePhysicalDeviceGroups(p_instance: vk.Instance, count: *
 
         for (groups[0..write_count], instance.physical_devices.items[0..write_count]) |*group, physical_device| {
             group.physical_device_count = 1;
-            group.physical_devices = @splat(.null_handle);
             group.physical_devices[0] = physical_device.toVkHandle(vk.PhysicalDevice);
             group.subset_allocation = .false;
         }
@@ -781,7 +781,7 @@ pub export fn apeAllocateMemory(p_device: vk.Device, info: *const vk.MemoryAlloc
         return .error_validation_failed;
     }
 
-    std.log.scoped(.vkAllocateMemory).debug("Allocating {d} bytes from device 0x{X}", .{ info.allocation_size, @intFromEnum(p_device) });
+    std.log.scoped(.vkAllocateMemory).debug("Allocating {d} bytes from device 0x{X}", .{ info.allocation_size, @intFromPtr(p_device) });
 
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
@@ -795,7 +795,7 @@ pub export fn apeBindBufferMemory(p_device: vk.Device, p_buffer: vk.Buffer, p_me
     entryPointBeginLogTrace(.vkBindBufferMemory);
     defer entryPointEndLogTrace();
 
-    std.log.scoped(.vkBindBufferMemory).debug("Binding device memory 0x{X} to buffer 0x{X}", .{ @intFromEnum(p_memory), @intFromEnum(p_buffer) });
+    std.log.scoped(.vkBindBufferMemory).debug("Binding device memory 0x{X} to buffer 0x{X}", .{ @backingInt(p_memory), @backingInt(p_buffer) });
 
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
 
@@ -810,7 +810,7 @@ pub export fn apeBindImageMemory(p_device: vk.Device, p_image: vk.Image, p_memor
     entryPointBeginLogTrace(.vkBindImageMemory);
     defer entryPointEndLogTrace();
 
-    std.log.scoped(.vkBindImageMemory).debug("Binding device memory 0x{X} to image 0x{X}", .{ @intFromEnum(p_memory), @intFromEnum(p_image) });
+    std.log.scoped(.vkBindImageMemory).debug("Binding device memory 0x{X} to image 0x{X}", .{ @backingInt(p_memory), @backingInt(p_image) });
 
     Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
 
@@ -1209,12 +1209,13 @@ pub export fn apeDestroyDescriptorSetLayout(p_device: vk.Device, p_layout: vk.De
     non_dispatchable.intrusiveDestroy(allocator);
 }
 
-pub export fn apeDestroyDevice(p_device: vk.Device, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+pub export fn apeDestroyDevice(p_device: ?vk.Device, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
     entryPointBeginLogTrace(.vkDestroyDevice);
     defer entryPointEndLogTrace();
 
+    const device = p_device orelse return;
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
-    const dispatchable = Dispatchable(Device).fromHandle(p_device) catch |err| return errorLogger(err);
+    const dispatchable = Dispatchable(Device).fromHandle(device) catch |err| return errorLogger(err);
 
     std.log.scoped(.vkDestroyDevice).debug("Destroying VkDevice created from {s}", .{dispatchable.object.physical_device.props.device_name});
 
@@ -1529,7 +1530,6 @@ pub export fn apeGetDeviceProcAddr(p_device: vk.Device, p_name: ?[*:0]const u8) 
     if (p_name == null) return null;
     const name = std.mem.span(p_name.?);
 
-    if (p_device == .null_handle) return null;
     const device = Dispatchable(Device).fromHandleObject(p_device) catch return null;
     if (device_entry_point_requirements.get(name)) |requirement| switch (requirement) {
         .device_extension => |extension| if (!device.isExtensionEnabled(extension)) return null,
@@ -1544,7 +1544,6 @@ pub export fn apeGetDeviceQueue(p_device: vk.Device, queue_family_index: u32, qu
     entryPointBeginLogTrace(.vkGetDeviceQueue);
     defer entryPointEndLogTrace();
 
-    p_queue.* = .null_handle;
     const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return errorLogger(err);
     if (device.queues.get(queue_family_index)) |family| {
         if (queue_index >= family.items.len) return;
@@ -2454,7 +2453,7 @@ pub export fn apeDestroySurfaceKHR(p_instance: vk.Instance, p_surface: vk.Surfac
     entryPointBeginLogTrace(.vkDestroySurfaceKHR);
     defer entryPointEndLogTrace();
 
-    NonDispatchable(Instance).checkHandleValidity(p_instance) catch |err| return errorLogger(err);
+    Dispatchable(Instance).checkHandleValidity(p_instance) catch |err| return errorLogger(err);
 
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const non_dispatchable = NonDispatchable(SurfaceKHR).fromHandle(p_surface) catch |err| return errorLogger(err);

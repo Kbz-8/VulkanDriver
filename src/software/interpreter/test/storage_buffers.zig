@@ -100,7 +100,7 @@ test "[interpreter] ssbo vector load/store use portable little-endian words" {
     try std.testing.expectEqual(@as(u32, 5), program.resourceBinding(destination_id).?.binding);
 
     var source = [_]u8{ 0xff, 0x78, 0x56, 0x34, 0x12, 0xef, 0xcd, 0xab, 0x90, 0x04, 0x03, 0x02, 0x01, 0xdd, 0xcc, 0xbb, 0xaa };
-    var destination = [_]u8{0xcc} ** 20;
+    var destination: [20]u8 = @splat(0xcc);
     const resources = [_]?[]u8{ source[0..], destination[0..] };
 
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{ .resource_buffers = &resources }));
@@ -121,7 +121,7 @@ test "[interpreter] ssbo scalar load/store interpret little-endian words" {
     defer runtime.deinit();
 
     var source = [_]u8{ 0x78, 0x56, 0x34, 0x12 };
-    var destination = [_]u8{0} ** 4;
+    var destination: [4]u8 = @splat(0);
     const resources = [_]?[]u8{ source[0..], destination[0..] };
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{ .resource_buffers = &resources }));
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0x79, 0x56, 0x34, 0x12 }, &destination);
@@ -138,10 +138,10 @@ test "[interpreter] ssbo access oob resources" {
 
     try std.testing.expectError(Runtime.RuntimeError.ResourceNotBound, runtime.run(&program, .{}));
 
-    var buffer = [_]u8{0xa5} ** 8;
+    var buffer: [8]u8 = @splat(0xa5);
     const resources = [_]?[]u8{buffer[0..]};
     try std.testing.expectError(Runtime.RuntimeError.BufferOutOfBounds, runtime.run(&program, .{ .resource_buffers = &resources }));
-    const unchanged = [_]u8{0xa5} ** 8;
+    const unchanged: [8]u8 = @splat(0xa5);
     try std.testing.expectEqualSlices(u8, &unchanged, &buffer);
 }
 
@@ -155,11 +155,11 @@ test "[interpreter] ssbo array length" {
     defer runtime.deinit();
 
     var source = [_]u8{ 0xff, 0x78, 0x56, 0x34, 0x12, 0xef, 0xcd, 0xab, 0x90, 0x04, 0x03, 0x02, 0x01, 0xdd, 0xcc, 0xbb, 0xaa };
-    var destination = [_]u8{0xcc} ** 20;
+    var destination: [20]u8 = @splat(0xcc);
     const resources = [_]?[]u8{ source[0..], destination[0..] };
 
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{ .resource_buffers = &resources }));
     try std.testing.expectEqualSlices(u8, &[_]u8{ 2, 0, 0, 0 }, destination[0..4]);
-    const unchanged = [_]u8{0xcc} ** 16;
+    const unchanged: [16]u8 = @splat(0xcc);
     try std.testing.expectEqualSlices(u8, &unchanged, destination[4..]);
 }

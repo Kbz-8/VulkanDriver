@@ -63,7 +63,7 @@ pub fn resolvedSubresourceRange(self: *const Self) vk.ImageSubresourceRange {
 }
 
 fn remainingLayerCount(self: *const Self) u32 {
-    if (self.image.image_type == .@"3d" and self.image.flags.@"2d_array_compatible_bit") {
+    if (self.image.image_type == .@"3d" and self.image.flags.@"2d_array_compatible") {
         const depth = @max(@as(u32, 1), self.image.extent.depth >> @intCast(self.subresource_range.base_mip_level));
         return depth - self.subresource_range.base_array_layer;
     }

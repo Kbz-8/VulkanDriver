@@ -210,7 +210,7 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
                 .multisample = blk: {
                     if (rasterizer_discard_enable) {
                         break :blk .{
-                            .rasterization_samples = .{ .@"1_bit" = true },
+                            .rasterization_samples = .{ .@"1" = true },
                             .sample_mask = null,
                             .alpha_to_coverage_enable = .false,
                             .alpha_to_one_enable = .false,

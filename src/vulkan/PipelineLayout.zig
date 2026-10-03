@@ -36,8 +36,8 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Pipel
     var self: Self = .{
         .owner = device,
         .set_count = info.set_layout_count,
-        .set_layouts = [_]?*DescriptorSetLayout{null} ** lib.vulkan_max_descriptor_sets,
-        .dynamic_descriptor_offsets = [_]usize{0} ** lib.vulkan_max_descriptor_sets,
+        .set_layouts = @splat(null),
+        .dynamic_descriptor_offsets = @splat(0),
         .push_ranges_count = info.push_constant_range_count,
         .push_ranges = @splat(std.mem.zeroes(vk.PushConstantRange)),
         .ref_count = std.atomic.Value(usize).init(1),

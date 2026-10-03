@@ -150,7 +150,7 @@ pub fn end(self: *Self) VkError!void {
 }
 
 pub fn reset(self: *Self, flags: vk.CommandBufferResetFlags) VkError!void {
-    if (!self.pool.flags.reset_command_buffer_bit) {
+    if (!self.pool.flags.reset_command_buffer) {
         return VkError.ValidationFailed;
     }
 
@@ -166,7 +166,7 @@ pub fn resetFromPool(self: *Self, flags: vk.CommandBufferResetFlags) VkError!voi
 }
 
 pub fn submit(self: *Self) VkError!void {
-    if (!self.usage_flags.simultaneous_use_bit) {
+    if (!self.usage_flags.simultaneous_use) {
         self.transitionState(.pending, &.{.executable}) catch return VkError.ValidationFailed;
         return;
     }
@@ -174,7 +174,7 @@ pub fn submit(self: *Self) VkError!void {
 }
 
 pub fn finish(self: *Self) VkError!void {
-    if (self.usage_flags.one_time_submit_bit) {
+    if (self.usage_flags.one_time_submit) {
         self.transitionState(.invalid, &.{.pending}) catch return VkError.ValidationFailed;
         return;
     }

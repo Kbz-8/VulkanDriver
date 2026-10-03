@@ -6,7 +6,7 @@ const Program = @import("../Program.zig");
 const Runtime = @import("../Runtime.zig");
 
 fn reg(index: u16) bc.Register {
-    return @enumFromInt(index);
+    return @fromBackingInt(@intCast(index));
 }
 
 fn f32Bits(value: f32) u32 {
@@ -95,7 +95,7 @@ test "[interpreter] signed and unsigned integer vectors convert to float" {
     var runtime = try Runtime.init(std.testing.allocator, &program);
     defer runtime.deinit();
 
-    var output = [_]u8{0} ** 32;
+    var output: [32]u8 = @splat(0);
     const resource_buffers = [_]?[]u8{output[0..]};
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{
         .resource_buffers = &resource_buffers,

@@ -198,19 +198,19 @@ pub fn getDeviceGroupPeerMemoryFeatures(interface: *Interface, heap_index: u32, 
     if (local_device_index != 0 or remote_device_index != 0) return VkError.ValidationFailed;
 
     return .{
-        .copy_src_bit = true,
-        .copy_dst_bit = true,
-        .generic_src_bit = true,
-        .generic_dst_bit = true,
+        .copy_src = true,
+        .copy_dst = true,
+        .generic_src = true,
+        .generic_dst = true,
     };
 }
 
 pub fn getDeviceGroupPresentCapabilitiesKHR(_: *Interface, capabilities: *vk.DeviceGroupPresentCapabilitiesKHR) VkError!void {
     capabilities.present_mask = @splat(0);
     capabilities.present_mask[0] = 1;
-    capabilities.modes = .{ .local_bit_khr = true };
+    capabilities.modes = .{ .local_khr = true };
 }
 
 pub fn getDeviceGroupSurfacePresentModesKHR(_: *Interface, _: *base.SurfaceKHR) VkError!vk.DeviceGroupPresentModeFlagsKHR {
-    return .{ .local_bit_khr = true };
+    return .{ .local_khr = true };
 }

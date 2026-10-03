@@ -4,6 +4,8 @@ const inst_ir = @import("instruction.zig");
 const module_ir = @import("module.zig");
 
 const indent = "    ";
+const indent2 = indent ++ indent;
+const indent3 = indent2 ++ indent;
 
 pub fn write(module: *const module_ir.Module, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     try writer.print("shader {t}", .{module.stage});
@@ -104,7 +106,7 @@ pub fn write(module: *const module_ir.Module, writer: *std.Io.Writer) std.Io.Wri
         for (function.blocks.items) |block_id| {
             const block = module.blocks.get(block_id) orelse continue;
 
-            try writer.writeAll(indent ** 2);
+            try writer.writeAll(indent2);
             try writeBlockRef(module, writer, block_id);
             try writer.writeByte('(');
             for (block.parameters.items, 0..) |parameter, index| {
@@ -117,7 +119,7 @@ pub fn write(module: *const module_ir.Module, writer: *std.Io.Writer) std.Io.Wri
 
             for (block.instructions.items) |instruction_id| {
                 const instruction = module.instructions.get(instruction_id) orelse continue;
-                try writer.writeAll(indent ** 3);
+                try writer.writeAll(indent3);
                 if (instruction.result) |result| {
                     try writeValueRef(module, writer, result);
                     try writer.writeAll(": ");
@@ -129,11 +131,11 @@ pub fn write(module: *const module_ir.Module, writer: *std.Io.Writer) std.Io.Wri
             }
 
             if (block.terminator) |terminator| {
-                try writer.writeAll(indent ** 3);
+                try writer.writeAll(indent3);
                 try writeTerminator(module, writer, terminator);
                 try writer.writeAll("\n\n");
             } else {
-                try writer.writeAll(indent ** 3 ++ "<missing terminator>\n\n");
+                try writer.writeAll(indent3 ++ "<missing terminator>\n\n");
             }
         }
         try writer.writeAll(indent ++ "}\n");

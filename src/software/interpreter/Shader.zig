@@ -158,9 +158,9 @@ fn specializationValues(allocator: std.mem.Allocator, info: ?*const vk.Specializ
 
 fn commonStage(stage: vk.ShaderStageFlags) ?ir.module.Stage {
     const bits: u32 = @bitCast(stage);
-    const vertex_bits: u32 = @bitCast(vk.ShaderStageFlags{ .vertex_bit = true });
-    const fragment_bits: u32 = @bitCast(vk.ShaderStageFlags{ .fragment_bit = true });
-    const compute_bits: u32 = @bitCast(vk.ShaderStageFlags{ .compute_bit = true });
+    const vertex_bits: u32 = @bitCast(vk.ShaderStageFlags{ .vertex = true });
+    const fragment_bits: u32 = @bitCast(vk.ShaderStageFlags{ .fragment = true });
+    const compute_bits: u32 = @bitCast(vk.ShaderStageFlags{ .compute = true });
     return if (bits == vertex_bits)
         .vertex
     else if (bits == fragment_bits)

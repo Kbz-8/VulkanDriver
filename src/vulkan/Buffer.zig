@@ -13,7 +13,7 @@ size: vk.DeviceSize,
 offset: vk.DeviceSize,
 usage: vk.BufferUsageFlags,
 memory: ?*DeviceMemory,
-allowed_memory_types: std.bit_set.IntegerBitSet(32),
+allowed_memory_types: std.bit_set.Integer(32),
 
 vtable: *const VTable,
 
@@ -30,7 +30,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Buffe
         .offset = 0,
         .usage = info.usage,
         .memory = null,
-        .allowed_memory_types = std.bit_set.IntegerBitSet(32).initFull(),
+        .allowed_memory_types = .full,
         // SAFETY: the backend assigns the vtable before returning the buffer.
         .vtable = undefined,
     };

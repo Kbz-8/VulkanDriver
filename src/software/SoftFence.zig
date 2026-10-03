@@ -31,7 +31,7 @@ pub fn create(device: *Device, allocator: std.mem.Allocator, info: *const vk.Fen
         .interface = interface,
         .mutex = .init,
         .condition = .init,
-        .is_signaled = info.flags.signaled_bit,
+        .is_signaled = info.flags.signaled,
     };
     return self;
 }

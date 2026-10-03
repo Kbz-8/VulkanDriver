@@ -53,7 +53,6 @@ const TargetContexts = struct {
 
 const ImplementationDesc = struct {
     name: []const u8,
-    icd_name: ?[]const u8 = null,
     root_source_file: []const u8,
     vulkan_version: std.SemanticVersion,
     target_profile: TargetProfile = .native,
@@ -141,7 +140,7 @@ pub fn build(b: *std.Build) !void {
         .options = options,
     };
 
-    const use_llvm = b.option(bool, "use-llvm", "LLVM build") orelse (b.release_mode != .off);
+    const use_llvm = b.option(bool, "use-llvm", "LLVM build") orelse false;
 
     const target_contexts = TargetContexts{
         .native = createTargetContext(b, optimize, shared_dependencies, .{
@@ -188,6 +187,10 @@ pub fn build(b: *std.Build) !void {
     const ir_docs_step = b.step("docs-ir", "Build and install the documentation or shader IR");
     ir_docs_step.dependOn(&ir_install_docs.step);
 
+    const caselist = b.option([]const u8, "deqp-case", "Caselist for deqp");
+    const caselist_file = b.option([]const u8, "deqp-caselist-file", "Caselist file relative to cwd for deqp");
+    const cts_jobs = b.option(u32, "deqp-jobs", "Job count for deqp-runner");
+
     var implementation_modules: [implementations.len]*std.Build.Module = undefined;
     for (implementations, 0..) |impl, impl_index| {
         const context = target_contexts.get(impl.target_profile);
@@ -224,24 +227,39 @@ pub fn build(b: *std.Build) !void {
         const install_step = b.step(impl.name, b.fmt("Build libvulkan_{s}", .{impl.name}));
         install_step.dependOn(implementation_install_step);
 
-        const lib_tests = b.addTest(.{
-            .root_module = lib_mod,
-            .test_runner = .{
-                .path = b.path("test/test_runner.zig"),
-                .mode = .simple,
-            },
-        });
-
-        const run_tests = b.addRunArtifact(lib_tests);
         const test_step = b.step(b.fmt("test-{s}", .{impl.name}), b.fmt("Run libvulkan_{s} tests", .{impl.name}));
-        test_step.dependOn(&run_tests.step);
+        if (impl.target_profile == .vita) {
+            // Vita is an unhosted target, so Zig cannot link or run a test executable for it.
+            // The library build still compiles the complete backend for the target toolchain.
+            test_step.dependOn(&lib.step);
+        } else {
+            const test_mod = b.allocator.create(std.Build.Module) catch @panic("OOM");
+            test_mod.init(b, .{ .existing = lib_mod });
+            if (std.mem.eql(u8, impl.name, "phi")) {
+                // miclib resolves the C ABI dynamically. Debug metadata for its translated C
+                // declarations otherwise creates spurious link-time references to libmicmgmt.
+                test_mod.strip = true;
+            }
+
+            const lib_tests = b.addTest(.{
+                .root_module = test_mod,
+                .test_runner = .{
+                    .path = b.path("test/test_runner.zig"),
+                    .mode = .simple,
+                },
+            });
+
+            const run_tests = b.addRunArtifact(lib_tests);
+            test_step.dependOn(&run_tests.step);
+        }
 
         inline for (std.enums.values(RunningMode)) |mode| {
-            if (addCTS(b, context.target, &impl, lib, mode) catch null) |step|
-                step.dependOn(implementation_install_step);
-            if (addMultithreadedCTS(b, context.target, &impl, lib, mode) catch null) |step|
+            if (addCTS(b, context.target, &impl, lib, mode, caselist, caselist_file) catch null) |step|
                 step.dependOn(implementation_install_step);
         }
+
+        if (addMultithreadedCTS(b, context.target, &impl, lib, caselist_file, cts_jobs) catch null) |step|
+            step.dependOn(implementation_install_step);
 
         const impl_autodoc_test = b.addObject(.{
             .name = "lib",
@@ -321,14 +339,10 @@ fn createTargetContext(b: *std.Build, optimize: std.builtin.OptimizeMode, deps: 
 }
 
 fn installSharedLibrary(b: *std.Build, impl: *const ImplementationDesc, lib: *Step.Compile) *Step {
-    const icd_file = b.addWriteFile(
-        b.getInstallPath(
-            .lib,
-            if (impl.icd_name) |icd_name|
-                b.fmt("vk_{s}.json", .{icd_name})
-            else
-                b.fmt("vk_ape_{s}.json", .{impl.name}),
-        ),
+    const icd_name = b.fmt("vk_ape_{s}.json", .{impl.name});
+    const write_files = b.addWriteFiles();
+    const icd_file = write_files.add(
+        icd_name,
         b.fmt(
             \\{{
             \\    "file_format_version": "1.0.1",
@@ -339,21 +353,38 @@ fn installSharedLibrary(b: *std.Build, impl: *const ImplementationDesc, lib: *St
             \\        "is_portability_driver": false
             \\    }}
             \\}}
-        , .{ lib.out_lib_filename, impl.vulkan_version.major, impl.vulkan_version.minor, impl.vulkan_version.patch }),
+        , .{
+            lib.out_filename,
+            impl.vulkan_version.major,
+            impl.vulkan_version.minor,
+            impl.vulkan_version.patch,
+        }),
     );
 
-    lib.step.dependOn(&icd_file.step);
-    return &b.addInstallArtifact(lib, .{}).step;
+    const install_lib = b.addInstallArtifact(lib, .{});
+    const install_icd = b.addInstallFileWithDir(icd_file, .lib, icd_name);
+
+    install_icd.step.dependOn(&install_lib.step);
+
+    return &install_icd.step;
 }
 
-fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *Step.Compile, comptime mode: RunningMode) !*Step {
+fn addCTS(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    impl: *const ImplementationDesc,
+    impl_lib: *Step.Compile,
+    comptime mode: RunningMode,
+    caselist: ?[]const u8,
+    caselist_file: ?[]const u8,
+) !*Step {
     const arch = if (target.query.cpu_arch) |arch| arch else builtin.cpu.arch;
     if (!arch.isX86())
         return error.NoCTSForPlatform;
 
     const cts = b.dependency("cts_bin", .{});
 
-    const cts_exe_name = cts.path(b.fmt("deqp-vk-{s}", .{
+    const cts_exe_path = cts.path(b.fmt("deqp-vk-{s}", .{
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
             .linux => "linux.x86_64",
             .windows => "windows.exe",
@@ -362,48 +393,47 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
         },
     }));
 
-    const mustpass = try cts.path("vk-default.txt").getPath3(b, null).toString(b.allocator);
+    const mustpass = cts.path("vk-default.txt");
 
-    const cts_exe_path = try cts_exe_name.getPath3(b, null).toString(b.allocator);
-
-    const run = b.addSystemCommand(&[_][]const u8{switch (mode) {
-        .normal => cts_exe_path,
-        .gdb => "gdb",
-        .valgrind => "valgrind",
-    }});
+    const run = switch (mode) {
+        .normal => blk: {
+            const run = Step.Run.create(b, "run CTS");
+            run.addFileArg(cts_exe_path);
+            break :blk run;
+        },
+        .gdb => blk: {
+            const run = b.addSystemCommand(&.{ "gdb", "--args" });
+            run.addFileArg(cts_exe_path);
+            break :blk run;
+        },
+        .valgrind => blk: {
+            const run = b.addSystemCommand(&.{
+                "valgrind",
+                "-s",
+                "--leak-check=full",
+                "--show-leak-kinds=all",
+                "--track-origins=no",
+            });
+            run.addFileArg(cts_exe_path);
+            break :blk run;
+        },
+    };
     run.step.dependOn(&impl_lib.step);
 
-    switch (mode) {
-        .gdb => {
-            run.addArg("--args");
-            run.addArg(cts_exe_path);
-        },
-        .valgrind => {
-            run.addArg("-s");
-            run.addArg("--leak-check=full");
-            run.addArg("--show-leak-kinds=all");
-            run.addArg("--track-origins=yes");
-            run.addArg(cts_exe_path);
-        },
-        else => {},
-    }
-
-    run.addArg(b.fmt("--deqp-archive-dir={s}", .{try cts.path("").getPath3(b, null).toString(b.allocator)}));
-    run.addArg(b.fmt("--deqp-vk-library-path={s}", .{b.getInstallPath(.lib, impl_lib.out_lib_filename)}));
+    run.addDirectoryArg2(cts.path(""), .{ .prefix = "--deqp-archive-dir=" });
+    run.addFileArg2(b.graph.path(.install_lib, impl_lib.out_filename), .{ .prefix = "--deqp-vk-library-path=" });
     run.addArg("--deqp-log-filename=vk-cts-logs.qpa");
+    run.addArg("--deqp-test-oom=disable");
 
-    var requires_explicit_tests = false;
-    if (b.args) |args| {
-        for (args) |arg| {
-            if (std.mem.startsWith(u8, arg, "--deqp-case")) {
-                requires_explicit_tests = true;
-            }
-            run.addArg(arg);
-        }
+    if (caselist) |list| {
+        run.addArg(b.fmt("--deqp-case={s}", .{list}));
+    } else if (caselist_file) |file| {
+        run.addArg(b.fmt("--deqp-caselist-file={s}", .{file}));
+    } else {
+        run.addFileArg2(mustpass, .{ .prefix = "--deqp-caselist-file=" });
     }
-    if (!requires_explicit_tests) {
-        run.addArg(b.fmt("--deqp-caselist-file={s}", .{mustpass}));
-    }
+
+    run.addPassthruArgs();
 
     const run_step = b.step(
         b.fmt("raw-cts-{s}{s}", .{
@@ -428,14 +458,21 @@ fn addCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const Implemen
     return &run.step;
 }
 
-fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *const ImplementationDesc, impl_lib: *Step.Compile, comptime mode: RunningMode) !*Step {
+fn addMultithreadedCTS(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    impl: *const ImplementationDesc,
+    impl_lib: *Step.Compile,
+    caselist_file: ?[]const u8,
+    jobs: ?u32,
+) !*Step {
     const arch = if (target.query.cpu_arch) |arch| arch else builtin.cpu.arch;
     if (!arch.isX86())
         return error.NoCTSForPlatform;
 
     const cts = b.dependency("cts_bin", .{});
 
-    const cts_exe_name = cts.path(b.fmt("deqp-vk-{s}", .{
+    const cts_exe_path = cts.path(b.fmt("deqp-vk-{s}", .{
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
             .linux => "linux.x86_64",
             .windows => "windows.exe",
@@ -444,84 +481,43 @@ fn addMultithreadedCTS(b: *std.Build, target: std.Build.ResolvedTarget, impl: *c
         },
     }));
 
-    var jobs_count: ?usize = null;
+    const mustpass = cts.path("vk-default.txt");
 
-    if (b.args) |args| {
-        for (args) |arg| {
-            if (std.mem.startsWith(u8, arg, "-j")) {
-                jobs_count = try std.fmt.parseInt(usize, arg["-j".len..], 10);
-            }
-        }
-    }
+    const run = b.addSystemCommand(&.{
+        "deqp-runner",
+        "run",
+        "--timeout",
+        "60",
+        "--output",
+        "./cts",
+    });
 
-    var caselist_file_path: []const u8 = try cts.path("vk-default.txt").getPath3(b, null).toString(b.allocator);
-    if (b.args) |args| {
-        for (args) |arg| {
-            if (std.mem.startsWith(u8, arg, "--deqp-caselist-file")) {
-                caselist_file_path = arg["--deqp-caselist-file=".len..];
-            }
-        }
-    }
-
-    const cts_exe_path = try cts_exe_name.getPath3(b, null).toString(b.allocator);
-
-    const run = b.addSystemCommand(&[_][]const u8{switch (mode) {
-        .normal => "deqp-runner",
-        .gdb => "gdb",
-        .valgrind => "valgrind",
-    }});
-    run.step.dependOn(&impl_lib.step);
-
-    switch (mode) {
-        .gdb => {
-            run.addArg("--args");
-            run.addArg(cts_exe_path);
-        },
-        .valgrind => {
-            run.addArg("-s");
-            run.addArg("--leak-check=full");
-            run.addArg("--show-leak-kinds=all");
-            run.addArg("--track-origins=yes");
-            run.addArg(cts_exe_path);
-        },
-        else => {},
-    }
-
-    run.addArg("run");
-    run.addArg("--timeout");
-    run.addArg("60");
     run.addArg("--deqp");
-    run.addArg(cts_exe_path);
+    run.addFileArg2(cts_exe_path, .{ .make_absolute = true });
+
     run.addArg("--caselist");
-    run.addArg(caselist_file_path);
-    run.addArg("--output");
-    run.addArg("./cts");
-    if (jobs_count) |count| {
-        run.addArg(b.fmt("-j{d}", .{count}));
+    if (caselist_file) |file| {
+        run.addArg(file);
+    } else {
+        run.addFileArg(mustpass);
     }
+
+    if (jobs) |j| {
+        run.addArg("-j");
+        run.addArg(b.fmt("{d}", .{j}));
+    }
+
     run.addArg("--");
-    run.addArg(b.fmt("--deqp-archive-dir={s}", .{try cts.path("").getPath3(b, null).toString(b.allocator)}));
-    run.addArg(b.fmt("--deqp-vk-library-path={s}", .{b.getInstallPath(.lib, impl_lib.out_lib_filename)}));
+
+    run.addDirectoryArg2(cts.path(""), .{ .prefix = "--deqp-archive-dir=" });
+    run.addFileArg2(b.graph.path(.install_lib, impl_lib.out_filename), .{ .prefix = "--deqp-vk-library-path=", .make_absolute = true });
     run.addArg("--deqp-test-oom=disable");
 
-    const run_step = b.step(
-        b.fmt("cts-{s}{s}", .{
-            impl.name,
-            switch (mode) {
-                .normal => "",
-                .gdb => "-gdb",
-                .valgrind => "-valgrind",
-            },
-        }),
-        b.fmt("Run Vulkan conformance tests for libvulkan_{s}{s} in a multithreaded environment", .{
-            impl.name,
-            switch (mode) {
-                .normal => "",
-                .gdb => " within GDB",
-                .valgrind => " within Valgrind",
-            },
-        }),
-    );
+    run.addPassthruArgs();
+
+    run.step.dependOn(&impl_lib.step);
+
+    const run_step = b.step(b.fmt("cts-{s}", .{impl.name}), b.fmt("Run Vulkan conformance tests for libvulkan_{s} in a multithreaded environment", .{impl.name}));
     run_step.dependOn(&run.step);
 
     return &run.step;

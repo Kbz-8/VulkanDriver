@@ -266,11 +266,11 @@ pub fn interpolateVertexOutputs(
     centroid_b1: f32,
     centroid_b2: f32,
 ) VkError![spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation {
-    var inputs = [_]VertexInterpolationLocation{[_]VertexInterpolation{.{
+    var inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation = @splat(@splat(.{
         .blob = &.{},
         .size = 0,
         .free_responsability = false,
-    }} ** 4} ** spv.SPIRV_MAX_OUTPUT_LOCATIONS;
+    }));
 
     for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
         for (0..4) |component| {
@@ -344,11 +344,11 @@ pub fn interpolateVertexOutputDerivatives(
     db1: f32,
     db2: f32,
 ) VkError![spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation {
-    var inputs = [_]VertexInterpolationLocation{[_]VertexInterpolation{.{
+    var inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation = @splat(@splat(.{
         .blob = &.{},
         .size = 0,
         .free_responsability = false,
-    }} ** 4} ** spv.SPIRV_MAX_OUTPUT_LOCATIONS;
+    }));
 
     for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
         for (0..4) |component| {
@@ -523,10 +523,10 @@ inline fn blendColor(src: F32x4, dst: F32x4, state: vk.PipelineColorBlendAttachm
 
 inline fn applyColorWriteMask(blended: F32x4, dst: F32x4, mask: vk.ColorComponentFlags) F32x4 {
     return .{
-        if (mask.r_bit) blended[0] else dst[0],
-        if (mask.g_bit) blended[1] else dst[1],
-        if (mask.b_bit) blended[2] else dst[2],
-        if (mask.a_bit) blended[3] else dst[3],
+        if (mask.r) blended[0] else dst[0],
+        if (mask.g) blended[1] else dst[1],
+        if (mask.b) blended[2] else dst[2],
+        if (mask.a) blended[3] else dst[3],
     };
 }
 

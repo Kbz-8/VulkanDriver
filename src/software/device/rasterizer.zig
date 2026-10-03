@@ -21,7 +21,7 @@ const VkError = base.VkError;
 const SpvRuntimeError = spv.Runtime.RuntimeError;
 
 fn renderTargetSubresourceSize(image: *const SoftImage, image_view: *const base.ImageView, aspect_mask: vk.ImageAspectFlags, mip_level: u32) usize {
-    if (image.interface.image_type == .@"3d" and image.interface.flags.@"2d_array_compatible_bit" and
+    if (image.interface.image_type == .@"3d" and image.interface.flags.@"2d_array_compatible" and
         (image_view.view_type == .@"2d" or image_view.view_type == .@"2d_array"))
     {
         return image.interface.getSliceMemSizeForMipLevel(aspect_mask, mip_level) *
@@ -46,7 +46,7 @@ fn snapshotInputAttachments(allocator: std.mem.Allocator, draw_call: *DrawCall) 
             continue;
 
         const range = image_view.subresource_range;
-        if (range.aspect_mask.depth_bit and range.aspect_mask.stencil_bit)
+        if (range.aspect_mask.depth and range.aspect_mask.stencil)
             snapshot_count += 2
         else
             snapshot_count += 1;
@@ -73,8 +73,8 @@ fn snapshotInputAttachments(allocator: std.mem.Allocator, draw_call: *DrawCall) 
             continue;
 
         const range = image_view.subresource_range;
-        const aspects: []const vk.ImageAspectFlags = if (range.aspect_mask.depth_bit and range.aspect_mask.stencil_bit)
-            &.{ .{ .depth_bit = true }, .{ .stencil_bit = true } }
+        const aspects: []const vk.ImageAspectFlags = if (range.aspect_mask.depth and range.aspect_mask.stencil)
+            &.{ .{ .depth = true }, .{ .stencil = true } }
         else
             &.{range.aspect_mask};
 
@@ -153,11 +153,11 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
             break :blk null;
 
         const depth_range = depth_attachment_view.?.subresource_range;
-        if (!depth_range.aspect_mask.depth_bit)
+        if (!depth_range.aspect_mask.depth)
             break :blk null;
 
         const depth_format = depth_attachment_view.?.format;
-        const depth_aspect: vk.ImageAspectFlags = .{ .depth_bit = true };
+        const depth_aspect: vk.ImageAspectFlags = .{ .depth = true };
         const depth_aspect_format = base.format.fromAspect(depth_format, depth_aspect);
         const depth_extent = depth_attachment.?.getMipLevelExtent(depth_range.base_mip_level);
 
@@ -185,11 +185,11 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
             break :blk null;
 
         const stencil_range = depth_attachment_view.?.subresource_range;
-        if (!stencil_range.aspect_mask.stencil_bit)
+        if (!stencil_range.aspect_mask.stencil)
             break :blk null;
 
         const stencil_format = depth_attachment_view.?.format;
-        const stencil_aspect: vk.ImageAspectFlags = .{ .stencil_bit = true };
+        const stencil_aspect: vk.ImageAspectFlags = .{ .stencil = true };
         const stencil_aspect_format = base.format.fromAspect(stencil_format, stencil_aspect);
         const stencil_extent = depth_attachment.?.getMipLevelExtent(stencil_range.base_mip_level);
 
@@ -634,13 +634,13 @@ fn triangleIsCulled(renderer: *Renderer, front_face: bool) VkError!bool {
     const pipeline_data = (renderer.state.pipeline orelse return VkError.InvalidHandleDrv).interface.mode.graphics;
     const cull_mode = pipeline_data.rasterization.cull_mode;
 
-    if (!cull_mode.front_bit and !cull_mode.back_bit)
+    if (!cull_mode.front and !cull_mode.back)
         return false;
 
-    if (cull_mode.front_bit and cull_mode.back_bit)
+    if (cull_mode.front and cull_mode.back)
         return true;
 
-    return (cull_mode.front_bit and front_face) or (cull_mode.back_bit and !front_face);
+    return (cull_mode.front and front_face) or (cull_mode.back and !front_face);
 }
 
 fn triangleFrontFace(renderer: *Renderer, v0: *const Vertex, v1: *const Vertex, v2: *const Vertex) VkError!?bool {

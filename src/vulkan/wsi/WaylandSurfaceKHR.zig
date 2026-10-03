@@ -355,7 +355,7 @@ pub fn presentImage(interface: *Interface, _: std.mem.Allocator, image: *Present
     const wl_image = self.image_map.get(image) orelse return VkError.Unknown;
 
     try image.image.copyToMemory(wl_image.staging, .{
-        .aspect_mask = .{ .color_bit = true },
+        .aspect_mask = .{ .color = true },
         .mip_level = 0,
         .base_array_layer = 0,
         .layer_count = 1,

@@ -87,7 +87,7 @@ pub fn freeCommandBuffers(self: *Self, cmds: []*Dispatchable(CommandBuffer)) VkE
     var len: usize = 0;
     for (cmds) |cmd| {
         if (std.mem.indexOfScalar(*Dispatchable(CommandBuffer), self.buffers.items, cmd)) |i| {
-            try cmd.object.resetFromPool(.{ .release_resources_bit = true });
+            try cmd.object.resetFromPool(.{ .release_resources = true });
             const save = self.buffers.orderedRemove(i);
             self.buffers.appendAssumeCapacity(save);
             len += 1;
@@ -113,6 +113,6 @@ pub fn reset(self: *Self, flags: vk.CommandPoolResetFlags) VkError!void {
     self.first_free_buffer_index = 0;
 
     for (self.buffers.items) |dis_cmd| {
-        _ = dis_cmd.object.resetFromPool(.{ .release_resources_bit = flags.release_resources_bit }) catch @panic("Caught an error while handling an error");
+        _ = dis_cmd.object.resetFromPool(.{ .release_resources = flags.release_resources }) catch @panic("Caught an error while handling an error");
     }
 }

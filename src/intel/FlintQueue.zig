@@ -24,7 +24,7 @@ pub fn create(allocator: std.mem.Allocator, device: *base.Device, index: u32, fa
     const completion = try FlintFence.create(device, allocator, &.{
         .s_type = .fence_create_info,
         .p_next = null,
-        .flags = .{ .signaled_bit = true },
+        .flags = .{ .signaled = true },
     });
     errdefer completion.interface.destroy(allocator);
     interface.dispatch_table = &.{

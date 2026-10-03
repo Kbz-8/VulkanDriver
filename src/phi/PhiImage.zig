@@ -107,8 +107,8 @@ fn getAspectOffset(self: *const Self, aspect_mask: vk.ImageAspectFlags) VkError!
         .d16_unorm_s8_uint,
         .d24_unorm_s8_uint,
         .d32_sfloat_s8_uint,
-        => if (aspect_mask.stencil_bit)
-            self.interface.getTotalSizeForAspect(.{ .depth_bit = true })
+        => if (aspect_mask.stencil)
+            self.interface.getTotalSizeForAspect(.{ .depth = true })
         else
             0,
         else => 0,
@@ -122,12 +122,12 @@ pub fn getTotalSizeForAspect(interface: *const Interface, aspect_mask: vk.ImageA
         return VkError.ValidationFailed;
 
     var size: usize = 0;
-    if (aspect_mask.color_bit)
-        size += self.getLayerSize(.{ .color_bit = true });
-    if (aspect_mask.depth_bit)
-        size += self.getLayerSize(.{ .depth_bit = true });
-    if (aspect_mask.stencil_bit)
-        size += self.getLayerSize(.{ .stencil_bit = true });
+    if (aspect_mask.color)
+        size += self.getLayerSize(.{ .color = true });
+    if (aspect_mask.depth)
+        size += self.getLayerSize(.{ .depth = true });
+    if (aspect_mask.stencil)
+        size += self.getLayerSize(.{ .stencil = true });
     return size * interface.array_layers;
 }
 

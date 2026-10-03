@@ -50,13 +50,13 @@ inline fn computeOffset3D(x: usize, y: usize, z: usize, slice_bytes: usize, pitc
 }
 
 pub fn clear(pixel: vk.ClearValue, format: vk.Format, dst: *SoftImage, view_format: vk.Format, range: vk.ImageSubresourceRange, render_area: ?vk.Rect2D) VkError!void {
-    if (range.aspect_mask.depth_bit and range.aspect_mask.stencil_bit) {
+    if (range.aspect_mask.depth and range.aspect_mask.stencil) {
         var depth_range = range;
-        depth_range.aspect_mask = .{ .depth_bit = true };
+        depth_range.aspect_mask = .{ .depth = true };
         try clear(pixel, format, dst, view_format, depth_range, render_area);
 
         var stencil_range = range;
-        stencil_range.aspect_mask = .{ .stencil_bit = true };
+        stencil_range.aspect_mask = .{ .stencil = true };
         try clear(pixel, format, dst, view_format, stencil_range, render_area);
 
         return;
@@ -76,7 +76,7 @@ pub fn clear(pixel: vk.ClearValue, format: vk.Format, dst: *SoftImage, view_form
     };
 
     var clamped_pixel: vk.ClearValue = pixel;
-    if (range.aspect_mask.color_bit and (base.format.isSnorm(view_format) or base.format.isUnorm(view_format))) {
+    if (range.aspect_mask.color and (base.format.isSnorm(view_format) or base.format.isUnorm(view_format))) {
         const min_value: f32 = if (base.format.isSnorm(view_format)) -1.0 else 0.0;
 
         clamped_pixel.color.float_32[0] = std.math.clamp(pixel.color.float_32[0], min_value, 1.0);
@@ -85,23 +85,23 @@ pub fn clear(pixel: vk.ClearValue, format: vk.Format, dst: *SoftImage, view_form
         clamped_pixel.color.float_32[3] = std.math.clamp(pixel.color.float_32[3], min_value, 1.0);
     }
 
-    if (range.aspect_mask.depth_bit) {
+    if (range.aspect_mask.depth) {
         clamped_pixel.depth_stencil.depth = std.math.clamp(pixel.depth_stencil.depth, 0.0, 1.0);
     }
 
     const depth_clear: F32x4 = @splat(clamped_pixel.depth_stencil.depth);
     const stencil_clear: U32x4 = @splat(clamped_pixel.depth_stencil.stencil);
 
-    const src_format: vk.Format = if (range.aspect_mask.stencil_bit)
+    const src_format: vk.Format = if (range.aspect_mask.stencil)
         .r32g32b32a32_uint
-    else if (range.aspect_mask.depth_bit)
+    else if (range.aspect_mask.depth)
         .r32g32b32a32_sfloat
     else
         format;
 
-    const src_map: []const u8 = if (range.aspect_mask.stencil_bit)
+    const src_map: []const u8 = if (range.aspect_mask.stencil)
         std.mem.asBytes(&stencil_clear)
-    else if (range.aspect_mask.depth_bit)
+    else if (range.aspect_mask.depth)
         std.mem.asBytes(&depth_clear)
     else
         std.mem.asBytes(&clamped_pixel);

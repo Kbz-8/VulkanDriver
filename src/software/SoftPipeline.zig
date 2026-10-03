@@ -102,8 +102,8 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
         .nothing => 1,
         .unlimited => std.Thread.getCpuCount() catch 1, // If we cannot get the CPU count, fallback on single runtime
         else => |count| blk: {
-            const cpu_count: usize = std.Thread.getCpuCount() catch break :blk @intFromEnum(count);
-            break :blk if (@intFromEnum(count) >= cpu_count) cpu_count else @intFromEnum(count);
+            const cpu_count: usize = std.Thread.getCpuCount() catch break :blk @backingInt(count);
+            break :blk if (@backingInt(count) >= cpu_count) cpu_count else @backingInt(count);
         },
     };
 
@@ -145,8 +145,8 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
         .nothing => 1,
         .unlimited => std.Thread.getCpuCount() catch 1, // If we cannot get the CPU count, fallback on single runtime
         else => |count| blk: {
-            const cpu_count: usize = std.Thread.getCpuCount() catch break :blk @intFromEnum(count);
-            break :blk if (@intFromEnum(count) >= cpu_count) cpu_count else @intFromEnum(count);
+            const cpu_count: usize = std.Thread.getCpuCount() catch break :blk @backingInt(count);
+            break :blk if (@backingInt(count) >= cpu_count) cpu_count else @backingInt(count);
         },
     };
 
@@ -161,19 +161,19 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
                 if (comptime base.config.soft_ir_interpreter) "IR" else "SPIR-V",
             });
 
-            if (stage.stage.contains(.{ .vertex_bit = true })) {
+            if (stage.stage.contains(.{ .vertex = true })) {
                 std.log.scoped(.GraphicsPipeline).debug(">   Vertex stage", .{});
                 self.stages.put(.vertex, shader);
-            } else if (stage.stage.contains(.{ .fragment_bit = true })) {
+            } else if (stage.stage.contains(.{ .fragment = true })) {
                 std.log.scoped(.GraphicsPipeline).debug(">   Fragment stage", .{});
                 self.stages.put(.fragment, shader);
-            } else if (stage.stage.contains(.{ .tessellation_control_bit = true })) {
+            } else if (stage.stage.contains(.{ .tessellation_control = true })) {
                 std.log.scoped(.GraphicsPipeline).debug(">   Tessellation control stage", .{});
                 self.stages.put(.tessellation_control, shader);
-            } else if (stage.stage.contains(.{ .tessellation_evaluation_bit = true })) {
+            } else if (stage.stage.contains(.{ .tessellation_evaluation = true })) {
                 std.log.scoped(.GraphicsPipeline).debug(">   Tessellation evaluation stage", .{});
                 self.stages.put(.tessellation_evaluation, shader);
-            } else if (stage.stage.contains(.{ .geometry_bit = true })) {
+            } else if (stage.stage.contains(.{ .geometry = true })) {
                 std.log.scoped(.GraphicsPipeline).debug(">   Geometry stage", .{});
                 self.stages.put(.geometry, shader);
             } else {
@@ -300,12 +300,12 @@ fn initRuntime(allocator: std.mem.Allocator, module: *SoftShaderModule, stage: *
 }
 
 fn executionModelForStage(stage: vk.ShaderStageFlags) ?spv.spv.SpvExecutionModel {
-    if (stage.vertex_bit) return .Vertex;
-    if (stage.tessellation_control_bit) return .TessellationControl;
-    if (stage.tessellation_evaluation_bit) return .TessellationEvaluation;
-    if (stage.geometry_bit) return .Geometry;
-    if (stage.fragment_bit) return .Fragment;
-    if (stage.compute_bit) return .GLCompute;
+    if (stage.vertex) return .Vertex;
+    if (stage.tessellation_control) return .TessellationControl;
+    if (stage.tessellation_evaluation) return .TessellationEvaluation;
+    if (stage.geometry) return .Geometry;
+    if (stage.fragment) return .Fragment;
+    if (stage.compute) return .GLCompute;
     return null;
 }
 
@@ -348,8 +348,8 @@ fn imageMipLevel(image_view: *SoftImageView, lod: ?i32) u32 {
 
 fn imageReadAspect(image_view: *SoftImageView, comptime int_read: bool) vk.ImageAspectFlags {
     const aspect = image_view.interface.subresource_range.aspect_mask;
-    if (aspect.depth_bit and aspect.stencil_bit) {
-        return if (int_read) .{ .stencil_bit = true } else .{ .depth_bit = true };
+    if (aspect.depth and aspect.stencil) {
+        return if (int_read) .{ .stencil = true } else .{ .depth = true };
     }
     return aspect;
 }

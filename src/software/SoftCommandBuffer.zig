@@ -346,19 +346,19 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
                 var clear_mask: vk.ImageAspectFlags = .{};
 
                 switch (desc.load_op) {
-                    .clear => clear_mask = .{ .color_bit = true, .depth_bit = true },
+                    .clear => clear_mask = .{ .color = true, .depth = true },
                     else => {},
                 }
 
                 switch (desc.stencil_load_op) {
-                    .clear => clear_mask.stencil_bit = true,
+                    .clear => clear_mask.stencil = true,
                     else => {},
                 }
 
                 clear_mask = clear_mask.intersect(base.format.toAspect(attachment.format));
 
                 if (clear_mask.toInt() != 0) {
-                    if (clear_mask.color_bit) {
+                    if (clear_mask.color) {
                         try blitter.clear(
                             (impl.clear_values orelse return VkError.Unknown)[index],
                             try SoftImage.getClearFormatFor(attachment.format),
@@ -370,8 +370,8 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
                     } else {
                         var subresource_range = attachment.subresource_range;
 
-                        if (clear_mask.depth_bit) {
-                            subresource_range.aspect_mask = .{ .depth_bit = true };
+                        if (clear_mask.depth) {
+                            subresource_range.aspect_mask = .{ .depth = true };
                             try blitter.clear(
                                 (impl.clear_values orelse return VkError.Unknown)[index],
                                 .d32_sfloat,
@@ -382,8 +382,8 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
                             );
                         }
 
-                        if (clear_mask.stencil_bit) {
-                            subresource_range.aspect_mask = .{ .stencil_bit = true };
+                        if (clear_mask.stencil) {
+                            subresource_range.aspect_mask = .{ .stencil = true };
                             try blitter.clear(
                                 (impl.clear_values orelse return VkError.Unknown)[index],
                                 .s8_uint,
@@ -428,7 +428,7 @@ pub fn bindDescriptorSets(interface: *Interface, bind_point: vk.PipelineBindPoin
             for (impl.first_set.., impl.sets[0..]) |i, set| {
                 if (set == null)
                     break;
-                const state = &device.pipeline_states[@intCast(@intFromEnum(impl.bind_point))];
+                const state = &device.pipeline_states[@intCast(@backingInt(impl.bind_point))];
                 const soft_set: *SoftDescriptorSet = @alignCast(@fieldParentPtr("interface", set.?));
                 state.sets[i] = soft_set;
 
@@ -473,7 +473,7 @@ pub fn bindPipeline(interface: *Interface, bind_point: vk.PipelineBindPoint, pip
 
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
-            device.pipeline_states[@intCast(@intFromEnum(impl.bind_point))].pipeline = impl.pipeline;
+            device.pipeline_states[@intCast(@backingInt(impl.bind_point))].pipeline = impl.pipeline;
         }
     };
 
@@ -597,12 +597,12 @@ pub fn clearAttachment(interface: *Interface, attachment: vk.ClearAttachment, re
             const subpass = render_pass.interface.subpasses[device.renderer.subpass_index];
 
             const image_view = blk: {
-                if (impl.attachment.aspect_mask.toInt() == (vk.ImageAspectFlags{ .color_bit = true }).toInt()) {
+                if (impl.attachment.aspect_mask.toInt() == (vk.ImageAspectFlags{ .color = true }).toInt()) {
                     const fb_attachment_index = (subpass.color_attachments orelse return)[impl.attachment.color_attachment].attachment;
 
                     if (fb_attachment_index != vk.ATTACHMENT_UNUSED)
                         break :blk framebuffer.interface.attachments[fb_attachment_index];
-                } else if (impl.attachment.aspect_mask.depth_bit or impl.attachment.aspect_mask.stencil_bit) {
+                } else if (impl.attachment.aspect_mask.depth or impl.attachment.aspect_mask.stencil) {
                     if (render_pass.interface.subpasses[device.renderer.subpass_index].depth_stencil_attachments) |desc| {
                         if (desc.attachment != vk.ATTACHMENT_UNUSED)
                             break :blk framebuffer.interface.attachments[desc.attachment];
@@ -833,8 +833,8 @@ pub fn copyQueryPoolResults(interface: *Interface, pool: *base.QueryPool, first:
 
         pub fn execute(context: *anyopaque, _: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
-            const value_size: vk.DeviceSize = if (impl.flags.@"64_bit") 8 else 4;
-            const item_size = value_size * (1 + @as(vk.DeviceSize, @intFromBool(impl.flags.with_availability_bit)));
+            const value_size: vk.DeviceSize = if (impl.flags.@"64") 8 else 4;
+            const item_size = value_size * (1 + @as(vk.DeviceSize, @intFromBool(impl.flags.with_availability)));
             const byte_size = if (impl.count == 0) 0 else (impl.count - 1) * impl.stride + item_size;
             const map = try impl.dst.mapAsSliceWithAddedOffset(u8, impl.offset, byte_size);
             try impl.pool.copyResults(impl.first, impl.count, map, impl.stride, impl.flags);
@@ -1196,17 +1196,17 @@ pub fn pushConstants(interface: *Interface, stages: vk.ShaderStageFlags, offset:
             const impl: *Impl = @ptrCast(@alignCast(context));
             const size = @min(lib.push_constant_size - impl.offset, impl.blob.len);
 
-            if (impl.stages.vertex_bit or
-                impl.stages.tessellation_control_bit or
-                impl.stages.tessellation_evaluation_bit or
-                impl.stages.geometry_bit or
-                impl.stages.fragment_bit)
+            if (impl.stages.vertex or
+                impl.stages.tessellation_control or
+                impl.stages.tessellation_evaluation or
+                impl.stages.geometry or
+                impl.stages.fragment)
             {
                 const state = &device.pipeline_states[ExecutionDevice.graphics_pipeline_state];
                 @memcpy(state.push_constant_blob[impl.offset .. impl.offset + size], impl.blob[0..size]);
             }
 
-            if (impl.stages.compute_bit) {
+            if (impl.stages.compute) {
                 const state = &device.pipeline_states[ExecutionDevice.compute_pipeline_state];
                 @memcpy(state.push_constant_blob[impl.offset .. impl.offset + size], impl.blob[0..size]);
             }
@@ -1462,25 +1462,25 @@ fn setStencilDynamicState(interface: *Interface, face_mask: vk.StencilFaceFlags,
 
         pub fn execute(context: *anyopaque, device: *ExecutionDevice) VkError!void {
             const impl: *Impl = @ptrCast(@alignCast(context));
-            if (!impl.face_mask.front_bit and !impl.face_mask.back_bit)
+            if (!impl.face_mask.front and !impl.face_mask.back)
                 return;
             switch (kind) {
                 .compare_mask => {
-                    if (impl.face_mask.front_bit)
+                    if (impl.face_mask.front)
                         device.renderer.dynamic_state.stencil_front_compare_mask = impl.value;
-                    if (impl.face_mask.back_bit)
+                    if (impl.face_mask.back)
                         device.renderer.dynamic_state.stencil_back_compare_mask = impl.value;
                 },
                 .reference => {
-                    if (impl.face_mask.front_bit)
+                    if (impl.face_mask.front)
                         device.renderer.dynamic_state.stencil_front_reference = impl.value;
-                    if (impl.face_mask.back_bit)
+                    if (impl.face_mask.back)
                         device.renderer.dynamic_state.stencil_back_reference = impl.value;
                 },
                 .write_mask => {
-                    if (impl.face_mask.front_bit)
+                    if (impl.face_mask.front)
                         device.renderer.dynamic_state.stencil_front_write_mask = impl.value;
-                    if (impl.face_mask.back_bit)
+                    if (impl.face_mask.back)
                         device.renderer.dynamic_state.stencil_back_write_mask = impl.value;
                 },
             }

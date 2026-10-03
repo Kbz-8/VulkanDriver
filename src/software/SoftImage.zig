@@ -115,8 +115,8 @@ pub fn getClearFormatFor(format: vk.Format) VkError!vk.Format {
 
 pub fn copyToImage(self: *const Self, dst: *Self, region: vk.ImageCopy) VkError!void {
     const combined_depth_stencil_aspect: vk.ImageAspectFlags = .{
-        .depth_bit = true,
-        .stencil_bit = true,
+        .depth = true,
+        .stencil = true,
     };
 
     if (region.src_subresource.aspect_mask == combined_depth_stencil_aspect and
@@ -124,12 +124,12 @@ pub fn copyToImage(self: *const Self, dst: *Self, region: vk.ImageCopy) VkError!
     {
         var single_aspect_region = region;
 
-        single_aspect_region.src_subresource.aspect_mask = .{ .depth_bit = true };
-        single_aspect_region.dst_subresource.aspect_mask = .{ .depth_bit = true };
+        single_aspect_region.src_subresource.aspect_mask = .{ .depth = true };
+        single_aspect_region.dst_subresource.aspect_mask = .{ .depth = true };
         try self.copyToImageSingleAspect(dst, single_aspect_region);
 
-        single_aspect_region.src_subresource.aspect_mask = .{ .stencil_bit = true };
-        single_aspect_region.dst_subresource.aspect_mask = .{ .stencil_bit = true };
+        single_aspect_region.src_subresource.aspect_mask = .{ .stencil = true };
+        single_aspect_region.dst_subresource.aspect_mask = .{ .stencil = true };
         try self.copyToImageSingleAspect(dst, single_aspect_region);
     } else {
         try self.copyToImageSingleAspect(dst, region);
@@ -137,17 +137,17 @@ pub fn copyToImage(self: *const Self, dst: *Self, region: vk.ImageCopy) VkError!
 }
 
 pub fn copyToImageSingleAspect(self: *const Self, dst: *Self, region: vk.ImageCopy) VkError!void {
-    if (!(region.src_subresource.aspect_mask == vk.ImageAspectFlags{ .color_bit = true } or
-        region.src_subresource.aspect_mask == vk.ImageAspectFlags{ .depth_bit = true } or
-        region.src_subresource.aspect_mask == vk.ImageAspectFlags{ .stencil_bit = true }))
+    if (!(region.src_subresource.aspect_mask == vk.ImageAspectFlags{ .color = true } or
+        region.src_subresource.aspect_mask == vk.ImageAspectFlags{ .depth = true } or
+        region.src_subresource.aspect_mask == vk.ImageAspectFlags{ .stencil = true }))
     {
         base.unsupported("src subresource aspectMask {f}", .{region.src_subresource.aspect_mask});
         return VkError.ValidationFailed;
     }
 
-    if (!(region.dst_subresource.aspect_mask == vk.ImageAspectFlags{ .color_bit = true } or
-        region.dst_subresource.aspect_mask == vk.ImageAspectFlags{ .depth_bit = true } or
-        region.dst_subresource.aspect_mask == vk.ImageAspectFlags{ .stencil_bit = true }))
+    if (!(region.dst_subresource.aspect_mask == vk.ImageAspectFlags{ .color = true } or
+        region.dst_subresource.aspect_mask == vk.ImageAspectFlags{ .depth = true } or
+        region.dst_subresource.aspect_mask == vk.ImageAspectFlags{ .stencil = true }))
     {
         base.unsupported("dst subresource aspectMask {f}", .{region.dst_subresource.aspect_mask});
         return VkError.ValidationFailed;
@@ -310,9 +310,9 @@ pub fn copy(
     const is_source: bool = base_src_memory != null;
 
     if (image_subresource.aspect_mask.subtract(.{
-        .color_bit = true,
-        .depth_bit = true,
-        .stencil_bit = true,
+        .color = true,
+        .depth = true,
+        .stencil = true,
     }).toInt() != 0) {
         base.unsupported("aspectMask {f}", .{image_subresource.aspect_mask});
         return VkError.ValidationFailed;
@@ -445,7 +445,7 @@ pub fn getSubresourceOffset(self: *const Self, aspect_mask: vk.ImageAspectFlags,
         offset += self.getMultiSampledLevelSize(aspect_mask, @intCast(mip));
     }
 
-    const is_3D = (self.interface.image_type == .@"3d") and self.interface.flags.@"2d_array_compatible_bit";
+    const is_3D = (self.interface.image_type == .@"3d") and self.interface.flags.@"2d_array_compatible";
     const layer_offset = if (is_3D)
         self.interface.getSliceMemSizeForMipLevel(aspect_mask, mip_level)
     else
@@ -458,8 +458,8 @@ fn getAspectOffset(self: *const Self, aspect_mask: vk.ImageAspectFlags) VkError!
         .d16_unorm_s8_uint,
         .d24_unorm_s8_uint,
         .d32_sfloat_s8_uint,
-        => if (aspect_mask.stencil_bit)
-            try self.interface.getTotalSizeForAspect(.{ .depth_bit = true })
+        => if (aspect_mask.stencil)
+            try self.interface.getTotalSizeForAspect(.{ .depth = true })
         else
             0,
         else => 0,
@@ -470,9 +470,9 @@ fn getTotalSizeForAspect(interface: *const Interface, aspect_mask: vk.ImageAspec
     const self: *const Self = @alignCast(@fieldParentPtr("interface", interface));
 
     if (aspect_mask.subtract(.{
-        .color_bit = true,
-        .depth_bit = true,
-        .stencil_bit = true,
+        .color = true,
+        .depth = true,
+        .stencil = true,
     }).toInt() != 0) {
         base.unsupported("aspectMask {f}", .{aspect_mask});
         return VkError.ValidationFailed;
@@ -480,12 +480,12 @@ fn getTotalSizeForAspect(interface: *const Interface, aspect_mask: vk.ImageAspec
 
     var size: usize = 0;
 
-    if (aspect_mask.color_bit)
-        size += self.getLayerSize(.{ .color_bit = true });
-    if (aspect_mask.depth_bit)
-        size += self.getLayerSize(.{ .depth_bit = true });
-    if (aspect_mask.stencil_bit)
-        size += self.getLayerSize(.{ .stencil_bit = true });
+    if (aspect_mask.color)
+        size += self.getLayerSize(.{ .color = true });
+    if (aspect_mask.depth)
+        size += self.getLayerSize(.{ .depth = true });
+    if (aspect_mask.stencil)
+        size += self.getLayerSize(.{ .stencil = true });
 
     return size * self.interface.array_layers;
 }
@@ -494,9 +494,9 @@ fn getSubresourceLayout(interface: *const Interface, subresource: vk.ImageSubres
     const self: *const Self = @alignCast(@fieldParentPtr("interface", interface));
 
     if (subresource.aspect_mask.subtract(.{
-        .color_bit = true,
-        .depth_bit = true,
-        .stencil_bit = true,
+        .color = true,
+        .depth = true,
+        .stencil = true,
     }).toInt() != 0) {
         base.unsupported("aspectMask {f}", .{subresource.aspect_mask});
         return VkError.ValidationFailed;

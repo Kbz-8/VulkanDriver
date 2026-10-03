@@ -23,7 +23,7 @@ tiling: vk.ImageTiling,
 usage: vk.ImageUsageFlags,
 memory: ?*DeviceMemory,
 memory_offset: vk.DeviceSize,
-allowed_memory_types: std.bit_set.IntegerBitSet(32),
+allowed_memory_types: std.bit_set.Integer(32),
 
 vtable: *const VTable,
 
@@ -52,7 +52,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Image
         .usage = info.usage,
         .memory = null,
         .memory_offset = 0,
-        .allowed_memory_types = std.bit_set.IntegerBitSet(32).initFull(),
+        .allowed_memory_types = .full,
         // SAFETY: the backend assigns the vtable before returning the image.
         .vtable = undefined,
     };

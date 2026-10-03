@@ -14,7 +14,7 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
     errdefer allocator.destroy(self);
 
     var interface = try Interface.init(device, allocator, info);
-    interface.allowed_memory_types = std.bit_set.IntegerBitSet(32).initEmpty();
+    interface.allowed_memory_types = std.bit_set.IntegerBitSet(32).empty;
     interface.allowed_memory_types.set(0);
 
     interface.vtable = &.{
@@ -35,13 +35,13 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 
 pub fn getMemoryRequirements(interface: *Interface, requirements: *vk.MemoryRequirements) void {
     requirements.alignment = 16;
-    if (interface.usage.uniform_texel_buffer_bit or interface.usage.storage_texel_buffer_bit) {
+    if (interface.usage.uniform_texel_buffer or interface.usage.storage_texel_buffer) {
         requirements.alignment = @max(requirements.alignment, interface.owner.physical_device.props.limits.min_texel_buffer_offset_alignment);
     }
-    if (interface.usage.storage_buffer_bit) {
+    if (interface.usage.storage_buffer) {
         requirements.alignment = @max(requirements.alignment, interface.owner.physical_device.props.limits.min_storage_buffer_offset_alignment);
     }
-    if (interface.usage.uniform_buffer_bit) {
+    if (interface.usage.uniform_buffer) {
         requirements.alignment = @max(requirements.alignment, interface.owner.physical_device.props.limits.min_uniform_buffer_offset_alignment);
     }
 }

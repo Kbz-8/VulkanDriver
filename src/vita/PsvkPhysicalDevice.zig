@@ -39,9 +39,9 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
     interface.mem_props.memory_heaps[0] = .{ .size = 0 };
     interface.queue_family_props.append(allocator, .{
         .queue_flags = .{
-            .graphics_bit = true,
-            .compute_bit = true,
-            .transfer_bit = true,
+            .graphics = true,
+            .compute = true,
+            .transfer = true,
         },
         .queue_count = 1,
         .timestamp_valid_bits = 0,
