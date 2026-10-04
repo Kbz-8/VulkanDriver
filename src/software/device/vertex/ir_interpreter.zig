@@ -4,6 +4,7 @@ const base = @import("base");
 const shader_ir = @import("shader_ir");
 
 const Program = @import("../../interpreter/Program.zig");
+const Runtime = @import("../../interpreter/Runtime.zig");
 const SoftPipeline = @import("../../SoftPipeline.zig");
 const Renderer = @import("../Renderer.zig");
 const ExecutionDevice = @import("../Device.zig");
@@ -14,7 +15,6 @@ const RunData = @import("dispatcher.zig").RunData;
 
 const VkError = base.VkError;
 const ir = shader_ir.ir;
-const interface_blob_padding = @sizeOf(base.zm.F32x4);
 
 pub fn run(data: RunData) VkError!void {
     const allocator = data.allocator;
@@ -98,7 +98,7 @@ pub fn run(data: RunData) VkError!void {
         }) catch return VkError.Unknown;
         if (outcome == .discarded)
             continue;
-        try collectOutputs(allocator, &slot.runtime, &shader.program, output);
+        try collectOutputs(&slot.runtime, &shader.program, output);
     }
 }
 
@@ -166,7 +166,7 @@ fn populateInputs(runtime: anytype, program: *const Program, pipeline: *SoftPipe
     }
 }
 
-fn collectOutputs(allocator: std.mem.Allocator, runtime: anytype, program: *const Program, output: *Renderer.Vertex) VkError!void {
+fn collectOutputs(runtime: anytype, program: *const Program, output: *Renderer.Vertex) VkError!void {
     for (program.interfaces, 0..) |optional_binding, index| {
         const binding = optional_binding orelse continue;
 
@@ -179,25 +179,26 @@ fn collectOutputs(allocator: std.mem.Allocator, runtime: anytype, program: *cons
         switch (binding.semantic) {
             .builtin => |builtin| switch (builtin) {
                 .position => @memcpy(std.mem.asBytes(&output.position), std.mem.asBytes(&values)),
+                .point_size => output.point_size = @bitCast(values[0]),
                 else => return VkError.InvalidPipelineDrv,
             },
             .location => |location| {
-                if (location.location >= output.outputs.len or location.component >= output.outputs[0].len)
+                const first_component: usize = location.component;
+                const end_component = first_component + binding.span.components;
+                if (location.location >= output.packed_outputs.len or end_component > output.packed_outputs[0].len)
                     return VkError.ValidationFailed;
 
-                const size = @as(usize, binding.span.components) * @sizeOf(u32);
-                const blob = allocator.alloc(u8, size + interface_blob_padding) catch return VkError.OutOfDeviceMemory;
-                @memset(blob, 0);
-                @memcpy(blob[0..size], std.mem.asBytes(&values)[0..size]);
-                output.outputs[location.location][location.component] = .{
-                    .interpolation_type = switch (binding.span.kind) {
-                        .signed_integer, .unsigned_integer, .boolean => .flat,
-                        .floating => .smooth,
-                    },
-                    .centroid = false,
-                    .blob = blob,
-                    .size = size,
+                const interpolation_type: Renderer.InterpolationType = switch (binding.span.kind) {
+                    .signed_integer, .unsigned_integer, .boolean => .flat,
+                    .floating => .smooth,
                 };
+                for (values[0..binding.span.components], first_component..) |word, component| {
+                    output.packed_outputs[location.location][component] = .{
+                        .word = word,
+                        .interpolation_type = interpolation_type,
+                        .centroid = false,
+                    };
+                }
             },
         }
     }
@@ -217,4 +218,65 @@ fn findBinding(bindings: []const vk.VertexInputBindingDescription, binding: u32)
             return description;
     }
     return null;
+}
+
+test "vertex IR collects Position and PointSize outputs" {
+    var module = ir.module.Module.init(std.testing.allocator, .vertex);
+    defer module.deinit();
+
+    var builder = ir.Builder.init(&module);
+
+    const void_type = try builder.internType(.void);
+    const float_type = try builder.internType(.{ .floating = .{ .bits = 32 } });
+    const vec4_type = try builder.internType(.{ .vector = .{ .element_type = float_type, .length = 4 } });
+
+    const position = try builder.addInterfaceVariable(vec4_type, .output, .{ .builtin = .position }, "position");
+    const point_size = try builder.addInterfaceVariable(float_type, .output, .{ .builtin = .point_size }, "point_size");
+    const varying = try builder.addInterfaceVariable(vec4_type, .output, .{ .location = .{ .location = 2 } }, "varying");
+    const position_values = [4]f32{ 0.25, -0.5, 0.75, 1.0 };
+    var position_elements: [4]ir.id.ValueId = undefined;
+
+    for (position_values, &position_elements) |value, *element|
+        element.* = try builder.internConstant(float_type, .{ .float_bits = @as(u32, @bitCast(value)) });
+
+    const function = try builder.addFunction(void_type, "main");
+    builder.setEntryPoint(function);
+
+    const block = try builder.addBlock(function, "entry");
+
+    const position_value = (try builder.appendInstruction(block, vec4_type, .{
+        .composite_construct = .{ .elements = &position_elements },
+    }, null)).?;
+
+    const expected_point_size: f32 = 3.5;
+    const point_size_value = try builder.internConstant(float_type, .{ .float_bits = @as(u32, @bitCast(expected_point_size)) });
+    _ = try builder.appendInstruction(block, null, .{ .store_interface = .{ .variable = position, .value = position_value } }, null);
+    _ = try builder.appendInstruction(block, null, .{ .store_interface = .{ .variable = point_size, .value = point_size_value } }, null);
+    _ = try builder.appendInstruction(block, null, .{ .store_interface = .{ .variable = varying, .value = position_value } }, null);
+    try builder.setTerminator(block, .return_void);
+
+    var program = try Program.compile(std.testing.allocator, &module);
+    defer program.deinit();
+
+    var runtime = try Runtime.init(std.testing.allocator, &program);
+    defer runtime.deinit();
+
+    runtime.resetInvocation(&program);
+    try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
+
+    var output: Renderer.Vertex = .{
+        .primitive_restart = false,
+        .position = @splat(0),
+        .point_size = 1.0,
+    };
+
+    try collectOutputs(&runtime, &program, &output);
+
+    try std.testing.expectEqual(@as(base.zm.F32x4, @bitCast(position_values)), output.position);
+    try std.testing.expectEqual(expected_point_size, output.point_size);
+    for (position_values, 0..) |value, component| {
+        const packed_output = output.packed_outputs[2][component].?;
+        try std.testing.expectEqual(@as(u32, @bitCast(value)), packed_output.word);
+        try std.testing.expectEqual(Renderer.InterpolationType.smooth, packed_output.interpolation_type);
+    }
 }

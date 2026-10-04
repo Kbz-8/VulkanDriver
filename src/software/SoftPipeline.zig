@@ -21,7 +21,8 @@ pub const InputAttachmentSnapshot = struct {
     sample_stride: usize,
 };
 
-pub threadlocal var current_fragment_coord: ?vk.Offset3D = null; // Ugly hack
+// Ugly hack
+pub threadlocal var current_fragment_coord: ?vk.Offset3D = null;
 pub threadlocal var current_input_attachment_snapshots: ?[]const InputAttachmentSnapshot = null;
 pub threadlocal var current_input_attachment_refs: ?[]const vk.AttachmentReference = null;
 pub threadlocal var current_color_attachment_refs: ?[]const vk.AttachmentReference = null;
@@ -58,9 +59,6 @@ const Shader = if (base.config.soft_ir_interpreter) InterpreterShader else SpvSh
 
 const Stages = enum {
     vertex,
-    tessellation_control,
-    tessellation_evaluation,
-    geometry,
     fragment,
     compute,
 };
@@ -154,32 +152,27 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
         for (stages[0..], 0..info.stage_count) |stage, _| {
             const module = try NonDispatchable(ShaderModule).fromHandleObject(stage.module);
             const soft_module: *SoftShaderModule = @alignCast(@fieldParentPtr("interface", module));
+
+            const driver_stage: Stages = blk: {
+                if (stage.stage.contains(.{ .vertex = true })) {
+                    break :blk .vertex;
+                } else if (stage.stage.contains(.{ .fragment = true })) {
+                    break :blk .fragment;
+                } else {
+                    std.log.scoped(.GraphicsPipeline).err("Invalid shader stage", .{});
+                    return VkError.Unknown;
+                }
+            };
+
+            std.log.scoped(.GraphicsPipeline).debug("Compiling {t} shader...", .{driver_stage});
+
             const shader = try createShader(allocator, device_allocator, runtimes_allocator, soft_cache, soft_module, &stage, runtimes_count);
+            self.stages.put(driver_stage, shader);
 
             std.log.scoped(.GraphicsPipeline).debug("Created {d} {s} runtimes for:", .{
                 runtimes_count,
                 if (comptime base.config.soft_ir_interpreter) "IR" else "SPIR-V",
             });
-
-            if (stage.stage.contains(.{ .vertex = true })) {
-                std.log.scoped(.GraphicsPipeline).debug(">   Vertex stage", .{});
-                self.stages.put(.vertex, shader);
-            } else if (stage.stage.contains(.{ .fragment = true })) {
-                std.log.scoped(.GraphicsPipeline).debug(">   Fragment stage", .{});
-                self.stages.put(.fragment, shader);
-            } else if (stage.stage.contains(.{ .tessellation_control = true })) {
-                std.log.scoped(.GraphicsPipeline).debug(">   Tessellation control stage", .{});
-                self.stages.put(.tessellation_control, shader);
-            } else if (stage.stage.contains(.{ .tessellation_evaluation = true })) {
-                std.log.scoped(.GraphicsPipeline).debug(">   Tessellation evaluation stage", .{});
-                self.stages.put(.tessellation_evaluation, shader);
-            } else if (stage.stage.contains(.{ .geometry = true })) {
-                std.log.scoped(.GraphicsPipeline).debug(">   Geometry stage", .{});
-                self.stages.put(.geometry, shader);
-            } else {
-                std.log.scoped(.GraphicsPipeline).err(">   invalid stage", .{});
-                return VkError.Unknown;
-            }
         }
     } else {
         return VkError.ValidationFailed;
@@ -267,9 +260,8 @@ fn createShader(
             initialized += 1;
         }
 
-        if (cache) |pipeline_cache| {
+        if (cache) |pipeline_cache|
             try pipeline_cache.storeRuntimeTemplate(object_allocator, cache_allocator, module, entry, execution_model, stage.p_specialization_info, image_api);
-        }
     }
 
     return .{

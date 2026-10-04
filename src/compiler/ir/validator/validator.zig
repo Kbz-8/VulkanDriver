@@ -26,6 +26,7 @@ pub const ValidationError = error{
     WrongDefinition,
     WrongInterfaceDirection,
     WrongOperandType,
+    WrongOperandCount,
     WrongParameterIndex,
     WrongParent,
     WrongResourceKind,
@@ -173,8 +174,33 @@ pub fn validate(module: *const module_ir.Module) Error!void {
 fn validateType(module: *const module_ir.Module, ty: type_ir.Type) ValidationError!void {
     switch (ty) {
         .vector => |vector| {
-            if (!module.types.isLive(vector.element_type) or vector.length < 2)
+            if (vector.length < 2)
                 return ValidationError.InvalidType;
+
+            if (module.types.get(vector.element_type)) |sub_type| {
+                switch (sub_type.*) {
+                    .boolean,
+                    .integer,
+                    .floating,
+                    => return,
+                    else => {},
+                }
+            }
+
+            return ValidationError.InvalidType;
+        },
+        .matrix => |matrix| {
+            if (matrix.column_count < 2)
+                return ValidationError.InvalidType;
+
+            if (module.types.get(matrix.element_type)) |sub_type| {
+                switch (sub_type.*) {
+                    .vector => return,
+                    else => {},
+                }
+            }
+
+            return ValidationError.InvalidType;
         },
         .array => |array| {
             if (!module.types.isLive(array.element_type) or array.length == 0)
@@ -196,12 +222,7 @@ fn validateType(module: *const module_ir.Module, ty: type_ir.Type) ValidationErr
     }
 }
 
-fn validateBlock(
-    module: *const module_ir.Module,
-    function_id: ids.FunctionId,
-    block_id: ids.BlockId,
-    block: *const module_ir.Block,
-) ValidationError!void {
+fn validateBlock(module: *const module_ir.Module, function_id: ids.FunctionId, block_id: ids.BlockId, block: *const module_ir.Block) ValidationError!void {
     for (block.parameters.items, 0..) |parameter_id, index| {
         const parameter = module.values.get(parameter_id) orelse return ValidationError.InvalidValue;
         if (parameter.definition != .block_parameter or
@@ -285,21 +306,161 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             const lhs_type = try operandType(module, function_id, op.lhs);
             const rhs_type = try operandType(module, function_id, op.rhs);
 
-            if (op.opcode == .vector_times_scalar) {
-                const lhs = module.types.get(lhs_type) orelse return ValidationError.InvalidType;
-                const vector = switch (lhs.*) {
-                    .vector => |vector| vector,
-                    else => return ValidationError.WrongOperandType,
-                };
-                const element = module.types.get(vector.element_type) orelse return ValidationError.InvalidType;
-                if (element.* != .floating or rhs_type != vector.element_type)
-                    return ValidationError.WrongOperandType;
-            } else if (lhs_type != rhs_type) {
-                return ValidationError.WrongOperandType;
-            }
+            switch (op.opcode) {
+                .matrix_times_matrix => {
+                    const lhs = module.types.get(lhs_type) orelse return ValidationError.InvalidType;
+                    const lhs_matrix = switch (lhs.*) {
+                        .matrix => |matrix| matrix,
+                        else => return ValidationError.WrongOperandType,
+                    };
 
-            if (result_type == null or result_type.? != lhs_type)
-                return ValidationError.WrongResultType;
+                    const lhs_column_type = module.types.get(lhs_matrix.element_type) orelse return ValidationError.InvalidType;
+                    const lhs_column = switch (lhs_column_type.*) {
+                        .vector => |vector| vector,
+                        else => return ValidationError.WrongOperandType,
+                    };
+
+                    const lhs_element = module.types.get(lhs_column.element_type) orelse return ValidationError.InvalidType;
+
+                    const rhs = module.types.get(rhs_type) orelse return ValidationError.InvalidType;
+                    const rhs_matrix = switch (rhs.*) {
+                        .matrix => |matrix| matrix,
+                        else => return ValidationError.WrongOperandType,
+                    };
+
+                    const rhs_column_type = module.types.get(rhs_matrix.element_type) orelse return ValidationError.InvalidType;
+                    const rhs_column = switch (rhs_column_type.*) {
+                        .vector => |vector| vector,
+                        else => return ValidationError.WrongOperandType,
+                    };
+
+                    if (lhs_element.* != .floating or
+                        rhs_column.element_type != lhs_column.element_type or
+                        lhs_matrix.column_count != rhs_column.length)
+                        return ValidationError.WrongOperandType;
+
+                    const result = module.types.get(result_type orelse return ValidationError.WrongResultType) orelse return ValidationError.InvalidType;
+                    const result_matrix = switch (result.*) {
+                        .matrix => |matrix| matrix,
+                        else => return ValidationError.WrongResultType,
+                    };
+
+                    const result_column_type = module.types.get(result_matrix.element_type) orelse return ValidationError.InvalidType;
+                    const result_column = switch (result_column_type.*) {
+                        .vector => |vector| vector,
+                        else => return ValidationError.WrongResultType,
+                    };
+
+                    if (result_column.element_type != lhs_column.element_type or
+                        result_column.length != lhs_column.length or
+                        result_matrix.column_count != rhs_matrix.column_count)
+                        return ValidationError.WrongResultType;
+                },
+                .matrix_times_scalar => {
+                    const lhs = module.types.get(lhs_type) orelse return ValidationError.InvalidType;
+                    const matrix = switch (lhs.*) {
+                        .matrix => |matrix| matrix,
+                        else => return ValidationError.WrongOperandType,
+                    };
+
+                    const column_type = module.types.get(matrix.element_type) orelse return ValidationError.InvalidType;
+                    const column = switch (column_type.*) {
+                        .vector => |vector| vector,
+                        else => return ValidationError.WrongOperandType,
+                    };
+
+                    const element = module.types.get(column.element_type) orelse return ValidationError.InvalidType;
+                    if (element.* != .floating or rhs_type != column.element_type)
+                        return ValidationError.WrongOperandType;
+
+                    if (result_type == null or result_type.? != lhs_type)
+                        return ValidationError.WrongResultType;
+                },
+                .matrix_times_vector => {
+                    const lhs = module.types.get(lhs_type) orelse return ValidationError.InvalidType;
+                    const matrix = switch (lhs.*) {
+                        .matrix => |matrix| matrix,
+                        else => return ValidationError.WrongOperandType,
+                    };
+
+                    const column_type = module.types.get(matrix.element_type) orelse return ValidationError.InvalidType;
+                    const column = switch (column_type.*) {
+                        .vector => |vector| vector,
+                        else => return ValidationError.WrongOperandType,
+                    };
+
+                    const element = module.types.get(column.element_type) orelse return ValidationError.InvalidType;
+
+                    const rhs = module.types.get(rhs_type) orelse return ValidationError.InvalidType;
+                    const vector = switch (rhs.*) {
+                        .vector => |vector| vector,
+                        else => return ValidationError.WrongOperandType,
+                    };
+
+                    if (element.* != .floating or
+                        vector.element_type != column.element_type or
+                        vector.length != matrix.column_count)
+                        return ValidationError.WrongOperandType;
+
+                    if (result_type == null or result_type.? != matrix.element_type)
+                        return ValidationError.WrongResultType;
+                },
+                .vector_times_matrix => {
+                    const lhs = module.types.get(lhs_type) orelse return ValidationError.InvalidType;
+                    const vector = switch (lhs.*) {
+                        .vector => |vector| vector,
+                        else => return ValidationError.WrongOperandType,
+                    };
+
+                    const element = module.types.get(vector.element_type) orelse return ValidationError.InvalidType;
+
+                    const rhs = module.types.get(rhs_type) orelse return ValidationError.InvalidType;
+                    const matrix = switch (rhs.*) {
+                        .matrix => |matrix| matrix,
+                        else => return ValidationError.WrongOperandType,
+                    };
+
+                    const column_type = module.types.get(matrix.element_type) orelse return ValidationError.InvalidType;
+                    const column = switch (column_type.*) {
+                        .vector => |column_vector| column_vector,
+                        else => return ValidationError.WrongOperandType,
+                    };
+
+                    if (element.* != .floating or
+                        column.element_type != vector.element_type or
+                        vector.length != column.length)
+                        return ValidationError.WrongOperandType;
+
+                    const result = module.types.get(result_type orelse return ValidationError.WrongResultType) orelse return ValidationError.InvalidType;
+                    const result_vector = switch (result.*) {
+                        .vector => |result_vector| result_vector,
+                        else => return ValidationError.WrongResultType,
+                    };
+
+                    if (result_vector.element_type != vector.element_type or result_vector.length != matrix.column_count)
+                        return ValidationError.WrongResultType;
+                },
+                .vector_times_scalar => {
+                    const lhs = module.types.get(lhs_type) orelse return ValidationError.InvalidType;
+                    const vector = switch (lhs.*) {
+                        .vector => |vector| vector,
+                        else => return ValidationError.WrongOperandType,
+                    };
+
+                    const element = module.types.get(vector.element_type) orelse return ValidationError.InvalidType;
+                    if (element.* != .floating or rhs_type != vector.element_type)
+                        return ValidationError.WrongOperandType;
+
+                    if (result_type == null or result_type.? != lhs_type)
+                        return ValidationError.WrongResultType;
+                },
+                else => {
+                    if (lhs_type != rhs_type)
+                        return ValidationError.WrongOperandType;
+                    if (result_type == null or result_type.? != lhs_type)
+                        return ValidationError.WrongResultType;
+                },
+            }
         },
         .compare => |op| {
             const lhs_type = try operandType(module, function_id, op.lhs);
@@ -348,16 +509,25 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             switch (ty.*) {
                 .vector => |vector| {
                     if (op.elements.len != vector.length)
-                        return ValidationError.WrongOperandType;
+                        return ValidationError.WrongOperandCount;
 
                     for (op.elements) |element| {
                         if (try operandType(module, function_id, element) != vector.element_type)
                             return ValidationError.WrongOperandType;
                     }
                 },
+                .matrix => |matrix| {
+                    if (op.elements.len != matrix.column_count)
+                        return ValidationError.WrongOperandCount;
+
+                    for (op.elements) |element| {
+                        if (try operandType(module, function_id, element) != matrix.element_type)
+                            return ValidationError.WrongOperandType;
+                    }
+                },
                 .array => |array| {
                     if (op.elements.len != array.length)
-                        return ValidationError.WrongOperandType;
+                        return ValidationError.WrongOperandCount;
                     for (op.elements) |element| {
                         if (try operandType(module, function_id, element) != array.element_type)
                             return ValidationError.WrongOperandType;
@@ -365,7 +535,7 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                 },
                 .structure => |structure| {
                     if (op.elements.len != structure.members.len)
-                        return ValidationError.WrongOperandType;
+                        return ValidationError.WrongOperandCount;
 
                     for (op.elements, structure.members) |element, member_type| {
                         if (try operandType(module, function_id, element) != member_type)
@@ -501,6 +671,22 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             op.dimension,
             op.arrayed,
         ),
+        .image_gather => |op| {
+            try validateImageSample(
+                module,
+                function_id,
+                result_type,
+                op.image,
+                op.sampler,
+                op.coordinate,
+                op.dimension,
+                op.arrayed,
+            );
+
+            const component_shape = integerShape(module, try operandType(module, function_id, op.component)) orelse return ValidationError.WrongOperandType;
+            if (component_shape.bits != 32 or component_shape.components != 1)
+                return ValidationError.WrongOperandType;
+        },
         .image_write => |op| {
             if (result_type != null)
                 return ValidationError.WrongResultPresence;
@@ -699,6 +885,10 @@ fn indexedType(module: *const module_ir.Module, root: ids.TypeId, indices: []con
                 vector.element_type
             else
                 return ValidationError.WrongOperandType,
+            .matrix => |matrix| if (index < matrix.column_count)
+                matrix.element_type
+            else
+                return ValidationError.WrongOperandType,
             .array => |array| if (index < array.length)
                 array.element_type
             else
@@ -769,6 +959,11 @@ fn isBufferAccessibleType(module: *const module_ir.Module, type_id: ids.TypeId) 
         .integer, .floating => true,
         .vector => |vector| {
             const element_type = module.types.get(vector.element_type) orelse return false;
+            return element_type.* == .integer or element_type.* == .floating;
+        },
+        .matrix => |matrix| {
+            const vector_type = module.types.get(matrix.element_type) orelse return false;
+            const element_type = module.types.get(vector_type.vector.element_type) orelse return false;
             return element_type.* == .integer or element_type.* == .floating;
         },
         else => false,
@@ -1113,8 +1308,125 @@ test "Validator: check unary, binary, compare, and select types" {
     );
 }
 
-test "Validator: check composite operations" {
+test "Validator: matrix arithmetic types and dimensions" {
+    const parser = @import("../parser/parser.zig");
+
+    var module = try parser.parseString(std.testing.allocator,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%lhs: mat2x3[f32], %rhs: mat4x2[f32], %scalar: f32, %columns: vec2[f32], %rows: vec3[f32]) -> void
+        \\    {
+        \\        .entry():
+        \\            %scaled: mat2x3[f32] = matrix_times_scalar %lhs, %scalar
+        \\            %column_result: vec3[f32] = matrix_times_vector %lhs, %columns
+        \\            %row_result: vec2[f32] = vector_times_matrix %rows, %lhs
+        \\            %matrix_result: mat4x3[f32] = matrix_times_matrix %lhs, %rhs
+        \\            return
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+    try validate(&module);
+
     try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%matrix: mat2x3[f32], %scalar: u32) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: mat2x3[f32] = matrix_times_scalar %matrix, %scalar
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%matrix: mat2x3[f32], %vector: vec3[f32]) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec3[f32] = matrix_times_vector %matrix, %vector
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%vector: vec2[f32], %matrix: mat2x3[f32]) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec2[f32] = vector_times_matrix %vector, %matrix
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%lhs: mat2x3[f32], %rhs: mat4x3[f32]) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: mat4x3[f32] = matrix_times_matrix %lhs, %rhs
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%matrix: mat2x3[f32], %scalar: f32) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: mat3x2[f32] = matrix_times_scalar %matrix, %scalar
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%matrix: mat2x3[f32], %vector: vec2[f32]) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec2[f32] = matrix_times_vector %matrix, %vector
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%vector: vec3[f32], %matrix: mat2x3[f32]) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec3[f32] = vector_times_matrix %vector, %matrix
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%lhs: mat2x3[f32], %rhs: mat4x2[f32]) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: mat4x2[f32] = matrix_times_matrix %lhs, %rhs
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Validator: check composite operations" {
+    try expectValidationError(Error.WrongOperandCount,
         \\shader compute @main
         \\{
         \\    %one: constant u32 = 1

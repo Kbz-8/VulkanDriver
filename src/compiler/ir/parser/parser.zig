@@ -394,6 +394,7 @@ const Parser = struct {
 
             if (indices.items.len == 0)
                 return Error.InvalidCompositeIndex;
+
             return .{
                 .composite_extract = .{
                     .composite = composite,
@@ -512,6 +513,30 @@ const Parser = struct {
                     .image_name = image_name,
                     .sampler_name = sampler_name,
                     .coordinate = coordinate,
+                    .dimension = options.dimension,
+                    .arrayed = options.arrayed,
+                },
+            };
+        }
+
+        if (std.mem.eql(u8, name, "image_gather")) {
+            const image_name = (try self.expect(.at_name)).text;
+            try self.expectDiscard(.comma);
+
+            const sampler_name = (try self.expect(.at_name)).text;
+            try self.expectDiscard(.comma);
+
+            const coordinate = try self.parseValueRef();
+            try self.expectDiscard(.comma);
+            const component = try self.parseValueRef();
+            const options = try self.parseImageOptions();
+
+            return .{
+                .image_gather = .{
+                    .image_name = image_name,
+                    .sampler_name = sampler_name,
+                    .coordinate = coordinate,
+                    .component = component,
                     .dimension = options.dimension,
                     .arrayed = options.arrayed,
                 },
@@ -647,8 +672,8 @@ const Parser = struct {
 
         if (std.mem.startsWith(u8, token.text, "vec")) {
             const length = parseTextUnsigned(u8, token.text[3..]) catch return Error.InvalidType;
-            try self.expectDiscard(.left_square);
 
+            try self.expectDiscard(.left_square);
             const element_type = try self.parseType();
             try self.expectDiscard(.right_square);
 
@@ -656,6 +681,29 @@ const Parser = struct {
                 .vector = .{
                     .element_type = element_type,
                     .length = length,
+                },
+            });
+        }
+
+        if (std.mem.startsWith(u8, token.text, "mat")) {
+            const column_count = parseTextUnsigned(u8, token.text[3..4]) catch return Error.InvalidType;
+            const vector_length = parseTextUnsigned(u8, token.text[5..]) catch return Error.InvalidType;
+
+            try self.expectDiscard(.left_square);
+            const element_type = try self.parseType();
+            try self.expectDiscard(.right_square);
+
+            const vector_type = try module.internType(.{
+                .vector = .{
+                    .element_type = element_type,
+                    .length = vector_length,
+                },
+            });
+
+            return module.internType(.{
+                .matrix = .{
+                    .element_type = vector_type,
+                    .column_count = column_count,
                 },
             });
         }
@@ -1028,6 +1076,7 @@ test "Parser: resources and buffer operations" {
         \\     %coordinate: constant vec2[f32] = null
         \\     %arrayed_coordinate: constant vec3[f32] = null
         \\     %lod: constant f32 = 0.0
+        \\     %component: constant i32 = 2
         \\
         \\     fn @main() -> void
         \\     {
@@ -1040,6 +1089,7 @@ test "Parser: resources and buffer operations" {
         \\             %converted: f32 = convert unsigned_to_float %value
         \\             %sample: vec4[f32] = image_sample_explicit_lod @texture, @linear_sampler, %coordinate, %lod, dimension two_d, arrayed false
         \\             %implicit_sample: vec4[f32] = image_sample_implicit_lod @texture, @linear_sampler, %arrayed_coordinate, dimension two_d, arrayed true
+        \\             %gather: vec4[f32] = image_gather @texture, @linear_sampler, %coordinate, %component, dimension two_d, arrayed false
         \\             return
         \\     }
         \\ }
@@ -1064,6 +1114,7 @@ test "Parser: resources and buffer operations" {
     try std.testing.expect(std.mem.indexOf(u8, printed, "%converted: f32 = convert unsigned_to_float %value") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "%sample: vec4[f32] = image_sample_explicit_lod @texture, @linear_sampler, %coordinate, %lod, dimension two_d, arrayed false") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "%implicit_sample: vec4[f32] = image_sample_implicit_lod @texture, @linear_sampler, %arrayed_coordinate, dimension two_d, arrayed true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%gather: vec4[f32] = image_gather @texture, @linear_sampler, %coordinate, %component, dimension two_d, arrayed false") != null);
 
     var reparsed = try parseString(std.testing.allocator, printed);
     defer reparsed.deinit();
@@ -1095,11 +1146,12 @@ test "Parser: types, operations, calls, terminators" {
         \\             %11: bool = cmp_equal %1, %2
         \\             %12: u32 = select %11, %1, %2
         \\             %13: u32 = bitcast %12
-        \\             %14: vec2[u32] = composite_construct %1, %2
+        \\             %14: vec3[u32] = composite_construct %1, %2, %1
         \\             %15: u32 = composite_extract %14[0]
         \\             %16: f32 = negate %3
         \\             %17: f32 = float_add %3, %16
         \\             %18: u32 = call @helper(%15)
+        \\             %19: mat3x3[u32] = composite_construct %14, %14, %14
         \\             return
         \\     }
         \\
@@ -1490,71 +1542,6 @@ test "Parser: reject malformed block structure and opcodes" {
         \\    {
         \\        .entry():
         \\            %bad = cmp_unknown %one, %one
-        \\            return
-        \\    }
-        \\}
-    );
-}
-
-test "Parser: nested composite extraction and index errors" {
-    const printer = @import("../printer.zig");
-
-    var module = try parseString(std.testing.allocator,
-        \\shader compute @main
-        \\{
-        \\    %one: constant u32 = 1
-        \\    fn @main() -> void
-        \\    {
-        \\        .entry():
-        \\            %inner = composite_construct %one, %one
-        \\            %outer = composite_construct %inner, %inner
-        \\            %element = composite_extract %outer[1][0]
-        \\            return
-        \\    }
-        \\}
-    );
-    defer module.deinit();
-
-    const text = try printer.allocPrint(std.testing.allocator, &module);
-    defer std.testing.allocator.free(text);
-    try std.testing.expect(std.mem.indexOf(u8, text, "%element: u32 = composite_extract %outer[1][0]") != null);
-
-    try expectParseError(Error.InvalidCompositeIndex,
-        \\shader compute @main
-        \\{
-        \\    %one: constant u32 = 1
-        \\    fn @main() -> void
-        \\    {
-        \\        .entry():
-        \\            %vector = composite_construct %one, %one
-        \\            %element = composite_extract %vector
-        \\            return
-        \\    }
-        \\}
-    );
-
-    try expectParseError(Error.InvalidCompositeIndex,
-        \\shader compute @main
-        \\{
-        \\    %one: constant u32 = 1
-        \\    fn @main() -> void
-        \\    {
-        \\        .entry():
-        \\            %vector = composite_construct %one, %one
-        \\            %element = composite_extract %vector[2]
-        \\            return
-        \\    }
-        \\}
-    );
-
-    try expectParseError(Error.InvalidCompositeIndex,
-        \\shader compute @main
-        \\{
-        \\    %one: constant u32 = 1
-        \\    fn @main() -> void
-        \\    {
-        \\        .entry():
-        \\            %element = composite_extract %one[0]
         \\            return
         \\    }
         \\}

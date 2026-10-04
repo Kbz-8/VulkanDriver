@@ -113,13 +113,7 @@ pub fn addBlockParameter(self: *Self, block_id: ids.BlockId, ty: ids.TypeId, nam
     return value_id;
 }
 
-pub fn appendInstruction(
-    self: *Self,
-    block_id: ids.BlockId,
-    result_type: ?ids.TypeId,
-    operation: inst_ir.Operation,
-    name: ?[]const u8,
-) !?ids.ValueId {
+pub fn appendInstruction(self: *Self, block_id: ids.BlockId, result_type: ?ids.TypeId, operation: inst_ir.Operation, name: ?[]const u8) !?ids.ValueId {
     const block = self.module.blocks.getMut(block_id) orelse return error.InvalidBlock;
     const owned_operation = try self.copyOperation(operation);
 
@@ -154,13 +148,7 @@ pub fn setTerminator(self: *Self, block_id: ids.BlockId, terminator: module_ir.T
     block.terminator = try self.copyTerminator(terminator);
 }
 
-pub fn addInterfaceVariable(
-    self: *Self,
-    ty: ids.TypeId,
-    direction: module_ir.InterfaceDirection,
-    semantic: module_ir.InterfaceSemantic,
-    name: ?[]const u8,
-) !ids.InterfaceVariableId {
+pub fn addInterfaceVariable(self: *Self, ty: ids.TypeId, direction: module_ir.InterfaceDirection, semantic: module_ir.InterfaceSemantic, name: ?[]const u8) !ids.InterfaceVariableId {
     return self.module.interface_variables.add(self.module.allocator(), .{
         .type = ty,
         .direction = direction,

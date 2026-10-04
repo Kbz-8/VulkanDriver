@@ -22,6 +22,26 @@ pub const Span = struct {
     }
 };
 
+pub const MatrixDimensions = struct {
+    rows: u8,
+    inner: u8,
+    columns: u8,
+
+    pub fn encode(self: MatrixDimensions) u32 {
+        return @as(u32, self.rows) |
+            (@as(u32, self.inner) << 8) |
+            (@as(u32, self.columns) << 16);
+    }
+
+    pub fn decode(value: u32) MatrixDimensions {
+        return .{
+            .rows = @truncate(value),
+            .inner = @truncate(value >> 8),
+            .columns = @truncate(value >> 16),
+        };
+    }
+};
+
 /// Native-endian internal bytecode. It is not a serialized or stable ABI
 pub const Instruction = extern struct {
     opcode: Opcode,
@@ -65,6 +85,7 @@ pub const Opcode = enum(u16) {
     float_modulo,
     float_multiply,
     float_subtract,
+    image_gather,
     image_read,
     image_read_float,
     image_sample_explicit_lod,
@@ -82,6 +103,9 @@ pub const Opcode = enum(u16) {
     logical_not,
     logical_or,
     logical_shift_right,
+    matrix_times_matrix,
+    matrix_times_scalar,
+    matrix_times_vector,
     negate_f32,
     negate_i32,
     return_void,
@@ -95,6 +119,7 @@ pub const Opcode = enum(u16) {
     unsigned_divide,
     unsigned_modulo,
     unsigned_to_float,
+    vector_times_matrix,
     vector_times_scalar,
 };
 

@@ -420,8 +420,8 @@ fn addCTS(
     };
     run.step.dependOn(&impl_lib.step);
 
-    run.addDirectoryArg2(cts.path(""), .{ .prefix = "--deqp-archive-dir=" });
-    run.addFileArg2(b.graph.path(.install_lib, impl_lib.out_filename), .{ .prefix = "--deqp-vk-library-path=" });
+    run.addDirectoryArg2(cts.path(""), .{ .prefix = "--deqp-archive-dir=", .make_absolute = true });
+    run.addFileArg2(b.graph.path(.install_lib, impl_lib.out_filename), .{ .prefix = "--deqp-vk-library-path=", .make_absolute = true });
     run.addArg("--deqp-log-filename=vk-cts-logs.qpa");
     run.addArg("--deqp-test-oom=disable");
 
@@ -430,7 +430,7 @@ fn addCTS(
     } else if (caselist_file) |file| {
         run.addArg(b.fmt("--deqp-caselist-file={s}", .{file}));
     } else {
-        run.addFileArg2(mustpass, .{ .prefix = "--deqp-caselist-file=" });
+        run.addFileArg2(mustpass, .{ .prefix = "--deqp-caselist-file=", .make_absolute = true });
     }
 
     run.addPassthruArgs();
@@ -499,7 +499,7 @@ fn addMultithreadedCTS(
     if (caselist_file) |file| {
         run.addArg(file);
     } else {
-        run.addFileArg(mustpass);
+        run.addFileArg2(mustpass, .{ .make_absolute = true });
     }
 
     if (jobs) |j| {
@@ -509,7 +509,7 @@ fn addMultithreadedCTS(
 
     run.addArg("--");
 
-    run.addDirectoryArg2(cts.path(""), .{ .prefix = "--deqp-archive-dir=" });
+    run.addDirectoryArg2(cts.path(""), .{ .prefix = "--deqp-archive-dir=", .make_absolute = true });
     run.addFileArg2(b.graph.path(.install_lib, impl_lib.out_filename), .{ .prefix = "--deqp-vk-library-path=", .make_absolute = true });
     run.addArg("--deqp-test-oom=disable");
 

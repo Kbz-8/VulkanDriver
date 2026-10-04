@@ -166,6 +166,15 @@ fn writeType(module: *const module_ir.Module, writer: *std.Io.Writer, type_id: i
             try writeType(module, writer, vector.element_type);
             try writer.writeByte(']');
         },
+        .matrix => |matrix| {
+            try writer.print("mat{d}x", .{matrix.column_count});
+            const sub_type = module.types.get(matrix.element_type) orelse unreachable;
+
+            // Validator guarantees that matrix sub-types are vectors
+            try writer.print("{d}[", .{sub_type.vector.length});
+            try writeType(module, writer, sub_type.vector.element_type);
+            try writer.writeByte(']');
+        },
         .array => |array| {
             try writer.writeAll("array[");
             try writeType(module, writer, array.element_type);
@@ -321,6 +330,19 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             try writeNamedRef(writer, if (sampler) |r| r.name else null, "resource", op.sampler.index());
             try writer.writeAll(", ");
             try writeValueRef(module, writer, op.coordinate);
+            try writer.print(", dimension {t}, arrayed {}", .{ op.dimension, op.arrayed });
+        },
+        .image_gather => |op| {
+            try writer.writeAll("image_gather ");
+            const image = module.resources.get(op.image);
+            try writeNamedRef(writer, if (image) |r| r.name else null, "resource", op.image.index());
+            try writer.writeAll(", ");
+            const sampler = module.resources.get(op.sampler);
+            try writeNamedRef(writer, if (sampler) |r| r.name else null, "resource", op.sampler.index());
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.coordinate);
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.component);
             try writer.print(", dimension {t}, arrayed {}", .{ op.dimension, op.arrayed });
         },
         .image_write => |op| {

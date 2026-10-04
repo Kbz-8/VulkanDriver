@@ -144,6 +144,14 @@ fn isVertexInsidePlane(vertex: *const Vertex, plane: ClipPlane) bool {
     return clipDistance(vertex.position, plane) >= 0.0;
 }
 
+pub fn vertexInsideClipVolume(vertex: *const Vertex) bool {
+    inline for (std.enums.values(ClipPlane)) |plane| {
+        if (!isVertexInsidePlane(vertex, plane))
+            return false;
+    }
+    return true;
+}
+
 fn interpolateBlob(allocator: std.mem.Allocator, a: []const u8, b: []const u8, size: usize, t: f32) VkError![]u8 {
     const len = @min(size, a.len, b.len);
     const result = allocator.alloc(u8, len + interface_blob_padding) catch return VkError.OutOfDeviceMemory;
@@ -173,27 +181,43 @@ fn interpolateVertexForClipping(allocator: std.mem.Allocator, a: *const Vertex, 
         .primitive_restart = false,
         .position = a.position + ((b.position - a.position) * zm.f32x4s(t)),
         .point_size = a.point_size + ((b.point_size - a.point_size) * t),
-        .outputs = @splat(@splat(null)),
     };
 
-    for (&result.outputs) |*location| {
-        @memset(location, null);
-    }
+    if (comptime base.config.soft_ir_interpreter) {
+        for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
+            for (0..4) |component| {
+                const out_a = a.packed_outputs[location][component] orelse continue;
+                const out_b = b.packed_outputs[location][component] orelse continue;
+                const word = if (out_a.interpolation_type == .flat)
+                    out_a.word
+                else blk: {
+                    const value_a: f32 = @bitCast(out_a.word);
+                    const value_b: f32 = @bitCast(out_b.word);
+                    break :blk @as(u32, @bitCast(value_a + ((value_b - value_a) * t)));
+                };
+                result.packed_outputs[location][component] = .{
+                    .word = word,
+                    .interpolation_type = out_a.interpolation_type,
+                    .centroid = out_a.centroid,
+                };
+            }
+        }
+    } else {
+        for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
+            for (0..4) |component| {
+                const out_a = a.outputs[location][component] orelse continue;
+                const out_b = b.outputs[location][component] orelse continue;
 
-    for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
-        for (0..4) |component| {
-            const out_a = a.outputs[location][component] orelse continue;
-            const out_b = b.outputs[location][component] orelse continue;
-
-            result.outputs[location][component] = .{
-                .interpolation_type = out_a.interpolation_type,
-                .centroid = out_a.centroid,
-                .blob = if (out_a.interpolation_type == .flat)
-                    allocator.dupe(u8, out_a.blob) catch return VkError.OutOfDeviceMemory
-                else
-                    try interpolateBlob(allocator, out_a.blob, out_b.blob, @min(out_a.size, out_b.size), t),
-                .size = @min(out_a.size, out_b.size),
-            };
+                result.outputs[location][component] = .{
+                    .interpolation_type = out_a.interpolation_type,
+                    .centroid = out_a.centroid,
+                    .blob = if (out_a.interpolation_type == .flat)
+                        allocator.dupe(u8, out_a.blob) catch return VkError.OutOfDeviceMemory
+                    else
+                        try interpolateBlob(allocator, out_a.blob, out_b.blob, @min(out_a.size, out_b.size), t),
+                    .size = @min(out_a.size, out_b.size),
+                };
+            }
         }
     }
 

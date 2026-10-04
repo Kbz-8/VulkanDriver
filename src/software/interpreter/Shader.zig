@@ -105,6 +105,8 @@ fn hasCompatibleInterface(program: *const Program, stage: ir.module.Stage) bool 
                             return false;
                         has_position = true;
                     },
+                    .point_size => if (binding.direction != .output or binding.span.kind != .floating or binding.span.components != 1)
+                        return false,
                     else => return false,
                 },
                 .compute => switch (builtin) {
@@ -169,4 +171,23 @@ fn commonStage(stage: vk.ShaderStageFlags) ?ir.module.Stage {
         .compute
     else
         null;
+}
+
+test "IR interpreter accepts scalar vertex PointSize output" {
+    var module = ir.module.Module.init(std.testing.allocator, .vertex);
+    defer module.deinit();
+    var builder = ir.Builder.init(&module);
+    const void_type = try builder.internType(.void);
+    const float_type = try builder.internType(.{ .floating = .{ .bits = 32 } });
+    const vec4_type = try builder.internType(.{ .vector = .{ .element_type = float_type, .length = 4 } });
+    _ = try builder.addInterfaceVariable(vec4_type, .output, .{ .builtin = .position }, "position");
+    _ = try builder.addInterfaceVariable(float_type, .output, .{ .builtin = .point_size }, "point_size");
+    const function = try builder.addFunction(void_type, "main");
+    builder.setEntryPoint(function);
+    const block = try builder.addBlock(function, "entry");
+    try builder.setTerminator(block, .return_void);
+
+    var program = try Program.compile(std.testing.allocator, &module);
+    defer program.deinit();
+    try std.testing.expect(hasCompatibleInterface(&program, .vertex));
 }

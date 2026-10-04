@@ -100,6 +100,7 @@ pub const Builtin = enum {
     local_invocation_index,
     num_workgroups,
     position,
+    point_size,
     vertex_index,
     workgroup_id,
     workgroup_size,

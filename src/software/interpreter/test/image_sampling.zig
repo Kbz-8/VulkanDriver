@@ -49,6 +49,35 @@ test "[interpreter] generalized image samples lower dimensions, arrayedness, res
     try std.testing.expect(!program.image_sampler_pairs[3].arrayed);
 }
 
+test "[interpreter] 2D image gather lowers component selection" {
+    var module = try shader_ir.ir.parser.parseString(std.testing.allocator,
+        \\shader fragment @main
+        \\{
+        \\    @image: f32 = sampled_image[set(0), binding(0)]
+        \\    @sampler: resourceHandle[sampler] = sampler[set(0), binding(1)]
+        \\    %coordinate: constant vec2[f32] = null
+        \\    %component: constant i32 = 2
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec4[f32] = image_gather @image, @sampler, %coordinate, %component, dimension two_d, arrayed false
+        \\            return
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+
+    var program = try Program.compile(std.testing.allocator, &module);
+    defer program.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), program.image_sampler_pairs.len);
+    try std.testing.expectEqual(Program.ImageDimension.two_d, program.image_sampler_pairs[0].dimension);
+    try std.testing.expect(!program.image_sampler_pairs[0].arrayed);
+    try std.testing.expectEqual(bc.ValueKind.floating, program.image_sampler_pairs[0].destination_kind);
+    try std.testing.expectEqual(bc.Opcode.image_gather, program.code[0].opcode);
+    try std.testing.expect(program.code[0].c != .invalid_register);
+}
+
 test "[interpreter] cube-array image sampling is rejected" {
     var module = try shader_ir.ir.parser.parseString(std.testing.allocator,
         \\shader fragment @main

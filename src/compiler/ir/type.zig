@@ -26,6 +26,12 @@ pub const VectorType = struct {
     length: u8,
 };
 
+pub const MatrixType = struct {
+    /// Must be a vector type
+    element_type: TypeId,
+    column_count: u8,
+};
+
 pub const ArrayType = struct {
     element_type: TypeId,
     length: u32,
@@ -75,6 +81,7 @@ pub const Type = union(enum) {
     integer: IntegerType,
     floating: FloatType,
     vector: VectorType,
+    matrix: MatrixType,
     array: ArrayType,
     structure: StructureType,
     pointer: PointerType,
@@ -95,6 +102,10 @@ pub const Type = union(enum) {
             },
             .vector => |value| switch (b) {
                 .vector => |other| std.meta.eql(value, other),
+                else => false,
+            },
+            .matrix => |value| switch (b) {
+                .matrix => |other| std.meta.eql(value, other),
                 else => false,
             },
             .array => |value| switch (b) {

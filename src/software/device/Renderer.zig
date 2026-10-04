@@ -11,8 +11,10 @@ const BoundedAllocator = @import("BoundedAllocator.zig");
 const SoftBuffer = @import("../SoftBuffer.zig");
 const SoftDevice = @import("../SoftDevice.zig");
 const SoftFramebuffer = @import("../SoftFramebuffer.zig");
+const SoftImageView = @import("../SoftImageView.zig");
 const SoftPipeline = @import("../SoftPipeline.zig");
 const SoftRenderPass = @import("../SoftRenderPass.zig");
+const SoftSampler = @import("../SoftSampler.zig");
 
 const rasterizer = @import("rasterizer.zig");
 const vertex_dispatcher = @import("vertex/dispatcher.zig");
@@ -38,6 +40,41 @@ pub const IndexBuffer = struct {
 };
 
 pub const InterpolationType = enum { smooth, flat, noperspective };
+
+pub const PackedVertexOutput = struct {
+    word: u32,
+    interpolation_type: InterpolationType,
+    centroid: bool,
+};
+
+pub const LegacyVertexOutput = struct {
+    interpolation_type: InterpolationType,
+    centroid: bool,
+    blob: []u8,
+    size: usize,
+};
+
+const EmptyVertexOutputs = struct {};
+pub const PackedVertexOutputs = if (base.config.soft_ir_interpreter)
+    [spv.SPIRV_MAX_OUTPUT_LOCATIONS][4]?PackedVertexOutput
+else
+    EmptyVertexOutputs;
+pub const LegacyVertexOutputs = if (base.config.soft_ir_interpreter)
+    EmptyVertexOutputs
+else
+    [spv.SPIRV_MAX_OUTPUT_LOCATIONS][4]?LegacyVertexOutput;
+
+fn emptyPackedVertexOutputs() PackedVertexOutputs {
+    if (comptime base.config.soft_ir_interpreter)
+        return @splat(@splat(null));
+    return .{};
+}
+
+fn emptyLegacyVertexOutputs() LegacyVertexOutputs {
+    if (comptime base.config.soft_ir_interpreter)
+        return .{};
+    return @splat(@splat(null));
+}
 
 pub const DynamicState = struct {
     viewports: ?[]const vk.Viewport,
@@ -69,12 +106,14 @@ pub const Vertex = struct {
     primitive_restart: bool,
     position: F32x4,
     point_size: f32,
-    outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][4]?struct {
-        interpolation_type: InterpolationType,
-        centroid: bool,
-        blob: []u8,
-        size: usize,
-    },
+    packed_outputs: PackedVertexOutputs = emptyPackedVertexOutputs(),
+    outputs: LegacyVertexOutputs = emptyLegacyVertexOutputs(),
+};
+
+pub const FragmentResources = struct {
+    buffers: []?[]u8 = &.{},
+    images: []?*SoftImageView = &.{},
+    samplers: []?*SoftSampler = &.{},
 };
 
 pub const DrawCall = struct {
@@ -89,6 +128,7 @@ pub const DrawCall = struct {
     color_attachments: []*base.ImageView,
     depth_attachment: ?*base.ImageView,
     input_attachment_snapshots: []const SoftPipeline.InputAttachmentSnapshot,
+    fragment_resources: FragmentResources,
 
     render_pass: *SoftRenderPass,
     framebuffer: *SoftFramebuffer,
@@ -115,6 +155,7 @@ pub const DrawCall = struct {
             .color_attachments = framebuffer.interface.attachments[0..],
             .depth_attachment = if (render_pass.interface.subpasses[renderer.subpass_index].depth_stencil_attachments) |desc| framebuffer.interface.attachments[desc.attachment] else null,
             .input_attachment_snapshots = &.{},
+            .fragment_resources = .{},
             .render_pass = render_pass,
             .framebuffer = framebuffer,
             .rasterizer_wait_group = .init,
@@ -126,8 +167,11 @@ pub const DrawCall = struct {
         for (self.vertices) |*vertex| {
             vertex.primitive_restart = false;
             vertex.point_size = 1.0;
-            for (&vertex.outputs) |*location| {
-                @memset(location, null);
+            if (comptime base.config.soft_ir_interpreter) {
+                vertex.packed_outputs = @splat(@splat(null));
+            } else {
+                for (&vertex.outputs) |*location|
+                    @memset(location, null);
             }
         }
 
@@ -135,11 +179,12 @@ pub const DrawCall = struct {
     }
 
     fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-        for (self.vertices) |*vertex| {
-            for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
-                for (0..4) |component| {
-                    if (vertex.outputs[location][component]) |output| {
-                        allocator.free(output.blob);
+        if (comptime !base.config.soft_ir_interpreter) {
+            for (self.vertices) |*vertex| {
+                for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
+                    for (0..4) |component| {
+                        if (vertex.outputs[location][component]) |output|
+                            allocator.free(output.blob);
                     }
                 }
             }

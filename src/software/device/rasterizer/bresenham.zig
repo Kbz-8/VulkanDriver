@@ -197,6 +197,11 @@ fn drawLineDiamond(
     const has_fragment_shader = fragment_stage != null;
     const batch_id: usize = 0;
 
+    // SAFETY: only used if has_fragment_shader
+    var fragment_worker: fragment.Worker = if (has_fragment_shader) try fragment.acquireWorker(draw_call, batch_id) else undefined;
+    defer if (has_fragment_shader)
+        fragment_worker.release();
+
     const min_x: i32 = @intFromFloat(@floor(@min(v0.position[0], v1.position[0]) - 1.0));
     const max_x: i32 = @intFromFloat(@ceil(@max(v0.position[0], v1.position[0]) + 1.0));
     const min_y: i32 = @intFromFloat(@floor(@min(v0.position[1], v1.position[1]) - 1.0));
@@ -221,9 +226,8 @@ fn drawLineDiamond(
             };
             if (has_fragment_shader) {
                 fragment_result = fragment.shaderInvocation(
+                    &fragment_worker,
                     allocator,
-                    draw_call,
-                    batch_id,
                     zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, z, frag_w),
                     null,
                     null,
@@ -263,6 +267,7 @@ fn drawLineDiamond(
                 ),
                 fragment_result.sample_mask,
                 false,
+                .locked,
             );
         }
     }
@@ -428,6 +433,11 @@ fn runWrapper(data: RunData) void {
 }
 
 inline fn run(data: RunData) !void {
+    // SAFETY: only used if data.has_fragment_shader
+    var fragment_worker: fragment.Worker = if (data.has_fragment_shader) try fragment.acquireWorker(data.draw_call, data.batch_id) else undefined;
+    defer if (data.has_fragment_shader)
+        fragment_worker.release();
+
     var step = data.start_step;
     while (step <= data.end_step) : (step += 1) {
         const x = data.x0 + @as(i32, @intCast(step));
@@ -451,9 +461,8 @@ inline fn run(data: RunData) !void {
         };
         if (data.has_fragment_shader) {
             fragment_result = fragment.shaderInvocation(
+                &fragment_worker,
                 data.allocator,
-                data.draw_call,
-                data.batch_id,
                 zm.f32x4(@as(f32, @floatFromInt(pixel_x)) + 0.5, @as(f32, @floatFromInt(pixel_y)) + 0.5, z, frag_w),
                 null,
                 null,
@@ -493,6 +502,7 @@ inline fn run(data: RunData) !void {
             ),
             fragment_result.sample_mask,
             false,
+            .locked,
         );
     }
 }

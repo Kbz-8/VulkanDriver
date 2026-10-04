@@ -455,6 +455,16 @@ fn remapOperation(module: *module_ir.Module, value_map: []const ?ids.ValueId, op
                 .arrayed = op.arrayed,
             },
         },
+        .image_gather => |op| .{
+            .image_gather = .{
+                .image = op.image,
+                .sampler = op.sampler,
+                .coordinate = try mappedValue(module, value_map, op.coordinate),
+                .component = try mappedValue(module, value_map, op.component),
+                .dimension = op.dimension,
+                .arrayed = op.arrayed,
+            },
+        },
         .image_write => |op| .{
             .image_write = .{
                 .resource = op.resource,

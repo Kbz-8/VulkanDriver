@@ -103,6 +103,7 @@ Types are interned in the module and printed inline; their `TypeId` is hidden.
 | Unsigned integer | `u32`                           | An unsigned integer of the written bit width.                             |
 | Floating point   | `f32`                           | A floating value of the written bit width.                                |
 | Vector           | `vec4[f32]`                     | A fixed number of equal scalar elements. Its length must be at least two. |
+| Matrix           | `mat4x4[f32]`                   | A fixed number of equal vector elements. Its length must be at least two. |
 | Array            | `array[u32, 8]`                 | A fixed number of equal elements. Its length must not be zero.            |
 | Structure        | `struct[f32, vec4[f32]]`        | An ordered sequence of potentially different member types.                |
 | Pointer          | `ptr[workgroup, u32]`           | A pointer to a type within an address space.                              |
@@ -292,6 +293,21 @@ and poison rules are not yet separately recorded by the IR.
 Instructions do not yet carry fast-math flags, rounding modes, contraction
 permission, or NaN guarantees.
 
+### Vector arithmetic
+
+| Opcode                | Description                     | Usage                          | Small printed example                        |
+| --------------------- | ------------------------------- | ------------------------------ | -------------------------------------------- |
+| `vector_times_scalar` | Multiplies a vector by a scalar | Floating operands of one type. | `%3: vec4[f32] = vector_times_scalar %1, %2` |
+| `vector_times_matrix` | Multiplies a vector by a matrix | Floating operands of one type. | `%3: vec4[f32] = vector_times_matrix %1, %2` |
+
+### Matrix arithmetic
+
+| Opcode                | Description                     | Usage                          | Small printed example                          |
+| --------------------- | ------------------------------- | ------------------------------ | ---------------------------------------------- |
+| `matrix_times_matrix` | Multiplies a matrix by a matrix | Floating operands of one type. | `%3: mat4x4[f32] = matrix_times_matrix %1, %2` |
+| `matrix_times_scalar` | Multiplies a matrix by a scalar | Floating operands of one type. | `%3: mat4x4[f32] = matrix_times_scalar %1, %2` |
+| `matrix_times_vector` | Multiplies a matrix by a vector | Floating operands of one type. | `%3: mat4x4[f32] = matrix_times_vector %1, %2` |
+
 ### Shifts and bitwise arithmetic
 
 | Opcode                   | Description                                        | Usage                                                         | Small printed example                     |
@@ -383,14 +399,15 @@ vector of `f32` with the same component count.
 
 ### `composite_construct`
 
-Constructs a vector or structure from its immediate elements.
+Constructs a vector, matrix or structure from its immediate elements.
 
 ```text
 %5: vec4[f32] = composite_construct %1, %2, %3, %4
 ```
 
 For a vector, every element must have the vector's element type and their count
-must equal its length. For a structure, each element must match the member at
+must equal its length. For matrix, all elements must be vectors of matrix row size
+and matrix primitive type. For a structure, each element must match the member at
 the same position. The validator does not support array construction yet.
 
 ### `composite_extract`

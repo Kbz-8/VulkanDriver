@@ -31,6 +31,74 @@ pub const VertexInterpolation = struct {
 
 pub const VertexInterpolationLocation = [4]VertexInterpolation;
 
+const PerspectiveWeights = struct { w0: f32, w1: f32, w2: f32 };
+
+pub const RasterVertex = struct {
+    position: F32x4,
+    attributes: *const Renderer.Vertex,
+};
+
+pub const PixelBounds = struct {
+    min_x: i32,
+    max_x: i32,
+    min_y: i32,
+    max_y: i32,
+
+    pub fn intersect(a: PixelBounds, b: PixelBounds) ?PixelBounds {
+        const result: PixelBounds = .{
+            .min_x = @max(a.min_x, b.min_x),
+            .max_x = @min(a.max_x, b.max_x),
+            .min_y = @max(a.min_y, b.min_y),
+            .max_y = @min(a.max_y, b.max_y),
+        };
+        return if (result.min_x <= result.max_x and result.min_y <= result.max_y) result else null;
+    }
+};
+
+pub const AttachmentOrdering = enum {
+    locked,
+    tile_exclusive,
+};
+
+pub const PackedFragmentInputs = struct {
+    v0: RasterVertex,
+    v1: RasterVertex,
+    v2: RasterVertex,
+    provoking_vertex: *const Renderer.Vertex,
+    barycentrics: [3]f32,
+    centroid_barycentrics: [3]f32,
+    smooth_weights: PerspectiveWeights,
+
+    pub fn word(self: PackedFragmentInputs, location: usize, component: usize) u32 {
+        if (location >= spv.SPIRV_MAX_OUTPUT_LOCATIONS or component >= 4)
+            return 0;
+
+        const out0 = self.v0.attributes.packed_outputs[location][component] orelse return 0;
+        if (out0.interpolation_type == .flat)
+            return if (self.provoking_vertex.packed_outputs[location][component]) |output| output.word else out0.word;
+
+        const out1 = self.v1.attributes.packed_outputs[location][component] orelse return 0;
+        const out2 = self.v2.attributes.packed_outputs[location][component] orelse return 0;
+        const barycentrics = if (out0.centroid) self.centroid_barycentrics else self.barycentrics;
+        const weights = if (out0.interpolation_type == .smooth)
+            if (out0.centroid)
+                perspectiveWeights(self.v0.position, self.v1.position, self.v2.position, barycentrics[0], barycentrics[1], barycentrics[2])
+            else
+                self.smooth_weights
+        else
+            PerspectiveWeights{ .w0 = barycentrics[0], .w1 = barycentrics[1], .w2 = barycentrics[2] };
+        const value0: f32 = @bitCast(out0.word);
+        const value1: f32 = @bitCast(out1.word);
+        const value2: f32 = @bitCast(out2.word);
+        return @bitCast((value0 * weights.w0) + (value1 * weights.w1) + (value2 * weights.w2));
+    }
+};
+
+pub const FragmentInputs = if (base.config.soft_ir_interpreter)
+    PackedFragmentInputs
+else
+    [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation;
+
 pub fn depthBiasConstantUnit(format: vk.Format, z: f32) f32 {
     return switch (format) {
         .d16_unorm => 1.0 / @as(f32, @floatFromInt(std.math.maxInt(u16))),
@@ -215,13 +283,16 @@ pub fn depthTestSampleAndUpdate(
     sample_index: usize,
     z: f32,
     state: ?vk.PipelineDepthStencilStateCreateInfo,
+    ordering: AttachmentOrdering,
 ) VkError!bool {
     const depth_state = state orelse return true;
     const depth_offset = targetSampleOffset(depth.*, x, y, sample_index) orelse return false;
 
-    depth.mutex.lock(io) catch return VkError.DeviceLost;
-    defer depth.mutex.unlock(io);
-
+    if (ordering == .locked) {
+        depth.mutex.lock(io) catch return VkError.DeviceLost;
+        defer depth.mutex.unlock(io);
+        return depthTestAndUpdateAtOffset(depth, depth_offset, z, depth_state);
+    }
     return depthTestAndUpdateAtOffset(depth, depth_offset, z, depth_state);
 }
 
@@ -254,6 +325,52 @@ fn resolveStencilState(draw_call: *Renderer.DrawCall, state: vk.StencilOpState, 
 }
 
 pub fn interpolateVertexOutputs(
+    allocator: std.mem.Allocator,
+    v0: *const Renderer.Vertex,
+    v1: *const Renderer.Vertex,
+    v2: *const Renderer.Vertex,
+    provoking_vertex: *const Renderer.Vertex,
+    b0: f32,
+    b1: f32,
+    b2: f32,
+    centroid_b0: f32,
+    centroid_b1: f32,
+    centroid_b2: f32,
+) VkError!FragmentInputs {
+    if (comptime base.config.soft_ir_interpreter) {
+        return packedFragmentInputs(
+            .{ .position = v0.position, .attributes = v0 },
+            .{ .position = v1.position, .attributes = v1 },
+            .{ .position = v2.position, .attributes = v2 },
+            provoking_vertex,
+            .{ b0, b1, b2 },
+            .{ centroid_b0, centroid_b1, centroid_b2 },
+        );
+    } else {
+        return interpolateVertexOutputsLegacy(allocator, v0, v1, v2, provoking_vertex, b0, b1, b2, centroid_b0, centroid_b1, centroid_b2);
+    }
+}
+
+pub fn packedFragmentInputs(
+    v0: RasterVertex,
+    v1: RasterVertex,
+    v2: RasterVertex,
+    provoking_vertex: *const Renderer.Vertex,
+    barycentrics: [3]f32,
+    centroid_barycentrics: [3]f32,
+) PackedFragmentInputs {
+    return .{
+        .v0 = v0,
+        .v1 = v1,
+        .v2 = v2,
+        .provoking_vertex = provoking_vertex,
+        .barycentrics = barycentrics,
+        .centroid_barycentrics = centroid_barycentrics,
+        .smooth_weights = perspectiveWeights(v0.position, v1.position, v2.position, barycentrics[0], barycentrics[1], barycentrics[2]),
+    };
+}
+
+fn interpolateVertexOutputsLegacy(
     allocator: std.mem.Allocator,
     v0: *const Renderer.Vertex,
     v1: *const Renderer.Vertex,
@@ -328,11 +445,38 @@ pub fn interpolateLineOutputs(
     v1: *const Renderer.Vertex,
     provoking_vertex: *const Renderer.Vertex,
     t: f32,
-) VkError![spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation {
+) VkError!FragmentInputs {
     return interpolateVertexOutputs(allocator, v0, v1, v0, provoking_vertex, 1.0 - t, t, 0.0, 1.0 - t, t, 0.0);
 }
 
 pub fn interpolateVertexOutputDerivatives(
+    allocator: std.mem.Allocator,
+    v0: *const Renderer.Vertex,
+    v1: *const Renderer.Vertex,
+    v2: *const Renderer.Vertex,
+    b0: f32,
+    b1: f32,
+    b2: f32,
+    db0: f32,
+    db1: f32,
+    db2: f32,
+) VkError!FragmentInputs {
+    if (comptime base.config.soft_ir_interpreter) {
+        return .{
+            .v0 = .{ .position = v0.position, .attributes = v0 },
+            .v1 = .{ .position = v1.position, .attributes = v1 },
+            .v2 = .{ .position = v2.position, .attributes = v2 },
+            .provoking_vertex = v0,
+            .barycentrics = .{ db0, db1, db2 },
+            .centroid_barycentrics = .{ db0, db1, db2 },
+            .smooth_weights = .{ .w0 = db0, .w1 = db1, .w2 = db2 },
+        };
+    } else {
+        return interpolateVertexOutputDerivativesLegacy(allocator, v0, v1, v2, b0, b1, b2, db0, db1, db2);
+    }
+}
+
+fn interpolateVertexOutputDerivativesLegacy(
     allocator: std.mem.Allocator,
     v0: *const Renderer.Vertex,
     v1: *const Renderer.Vertex,
@@ -387,10 +531,10 @@ pub fn interpolateVertexOutputDerivatives(
     return inputs;
 }
 
-fn perspectiveWeights(v0: *const Renderer.Vertex, v1: *const Renderer.Vertex, v2: *const Renderer.Vertex, b0: f32, b1: f32, b2: f32) struct { w0: f32, w1: f32, w2: f32 } {
-    const iw0 = 1.0 / v0.position[3];
-    const iw1 = 1.0 / v1.position[3];
-    const iw2 = 1.0 / v2.position[3];
+fn perspectiveWeights(p0: F32x4, p1: F32x4, p2: F32x4, b0: f32, b1: f32, b2: f32) PerspectiveWeights {
+    const iw0 = 1.0 / p0[3];
+    const iw1 = 1.0 / p1[3];
+    const iw2 = 1.0 / p2[3];
     const denominator = (b0 * iw0) + (b1 * iw1) + (b2 * iw2);
     if (denominator == 0.0)
         return .{ .w0 = b0, .w1 = b1, .w2 = b2 };
@@ -403,7 +547,7 @@ fn perspectiveWeights(v0: *const Renderer.Vertex, v1: *const Renderer.Vertex, v2
 
 inline fn interpolateF32(interpolation_type: anytype, value0: f32, value1: f32, value2: f32, v0: *const Renderer.Vertex, v1: *const Renderer.Vertex, v2: *const Renderer.Vertex, b0: f32, b1: f32, b2: f32) f32 {
     if (interpolation_type == .smooth) {
-        const weights = perspectiveWeights(v0, v1, v2, b0, b1, b2);
+        const weights = perspectiveWeights(v0.position, v1.position, v2.position, b0, b1, b2);
         return (value0 * weights.w0) + (value1 * weights.w1) + (value2 * weights.w2);
     }
     return (value0 * b0) + (value1 * b1) + (value2 * b2);
@@ -411,7 +555,7 @@ inline fn interpolateF32(interpolation_type: anytype, value0: f32, value1: f32, 
 
 inline fn interpolateF32x4(interpolation_type: anytype, value0: F32x4, value1: F32x4, value2: F32x4, v0: *const Renderer.Vertex, v1: *const Renderer.Vertex, v2: *const Renderer.Vertex, b0: f32, b1: f32, b2: f32) F32x4 {
     if (interpolation_type == .smooth) {
-        const weights = perspectiveWeights(v0, v1, v2, b0, b1, b2);
+        const weights = perspectiveWeights(v0.position, v1.position, v2.position, b0, b1, b2);
         return (value0 * zm.f32x4s(weights.w0)) + (value1 * zm.f32x4s(weights.w1)) + (value2 * zm.f32x4s(weights.w2));
     }
     return (value0 * zm.f32x4s(b0)) + (value1 * zm.f32x4s(b1)) + (value2 * zm.f32x4s(b2));
@@ -543,6 +687,7 @@ pub fn writeToTargets(
     coverage_sample_mask: ?vk.SampleMask,
     fragment_sample_mask: ?vk.SampleMask,
     depth_already_applied: bool,
+    ordering: AttachmentOrdering,
 ) VkError!void {
     const io = draw_call.renderer.device.interface.io();
     const pipeline_data = draw_call.renderer.state.pipeline.?.interface.mode.graphics;
@@ -593,10 +738,13 @@ pub fn writeToTargets(
             const depth = depth_attachment_access.?;
             const depth_offset = targetSampleOffset(depth.*, x, y, sample_index) orelse continue;
 
-            depth.mutex.lock(io) catch return VkError.DeviceLost;
-            defer depth.mutex.unlock(io);
-
-            depth_passed = depthTestAndUpdateAtOffset(depth, depth_offset, z, depth_stencil_state.?);
+            if (ordering == .locked) {
+                depth.mutex.lock(io) catch return VkError.DeviceLost;
+                defer depth.mutex.unlock(io);
+                depth_passed = depthTestAndUpdateAtOffset(depth, depth_offset, z, depth_stencil_state.?);
+            } else {
+                depth_passed = depthTestAndUpdateAtOffset(depth, depth_offset, z, depth_stencil_state.?);
+            }
             if (!depth_passed.? and stencil_state == null)
                 continue;
         }

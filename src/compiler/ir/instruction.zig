@@ -39,11 +39,15 @@ pub const BinaryOpcode = enum {
     logical_and,
     logical_or,
     logical_shift_right,
+    matrix_times_matrix,
+    matrix_times_scalar,
+    matrix_times_vector,
     shift_left,
     signed_divide,
     signed_modulo,
     unsigned_divide,
     unsigned_modulo,
+    vector_times_matrix,
     vector_times_scalar,
 };
 
@@ -157,6 +161,15 @@ pub const ImageSampleImplicitLod = struct {
     arrayed: bool,
 };
 
+pub const ImageGather = struct {
+    image: ResourceId,
+    sampler: ResourceId,
+    coordinate: ValueId,
+    component: ValueId,
+    dimension: type_ir.ImageDimension,
+    arrayed: bool,
+};
+
 pub const ImageWrite = struct {
     resource: ResourceId,
     coordinate: ValueId,
@@ -200,6 +213,7 @@ pub const Operation = union(enum) {
     image_read: ImageRead,
     image_sample_explicit_lod: ImageSampleExplicitLod,
     image_sample_implicit_lod: ImageSampleImplicitLod,
+    image_gather: ImageGather,
     image_write: ImageWrite,
     control_barrier,
     call: Call,
@@ -254,6 +268,10 @@ pub const Operation = union(enum) {
                 visitor(context, op.lod);
             },
             .image_sample_implicit_lod => |op| visitor(context, op.coordinate),
+            .image_gather => |op| {
+                visitor(context, op.coordinate);
+                visitor(context, op.component);
+            },
             .image_write => |op| {
                 visitor(context, op.coordinate);
                 visitor(context, op.value);
@@ -324,6 +342,10 @@ pub const Operation = union(enum) {
                 replaceOne(&op.lod, old, replacement, &count);
             },
             .image_sample_implicit_lod => |*op| replaceOne(&op.coordinate, old, replacement, &count),
+            .image_gather => |*op| {
+                replaceOne(&op.coordinate, old, replacement, &count);
+                replaceOne(&op.component, old, replacement, &count);
+            },
             .image_write => |*op| {
                 replaceOne(&op.coordinate, old, replacement, &count);
                 replaceOne(&op.value, old, replacement, &count);

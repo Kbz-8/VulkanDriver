@@ -385,6 +385,26 @@ fn lowerOperation(
                 .inferred_type = null,
             };
         },
+        .image_gather => |op| blk: {
+            const image = resources.get(op.image_name) orelse return error.UnknownResource;
+            const sampler = resources.get(op.sampler_name) orelse return error.UnknownResource;
+            const coordinate = resolveValue(values, op.coordinate) orelse return error.UnknownValue;
+            const component = resolveValue(values, op.component) orelse return error.UnknownValue;
+
+            break :blk .{
+                .operation = .{
+                    .image_gather = .{
+                        .image = image,
+                        .sampler = sampler,
+                        .coordinate = coordinate,
+                        .component = component,
+                        .dimension = op.dimension,
+                        .arrayed = op.arrayed,
+                    },
+                },
+                .inferred_type = null,
+            };
+        },
         .control_barrier => .{ .operation = .control_barrier, .inferred_type = null },
         .array_length => |op| blk: {
             const resource_id = resources.get(op.resource_name) orelse return error.UnknownResource;
@@ -473,14 +493,29 @@ fn lowerEdge(
 fn inferCompositeType(module: *module_ir.Module, element_types: []const ids.TypeId) !ids.TypeId {
     if (element_types.len >= 2 and element_types.len <= std.math.maxInt(u8)) {
         const first = element_types[0];
+
         for (element_types[1..]) |element_type| {
-            if (element_type != first)
+            if (element_type != first) {
                 return module.internType(.{
                     .structure = .{
                         .members = element_types,
                     },
                 });
+            }
         }
+
+        if (module.types.get(first)) |first_type| {
+            switch (first_type.*) {
+                .vector => return module.internType(.{
+                    .matrix = .{
+                        .element_type = first,
+                        .column_count = @intCast(element_types.len),
+                    },
+                }),
+                else => {},
+            }
+        }
+
         return module.internType(.{
             .vector = .{
                 .element_type = first,
@@ -488,6 +523,7 @@ fn inferCompositeType(module: *module_ir.Module, element_types: []const ids.Type
             },
         });
     }
+
     return module.internType(.{
         .structure = .{
             .members = element_types,
@@ -502,6 +538,10 @@ fn extractedType(module: *const module_ir.Module, root_type: ids.TypeId, indices
         current = switch (ty.*) {
             .vector => |vector| if (index < vector.length)
                 vector.element_type
+            else
+                return error.InvalidCompositeIndex,
+            .matrix => |matrix| if (index < matrix.column_count)
+                matrix.element_type
             else
                 return error.InvalidCompositeIndex,
             .array => |array| if (index < array.length)

@@ -172,12 +172,17 @@ fn execute(self: *Self, program: *const Program, options: RunOptions) RuntimeErr
             .float_modulo => self.binaryFloat(instruction, .modulo, false),
             .float_multiply => self.binaryFloat(instruction, .multiply, false),
             .vector_times_scalar => self.binaryFloat(instruction, .multiply, true),
+            .vector_times_matrix => try self.vectorTimesMatrix(instruction),
+            .matrix_times_matrix => try self.matrixTimesMatrix(instruction),
+            .matrix_times_scalar => self.binaryFloat(instruction, .multiply, true),
+            .matrix_times_vector => try self.matrixTimesVector(instruction),
             .float_subtract => self.binaryFloat(instruction, .subtract, false),
             .integer_add => try self.binaryInt(instruction, .add),
             .integer_multiply => try self.binaryInt(instruction, .multiply),
             .integer_subtract => try self.binaryInt(instruction, .subtract),
             .image_read => try self.imageRead(program, options.resource_images, instruction),
             .image_read_float => try self.imageReadFloat(program, options.resource_images, instruction),
+            .image_gather => try self.imageGather(program, options.resource_images, options.resource_samplers, instruction),
             .image_sample_explicit_lod => try self.imageSample(program, options.resource_images, options.resource_samplers, instruction, true),
             .image_sample_implicit_lod => try self.imageSample(program, options.resource_images, options.resource_samplers, instruction, false),
             .image_write => try self.imageWrite(program, options.resource_images, instruction),
@@ -374,6 +379,80 @@ fn binaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Bin
     }
 }
 
+fn matrixTimesVector(self: *Self, instruction: bc.Instruction) RuntimeError!void {
+    const dimensions = bc.MatrixDimensions.decode(instruction.immediate);
+    if (dimensions.rows == 0 or dimensions.inner == 0 or dimensions.columns != 1 or instruction.components != dimensions.rows or instruction.d != .invalid_register)
+        return RuntimeError.InvalidBytecode;
+
+    const matrix_components = try componentProduct(dimensions.rows, dimensions.inner);
+    try self.validateRegisterRange(instruction.a, dimensions.rows);
+    try self.validateRegisterRange(instruction.b, matrix_components);
+    try self.validateRegisterRange(instruction.c, dimensions.inner);
+
+    for (0..dimensions.rows) |row| {
+        var sum: f32 = 0.0;
+        for (0..dimensions.inner) |column| {
+            const matrix: f32 = @bitCast(self.registers[@backingInt(instruction.b) + column * dimensions.rows + row]);
+            const vector: f32 = @bitCast(self.registers[@backingInt(instruction.c) + column]);
+            sum += matrix * vector;
+        }
+        self.registers[@backingInt(instruction.a) + row] = @bitCast(sum);
+    }
+}
+
+fn vectorTimesMatrix(self: *Self, instruction: bc.Instruction) RuntimeError!void {
+    const dimensions = bc.MatrixDimensions.decode(instruction.immediate);
+    if (dimensions.rows != 1 or dimensions.inner == 0 or dimensions.columns == 0 or instruction.components != dimensions.columns or instruction.d != .invalid_register)
+        return RuntimeError.InvalidBytecode;
+
+    const matrix_components = try componentProduct(dimensions.inner, dimensions.columns);
+    try self.validateRegisterRange(instruction.a, dimensions.columns);
+    try self.validateRegisterRange(instruction.b, dimensions.inner);
+    try self.validateRegisterRange(instruction.c, matrix_components);
+
+    for (0..dimensions.columns) |column| {
+        var sum: f32 = 0.0;
+        for (0..dimensions.inner) |row| {
+            const vector: f32 = @bitCast(self.registers[@backingInt(instruction.b) + row]);
+            const matrix: f32 = @bitCast(self.registers[@backingInt(instruction.c) + column * dimensions.inner + row]);
+            sum += vector * matrix;
+        }
+        self.registers[@backingInt(instruction.a) + column] = @bitCast(sum);
+    }
+}
+
+fn matrixTimesMatrix(self: *Self, instruction: bc.Instruction) RuntimeError!void {
+    const dimensions = bc.MatrixDimensions.decode(instruction.immediate);
+    if (dimensions.rows == 0 or dimensions.inner == 0 or dimensions.columns == 0 or instruction.d != .invalid_register)
+        return RuntimeError.InvalidBytecode;
+
+    const lhs_components = try componentProduct(dimensions.rows, dimensions.inner);
+    const rhs_components = try componentProduct(dimensions.inner, dimensions.columns);
+    const result_components = try componentProduct(dimensions.rows, dimensions.columns);
+    if (instruction.components != result_components)
+        return RuntimeError.InvalidBytecode;
+
+    try self.validateRegisterRange(instruction.a, result_components);
+    try self.validateRegisterRange(instruction.b, lhs_components);
+    try self.validateRegisterRange(instruction.c, rhs_components);
+
+    for (0..dimensions.columns) |column| {
+        for (0..dimensions.rows) |row| {
+            var sum: f32 = 0.0;
+            for (0..dimensions.inner) |inner| {
+                const lhs: f32 = @bitCast(self.registers[@backingInt(instruction.b) + inner * dimensions.rows + row]);
+                const rhs: f32 = @bitCast(self.registers[@backingInt(instruction.c) + column * dimensions.inner + inner]);
+                sum += lhs * rhs;
+            }
+            self.registers[@backingInt(instruction.a) + column * dimensions.rows + row] = @bitCast(sum);
+        }
+    }
+}
+
+fn componentProduct(lhs: u8, rhs: u8) RuntimeError!usize {
+    return std.math.mul(usize, lhs, rhs) catch RuntimeError.InvalidBytecode;
+}
+
 fn compareInt(self: *Self, instruction: bc.Instruction, comptime operation: CompareInt) void {
     for (0..instruction.components) |component| {
         const lhs = self.registers[@backingInt(instruction.b) + component];
@@ -458,6 +537,66 @@ fn imageReadFloat(self: *Self, program: *const Program, resource_images: []const
     const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
     const pixel = image.readFloat4(imageOffset(self, instruction), imageSubresource(view), view.interface.format) catch return RuntimeError.InvalidResource;
     const components: [4]u32 = @bitCast(pixel);
+    @memcpy(self.registers[@backingInt(instruction.a)..][0..4], &components);
+}
+
+fn imageGather(
+    self: *Self,
+    program: *const Program,
+    resource_images: []const ?*SoftImageView,
+    resource_samplers: []const ?*SoftSampler,
+    instruction: bc.Instruction,
+) RuntimeError!void {
+    if (instruction.components != 4 or instruction.immediate >= program.image_sampler_pairs.len or instruction.c == .invalid_register or instruction.d != .invalid_register)
+        return RuntimeError.InvalidBytecode;
+
+    try self.validateRegisterSpan(instruction);
+
+    const pair = program.image_sampler_pairs[instruction.immediate];
+    if (pair.dimension != .two_d or pair.arrayed)
+        return RuntimeError.InvalidBytecode;
+
+    const coordinate_base: usize = @backingInt(instruction.b);
+    const coordinate_end = std.math.add(usize, coordinate_base, 2) catch return RuntimeError.InvalidBytecode;
+    if (coordinate_end > self.registers.len or @backingInt(instruction.c) >= self.registers.len)
+        return RuntimeError.InvalidBytecode;
+
+    const component: usize = self.registers[@backingInt(instruction.c)];
+    if (component >= 4)
+        return RuntimeError.InvalidResource;
+
+    const view = try sampledImage(program, resource_images, pair.image);
+    const sampler = try resourceSampler(program, resource_samplers, pair.sampler);
+    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
+    const extent = image.getMipLevelExtent(view.interface.subresource_range.base_mip_level);
+    if (extent.width == 0 or extent.height == 0)
+        return RuntimeError.InvalidResource;
+
+    const x: f32 = @bitCast(self.registers[coordinate_base]);
+    const y: f32 = @bitCast(self.registers[coordinate_base + 1]);
+    const width: f32 = @floatFromInt(extent.width);
+    const height: f32 = @floatFromInt(extent.height);
+    const base_x: i32 = @intFromFloat(@floor(x * width - 0.5));
+    const base_y: i32 = @intFromFloat(@floor(y * height - 0.5));
+    const gather_x = [4]i32{ base_x, base_x + 1, base_x + 1, base_x };
+    const gather_y = [4]i32{ base_y + 1, base_y + 1, base_y, base_y };
+
+    var components: [4]u32 = undefined;
+    for (0..4) |i| {
+        const sample_x = (@as(f32, @floatFromInt(gather_x[i])) + 0.5) / width;
+        const sample_y = (@as(f32, @floatFromInt(gather_y[i])) + 0.5) / height;
+        components[i] = switch (pair.destination_kind) {
+            .floating => blk: {
+                const texel: [4]f32 = @bitCast(SoftSampler.sampleImageFloat4(image, view, sampler, .@"2D", sample_x, sample_y, 0.0, 0.0, .{}) catch return RuntimeError.InvalidResource);
+                break :blk @bitCast(texel[component]);
+            },
+            .signed_integer, .unsigned_integer => blk: {
+                const texel: [4]u32 = @bitCast(SoftSampler.sampleImageInt4(image, view, sampler, .@"2D", sample_x, sample_y, 0.0, 0.0, .{}) catch return RuntimeError.InvalidResource);
+                break :blk texel[component];
+            },
+            .boolean => return RuntimeError.InvalidBytecode,
+        };
+    }
     @memcpy(self.registers[@backingInt(instruction.a)..][0..4], &components);
 }
 
@@ -601,7 +740,11 @@ fn workgroupRange(self: *const Self, program: *const Program, optional_memory: ?
 }
 
 fn validateRegisterSpan(self: *const Self, instruction: bc.Instruction) RuntimeError!void {
-    const register_end = std.math.add(usize, @backingInt(instruction.a), instruction.components) catch return RuntimeError.InvalidBytecode;
+    try self.validateRegisterRange(instruction.a, instruction.components);
+}
+
+fn validateRegisterRange(self: *const Self, base: bc.Register, components: usize) RuntimeError!void {
+    const register_end = std.math.add(usize, @backingInt(base), components) catch return RuntimeError.InvalidBytecode;
     if (register_end > self.registers.len)
         return RuntimeError.InvalidBytecode;
 }

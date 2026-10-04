@@ -66,16 +66,34 @@ const MemberOffset = struct {
     offset: u32,
 };
 
+const MatrixMajor = enum { row, column };
+
+const MatrixMemoryLayout = struct {
+    stride: u32,
+    major: MatrixMajor,
+};
+
+const MemberMatrixLayout = struct {
+    structure_id: u32,
+    member: u32,
+    stride: ?u32 = null,
+    major: ?MatrixMajor = null,
+};
+
 const BufferAddress = struct {
     resource: ir.id.ResourceId,
     descriptor_index: ?ir.id.ValueId = null,
     byte_offset: ?ir.id.ValueId,
     pointee_type: u32,
+    matrix_layout: ?MatrixMemoryLayout = null,
+    vector_stride: ?u32 = null,
 };
 
 const PushConstantAddress = struct {
     byte_offset: ?ir.id.ValueId,
     pointee_type: u32,
+    matrix_layout: ?MatrixMemoryLayout = null,
+    vector_stride: ?u32 = null,
 };
 
 const DescriptorArray = struct {
@@ -179,6 +197,7 @@ const Context = struct {
     workgroup_addresses: []?WorkgroupAddress,
     composite_addresses: []?CompositeAddress,
     member_offsets: std.ArrayList(MemberOffset) = .empty,
+    member_matrix_layouts: std.ArrayList(MemberMatrixLayout) = .empty,
     member_interfaces: std.ArrayList(MemberInterface) = .empty,
     interface_blocks: std.ArrayList(InterfaceBlock) = .empty,
     member_bindings: std.AutoHashMapUnmanaged(u64, ir.id.InterfaceVariableId) = .empty,
@@ -273,6 +292,19 @@ const Context = struct {
                     .vector = .{
                         .element_type = try self.translateType(operands[1]),
                         .length = @intCast(operands[2]),
+                    },
+                });
+            },
+            .type_matrix => blk: {
+                try expectOperandCount(operands, 3);
+
+                if (operands[2] < 2 or operands[2] > std.math.maxInt(u8))
+                    return TranslationError.UnsupportedType;
+
+                break :blk try self.builder.internType(.{
+                    .matrix = .{
+                        .element_type = try self.translateType(operands[1]),
+                        .column_count = @intCast(operands[2]),
                     },
                 });
             },
@@ -473,7 +505,35 @@ const Context = struct {
                     else => return TranslationError.UnsupportedConstant,
                 };
             },
-            .spec_constant_op => return TranslationError.SpecializationConstantsNotApplied,
+            .spec_constant_op => blk: {
+                try expectOperandCount(operands, 5);
+                const opcode: spirv.Opcode = @fromBackingInt(@intCast(operands[2]));
+                if (opcode != .i_not_equal)
+                    return TranslationError.SpecializationConstantsNotApplied;
+
+                const result_type = try self.translateType(operands[0]);
+                const result_type_data = self.module.types.get(result_type) orelse return TranslationError.InvalidId;
+                if (result_type_data.* != .boolean)
+                    return TranslationError.UnsupportedConstant;
+
+                const lhs = self.module.values.get(try self.translateValue(operands[3])) orelse return TranslationError.InvalidId;
+                const rhs = self.module.values.get(try self.translateValue(operands[4])) orelse return TranslationError.InvalidId;
+                if (lhs.type != rhs.type or lhs.definition != .constant or rhs.definition != .constant)
+                    return TranslationError.UnsupportedConstant;
+
+                const operand_type = self.module.types.get(lhs.type) orelse return TranslationError.InvalidId;
+                if (operand_type.* != .integer)
+                    return TranslationError.UnsupportedConstant;
+
+                const lhs_constant = self.module.constants.get(lhs.definition.constant) orelse return TranslationError.InvalidId;
+                const rhs_constant = self.module.constants.get(rhs.definition.constant) orelse return TranslationError.InvalidId;
+                if (lhs_constant.value != .integer_bits or rhs_constant.value != .integer_bits)
+                    return TranslationError.UnsupportedConstant;
+
+                break :blk try self.builder.internConstant(result_type, .{
+                    .boolean = lhs_constant.value.integer_bits != rhs_constant.value.integer_bits,
+                });
+            },
 
             else => return TranslationError.MissingDefinition,
         };
@@ -632,6 +692,7 @@ pub fn instantiate(allocator: std.mem.Allocator, source: *const SourceModule, op
     };
     @memset(context.decorations, .{});
     defer context.member_offsets.deinit(scratch);
+    defer context.member_matrix_layouts.deinit(scratch);
     defer context.phi_infos.deinit(scratch);
     defer context.locals.deinit(scratch);
 
@@ -778,6 +839,41 @@ fn collectMemberDecoration(context: *Context, operands: []const u32) !void {
         return TranslationError.InvalidInstruction;
 
     const decoration: spirv.Decoration = @fromBackingInt(@intCast(operands[2]));
+    if (decoration == .row_major or decoration == .col_major or decoration == .matrix_stride) {
+        _ = try context.idIndex(operands[0]);
+        var entry: ?*MemberMatrixLayout = null;
+        for (context.member_matrix_layouts.items) |*layout| {
+            if (layout.structure_id == operands[0] and layout.member == operands[1]) {
+                entry = layout;
+                break;
+            }
+        }
+        if (entry == null) {
+            try context.member_matrix_layouts.append(context.scratch, .{
+                .structure_id = operands[0],
+                .member = operands[1],
+            });
+            entry = &context.member_matrix_layouts.items[context.member_matrix_layouts.items.len - 1];
+        }
+
+        switch (decoration) {
+            .row_major, .col_major => {
+                try expectOperandCount(operands, 3);
+                if (entry.?.major != null)
+                    return TranslationError.InvalidInstruction;
+                entry.?.major = if (decoration == .row_major) .row else .column;
+            },
+            .matrix_stride => {
+                try expectOperandCount(operands, 4);
+                if (entry.?.stride != null or operands[3] == 0)
+                    return TranslationError.InvalidInstruction;
+                entry.?.stride = operands[3];
+            },
+            else => unreachable,
+        }
+        return;
+    }
+
     if (decoration != .offset) {
         if (decoration != .built_in and decoration != .location and decoration != .component and decoration != .index)
             return;
@@ -1554,19 +1650,32 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                 if (result_type != try context.translateType(address.pointee_type))
                     return TranslationError.InvalidInstruction;
 
-                const result = (try context.builder.appendInstruction(block, result_type, .{
-                    .load_push_constant = .{ .byte_offset = try pushConstantByteOffset(context, address) },
-                }, context.nameOf(operands[1]))).?;
+                const result = if (address.matrix_layout) |layout|
+                    try translatePushConstantMatrixLoad(context, block, address, layout, context.nameOf(operands[1]))
+                else if (address.vector_stride) |stride|
+                    try translatePushConstantStridedVectorLoad(context, block, address, stride, context.nameOf(operands[1]))
+                else
+                    (try context.builder.appendInstruction(block, result_type, .{
+                        .load_push_constant = .{ .byte_offset = try pushConstantByteOffset(context, address) },
+                    }, context.nameOf(operands[1]))).?;
 
                 try context.setValue(operands[1], result);
             } else if (try context.bufferAddress(operands[2])) |address| {
-                const result = (try context.builder.appendInstruction(block, result_type, .{
-                    .load_buffer = .{
-                        .resource = address.resource,
-                        .descriptor_index = address.descriptor_index,
-                        .byte_offset = try bufferByteOffset(context, address),
-                    },
-                }, context.nameOf(operands[1]))).?;
+                if (result_type != try context.translateType(address.pointee_type))
+                    return TranslationError.InvalidInstruction;
+
+                const result = if (address.matrix_layout) |layout|
+                    try translateBufferMatrixLoad(context, block, address, layout, context.nameOf(operands[1]))
+                else if (address.vector_stride) |stride|
+                    try translateBufferStridedVectorLoad(context, block, address, stride, context.nameOf(operands[1]))
+                else
+                    (try context.builder.appendInstruction(block, result_type, .{
+                        .load_buffer = .{
+                            .resource = address.resource,
+                            .descriptor_index = address.descriptor_index,
+                            .byte_offset = try bufferByteOffset(context, address),
+                        },
+                    }, context.nameOf(operands[1]))).?;
 
                 try context.setValue(operands[1], result);
             } else if (try context.workgroupAddress(operands[2])) |address| {
@@ -1619,14 +1728,23 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
 
                 context.current_locals[local_index] = value;
             } else if (try context.bufferAddress(operands[0])) |address| {
-                _ = try context.builder.appendInstruction(block, null, .{
-                    .store_buffer = .{
-                        .resource = address.resource,
-                        .descriptor_index = address.descriptor_index,
-                        .byte_offset = try bufferByteOffset(context, address),
-                        .value = value,
-                    },
-                }, null);
+                if (context.module.typeOf(value) != try context.translateType(address.pointee_type))
+                    return TranslationError.InvalidInstruction;
+
+                if (address.matrix_layout) |layout| {
+                    try translateBufferMatrixStore(context, block, address, layout, value);
+                } else if (address.vector_stride) |stride| {
+                    try translateBufferStridedVectorStore(context, block, address, stride, value);
+                } else {
+                    _ = try context.builder.appendInstruction(block, null, .{
+                        .store_buffer = .{
+                            .resource = address.resource,
+                            .descriptor_index = address.descriptor_index,
+                            .byte_offset = try bufferByteOffset(context, address),
+                            .value = value,
+                        },
+                    }, null);
+                }
             } else if (try context.workgroupAddress(operands[0])) |address| {
                 if (context.module.typeOf(value) != try context.translateType(address.pointee_type))
                     return TranslationError.InvalidInstruction;
@@ -1698,6 +1816,28 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                     .image = sampled_image.image,
                     .sampler = sampled_image.sampler,
                     .coordinate = try context.resolveValue(operands[3]),
+                    .dimension = image_info.dimension,
+                    .arrayed = image_info.arrayed,
+                },
+            }, context.nameOf(operands[1]))).?;
+            try context.setValue(operands[1], result);
+        },
+
+        .image_gather => {
+            if (operands.len != 5)
+                return TranslationError.UnsupportedOpcode;
+
+            const sampled_image = (try context.sampledImage(operands[2])) orelse return TranslationError.UnsupportedOpcode;
+            const image_info = try imageTypeInfo(context, sampled_image.image_type);
+            if (image_info.dimension != .two_d or image_info.arrayed)
+                return TranslationError.UnsupportedOpcode;
+
+            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+                .image_gather = .{
+                    .image = sampled_image.image,
+                    .sampler = sampled_image.sampler,
+                    .coordinate = try context.resolveValue(operands[3]),
+                    .component = try context.resolveValue(operands[4]),
                     .dimension = image_info.dimension,
                     .arrayed = image_info.arrayed,
                 },
@@ -1826,6 +1966,55 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
                 .binary = .{
                     .opcode = .vector_times_scalar,
+                    .lhs = try context.resolveValue(operands[2]),
+                    .rhs = try context.resolveValue(operands[3]),
+                },
+            }, context.nameOf(operands[1]))).?;
+            try context.setValue(operands[1], result);
+        },
+        .vector_times_matrix => {
+            try expectOperandCount(operands, 4);
+
+            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+                .binary = .{
+                    .opcode = .vector_times_matrix,
+                    .lhs = try context.resolveValue(operands[2]),
+                    .rhs = try context.resolveValue(operands[3]),
+                },
+            }, context.nameOf(operands[1]))).?;
+            try context.setValue(operands[1], result);
+        },
+
+        .matrix_times_matrix => {
+            try expectOperandCount(operands, 4);
+
+            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+                .binary = .{
+                    .opcode = .matrix_times_matrix,
+                    .lhs = try context.resolveValue(operands[2]),
+                    .rhs = try context.resolveValue(operands[3]),
+                },
+            }, context.nameOf(operands[1]))).?;
+            try context.setValue(operands[1], result);
+        },
+        .matrix_times_scalar => {
+            try expectOperandCount(operands, 4);
+
+            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+                .binary = .{
+                    .opcode = .matrix_times_scalar,
+                    .lhs = try context.resolveValue(operands[2]),
+                    .rhs = try context.resolveValue(operands[3]),
+                },
+            }, context.nameOf(operands[1]))).?;
+            try context.setValue(operands[1], result);
+        },
+        .matrix_times_vector => {
+            try expectOperandCount(operands, 4);
+
+            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+                .binary = .{
+                    .opcode = .matrix_times_vector,
                     .lhs = try context.resolveValue(operands[2]),
                     .rhs = try context.resolveValue(operands[3]),
                 },
@@ -2340,6 +2529,8 @@ fn translateAccessChain(context: *Context, block: ir.id.BlockId, operands: []con
 fn translateBufferAccessChain(context: *Context, block: ir.id.BlockId, operands: []const u32, base: BufferAddress, first_index: usize) !void {
     var current_type = base.pointee_type;
     var byte_offset = base.byte_offset;
+    var matrix_layout = base.matrix_layout;
+    var vector_stride = base.vector_stride;
 
     for (operands[first_index..]) |index_id| {
         const type_definition = context.type_defs[try context.idIndex(current_type)] orelse return TranslationError.MissingDefinition;
@@ -2349,6 +2540,8 @@ fn translateBufferAccessChain(context: *Context, block: ir.id.BlockId, operands:
                 if (member + 1 >= type_definition.operands.len)
                     return TranslationError.InvalidInstruction;
                 const member_offset = try findMemberOffset(context, current_type, member);
+                matrix_layout = try findMemberMatrixLayout(context, current_type, member);
+                vector_stride = null;
 
                 if (member_offset != 0) {
                     const offset_value = try context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = member_offset });
@@ -2374,23 +2567,23 @@ fn translateBufferAccessChain(context: *Context, block: ir.id.BlockId, operands:
                 byte_offset = try addByteOffset(context, block, byte_offset, term);
                 current_type = type_definition.operands[1];
             },
+            .type_matrix => {
+                const layout = matrix_layout orelse return TranslationError.InvalidInstruction;
+                const info = try matrixTypeInfo(context, current_type);
+                const stride = if (layout.major == .column) layout.stride else info.element_size;
+                byte_offset = try addIndexedByteOffset(context, block, byte_offset, index_id, stride);
+                vector_stride = if (layout.major == .row) layout.stride else null;
+                matrix_layout = null;
+                current_type = type_definition.operands[1];
+            },
             .type_vector => {
                 try expectOperandCount(type_definition.operands, 3);
 
                 const element_type = type_definition.operands[1];
-                const stride = try workgroupTypeSize(context, element_type);
-                const index = try unsignedOffsetValue(context, block, index_id);
-                const stride_value = try context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = stride });
-
-                const term = (try context.builder.appendInstruction(block, try unsigned32Type(context), .{
-                    .binary = .{
-                        .opcode = .integer_multiply,
-                        .lhs = index,
-                        .rhs = stride_value,
-                    },
-                }, null)).?;
-
-                byte_offset = try addByteOffset(context, block, byte_offset, term);
+                const stride = vector_stride orelse try workgroupTypeSize(context, element_type);
+                byte_offset = try addIndexedByteOffset(context, block, byte_offset, index_id, stride);
+                vector_stride = null;
+                matrix_layout = null;
                 current_type = element_type;
             },
             else => return TranslationError.UnsupportedType,
@@ -2415,12 +2608,16 @@ fn translateBufferAccessChain(context: *Context, block: ir.id.BlockId, operands:
         .descriptor_index = base.descriptor_index,
         .byte_offset = byte_offset,
         .pointee_type = current_type,
+        .matrix_layout = matrix_layout,
+        .vector_stride = vector_stride,
     };
 }
 
 fn translatePushConstantAccessChain(context: *Context, block: ir.id.BlockId, operands: []const u32, base: PushConstantAddress) !void {
     var current_type = base.pointee_type;
     var byte_offset = base.byte_offset;
+    var matrix_layout = base.matrix_layout;
+    var vector_stride = base.vector_stride;
 
     for (operands[3..]) |index_id| {
         const type_definition = context.type_defs[try context.idIndex(current_type)] orelse return TranslationError.MissingDefinition;
@@ -2430,6 +2627,8 @@ fn translatePushConstantAccessChain(context: *Context, block: ir.id.BlockId, ope
                 if (member + 1 >= type_definition.operands.len)
                     return TranslationError.InvalidInstruction;
                 const member_offset = try findMemberOffset(context, current_type, member);
+                matrix_layout = try findMemberMatrixLayout(context, current_type, member);
+                vector_stride = null;
                 if (member_offset != 0) {
                     const offset_value = try context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = member_offset });
                     byte_offset = try addByteOffset(context, block, byte_offset, offset_value);
@@ -2447,16 +2646,22 @@ fn translatePushConstantAccessChain(context: *Context, block: ir.id.BlockId, ope
                 byte_offset = try addByteOffset(context, block, byte_offset, term);
                 current_type = type_definition.operands[1];
             },
+            .type_matrix => {
+                const layout = matrix_layout orelse return TranslationError.InvalidInstruction;
+                const info = try matrixTypeInfo(context, current_type);
+                const stride = if (layout.major == .column) layout.stride else info.element_size;
+                byte_offset = try addIndexedByteOffset(context, block, byte_offset, index_id, stride);
+                vector_stride = if (layout.major == .row) layout.stride else null;
+                matrix_layout = null;
+                current_type = type_definition.operands[1];
+            },
             .type_vector => {
                 try expectOperandCount(type_definition.operands, 3);
                 const element_type = type_definition.operands[1];
-                const stride = try workgroupTypeSize(context, element_type);
-                const index = try unsignedOffsetValue(context, block, index_id);
-                const stride_value = try context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = stride });
-                const term = (try context.builder.appendInstruction(block, try unsigned32Type(context), .{
-                    .binary = .{ .opcode = .integer_multiply, .lhs = index, .rhs = stride_value },
-                }, null)).?;
-                byte_offset = try addByteOffset(context, block, byte_offset, term);
+                const stride = vector_stride orelse try workgroupTypeSize(context, element_type);
+                byte_offset = try addIndexedByteOffset(context, block, byte_offset, index_id, stride);
+                vector_stride = null;
+                matrix_layout = null;
                 current_type = element_type;
             },
             else => return TranslationError.UnsupportedType,
@@ -2476,6 +2681,8 @@ fn translatePushConstantAccessChain(context: *Context, block: ir.id.BlockId, ope
     context.push_constant_addresses[result_index] = .{
         .byte_offset = byte_offset,
         .pointee_type = current_type,
+        .matrix_layout = matrix_layout,
+        .vector_stride = vector_stride,
     };
 }
 
@@ -2692,6 +2899,7 @@ fn extractCompositeAddress(context: *Context, block: ir.id.BlockId, composite: i
     const ty = context.module.types.get(context.module.typeOf(composite).?).?.*;
     const element_type = switch (ty) {
         .vector => |v| v.element_type,
+        .matrix => |m| m.element_type,
         .array => |a| a.element_type,
         .structure => |s| s.members[indices[0].constant],
         else => return TranslationError.UnsupportedType,
@@ -2872,6 +3080,192 @@ fn unsignedOffsetValue(context: *Context, block: ir.id.BlockId, spv_id: u32) !ir
     }, null)).?;
 }
 
+const MatrixTypeInfo = struct {
+    matrix_type: ir.id.TypeId,
+    column_type: ir.id.TypeId,
+    element_type: ir.id.TypeId,
+    rows: u32,
+    columns: u32,
+    element_size: u32,
+};
+
+fn matrixTypeInfo(context: *Context, spv_type: u32) !MatrixTypeInfo {
+    const matrix = context.type_defs[try context.idIndex(spv_type)] orelse return TranslationError.MissingDefinition;
+    if (matrix.opcode != .type_matrix)
+        return TranslationError.InvalidInstruction;
+    try expectOperandCount(matrix.operands, 3);
+
+    const column = context.type_defs[try context.idIndex(matrix.operands[1])] orelse return TranslationError.MissingDefinition;
+    if (column.opcode != .type_vector)
+        return TranslationError.InvalidInstruction;
+    try expectOperandCount(column.operands, 3);
+
+    return .{
+        .matrix_type = try context.translateType(spv_type),
+        .column_type = try context.translateType(matrix.operands[1]),
+        .element_type = try context.translateType(column.operands[1]),
+        .rows = column.operands[2],
+        .columns = matrix.operands[2],
+        .element_size = try workgroupTypeSize(context, column.operands[1]),
+    };
+}
+
+fn matrixElementMemoryOffset(layout: MatrixMemoryLayout, element_size: u32, column: u32, row: u32) !u32 {
+    const major_index, const minor_index = switch (layout.major) {
+        .column => .{ column, row },
+        .row => .{ row, column },
+    };
+    const major_offset = std.math.mul(u32, major_index, layout.stride) catch return TranslationError.InvalidInstruction;
+    const minor_offset = std.math.mul(u32, minor_index, element_size) catch return TranslationError.InvalidInstruction;
+    return std.math.add(u32, major_offset, minor_offset) catch return TranslationError.InvalidInstruction;
+}
+
+fn addIndexedByteOffset(context: *Context, block: ir.id.BlockId, base: ?ir.id.ValueId, spv_index: u32, stride: u32) !ir.id.ValueId {
+    const index = try unsignedOffsetValue(context, block, spv_index);
+    const stride_value = try context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = stride });
+    const term = (try context.builder.appendInstruction(block, try unsigned32Type(context), .{
+        .binary = .{ .opcode = .integer_multiply, .lhs = index, .rhs = stride_value },
+    }, null)).?;
+    return addByteOffset(context, block, base, term);
+}
+
+fn addConstantByteOffset(context: *Context, block: ir.id.BlockId, base: ?ir.id.ValueId, offset: u32) !ir.id.ValueId {
+    if (offset == 0)
+        return base orelse context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = 0 });
+    const value = try context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = offset });
+    return addByteOffset(context, block, base, value);
+}
+
+const VectorTypeInfo = struct {
+    vector_type: ir.id.TypeId,
+    element_type: ir.id.TypeId,
+    length: u32,
+};
+
+fn vectorTypeInfo(context: *Context, spv_type: u32) !VectorTypeInfo {
+    const vector = context.type_defs[try context.idIndex(spv_type)] orelse return TranslationError.MissingDefinition;
+    if (vector.opcode != .type_vector)
+        return TranslationError.InvalidInstruction;
+    try expectOperandCount(vector.operands, 3);
+    return .{
+        .vector_type = try context.translateType(spv_type),
+        .element_type = try context.translateType(vector.operands[1]),
+        .length = vector.operands[2],
+    };
+}
+
+fn translateBufferStridedVectorLoad(context: *Context, block: ir.id.BlockId, address: BufferAddress, stride: u32, name: ?[]const u8) !ir.id.ValueId {
+    const info = try vectorTypeInfo(context, address.pointee_type);
+    const elements = try context.scratch.alloc(ir.id.ValueId, info.length);
+    for (elements, 0..) |*element, index| {
+        const relative_offset = std.math.mul(u32, @intCast(index), stride) catch return TranslationError.InvalidInstruction;
+        element.* = (try context.builder.appendInstruction(block, info.element_type, .{ .load_buffer = .{
+            .resource = address.resource,
+            .descriptor_index = address.descriptor_index,
+            .byte_offset = try addConstantByteOffset(context, block, address.byte_offset, relative_offset),
+        } }, null)).?;
+    }
+    return (try context.builder.appendInstruction(block, info.vector_type, .{ .composite_construct = .{
+        .elements = elements,
+    } }, name)).?;
+}
+
+fn translatePushConstantStridedVectorLoad(context: *Context, block: ir.id.BlockId, address: PushConstantAddress, stride: u32, name: ?[]const u8) !ir.id.ValueId {
+    const info = try vectorTypeInfo(context, address.pointee_type);
+    const elements = try context.scratch.alloc(ir.id.ValueId, info.length);
+    for (elements, 0..) |*element, index| {
+        const relative_offset = std.math.mul(u32, @intCast(index), stride) catch return TranslationError.InvalidInstruction;
+        element.* = (try context.builder.appendInstruction(block, info.element_type, .{ .load_push_constant = .{
+            .byte_offset = try addConstantByteOffset(context, block, address.byte_offset, relative_offset),
+        } }, null)).?;
+    }
+    return (try context.builder.appendInstruction(block, info.vector_type, .{ .composite_construct = .{
+        .elements = elements,
+    } }, name)).?;
+}
+
+fn translateBufferStridedVectorStore(context: *Context, block: ir.id.BlockId, address: BufferAddress, stride: u32, value: ir.id.ValueId) !void {
+    const info = try vectorTypeInfo(context, address.pointee_type);
+    for (0..info.length) |index| {
+        const element = (try context.builder.appendInstruction(block, info.element_type, .{ .composite_extract = .{
+            .composite = value,
+            .indices = &.{@intCast(index)},
+        } }, null)).?;
+        const relative_offset = std.math.mul(u32, @intCast(index), stride) catch return TranslationError.InvalidInstruction;
+        _ = try context.builder.appendInstruction(block, null, .{ .store_buffer = .{
+            .resource = address.resource,
+            .descriptor_index = address.descriptor_index,
+            .byte_offset = try addConstantByteOffset(context, block, address.byte_offset, relative_offset),
+            .value = element,
+        } }, null);
+    }
+}
+
+fn translateBufferMatrixLoad(context: *Context, block: ir.id.BlockId, address: BufferAddress, layout: MatrixMemoryLayout, name: ?[]const u8) !ir.id.ValueId {
+    const info = try matrixTypeInfo(context, address.pointee_type);
+    const columns = try context.scratch.alloc(ir.id.ValueId, info.columns);
+    const elements = try context.scratch.alloc(ir.id.ValueId, info.rows);
+
+    for (columns, 0..) |*column, column_index| {
+        for (elements, 0..) |*element, row_index| {
+            const relative_offset = try matrixElementMemoryOffset(layout, info.element_size, @intCast(column_index), @intCast(row_index));
+            element.* = (try context.builder.appendInstruction(block, info.element_type, .{ .load_buffer = .{
+                .resource = address.resource,
+                .descriptor_index = address.descriptor_index,
+                .byte_offset = try addConstantByteOffset(context, block, address.byte_offset, relative_offset),
+            } }, null)).?;
+        }
+        column.* = (try context.builder.appendInstruction(block, info.column_type, .{ .composite_construct = .{
+            .elements = elements,
+        } }, null)).?;
+    }
+
+    return (try context.builder.appendInstruction(block, info.matrix_type, .{ .composite_construct = .{
+        .elements = columns,
+    } }, name)).?;
+}
+
+fn translatePushConstantMatrixLoad(context: *Context, block: ir.id.BlockId, address: PushConstantAddress, layout: MatrixMemoryLayout, name: ?[]const u8) !ir.id.ValueId {
+    const info = try matrixTypeInfo(context, address.pointee_type);
+    const columns = try context.scratch.alloc(ir.id.ValueId, info.columns);
+    const elements = try context.scratch.alloc(ir.id.ValueId, info.rows);
+
+    for (columns, 0..) |*column, column_index| {
+        for (elements, 0..) |*element, row_index| {
+            const relative_offset = try matrixElementMemoryOffset(layout, info.element_size, @intCast(column_index), @intCast(row_index));
+            element.* = (try context.builder.appendInstruction(block, info.element_type, .{ .load_push_constant = .{
+                .byte_offset = try addConstantByteOffset(context, block, address.byte_offset, relative_offset),
+            } }, null)).?;
+        }
+        column.* = (try context.builder.appendInstruction(block, info.column_type, .{ .composite_construct = .{
+            .elements = elements,
+        } }, null)).?;
+    }
+
+    return (try context.builder.appendInstruction(block, info.matrix_type, .{ .composite_construct = .{
+        .elements = columns,
+    } }, name)).?;
+}
+
+fn translateBufferMatrixStore(context: *Context, block: ir.id.BlockId, address: BufferAddress, layout: MatrixMemoryLayout, value: ir.id.ValueId) !void {
+    const info = try matrixTypeInfo(context, address.pointee_type);
+    for (0..info.columns) |column_index| {
+        for (0..info.rows) |row_index| {
+            const element = (try context.builder.appendInstruction(block, info.element_type, .{ .composite_extract = .{
+                .composite = value,
+                .indices = &.{ @intCast(column_index), @intCast(row_index) },
+            } }, null)).?;
+            const relative_offset = try matrixElementMemoryOffset(layout, info.element_size, @intCast(column_index), @intCast(row_index));
+            _ = try context.builder.appendInstruction(block, null, .{ .store_buffer = .{
+                .resource = address.resource,
+                .descriptor_index = address.descriptor_index,
+                .byte_offset = try addConstantByteOffset(context, block, address.byte_offset, relative_offset),
+                .value = element,
+            } }, null);
+        }
+    }
+}
+
 fn addByteOffset(context: *Context, block: ir.id.BlockId, current: ?ir.id.ValueId, term: ir.id.ValueId) !ir.id.ValueId {
     const lhs = current orelse return term;
     return (try context.builder.appendInstruction(block, try unsigned32Type(context), .{
@@ -2933,6 +3327,23 @@ fn constantIndex(context: *Context, spv_id: u32) !u32 {
     if (constant.value != .integer_bits or constant.value.integer_bits > std.math.maxInt(u32))
         return TranslationError.InvalidInstruction;
     return @intCast(constant.value.integer_bits);
+}
+
+fn findMemberMatrixLayout(context: *const Context, structure_id: u32, member: u32) !?MatrixMemoryLayout {
+    var found: ?MemberMatrixLayout = null;
+    for (context.member_matrix_layouts.items) |entry| {
+        if (entry.structure_id != structure_id or entry.member != member)
+            continue;
+        if (found != null)
+            return TranslationError.InvalidInstruction;
+        found = entry;
+    }
+
+    const entry = found orelse return null;
+    return .{
+        .stride = entry.stride orelse return TranslationError.InvalidInstruction,
+        .major = entry.major orelse return TranslationError.InvalidInstruction,
+    };
 }
 
 fn findMemberOffset(context: *const Context, structure_id: u32, member: u32) !u32 {
@@ -3118,6 +3529,7 @@ fn translateBuiltin(builtin: spirv.Builtin) TranslationError!ir.module.Builtin {
         .local_invocation_index => .local_invocation_index,
         .num_workgroups => .num_workgroups,
         .position => .position,
+        .point_size => .point_size,
         .vertex_index => .vertex_index,
         .workgroup_id => .workgroup_id,
         .workgroup_size => .workgroup_size,
@@ -3604,6 +4016,111 @@ test "SPIR-V: storage buffers and promoted function locals" {
     defer parsed.deinit();
 }
 
+test "SPIR-V: row-major and column-major matrix memory layouts" {
+    const assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint GLCompute %main "main"
+        \\OpExecutionMode %main LocalSize 1 1 1
+        \\OpDecorate %Matrices BufferBlock
+        \\OpMemberDecorate %Matrices 0 Offset 0
+        \\OpMemberDecorate %Matrices 0 RowMajor
+        \\OpMemberDecorate %Matrices 0 MatrixStride 16
+        \\OpMemberDecorate %Matrices 1 Offset 48
+        \\OpMemberDecorate %Matrices 1 ColMajor
+        \\OpMemberDecorate %Matrices 1 MatrixStride 16
+        \\OpDecorate %source DescriptorSet 0
+        \\OpDecorate %source Binding 0
+        \\OpDecorate %destination DescriptorSet 0
+        \\OpDecorate %destination Binding 1
+        \\OpDecorate %Push Block
+        \\OpMemberDecorate %Push 0 Offset 0
+        \\OpMemberDecorate %Push 0 RowMajor
+        \\OpMemberDecorate %Push 0 MatrixStride 16
+        \\%void = OpTypeVoid
+        \\%fn_void = OpTypeFunction %void
+        \\%float = OpTypeFloat 32
+        \\%int = OpTypeInt 32 1
+        \\%vec3 = OpTypeVector %float 3
+        \\%mat2x3 = OpTypeMatrix %vec3 2
+        \\%Matrices = OpTypeStruct %mat2x3 %mat2x3
+        \\%Push = OpTypeStruct %mat2x3
+        \\%ptr_uniform_matrices = OpTypePointer Uniform %Matrices
+        \\%ptr_uniform_matrix = OpTypePointer Uniform %mat2x3
+        \\%ptr_uniform_vec3 = OpTypePointer Uniform %vec3
+        \\%ptr_uniform_float = OpTypePointer Uniform %float
+        \\%ptr_push_struct = OpTypePointer PushConstant %Push
+        \\%ptr_push_matrix = OpTypePointer PushConstant %mat2x3
+        \\%ptr_push_vec3 = OpTypePointer PushConstant %vec3
+        \\%int_0 = OpConstant %int 0
+        \\%int_1 = OpConstant %int 1
+        \\%source = OpVariable %ptr_uniform_matrices Uniform
+        \\%destination = OpVariable %ptr_uniform_matrices Uniform
+        \\%push = OpVariable %ptr_push_struct PushConstant
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    %source_row_ptr = OpAccessChain %ptr_uniform_matrix %source %int_0
+        \\    %source_row = OpLoad %mat2x3 %source_row_ptr
+        \\    %destination_row_ptr = OpAccessChain %ptr_uniform_matrix %destination %int_0
+        \\    OpStore %destination_row_ptr %source_row
+        \\    %source_column_ptr = OpAccessChain %ptr_uniform_matrix %source %int_1
+        \\    %source_column = OpLoad %mat2x3 %source_column_ptr
+        \\    %destination_column_ptr = OpAccessChain %ptr_uniform_matrix %destination %int_1
+        \\    OpStore %destination_column_ptr %source_column
+        \\    %push_ptr = OpAccessChain %ptr_push_matrix %push %int_0
+        \\    %push_value = OpLoad %mat2x3 %push_ptr
+        \\    %source_row_column_ptr = OpAccessChain %ptr_uniform_vec3 %source %int_0 %int_1
+        \\    %source_row_column = OpLoad %vec3 %source_row_column_ptr
+        \\    %destination_row_column_ptr = OpAccessChain %ptr_uniform_vec3 %destination %int_0 %int_1
+        \\    OpStore %destination_row_column_ptr %source_row_column
+        \\    %source_row_scalar_ptr = OpAccessChain %ptr_uniform_float %source %int_0 %int_1 %int_1
+        \\    %source_row_scalar = OpLoad %float %source_row_scalar_ptr
+        \\    %destination_row_scalar_ptr = OpAccessChain %ptr_uniform_float %destination %int_0 %int_1 %int_1
+        \\    OpStore %destination_row_scalar_ptr %source_row_scalar
+        \\    %source_column_vector_ptr = OpAccessChain %ptr_uniform_vec3 %source %int_1 %int_1
+        \\    %source_column_vector = OpLoad %vec3 %source_column_vector_ptr
+        \\    %destination_column_vector_ptr = OpAccessChain %ptr_uniform_vec3 %destination %int_1 %int_1
+        \\    OpStore %destination_column_vector_ptr %source_column_vector
+        \\    %push_column_ptr = OpAccessChain %ptr_push_vec3 %push %int_0 %int_1
+        \\    %push_column = OpLoad %vec3 %push_column_ptr
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+
+    var buffer_loads: usize = 0;
+    var buffer_stores: usize = 0;
+    var push_loads: usize = 0;
+    const function = module.functions.get(module.entry_point.?).?;
+    for (function.blocks.items) |block_id| {
+        const block = module.blocks.get(block_id).?;
+        for (block.instructions.items) |instruction_id| {
+            const instruction = module.instructions.get(instruction_id).?;
+            switch (instruction.operation) {
+                .load_buffer => buffer_loads += 1,
+                .store_buffer => buffer_stores += 1,
+                .load_push_constant => push_loads += 1,
+                else => {},
+            }
+        }
+    }
+
+    try std.testing.expectEqual(@as(usize, 17), buffer_loads);
+    try std.testing.expectEqual(@as(usize, 17), buffer_stores);
+    try std.testing.expectEqual(@as(usize, 9), push_loads);
+    try std.testing.expectEqual(@as(u32, 36), try matrixElementMemoryOffset(.{ .stride = 16, .major = .row }, 4, 1, 2));
+    try std.testing.expectEqual(@as(u32, 24), try matrixElementMemoryOffset(.{ .stride = 16, .major = .column }, 4, 1, 2));
+
+    const text = try ir.printer.allocPrint(std.testing.allocator, &module);
+    defer std.testing.allocator.free(text);
+    var parsed = try ir.parser.parseString(std.testing.allocator, text);
+    defer parsed.deinit();
+}
+
 test "SPIR-V: storage buffer descriptor arrays" {
     const assembly =
         \\OpCapability Shader
@@ -3790,8 +4307,11 @@ test "SPIR-V: scalar specialization constants and defaults" {
         \\OpName %number "number"
         \\OpName %enabled "enabled"
         \\OpName %pair "pair"
+        \\OpName %mode "mode"
+        \\OpName %gather "gather"
         \\OpDecorate %number SpecId 7
         \\OpDecorate %enabled SpecId 8
+        \\OpDecorate %mode SpecId 9
         \\%void = OpTypeVoid
         \\%bool = OpTypeBool
         \\%u32 = OpTypeInt 32 0
@@ -3799,11 +4319,15 @@ test "SPIR-V: scalar specialization constants and defaults" {
         \\%fn_void = OpTypeFunction %void
         \\%number = OpSpecConstant %u32 3
         \\%enabled = OpSpecConstantFalse %bool
+        \\%mode = OpSpecConstant %u32 0
+        \\%zero = OpConstant %u32 0
+        \\%gather = OpSpecConstantOp %bool INotEqual %mode %zero
         \\%pair = OpSpecConstantComposite %vec2_u32 %number %number
         \\%main = OpFunction %void None %fn_void
         \\    %entry = OpLabel
         \\    %sum = OpIAdd %u32 %number %number
         \\    %selected = OpSelect %u32 %enabled %sum %number
+        \\    %gather_selected = OpSelect %u32 %gather %sum %number
         \\    %first = OpCompositeExtract %u32 %pair 0
         \\    OpReturn
         \\OpFunctionEnd
@@ -3821,12 +4345,15 @@ test "SPIR-V: scalar specialization constants and defaults" {
     defer defaults.deinit();
     try expectNamedIntegerConstant(&defaults, "number", 3);
     try expectNamedBooleanConstant(&defaults, "enabled", false);
+    try expectSelectCondition(&defaults, 2, false);
 
     const number_override: u32 = 42;
     const enabled_override: u32 = 1;
+    const mode_override: u32 = 1;
     const specializations = [_]SpecializationValue{
         .{ .constant_id = 7, .data = std.mem.asBytes(&number_override) },
         .{ .constant_id = 8, .data = std.mem.asBytes(&enabled_override) },
+        .{ .constant_id = 9, .data = std.mem.asBytes(&mode_override) },
     };
     var specialized = try instantiate(std.testing.allocator, &source, .{
         .entry_point = "main",
@@ -3836,6 +4363,7 @@ test "SPIR-V: scalar specialization constants and defaults" {
     defer specialized.deinit();
     try expectNamedIntegerConstant(&specialized, "number", 42);
     try expectNamedBooleanConstant(&specialized, "enabled", true);
+    try expectSelectCondition(&specialized, 2, true);
 
     const invalid_size: u16 = 9;
     try std.testing.expectError(TranslationError.InvalidSpecialization, instantiate(std.testing.allocator, &source, .{
@@ -4033,6 +4561,50 @@ test "SPIR-V: combined cube-array descriptor and implicit-LOD sampling" {
     try std.testing.expect(explicit.arrayed);
 }
 
+test "SPIR-V: translate 2D image gather" {
+    const assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint Fragment %main "main"
+        \\OpExecutionMode %main OriginUpperLeft
+        \\OpDecorate %descriptor DescriptorSet 0
+        \\OpDecorate %descriptor Binding 0
+        \\%void = OpTypeVoid
+        \\%int = OpTypeInt 32 1
+        \\%float = OpTypeFloat 32
+        \\%vec2 = OpTypeVector %float 2
+        \\%vec4 = OpTypeVector %float 4
+        \\%image = OpTypeImage %float 2D 0 0 0 1 Unknown
+        \\%sampled_image = OpTypeSampledImage %image
+        \\%ptr_sampled_image = OpTypePointer UniformConstant %sampled_image
+        \\%fn_void = OpTypeFunction %void
+        \\%zero = OpConstant %float 0
+        \\%component = OpConstant %int 2
+        \\%coordinate = OpConstantComposite %vec2 %zero %zero
+        \\%descriptor = OpVariable %ptr_sampled_image UniformConstant
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    %loaded = OpLoad %sampled_image %descriptor
+        \\    %gather = OpImageGather %vec4 %loaded %coordinate %component
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+
+    const function = module.functions.get(module.entry_point.?).?;
+    const block = module.blocks.get(function.entry_block.?).?;
+    try std.testing.expectEqual(@as(usize, 1), block.instructions.items.len);
+    const gather = module.instructions.get(block.instructions.items[0]).?.operation.image_gather;
+    try std.testing.expectEqual(ir.types.ImageDimension.two_d, gather.dimension);
+    try std.testing.expect(!gather.arrayed);
+    try std.testing.expectEqual(ir.id.ResourceId.fromIndex(0), gather.image);
+    try std.testing.expectEqual(ir.id.ResourceId.fromIndex(1), gather.sampler);
+}
+
 test "SPIR-V: unknown opcode reports an error without formatting the enum" {
     const assembly =
         \\OpCapability Shader
@@ -4191,6 +4763,62 @@ test "SPIR-V: preserves location components and builtin interfaces" {
     try std.testing.expectEqual(ir.module.InterfaceDirection.output, position.direction);
     try std.testing.expect(position.semantic == .builtin);
     try std.testing.expectEqual(ir.module.Builtin.position, position.semantic.builtin);
+}
+
+test "SPIR-V: translates used PointSize and ignores unused clip and cull block members" {
+    const assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint Vertex %main "main" %outputs
+        \\OpDecorate %output_block Block
+        \\OpMemberDecorate %output_block 0 BuiltIn Position
+        \\OpMemberDecorate %output_block 1 BuiltIn PointSize
+        \\OpMemberDecorate %output_block 2 BuiltIn ClipDistance
+        \\OpMemberDecorate %output_block 3 BuiltIn CullDistance
+        \\%void = OpTypeVoid
+        \\%float = OpTypeFloat 32
+        \\%vec4 = OpTypeVector %float 4
+        \\%uint = OpTypeInt 32 0
+        \\%one = OpConstant %uint 1
+        \\%float_array = OpTypeArray %float %one
+        \\%output_block = OpTypeStruct %vec4 %float %float_array %float_array
+        \\%output_block_ptr = OpTypePointer Output %output_block
+        \\%float_ptr = OpTypePointer Output %float
+        \\%fn_void = OpTypeFunction %void
+        \\%point_size_member = OpConstant %uint 1
+        \\%point_size = OpConstant %float 1
+        \\%outputs = OpVariable %output_block_ptr Output
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    %point_size_address = OpAccessChain %float_ptr %outputs %point_size_member
+        \\    OpStore %point_size_address %point_size
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), module.interface_variables.entries.items.len);
+    const point_size = module.interface_variables.get(ir.id.InterfaceVariableId.fromIndex(0)).?;
+    try std.testing.expectEqual(ir.module.InterfaceDirection.output, point_size.direction);
+    try std.testing.expect(point_size.semantic == .builtin);
+    try std.testing.expectEqual(ir.module.Builtin.point_size, point_size.semantic.builtin);
+}
+
+fn expectSelectCondition(module: *const ir.module.Module, instruction_index: usize, expected: bool) !void {
+    const function = module.functions.get(module.entry_point.?).?;
+    const block = module.blocks.get(function.entry_block.?).?;
+    const instruction = module.instructions.get(block.instructions.items[instruction_index]).?;
+    try std.testing.expect(instruction.operation == .select);
+
+    const condition = module.values.get(instruction.operation.select.condition).?;
+    try std.testing.expect(condition.definition == .constant);
+    const constant = module.constants.get(condition.definition.constant).?;
+    try std.testing.expect(constant.value == .boolean);
+    try std.testing.expectEqual(expected, constant.value.boolean);
 }
 
 fn expectNamedIntegerConstant(module: *const ir.module.Module, name: []const u8, expected: u64) !void {

@@ -18,23 +18,12 @@ const SamplePosition = struct {
     y: f32,
 };
 
-const RunData = struct {
+pub const FillState = struct {
     allocator: std.mem.Allocator,
     draw_call: *Renderer.DrawCall,
-    batch_id: usize,
-    min_x: i32,
-    max_x: i32,
-    min_y: i32,
-    max_y: i32,
-    area: f32,
-    v0: Renderer.Vertex,
-    v1: Renderer.Vertex,
-    v2: Renderer.Vertex,
-    provoking_vertex: Renderer.Vertex,
     color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
     stencil_attachment_access: ?*common.RenderTargetAccess,
-    front_face: bool,
     has_fragment_shader: bool,
     early_fragment_tests: bool,
     fragment_uses_derivatives: bool,
@@ -43,51 +32,36 @@ const RunData = struct {
     sample_count: usize,
     depth_stencil_state: ?vk.PipelineDepthStencilStateCreateInfo,
     depth_bias: ?Renderer.DepthBias,
-    depth_bias_slope: f32,
+    worker_capacity: usize,
+    ordering: common.AttachmentOrdering,
 };
 
-pub fn drawTriangle(
+pub const PreparedTriangle = struct {
+    vertices: [3]common.RasterVertex,
+    provoking_vertex: *const Renderer.Vertex,
+    bounds: common.PixelBounds,
+    area: f32,
+    depth_bias_slope: f32,
+    front_face: bool,
+};
+
+const RunData = struct {
+    state: *const FillState,
+    triangle: *const PreparedTriangle,
+    batch_id: usize,
+    bounds: common.PixelBounds,
+};
+
+pub fn initFillState(
     allocator: std.mem.Allocator,
     draw_call: *Renderer.DrawCall,
-    v0: *Renderer.Vertex,
-    v1: *Renderer.Vertex,
-    v2: *Renderer.Vertex,
-    provoking_vertex: *Renderer.Vertex,
     color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
     stencil_attachment_access: ?*common.RenderTargetAccess,
-    front_face: bool,
-) VkError!void {
-    const io = draw_call.renderer.device.interface.io();
-
-    var min_x: i32 = @intFromFloat(@floor(@min(v0.position[0], v1.position[0], v2.position[0])));
-    var max_x: i32 = @intFromFloat(@ceil(@max(v0.position[0], v1.position[0], v2.position[0])));
-    var min_y: i32 = @intFromFloat(@floor(@min(v0.position[1], v1.position[1], v2.position[1])));
-    var max_y: i32 = @intFromFloat(@ceil(@max(v0.position[1], v1.position[1], v2.position[1])));
-
-    const area = edgeFunction(v0.position, v1.position, v2.position);
-    if (area == 0.0)
-        return;
-    const inv_area = 1.0 / area;
-    const dz_dx =
-        (v0.position[2] * ((v1.position[1] - v2.position[1]) * inv_area)) +
-        (v1.position[2] * ((v2.position[1] - v0.position[1]) * inv_area)) +
-        (v2.position[2] * ((v0.position[1] - v1.position[1]) * inv_area));
-    const dz_dy =
-        (v0.position[2] * ((v2.position[0] - v1.position[0]) * inv_area)) +
-        (v1.position[2] * ((v0.position[0] - v2.position[0]) * inv_area)) +
-        (v2.position[2] * ((v1.position[0] - v0.position[0]) * inv_area));
-    const depth_bias_slope = @max(@abs(dz_dx), @abs(dz_dy));
-
-    const pipeline = draw_call.renderer.state.pipeline orelse return;
+    ordering: common.AttachmentOrdering,
+) VkError!FillState {
+    const pipeline = draw_call.renderer.state.pipeline orelse return VkError.InvalidPipelineDrv;
     const pipeline_data = pipeline.interface.mode.graphics;
-    if (!clipToRect(&min_x, &max_x, &min_y, &max_y, draw_call.scissor))
-        return;
-    if (draw_call.renderer.render_area) |render_area| {
-        if (!clipToRect(&min_x, &max_x, &min_y, &max_y, render_area))
-            return;
-    }
-
     const fragment_stage = pipeline.stages.getPtr(.fragment);
     const fragment_uses_derivatives = if (comptime base.config.soft_ir_interpreter)
         false
@@ -112,13 +86,21 @@ pub fn drawTriangle(
     else
         false;
 
-    const runtimes_count = if (fragment_stage) |stage|
+    var worker_capacity = if (fragment_stage) |stage|
+        stage.runtimes.len
+    else if (pipeline.stages.getPtr(.vertex)) |stage|
         stage.runtimes.len
     else
         1;
-    if (runtimes_count == 0)
-        return;
-    const sample_count = pipeline_data.multisample.rasterization_samples.toInt();
+    if (comptime base.config.soft_ir_interpreter) {
+        if (fragment_stage) |stage| {
+            if (stage.program.uses_atomics)
+                worker_capacity = @min(worker_capacity, 1);
+        }
+    }
+    if (worker_capacity == 0)
+        return VkError.InvalidPipelineDrv;
+
     const depth_stencil_state = if (pipeline_data.depth_stencil) |state| common.resolveDepthStencilState(draw_call, state) else null;
     const depth_bias: ?Renderer.DepthBias = if (pipeline_data.rasterization.depth_bias_enable == .true and depth_attachment_access != null)
         if (pipeline_data.dynamic_state.depth_bias)
@@ -135,89 +117,453 @@ pub fn drawTriangle(
             }
     else
         null;
-    const grid_size: usize = @intFromFloat(@ceil(@sqrt(@as(f32, @floatFromInt(runtimes_count)))));
 
-    const width: usize = @intCast(max_x - min_x + 1);
-    const height: usize = @intCast(max_y - min_y + 1);
+    return .{
+        .allocator = allocator,
+        .draw_call = draw_call,
+        .color_attachment_access = color_attachment_access,
+        .depth_attachment_access = depth_attachment_access,
+        .stencil_attachment_access = stencil_attachment_access,
+        .has_fragment_shader = fragment_stage != null,
+        .early_fragment_tests = early_fragment_tests,
+        .fragment_uses_derivatives = fragment_uses_derivatives,
+        .fragment_uses_sample_id = fragment_uses_sample_id,
+        .fragment_uses_centroid = fragment_uses_centroid,
+        .sample_count = pipeline_data.multisample.rasterization_samples.toInt(),
+        .depth_stencil_state = depth_stencil_state,
+        .depth_bias = depth_bias,
+        .worker_capacity = worker_capacity,
+        .ordering = ordering,
+    };
+}
 
+pub fn prepareTriangle(
+    state: *const FillState,
+    vertices: [3]common.RasterVertex,
+    provoking_vertex: *const Renderer.Vertex,
+    front_face: bool,
+) ?PreparedTriangle {
+    const p0 = vertices[0].position;
+    const p1 = vertices[1].position;
+    const p2 = vertices[2].position;
+    const area = edgeFunction(p0, p1, p2);
+    if (area == 0.0)
+        return null;
+
+    var bounds: common.PixelBounds = .{
+        .min_x = @intFromFloat(@floor(@min(p0[0], p1[0], p2[0]))),
+        .max_x = @intFromFloat(@ceil(@max(p0[0], p1[0], p2[0]))),
+        .min_y = @intFromFloat(@floor(@min(p0[1], p1[1], p2[1]))),
+        .max_y = @intFromFloat(@ceil(@max(p0[1], p1[1], p2[1]))),
+    };
+    bounds = intersectRect(bounds, state.draw_call.scissor) orelse return null;
+    if (state.draw_call.renderer.render_area) |render_area|
+        bounds = intersectRect(bounds, render_area) orelse return null;
+    bounds = common.PixelBounds.intersect(bounds, .{
+        .min_x = 0,
+        .max_x = clampUsizeToI32(state.draw_call.framebuffer.interface.width) - 1,
+        .min_y = 0,
+        .max_y = clampUsizeToI32(state.draw_call.framebuffer.interface.height) - 1,
+    }) orelse return null;
+
+    const inv_area = 1.0 / area;
+    const dz_dx =
+        (p0[2] * ((p1[1] - p2[1]) * inv_area)) +
+        (p1[2] * ((p2[1] - p0[1]) * inv_area)) +
+        (p2[2] * ((p0[1] - p1[1]) * inv_area));
+    const dz_dy =
+        (p0[2] * ((p2[0] - p1[0]) * inv_area)) +
+        (p1[2] * ((p0[0] - p2[0]) * inv_area)) +
+        (p2[2] * ((p1[0] - p0[0]) * inv_area));
+
+    return .{
+        .vertices = vertices,
+        .provoking_vertex = provoking_vertex,
+        .bounds = bounds,
+        .area = area,
+        .depth_bias_slope = @max(@abs(dz_dx), @abs(dz_dy)),
+        .front_face = front_face,
+    };
+}
+
+pub fn drawTriangle(
+    allocator: std.mem.Allocator,
+    draw_call: *Renderer.DrawCall,
+    v0: *Renderer.Vertex,
+    v1: *Renderer.Vertex,
+    v2: *Renderer.Vertex,
+    provoking_vertex: *Renderer.Vertex,
+    color_attachment_access: []const ?common.RenderTargetAccess,
+    depth_attachment_access: ?*common.RenderTargetAccess,
+    stencil_attachment_access: ?*common.RenderTargetAccess,
+    front_face: bool,
+) VkError!void {
+    var state = try initFillState(
+        allocator,
+        draw_call,
+        color_attachment_access,
+        depth_attachment_access,
+        stencil_attachment_access,
+        .locked,
+    );
+    var triangle = prepareTriangle(&state, .{
+        .{ .position = v0.position, .attributes = v0 },
+        .{ .position = v1.position, .attributes = v1 },
+        .{ .position = v2.position, .attributes = v2 },
+    }, provoking_vertex, front_face) orelse return;
+
+    const io = draw_call.renderer.device.interface.io();
+    const grid_size: usize = @intFromFloat(@ceil(@sqrt(@as(f32, @floatFromInt(state.worker_capacity)))));
+    const width: usize = @intCast(triangle.bounds.max_x - triangle.bounds.min_x + 1);
+    const height: usize = @intCast(triangle.bounds.max_y - triangle.bounds.min_y + 1);
     const cols_per_run = @divTrunc(width + grid_size - 1, grid_size);
     const rows_per_run = @divTrunc(height + grid_size - 1, grid_size);
-
     var batch_id: usize = 0;
 
     for (0..grid_size) |gy| {
         for (0..grid_size) |gx| {
-            defer batch_id = @mod(batch_id + 1, runtimes_count);
-
-            const run_min_x = min_x + @as(i32, @intCast(gx * cols_per_run));
-            const run_min_y = min_y + @as(i32, @intCast(gy * rows_per_run));
-
-            if (run_min_x > max_x or run_min_y > max_y)
+            defer batch_id = @mod(batch_id + 1, state.worker_capacity);
+            const min_x = triangle.bounds.min_x + @as(i32, @intCast(gx * cols_per_run));
+            const min_y = triangle.bounds.min_y + @as(i32, @intCast(gy * rows_per_run));
+            if (min_x > triangle.bounds.max_x or min_y > triangle.bounds.max_y)
                 continue;
-
-            const run_max_x = @min(
-                run_min_x + @as(i32, @intCast(cols_per_run)) - 1,
-                max_x,
-            );
-
-            const run_max_y = @min(
-                run_min_y + @as(i32, @intCast(rows_per_run)) - 1,
-                max_y,
-            );
-
-            const run_data: RunData = .{
-                .allocator = allocator,
-                .draw_call = draw_call,
+            const data: RunData = .{
+                .state = &state,
+                .triangle = &triangle,
                 .batch_id = batch_id,
-                .v0 = v0.*,
-                .v1 = v1.*,
-                .v2 = v2.*,
-                .provoking_vertex = provoking_vertex.*,
-                .area = area,
-                .min_x = run_min_x,
-                .max_x = run_max_x,
-                .min_y = run_min_y,
-                .max_y = run_max_y,
-                .color_attachment_access = color_attachment_access,
-                .depth_attachment_access = depth_attachment_access,
-                .stencil_attachment_access = stencil_attachment_access,
-                .front_face = front_face,
-                .has_fragment_shader = fragment_stage != null,
-                .early_fragment_tests = early_fragment_tests,
-                .fragment_uses_derivatives = fragment_uses_derivatives,
-                .fragment_uses_sample_id = fragment_uses_sample_id,
-                .fragment_uses_centroid = fragment_uses_centroid,
-                .sample_count = sample_count,
-                .depth_stencil_state = depth_stencil_state,
-                .depth_bias = depth_bias,
-                .depth_bias_slope = depth_bias_slope,
+                .bounds = .{
+                    .min_x = min_x,
+                    .max_x = @min(min_x + @as(i32, @intCast(cols_per_run)) - 1, triangle.bounds.max_x),
+                    .min_y = min_y,
+                    .max_y = @min(min_y + @as(i32, @intCast(rows_per_run)) - 1, triangle.bounds.max_y),
+                },
             };
-
-            draw_call.rasterizer_wait_group.async(io, runWrapper, .{run_data});
+            draw_call.rasterizer_wait_group.async(io, runWrapper, .{data});
         }
     }
-
     draw_call.rasterizer_wait_group.await(io) catch return VkError.DeviceLost;
 }
 
-fn clipToRect(min_x: *i32, max_x: *i32, min_y: *i32, max_y: *i32, rect: vk.Rect2D) bool {
+pub fn rasterizeTriangleInRect(
+    state: *const FillState,
+    optional_worker: ?*fragment.Worker,
+    triangle: *const PreparedTriangle,
+    rect: common.PixelBounds,
+) VkError!void {
+    const bounds = common.PixelBounds.intersect(triangle.bounds, rect) orelse return;
+    const v0 = triangle.vertices[0];
+    const v1 = triangle.vertices[1];
+    const v2 = triangle.vertices[2];
+
+    var y = bounds.min_y;
+    while (y <= bounds.max_y) : (y += 1) {
+        var x = bounds.min_x;
+        while (x <= bounds.max_x) : (x += 1) {
+            const p = zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, 0.0, 1.0);
+            const w0 = edgeFunction(v1.position, v2.position, p);
+            const w1 = edgeFunction(v2.position, v0.position, p);
+            const w2 = edgeFunction(v0.position, v1.position, p);
+            const coverage_sample_mask = if (state.sample_count == 1) blk: {
+                const inside =
+                    edgeContainsPixel(v1.position, v2.position, w0, triangle.area) and
+                    edgeContainsPixel(v2.position, v0.position, w1, triangle.area) and
+                    edgeContainsPixel(v0.position, v1.position, w2, triangle.area);
+                break :blk if (inside) @as(vk.SampleMask, 1) else @as(vk.SampleMask, 0);
+            } else triangleCoverageMask(triangle, x, y, state.sample_count);
+            if (coverage_sample_mask == 0)
+                continue;
+
+            const b0 = w0 / triangle.area;
+            const b1 = w1 / triangle.area;
+            const b2 = w2 / triangle.area;
+            const z = (b0 * v0.position[2]) + (b1 * v1.position[2]) + (b2 * v2.position[2]);
+            const depth_z = biasedDepth(state, triangle, z);
+            const frag_w = (b0 / v0.position[3]) + (b1 / v1.position[3]) + (b2 / v2.position[3]);
+            const early_depth = try applyEarlyDepth(state, coverage_sample_mask, x, y, depth_z);
+            if (early_depth.mask == 0)
+                continue;
+
+            const centroid_barycentrics = if (state.sample_count > 1 and state.fragment_uses_centroid) blk: {
+                const sample_pos = firstCoveredSamplePosition(state.sample_count, early_depth.mask);
+                const centroid_p = zm.f32x4(
+                    @as(f32, @floatFromInt(x)) + sample_pos.x,
+                    @as(f32, @floatFromInt(y)) + sample_pos.y,
+                    0.0,
+                    1.0,
+                );
+                break :blk .{
+                    edgeFunction(v1.position, v2.position, centroid_p) / triangle.area,
+                    edgeFunction(v2.position, v0.position, centroid_p) / triangle.area,
+                    edgeFunction(v0.position, v1.position, centroid_p) / triangle.area,
+                };
+            } else .{ b0, b1, b2 };
+
+            var fragment_result: fragment.InvocationResult = .{
+                .outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8),
+                .depth = null,
+                .sample_mask = null,
+            };
+            if (state.has_fragment_shader and state.fragment_uses_sample_id and state.sample_count > 1) {
+                const worker = optional_worker orelse return VkError.InvalidPipelineDrv;
+                for (0..state.sample_count) |sample_index| {
+                    if (sample_index >= @bitSizeOf(vk.SampleMask))
+                        break;
+                    const bit_index: u5 = @intCast(sample_index);
+                    const sample_coverage_mask = @as(vk.SampleMask, 1) << bit_index;
+                    if ((early_depth.mask & sample_coverage_mask) == 0)
+                        continue;
+
+                    const inputs = try fragmentInputs(
+                        state,
+                        triangle,
+                        .{ b0, b1, b2 },
+                        centroid_barycentrics,
+                    );
+                    const sample_result = fragment.shaderInvocation(
+                        worker,
+                        state.allocator,
+                        zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, depth_z, frag_w),
+                        null,
+                        @intCast(sample_index),
+                        triangle.front_face,
+                        inputs,
+                        null,
+                    ) catch |err| {
+                        if (err == SpvRuntimeError.Killed)
+                            continue;
+                        logFragmentError(err);
+                        return VkError.Unknown;
+                    };
+                    try common.writeToTargets(
+                        sample_result.outputs,
+                        state.draw_call,
+                        state.color_attachment_access,
+                        state.depth_attachment_access,
+                        state.stencil_attachment_access,
+                        triangle.front_face,
+                        @intCast(x),
+                        @intCast(y),
+                        sample_result.depth orelse depth_z,
+                        sample_coverage_mask,
+                        sample_result.sample_mask,
+                        early_depth.applied,
+                        state.ordering,
+                    );
+                }
+                continue;
+            }
+
+            if (state.has_fragment_shader) {
+                const worker = optional_worker orelse return VkError.InvalidPipelineDrv;
+                const inputs = try fragmentInputs(
+                    state,
+                    triangle,
+                    .{ b0, b1, b2 },
+                    centroid_barycentrics,
+                );
+                const derivative_inputs: ?fragment.DerivativeInputs = if (state.fragment_uses_derivatives) blk: {
+                    const p_dx = zm.f32x4(@as(f32, @floatFromInt(x)) + 1.5, @as(f32, @floatFromInt(y)) + 0.5, 0.0, 1.0);
+                    const p_dy = zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 1.5, 0.0, 1.0);
+
+                    break :blk fragment.DerivativeInputs{
+                        .dx = try common.interpolateVertexOutputDerivatives(
+                            state.allocator,
+                            v0.attributes,
+                            v1.attributes,
+                            v2.attributes,
+                            b0,
+                            b1,
+                            b2,
+                            (edgeFunction(v1.position, v2.position, p_dx) / triangle.area) - b0,
+                            (edgeFunction(v2.position, v0.position, p_dx) / triangle.area) - b1,
+                            (edgeFunction(v0.position, v1.position, p_dx) / triangle.area) - b2,
+                        ),
+                        .dy = try common.interpolateVertexOutputDerivatives(
+                            state.allocator,
+                            v0.attributes,
+                            v1.attributes,
+                            v2.attributes,
+                            b0,
+                            b1,
+                            b2,
+                            (edgeFunction(v1.position, v2.position, p_dy) / triangle.area) - b0,
+                            (edgeFunction(v2.position, v0.position, p_dy) / triangle.area) - b1,
+                            (edgeFunction(v0.position, v1.position, p_dy) / triangle.area) - b2,
+                        ),
+                    };
+                } else null;
+
+                fragment_result = fragment.shaderInvocation(
+                    worker,
+                    state.allocator,
+                    zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, depth_z, frag_w),
+                    null,
+                    null,
+                    triangle.front_face,
+                    inputs,
+                    derivative_inputs,
+                ) catch |err| {
+                    if (err == SpvRuntimeError.Killed)
+                        continue;
+                    logFragmentError(err);
+                    return VkError.Unknown;
+                };
+            }
+
+            try common.writeToTargets(
+                fragment_result.outputs,
+                state.draw_call,
+                state.color_attachment_access,
+                state.depth_attachment_access,
+                state.stencil_attachment_access,
+                triangle.front_face,
+                @intCast(x),
+                @intCast(y),
+                fragment_result.depth orelse depth_z,
+                early_depth.mask,
+                fragment_result.sample_mask,
+                early_depth.applied,
+                state.ordering,
+            );
+        }
+    }
+}
+
+fn fragmentInputs(
+    state: *const FillState,
+    triangle: *const PreparedTriangle,
+    barycentrics: [3]f32,
+    centroid_barycentrics: [3]f32,
+) VkError!fragment.FragmentInputs {
+    if (comptime base.config.soft_ir_interpreter) {
+        return common.packedFragmentInputs(
+            triangle.vertices[0],
+            triangle.vertices[1],
+            triangle.vertices[2],
+            triangle.provoking_vertex,
+            barycentrics,
+            centroid_barycentrics,
+        );
+    }
+    return common.interpolateVertexOutputs(
+        state.allocator,
+        triangle.vertices[0].attributes,
+        triangle.vertices[1].attributes,
+        triangle.vertices[2].attributes,
+        triangle.provoking_vertex,
+        barycentrics[0],
+        barycentrics[1],
+        barycentrics[2],
+        centroid_barycentrics[0],
+        centroid_barycentrics[1],
+        centroid_barycentrics[2],
+    );
+}
+
+fn triangleCoverageMask(triangle: *const PreparedTriangle, x: i32, y: i32, sample_count: usize) vk.SampleMask {
+    const v0 = triangle.vertices[0].position;
+    const v1 = triangle.vertices[1].position;
+    const v2 = triangle.vertices[2].position;
+    var mask: vk.SampleMask = 0;
+    for (0..sample_count) |sample_index| {
+        if (sample_index >= @bitSizeOf(vk.SampleMask))
+            break;
+        const sample_pos = standardSamplePosition(sample_count, sample_index);
+        const p = zm.f32x4(
+            @as(f32, @floatFromInt(x)) + sample_pos.x,
+            @as(f32, @floatFromInt(y)) + sample_pos.y,
+            0.0,
+            1.0,
+        );
+        const w0 = edgeFunction(v1, v2, p);
+        const w1 = edgeFunction(v2, v0, p);
+        const w2 = edgeFunction(v0, v1, p);
+        if (edgeContainsPixel(v1, v2, w0, triangle.area) and
+            edgeContainsPixel(v2, v0, w1, triangle.area) and
+            edgeContainsPixel(v0, v1, w2, triangle.area))
+        {
+            mask |= @as(vk.SampleMask, 1) << @as(u5, @intCast(sample_index));
+        }
+    }
+    return mask;
+}
+
+fn applyEarlyDepth(
+    state: *const FillState,
+    coverage_sample_mask: vk.SampleMask,
+    x: i32,
+    y: i32,
+    z: f32,
+) VkError!struct { mask: vk.SampleMask, applied: bool } {
+    if (!state.early_fragment_tests)
+        return .{ .mask = coverage_sample_mask, .applied = false };
+    const depth = state.depth_attachment_access orelse return .{ .mask = coverage_sample_mask, .applied = false };
+    const io = state.draw_call.renderer.device.interface.io();
+    var passed_mask: vk.SampleMask = 0;
+    for (0..state.sample_count) |sample_index| {
+        if (sample_index >= @bitSizeOf(vk.SampleMask))
+            break;
+        const bit = @as(vk.SampleMask, 1) << @as(u5, @intCast(sample_index));
+        if ((coverage_sample_mask & bit) == 0)
+            continue;
+        if (try common.depthTestSampleAndUpdate(
+            io,
+            depth,
+            @intCast(x),
+            @intCast(y),
+            sample_index,
+            z,
+            state.depth_stencil_state,
+            state.ordering,
+        )) passed_mask |= bit;
+    }
+    return .{ .mask = passed_mask, .applied = true };
+}
+
+fn biasedDepth(state: *const FillState, triangle: *const PreparedTriangle, z: f32) f32 {
+    const depth = state.depth_attachment_access orelse return z;
+    const bias_state = state.depth_bias orelse return z;
+    const bias = bias_state.constant_factor * common.depthBiasConstantUnit(depth.format, z) +
+        bias_state.slope_factor * triangle.depth_bias_slope;
+    return z + common.clampDepthBias(bias, bias_state.clamp);
+}
+
+fn runWrapper(data: RunData) void {
+    run(data) catch |err| {
+        std.log.scoped(.@"Rasterization stage").err("triangle fill mode caught a '{s}'", .{@errorName(err)});
+        if (comptime base.config.logs == .verbose) {
+            if (@errorReturnTrace()) |trace|
+                std.debug.dumpErrorReturnTrace(trace);
+        }
+    };
+}
+
+fn run(data: RunData) VkError!void {
+    // SAFETY: only used if data.sate.has_fragment_shader
+    var fragment_worker: fragment.Worker = if (data.state.has_fragment_shader) try fragment.acquireWorker(data.state.draw_call, data.batch_id) else undefined;
+    defer if (data.state.has_fragment_shader)
+        fragment_worker.release();
+
+    try rasterizeTriangleInRect(data.state, if (data.state.has_fragment_shader) &fragment_worker else null, data.triangle, data.bounds);
+}
+
+fn intersectRect(bounds: common.PixelBounds, rect: vk.Rect2D) ?common.PixelBounds {
     if (rect.extent.width == 0 or rect.extent.height == 0)
-        return false;
-
-    const rect_min_x = rect.offset.x;
-    const rect_min_y = rect.offset.y;
-    const rect_max_x = clampI64ToI32(@as(i64, rect.offset.x) + @as(i64, @intCast(rect.extent.width)) - 1);
-    const rect_max_y = clampI64ToI32(@as(i64, rect.offset.y) + @as(i64, @intCast(rect.extent.height)) - 1);
-
-    min_x.* = @max(min_x.*, rect_min_x);
-    min_y.* = @max(min_y.*, rect_min_y);
-    max_x.* = @min(max_x.*, rect_max_x);
-    max_y.* = @min(max_y.*, rect_max_y);
-    return min_x.* <= max_x.* and min_y.* <= max_y.*;
+        return null;
+    return common.PixelBounds.intersect(bounds, .{
+        .min_x = rect.offset.x,
+        .max_x = clampI64ToI32(@as(i64, rect.offset.x) + @as(i64, @intCast(rect.extent.width)) - 1),
+        .min_y = rect.offset.y,
+        .max_y = clampI64ToI32(@as(i64, rect.offset.y) + @as(i64, @intCast(rect.extent.height)) - 1),
+    });
 }
 
 fn clampI64ToI32(value: i64) i32 {
     return @intCast(std.math.clamp(value, std.math.minInt(i32), std.math.maxInt(i32)));
+}
+
+fn clampUsizeToI32(value: usize) i32 {
+    return @intCast(@min(value, @as(usize, std.math.maxInt(i32))));
 }
 
 inline fn edgeFunction(a: F32x4, b: F32x4, p: F32x4) f32 {
@@ -256,25 +602,10 @@ fn standardSamplePosition(sample_count: usize, sample_index: usize) SamplePositi
     };
 }
 
-fn fragmentStageUsesInputDecoration(stage: anytype, decoration: anytype) bool {
-    const rt = &stage.runtimes[0].rt;
-    for (rt.mod.input_locations) |location| {
-        for (location) |result_word| {
-            if (result_word == 0)
-                continue;
-
-            if (rt.hasResultDecoration(result_word, decoration))
-                return true;
-        }
-    }
-    return false;
-}
-
 fn firstCoveredSamplePosition(sample_count: usize, coverage_sample_mask: vk.SampleMask) SamplePosition {
     for (0..sample_count) |sample_index| {
         if (sample_index >= @bitSizeOf(vk.SampleMask))
             break;
-
         const bit_index: u5 = @intCast(sample_index);
         if ((coverage_sample_mask & (@as(vk.SampleMask, 1) << bit_index)) != 0)
             return standardSamplePosition(sample_count, sample_index);
@@ -282,295 +613,23 @@ fn firstCoveredSamplePosition(sample_count: usize, coverage_sample_mask: vk.Samp
     return .{ .x = 0.5, .y = 0.5 };
 }
 
-fn triangleCoverageMask(data: RunData, x: i32, y: i32, sample_count: usize) vk.SampleMask {
-    var mask: vk.SampleMask = 0;
-    for (0..sample_count) |sample_index| {
-        if (sample_index >= @bitSizeOf(vk.SampleMask))
-            break;
-
-        const sample_pos = standardSamplePosition(sample_count, sample_index);
-        const p = zm.f32x4(
-            @as(f32, @floatFromInt(x)) + sample_pos.x,
-            @as(f32, @floatFromInt(y)) + sample_pos.y,
-            0.0,
-            1.0,
-        );
-
-        const w0 = edgeFunction(data.v1.position, data.v2.position, p);
-        const w1 = edgeFunction(data.v2.position, data.v0.position, p);
-        const w2 = edgeFunction(data.v0.position, data.v1.position, p);
-
-        const inside =
-            edgeContainsPixel(data.v1.position, data.v2.position, w0, data.area) and
-            edgeContainsPixel(data.v2.position, data.v0.position, w1, data.area) and
-            edgeContainsPixel(data.v0.position, data.v1.position, w2, data.area);
-
-        if (inside) {
-            const bit_index: u5 = @intCast(sample_index);
-            mask |= @as(vk.SampleMask, 1) << bit_index;
+fn fragmentStageUsesInputDecoration(stage: anytype, decoration: anytype) bool {
+    const rt = &stage.runtimes[0].rt;
+    for (rt.mod.input_locations) |location| {
+        for (location) |result_word| {
+            if (result_word == 0)
+                continue;
+            if (rt.hasResultDecoration(result_word, decoration))
+                return true;
         }
     }
-    return mask;
+    return false;
 }
 
-fn applyEarlyDepth(data: RunData, coverage_sample_mask: vk.SampleMask, x: i32, y: i32, z: f32, sample_count: usize) VkError!struct {
-    mask: vk.SampleMask,
-    applied: bool,
-} {
-    if (!data.early_fragment_tests)
-        return .{ .mask = coverage_sample_mask, .applied = false };
-
-    const depth = data.depth_attachment_access orelse return .{ .mask = coverage_sample_mask, .applied = false };
-    const io = data.draw_call.renderer.device.interface.io();
-
-    var passed_mask: vk.SampleMask = 0;
-    for (0..sample_count) |sample_index| {
-        if (sample_index >= @bitSizeOf(vk.SampleMask))
-            break;
-
-        const bit = @as(vk.SampleMask, 1) << @as(u5, @intCast(sample_index));
-        if ((coverage_sample_mask & bit) == 0)
-            continue;
-
-        if (try common.depthTestSampleAndUpdate(io, depth, @intCast(x), @intCast(y), sample_index, z, data.depth_stencil_state))
-            passed_mask |= bit;
-    }
-
-    return .{ .mask = passed_mask, .applied = true };
-}
-
-fn biasedDepth(data: RunData, z: f32) f32 {
-    const depth = data.depth_attachment_access orelse return z;
-    const bias_state = data.depth_bias orelse return z;
-
-    const bias =
-        bias_state.constant_factor * common.depthBiasConstantUnit(depth.format, z) +
-        bias_state.slope_factor * data.depth_bias_slope;
-    return z + common.clampDepthBias(bias, bias_state.clamp);
-}
-
-fn runWrapper(data: RunData) void {
-    @call(.always_inline, run, .{data}) catch |err| {
-        std.log.scoped(.@"Rasterization stage").err("triangle fill mode catched a '{s}'", .{@errorName(err)});
-        if (comptime base.config.logs == .verbose) {
-            if (@errorReturnTrace()) |trace| {
-                std.debug.dumpErrorReturnTrace(trace);
-            }
-        }
-    };
-}
-
-inline fn run(data: RunData) !void {
-    var y = data.min_y;
-    while (y <= data.max_y) : (y += 1) {
-        var x = data.min_x;
-        while (x <= data.max_x) : (x += 1) {
-            const p = zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, 0.0, 1.0);
-
-            const w0 = edgeFunction(data.v1.position, data.v2.position, p);
-            const w1 = edgeFunction(data.v2.position, data.v0.position, p);
-            const w2 = edgeFunction(data.v0.position, data.v1.position, p);
-            const coverage_sample_mask = if (data.sample_count == 1) blk: {
-                const inside =
-                    edgeContainsPixel(data.v1.position, data.v2.position, w0, data.area) and
-                    edgeContainsPixel(data.v2.position, data.v0.position, w1, data.area) and
-                    edgeContainsPixel(data.v0.position, data.v1.position, w2, data.area);
-                break :blk if (inside) @as(vk.SampleMask, 1) else @as(vk.SampleMask, 0);
-            } else triangleCoverageMask(data, x, y, data.sample_count);
-            if (coverage_sample_mask == 0)
-                continue;
-
-            const b0 = w0 / data.area;
-            const b1 = w1 / data.area;
-            const b2 = w2 / data.area;
-            const z = (b0 * data.v0.position[2]) + (b1 * data.v1.position[2]) + (b2 * data.v2.position[2]);
-            const depth_z = biasedDepth(data, z);
-            const frag_w = (b0 / data.v0.position[3]) + (b1 / data.v1.position[3]) + (b2 / data.v2.position[3]);
-            const early_depth = try applyEarlyDepth(data, coverage_sample_mask, x, y, depth_z, data.sample_count);
-            if (early_depth.mask == 0)
-                continue;
-
-            const centroid_barycentrics = if (data.sample_count > 1 and data.fragment_uses_centroid) blk: {
-                const sample_pos = firstCoveredSamplePosition(data.sample_count, early_depth.mask);
-                const centroid_p = zm.f32x4(
-                    @as(f32, @floatFromInt(x)) + sample_pos.x,
-                    @as(f32, @floatFromInt(y)) + sample_pos.y,
-                    0.0,
-                    1.0,
-                );
-                const centroid_w0 = edgeFunction(data.v1.position, data.v2.position, centroid_p);
-                const centroid_w1 = edgeFunction(data.v2.position, data.v0.position, centroid_p);
-                const centroid_w2 = edgeFunction(data.v0.position, data.v1.position, centroid_p);
-                break :blk .{
-                    centroid_w0 / data.area,
-                    centroid_w1 / data.area,
-                    centroid_w2 / data.area,
-                };
-            } else .{ b0, b1, b2 };
-            const centroid_b0 = centroid_barycentrics[0];
-            const centroid_b1 = centroid_barycentrics[1];
-            const centroid_b2 = centroid_barycentrics[2];
-
-            var fragment_result: fragment.InvocationResult = .{
-                .outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8),
-                .depth = null,
-                .sample_mask = null,
-            };
-            if (data.has_fragment_shader and data.fragment_uses_sample_id and data.sample_count > 1) {
-                for (0..data.sample_count) |sample_index| {
-                    if (sample_index >= @bitSizeOf(vk.SampleMask))
-                        break;
-
-                    const bit_index: u5 = @intCast(sample_index);
-                    const sample_coverage_mask = @as(vk.SampleMask, 1) << bit_index;
-                    if ((early_depth.mask & sample_coverage_mask) == 0)
-                        continue;
-
-                    const inputs = try common.interpolateVertexOutputs(
-                        data.allocator,
-                        &data.v0,
-                        &data.v1,
-                        &data.v2,
-                        &data.provoking_vertex,
-                        b0,
-                        b1,
-                        b2,
-                        centroid_b0,
-                        centroid_b1,
-                        centroid_b2,
-                    );
-                    const sample_result = fragment.shaderInvocation(
-                        data.allocator,
-                        data.draw_call,
-                        data.batch_id,
-                        zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, depth_z, frag_w),
-                        null,
-                        @intCast(sample_index),
-                        data.front_face,
-                        inputs,
-                        null,
-                    ) catch |err| {
-                        if (err == SpvRuntimeError.Killed)
-                            continue;
-
-                        std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
-                        if (comptime base.config.logs == .verbose) {
-                            if (@errorReturnTrace()) |trace| {
-                                std.debug.dumpErrorReturnTrace(trace);
-                            }
-                        }
-                        return;
-                    };
-
-                    try common.writeToTargets(
-                        sample_result.outputs,
-                        data.draw_call,
-                        data.color_attachment_access,
-                        data.depth_attachment_access,
-                        data.stencil_attachment_access,
-                        data.front_face,
-                        @intCast(x),
-                        @intCast(y),
-                        sample_result.depth orelse depth_z,
-                        sample_coverage_mask,
-                        sample_result.sample_mask,
-                        early_depth.applied,
-                    );
-                }
-                continue;
-            }
-            if (data.has_fragment_shader) {
-                const inputs = try common.interpolateVertexOutputs(
-                    data.allocator,
-                    &data.v0,
-                    &data.v1,
-                    &data.v2,
-                    &data.provoking_vertex,
-                    b0,
-                    b1,
-                    b2,
-                    centroid_b0,
-                    centroid_b1,
-                    centroid_b2,
-                );
-                const derivative_inputs: ?fragment.DerivativeInputs = if (data.fragment_uses_derivatives) blk: {
-                    // SAFETY: both dx and dy are assigned below before derivatives is returned.
-                    var derivatives: fragment.DerivativeInputs = undefined;
-
-                    const p_dx = zm.f32x4(@as(f32, @floatFromInt(x)) + 1.5, @as(f32, @floatFromInt(y)) + 0.5, 0.0, 1.0);
-                    const dx_w0 = edgeFunction(data.v1.position, data.v2.position, p_dx);
-                    const dx_w1 = edgeFunction(data.v2.position, data.v0.position, p_dx);
-                    const dx_w2 = edgeFunction(data.v0.position, data.v1.position, p_dx);
-                    derivatives.dx = try common.interpolateVertexOutputDerivatives(
-                        data.allocator,
-                        &data.v0,
-                        &data.v1,
-                        &data.v2,
-                        b0,
-                        b1,
-                        b2,
-                        (dx_w0 / data.area) - b0,
-                        (dx_w1 / data.area) - b1,
-                        (dx_w2 / data.area) - b2,
-                    );
-
-                    const p_dy = zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 1.5, 0.0, 1.0);
-                    const dy_w0 = edgeFunction(data.v1.position, data.v2.position, p_dy);
-                    const dy_w1 = edgeFunction(data.v2.position, data.v0.position, p_dy);
-                    const dy_w2 = edgeFunction(data.v0.position, data.v1.position, p_dy);
-                    derivatives.dy = try common.interpolateVertexOutputDerivatives(
-                        data.allocator,
-                        &data.v0,
-                        &data.v1,
-                        &data.v2,
-                        b0,
-                        b1,
-                        b2,
-                        (dy_w0 / data.area) - b0,
-                        (dy_w1 / data.area) - b1,
-                        (dy_w2 / data.area) - b2,
-                    );
-                    break :blk derivatives;
-                } else null;
-
-                fragment_result = fragment.shaderInvocation(
-                    data.allocator,
-                    data.draw_call,
-                    data.batch_id,
-                    zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, depth_z, frag_w),
-                    null,
-                    null,
-                    data.front_face,
-                    inputs,
-                    derivative_inputs,
-                ) catch |err| {
-                    if (err == SpvRuntimeError.Killed)
-                        continue;
-
-                    std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
-                    if (comptime base.config.logs == .verbose) {
-                        if (@errorReturnTrace()) |trace| {
-                            std.debug.dumpErrorReturnTrace(trace);
-                        }
-                    }
-                    return;
-                };
-            }
-
-            try common.writeToTargets(
-                fragment_result.outputs,
-                data.draw_call,
-                data.color_attachment_access,
-                data.depth_attachment_access,
-                data.stencil_attachment_access,
-                data.front_face,
-                @intCast(x),
-                @intCast(y),
-                fragment_result.depth orelse depth_z,
-                early_depth.mask,
-                fragment_result.sample_mask,
-                early_depth.applied,
-            );
-        }
+fn logFragmentError(err: anyerror) void {
+    std.log.scoped(.@"Fragment stage").err("caught a '{s}'", .{@errorName(err)});
+    if (comptime base.config.logs == .verbose) {
+        if (@errorReturnTrace()) |trace|
+            std.debug.dumpErrorReturnTrace(trace);
     }
 }

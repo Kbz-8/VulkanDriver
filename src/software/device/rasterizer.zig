@@ -8,6 +8,7 @@ const clip = @import("clip.zig");
 
 const bresenham = @import("rasterizer/bresenham.zig");
 const edge_function = @import("rasterizer/edge_function.zig");
+const tile_scheduler = @import("rasterizer/tile_scheduler.zig");
 const common = @import("rasterizer/common.zig");
 const fragment = @import("fragment/dispatcher.zig");
 
@@ -104,6 +105,9 @@ fn snapshotInputAttachments(allocator: std.mem.Allocator, draw_call: *DrawCall) 
 pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocator, draw_call: *DrawCall) VkError!void {
     const io = draw_call.renderer.device.interface.io();
 
+    try fragment.prepareDraw(allocator, draw_call);
+    defer fragment.finishDraw(allocator, draw_call);
+
     const pipeline_data = (renderer.state.pipeline orelse return VkError.InvalidHandleDrv).interface.mode.graphics;
     const topology = pipeline_data.input_assembly.topology;
     if (renderer.input_attachment_snapshots.len == 0) {
@@ -113,6 +117,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
 
     const color_attachments = draw_call.render_pass.interface.subpasses[renderer.subpass_index].color_attachments orelse &.{};
     const color_attachment_access = allocator.alloc(?common.RenderTargetAccess, color_attachments.len) catch return VkError.OutOfDeviceMemory;
+    defer allocator.free(color_attachment_access);
     @memset(color_attachment_access, null);
 
     for (color_attachments, color_attachment_access) |attachment_ref, *access| {
@@ -212,6 +217,21 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
         };
     };
 
+    var tile_batch: ?tile_scheduler.Batch = if (comptime base.config.soft_ir_interpreter)
+        if (isTriangleTopology(topology) and pipeline_data.rasterization.polygon_mode == .fill)
+            try tile_scheduler.Batch.init(
+                allocator,
+                draw_call,
+                color_attachment_access,
+                if (depth_attachment_access) |*access| access else null,
+                if (stencil_attachment_access) |*access| access else null,
+            )
+        else
+            null
+    else
+        null;
+    defer if (tile_batch) |*batch| batch.deinit();
+
     switch (topology) {
         .point_list => for (0..draw_call.instance_count) |instance_index| {
             const range = instanceVertexRange(draw_call, instance_index);
@@ -249,6 +269,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                     color_attachment_access,
                     if (depth_attachment_access) |*access| access else null,
                     if (stencil_attachment_access) |*access| access else null,
+                    if (tile_batch) |*batch| batch else null,
                 );
             }
         },
@@ -275,6 +296,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                                 color_attachment_access,
                                 if (depth_attachment_access) |*access| access else null,
                                 if (stencil_attachment_access) |*access| access else null,
+                                if (tile_batch) |*batch| batch else null,
                             );
                         }
                     }
@@ -307,6 +329,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                                     color_attachment_access,
                                     if (depth_attachment_access) |*access| access else null,
                                     if (stencil_attachment_access) |*access| access else null,
+                                    if (tile_batch) |*batch| batch else null,
                                 );
                             } else {
                                 try clipTransformAndRasterizeTriangle(
@@ -320,6 +343,7 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                                     color_attachment_access,
                                     if (depth_attachment_access) |*access| access else null,
                                     if (stencil_attachment_access) |*access| access else null,
+                                    if (tile_batch) |*batch| batch else null,
                                 );
                             }
                         }
@@ -378,7 +402,17 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
         else => base.unsupported("primitive topology {any}", .{topology}),
     }
 
+    if (tile_batch) |*batch|
+        try batch.execute();
+
     draw_call.rasterizer_wait_group.await(io) catch return VkError.DeviceLost;
+}
+
+fn isTriangleTopology(topology: vk.PrimitiveTopology) bool {
+    return switch (topology) {
+        .triangle_list, .triangle_fan, .triangle_strip => true,
+        else => false,
+    };
 }
 
 const VertexRange = struct {
@@ -449,6 +483,12 @@ fn rasterizeTransformedPoint(
     const pipeline = draw_call.renderer.state.pipeline orelse return;
     const has_fragment_shader = pipeline.stages.getPtr(.fragment) != null;
 
+    // SAFETY: only used if has_fragment_shader
+    var fragment_worker: fragment.Worker = if (has_fragment_shader) try fragment.acquireWorker(draw_call, 0) else undefined;
+
+    defer if (has_fragment_shader)
+        fragment_worker.release();
+
     var py = min_y;
     while (py <= max_y) : (py += 1) {
         var px = min_x;
@@ -470,9 +510,8 @@ fn rasterizeTransformedPoint(
                 };
 
                 fragment_result = fragment.shaderInvocation(
+                    &fragment_worker,
                     allocator,
-                    draw_call,
-                    0,
                     zm.f32x4(frag_x, frag_y, vertex.position[2], 1.0 / vertex.position[3]),
                     point_coord,
                     null,
@@ -506,6 +545,7 @@ fn rasterizeTransformedPoint(
                 null,
                 fragment_result.sample_mask,
                 false,
+                .locked,
             );
         }
     }
@@ -563,9 +603,48 @@ fn clipTransformAndRasterizeTriangle(
     color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
     stencil_attachment_access: ?*common.RenderTargetAccess,
+    tile_batch: ?*tile_scheduler.Batch,
 ) VkError!void {
-    const clipped_polygon = try clip.clipTriangle(allocator, v0, v1, v2);
+    if (tile_batch) |batch| {
+        if (clip.vertexInsideClipVolume(v0) and clip.vertexInsideClipVolume(v1) and clip.vertexInsideClipVolume(v2)) {
+            var tv0 = v0.*;
+            var tv1 = v1.*;
+            var tv2 = v2.*;
+            clip.viewportTransformVertex(draw_call.viewport, &tv0);
+            clip.viewportTransformVertex(draw_call.viewport, &tv1);
+            clip.viewportTransformVertex(draw_call.viewport, &tv2);
+            try appendTriangleToBatch(renderer, draw_call, batch, .{
+                .{ .position = tv0.position, .attributes = v0 },
+                .{ .position = tv1.position, .attributes = v1 },
+                .{ .position = tv2.position, .attributes = v2 },
+            }, provoking_vertex);
+            return;
+        }
 
+        const clipped_polygon = try clip.clipTriangle(batch.arenaAllocator(), v0, v1, v2);
+        if (clipped_polygon.len < 3)
+            return;
+
+        for (1..(clipped_polygon.len - 1)) |vertex_index| {
+            var tv0 = clipped_polygon.vertices[0];
+            var tv1 = clipped_polygon.vertices[vertex_index];
+            var tv2 = clipped_polygon.vertices[vertex_index + 1];
+            clip.viewportTransformVertex(draw_call.viewport, &tv0);
+            clip.viewportTransformVertex(draw_call.viewport, &tv1);
+            clip.viewportTransformVertex(draw_call.viewport, &tv2);
+
+            const stable_vertices = batch.arenaAllocator().create([3]Vertex) catch return VkError.OutOfDeviceMemory;
+            stable_vertices.* = .{ tv0, tv1, tv2 };
+            try appendTriangleToBatch(renderer, draw_call, batch, .{
+                .{ .position = tv0.position, .attributes = &stable_vertices[0] },
+                .{ .position = tv1.position, .attributes = &stable_vertices[1] },
+                .{ .position = tv2.position, .attributes = &stable_vertices[2] },
+            }, provoking_vertex);
+        }
+        return;
+    }
+
+    const clipped_polygon = try clip.clipTriangle(allocator, v0, v1, v2);
     if (clipped_polygon.len < 3)
         return;
 
@@ -573,7 +652,6 @@ fn clipTransformAndRasterizeTriangle(
         var tv0 = clipped_polygon.vertices[0];
         var tv1 = clipped_polygon.vertices[vertex_index];
         var tv2 = clipped_polygon.vertices[vertex_index + 1];
-
         clip.viewportTransformVertex(draw_call.viewport, &tv0);
         clip.viewportTransformVertex(draw_call.viewport, &tv1);
         clip.viewportTransformVertex(draw_call.viewport, &tv2);
@@ -591,6 +669,27 @@ fn clipTransformAndRasterizeTriangle(
             stencil_attachment_access,
         );
     }
+}
+
+fn appendTriangleToBatch(
+    renderer: *Renderer,
+    draw_call: *DrawCall,
+    batch: *tile_scheduler.Batch,
+    vertices: [3]common.RasterVertex,
+    provoking_vertex: *const Vertex,
+) VkError!void {
+    const maybe_front_face = try triangleFrontFaceFromPositions(
+        renderer,
+        vertices[0].position,
+        vertices[1].position,
+        vertices[2].position,
+    );
+    const front_face = maybe_front_face orelse return;
+    if (try triangleIsCulled(renderer, front_face))
+        return;
+
+    draw_call.stats.polygons_drawn += 1;
+    try batch.appendTriangle(vertices, provoking_vertex, front_face);
 }
 
 fn rasterizeTriangle(
@@ -644,9 +743,13 @@ fn triangleIsCulled(renderer: *Renderer, front_face: bool) VkError!bool {
 }
 
 fn triangleFrontFace(renderer: *Renderer, v0: *const Vertex, v1: *const Vertex, v2: *const Vertex) VkError!?bool {
+    return triangleFrontFaceFromPositions(renderer, v0.position, v1.position, v2.position);
+}
+
+fn triangleFrontFaceFromPositions(renderer: *Renderer, p0: zm.F32x4, p1: zm.F32x4, p2: zm.F32x4) VkError!?bool {
     const pipeline_data = (renderer.state.pipeline orelse return VkError.InvalidHandleDrv).interface.mode.graphics;
     const rasterization = pipeline_data.rasterization;
-    const area = triangleArea(v0, v1, v2);
+    const area = triangleArea(p0, p1, p2);
     if (area == 0.0)
         return null;
 
@@ -657,9 +760,9 @@ fn triangleFrontFace(renderer: *Renderer, v0: *const Vertex, v1: *const Vertex, 
     };
 }
 
-inline fn triangleArea(v0: *const Vertex, v1: *const Vertex, v2: *const Vertex) f32 {
-    const x0, const y0, _, _ = v0.position;
-    const x1, const y1, _, _ = v1.position;
-    const x2, const y2, _, _ = v2.position;
+inline fn triangleArea(p0: zm.F32x4, p1: zm.F32x4, p2: zm.F32x4) f32 {
+    const x0, const y0, _, _ = p0;
+    const x1, const y1, _, _ = p1;
+    const x2, const y2, _, _ = p2;
     return ((x1 - x0) * (y2 - y0)) - ((y1 - y0) * (x2 - x0));
 }
