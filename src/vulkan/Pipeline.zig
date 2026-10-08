@@ -12,6 +12,7 @@ const PipelineCache = @import("PipelineCache.zig");
 const PipelineLayout = @import("PipelineLayout.zig");
 const RenderPass = @import("RenderPass.zig");
 const ShaderModule = @import("ShaderModule.zig");
+const VulkanAllocator = @import("VulkanAllocator.zig");
 
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .pipeline;
@@ -19,6 +20,8 @@ pub const ObjectType: vk.ObjectType = .pipeline;
 pub const CommonStage = struct {
     stage: shader_ir.ir.module.Stage,
     module: ShaderModule.IrModule,
+    // Module's arena retains this allocator's address, so the stage is initialized in place.
+    allocator: VulkanAllocator,
 
     fn deinit(self: *CommonStage) void {
         self.module.deinit();
@@ -303,7 +306,7 @@ fn instantiateCommonStages(device: *Device, allocator: std.mem.Allocator, infos:
     }
 
     for (infos, stages) |*info, *stage| {
-        stage.* = try instantiateCommonStage(allocator, info, kind);
+        try instantiateCommonStage(stage, allocator, info, kind);
         initialized += 1;
         if (comptime config.dump_common_ir)
             dumpCommonIr(allocator, device.io(), std.mem.span(info.p_name), &stage.module);
@@ -311,18 +314,24 @@ fn instantiateCommonStages(device: *Device, allocator: std.mem.Allocator, infos:
     return stages;
 }
 
-fn instantiateCommonStage(allocator: std.mem.Allocator, info: *const vk.PipelineShaderStageCreateInfo, kind: PipelineKind) VkError!CommonStage {
+fn instantiateCommonStage(result: *CommonStage, allocator: std.mem.Allocator, info: *const vk.PipelineShaderStageCreateInfo, kind: PipelineKind) VkError!void {
     const stage = commonStage(info.stage) orelse return VkError.ValidationFailed;
     switch (kind) {
         .compute => if (stage != .compute) return VkError.ValidationFailed,
         .graphics => if (stage == .compute) return VkError.ValidationFailed,
     }
 
+    result.* = .{
+        .stage = stage,
+        .module = undefined,
+        .allocator = VulkanAllocator.from(allocator).clone(),
+    };
+
     const specializations = try specializationValues(allocator, info.p_specialization_info);
     defer if (specializations.len != 0) allocator.free(specializations);
 
     const shader_module = try NonDispatchable(ShaderModule).fromHandleObject(info.module);
-    const module = shader_module.instantiateIr(allocator, .{
+    result.module = shader_module.instantiateIr(result.allocator.allocator(), .{
         .entry_point = std.mem.span(info.p_name),
         .stage = stage,
         .specializations = specializations,
@@ -330,7 +339,6 @@ fn instantiateCommonStage(allocator: std.mem.Allocator, info: *const vk.Pipeline
         error.OutOfMemory => VkError.OutOfHostMemory,
         else => VkError.ValidationFailed,
     };
-    return .{ .stage = stage, .module = module };
 }
 
 fn dumpCommonIr(allocator: std.mem.Allocator, io: std.Io, entry_point: []const u8, module: *const ShaderModule.IrModule) void {
