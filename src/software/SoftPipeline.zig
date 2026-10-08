@@ -105,7 +105,16 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
         },
     };
 
-    self.stages.put(.compute, try createShader(allocator, device_allocator, runtimes_allocator, soft_cache, soft_module, &info.stage, runtimes_count));
+    self.stages.put(.compute, try createShader(
+        allocator,
+        device_allocator,
+        runtimes_allocator,
+        soft_cache,
+        soft_module,
+        &info.stage,
+        &self.interface.common_stages[0].module,
+        runtimes_count,
+    ));
     std.log.scoped(.ComputePipeline).debug("Created {d} {s} runtimes for compute stage", .{
         runtimes_count,
         if (comptime base.config.soft_ir_interpreter) "IR" else "SPIR-V",
@@ -149,7 +158,7 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
     };
 
     if (info.p_stages) |stages| {
-        for (stages[0..], 0..info.stage_count) |stage, _| {
+        for (stages[0..info.stage_count], 0..) |stage, stage_index| {
             const module = try NonDispatchable(ShaderModule).fromHandleObject(stage.module);
             const soft_module: *SoftShaderModule = @alignCast(@fieldParentPtr("interface", module));
 
@@ -166,7 +175,16 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
 
             std.log.scoped(.GraphicsPipeline).debug("Compiling {t} shader...", .{driver_stage});
 
-            const shader = try createShader(allocator, device_allocator, runtimes_allocator, soft_cache, soft_module, &stage, runtimes_count);
+            const shader = try createShader(
+                allocator,
+                device_allocator,
+                runtimes_allocator,
+                soft_cache,
+                soft_module,
+                &stage,
+                &self.interface.common_stages[stage_index].module,
+                runtimes_count,
+            );
             self.stages.put(driver_stage, shader);
 
             std.log.scoped(.GraphicsPipeline).debug("Created {d} {s} runtimes for:", .{
@@ -208,10 +226,11 @@ fn createShader(
     cache: ?*SoftPipelineCache,
     module: *SoftShaderModule,
     stage: *const vk.PipelineShaderStageCreateInfo,
+    common_module: *const ShaderModule.IrModule,
     runtimes_count: usize,
 ) VkError!Shader {
     if (comptime base.config.soft_ir_interpreter)
-        return InterpreterShader.compile(runtimes_allocator, module, stage, runtimes_count);
+        return InterpreterShader.compile(runtimes_allocator, common_module, runtimes_count);
 
     const entry = std.mem.span(stage.p_name);
     const execution_model = executionModelForStage(stage.stage) orelse return VkError.Unknown;

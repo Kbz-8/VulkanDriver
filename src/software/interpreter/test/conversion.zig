@@ -69,6 +69,80 @@ test "[interpreter] integer-to-float conversions lower component-wise" {
     try std.testing.expectEqual(@as(u16, 3), program.code[1].components);
 }
 
+test "[interpreter] float vectors convert to signed and unsigned integers" {
+    const code = [_]bc.Instruction{
+        .{ .opcode = .float_to_signed, .components = 4, .a = reg(8), .b = reg(0) },
+        .{ .opcode = .float_to_unsigned, .components = 4, .a = reg(12), .b = reg(4) },
+        .{ .opcode = .return_void },
+    };
+    const initializers = [_]Program.RegisterInit{
+        .{ .register = reg(0), .value = f32Bits(-2.75) },
+        .{ .register = reg(1), .value = f32Bits(0.0) },
+        .{ .register = reg(2), .value = f32Bits(17.9) },
+        .{ .register = reg(3), .value = f32Bits(2147483520.0) },
+        .{ .register = reg(4), .value = f32Bits(0.0) },
+        .{ .register = reg(5), .value = f32Bits(1.9) },
+        .{ .register = reg(6), .value = f32Bits(42.75) },
+        .{ .register = reg(7), .value = f32Bits(4294967040.0) },
+    };
+
+    var program = makeProgram(&code, &initializers);
+    defer program.deinit();
+
+    var runtime = try Runtime.init(std.testing.allocator, &program);
+    defer runtime.deinit();
+
+    try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
+    try std.testing.expectEqualSlices(u32, &.{
+        @bitCast(@as(i32, -2)),
+        @bitCast(@as(i32, 0)),
+        @bitCast(@as(i32, 17)),
+        @bitCast(@as(i32, 2147483520)),
+    }, runtime.registers[8..12]);
+    try std.testing.expectEqualSlices(u32, &.{ 0, 1, 42, 4294967040 }, runtime.registers[12..16]);
+}
+
+test "[interpreter] float-to-integer conversions do not trap for unspecified results" {
+    const code = [_]bc.Instruction{
+        .{ .opcode = .float_to_signed, .components = 6, .a = reg(6), .b = reg(0) },
+        .{ .opcode = .float_to_unsigned, .components = 6, .a = reg(12), .b = reg(0) },
+        .{ .opcode = .return_void },
+    };
+    const initializers = [_]Program.RegisterInit{
+        .{ .register = reg(0), .value = f32Bits(std.math.nan(f32)) },
+        .{ .register = reg(1), .value = f32Bits(std.math.inf(f32)) },
+        .{ .register = reg(2), .value = f32Bits(-std.math.inf(f32)) },
+        .{ .register = reg(3), .value = f32Bits(2147483648.0) },
+        .{ .register = reg(4), .value = f32Bits(4294967296.0) },
+        .{ .register = reg(5), .value = f32Bits(-2.75) },
+    };
+
+    var program = makeProgram(&code, &initializers);
+    defer program.deinit();
+
+    var runtime = try Runtime.init(std.testing.allocator, &program);
+    defer runtime.deinit();
+
+    try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
+    try std.testing.expectEqualSlices(u32, &.{
+        @bitCast(@as(i32, 0)),
+        @bitCast(@as(i32, std.math.maxInt(i32))),
+        @bitCast(@as(i32, std.math.minInt(i32))),
+        @bitCast(@as(i32, std.math.maxInt(i32))),
+        @bitCast(@as(i32, std.math.maxInt(i32))),
+        @bitCast(@as(i32, -2)),
+    }, runtime.registers[6..12]);
+
+    try std.testing.expectEqualSlices(u32, &.{
+        0,
+        std.math.maxInt(u32),
+        0,
+        2147483648,
+        std.math.maxInt(u32),
+        0,
+    }, runtime.registers[12..18]);
+}
+
 test "[interpreter] signed and unsigned integer vectors convert to float" {
     const code = [_]bc.Instruction{
         .{ .opcode = .signed_to_float, .components = 4, .a = reg(8), .b = reg(0) },

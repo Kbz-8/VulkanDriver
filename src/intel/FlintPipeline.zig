@@ -10,29 +10,22 @@ const VkError = base.VkError;
 const Self = @This();
 pub const Interface = base.Pipeline;
 
-const PipelineKind = enum {
-    graphics,
-    compute,
-};
-
 pub const ComputeArtifact = compiler.targets.ComputeArtifact;
 
-const CommonStage = struct {
+const CompiledStage = struct {
     stage: shader_ir.ir.module.Stage,
-    module: base.ShaderModule.IrModule,
     artifact: ?ComputeArtifact,
 
-    fn deinit(self: *CommonStage, allocator: std.mem.Allocator) void {
+    fn deinit(self: *CompiledStage, allocator: std.mem.Allocator) void {
         if (self.artifact) |*artifact|
             artifact.deinit(allocator);
-        self.module.deinit();
         self.* = undefined;
     }
 };
 
 interface: Interface,
 artifact_allocator: base.VulkanAllocator,
-stages: []CommonStage,
+stages: []CompiledStage,
 
 pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: ?*base.PipelineCache, info: *const vk.ComputePipelineCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
@@ -49,7 +42,13 @@ pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: 
     };
     initialized = true;
 
-    self.stages = try compileStages(self.artifact_allocator.allocator(), device.io(), &.{info.stage}, .compute, compilerDeviceInfo(device));
+    self.stages = try compileStages(
+        self.artifact_allocator.allocator(),
+        device.io(),
+        self.interface.common_stages,
+        &.{info.stage},
+        compilerDeviceInfo(device),
+    );
     if (self.computeArtifact()) |artifact|
         try validateComputePipelineLayout(self.interface.layout, &artifact.resources);
     return self;
@@ -74,15 +73,27 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
         stages[0..info.stage_count]
     else
         return VkError.ValidationFailed;
-    self.stages = try compileStages(self.artifact_allocator.allocator(), device.io(), stage_infos, .graphics, compilerDeviceInfo(device));
+    self.stages = try compileStages(
+        self.artifact_allocator.allocator(),
+        device.io(),
+        self.interface.common_stages,
+        stage_infos,
+        compilerDeviceInfo(device),
+    );
     return self;
 }
 
-fn compileStages(allocator: std.mem.Allocator, io: std.Io, infos: []const vk.PipelineShaderStageCreateInfo, pipeline_kind: PipelineKind, device_info: ?compiler.device.DeviceInfo) VkError![]CommonStage {
-    if (infos.len == 0)
+fn compileStages(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    common_stages: []base.Pipeline.CommonStage,
+    infos: []const vk.PipelineShaderStageCreateInfo,
+    device_info: ?compiler.device.DeviceInfo,
+) VkError![]CompiledStage {
+    if (common_stages.len == 0 or common_stages.len != infos.len)
         return VkError.ValidationFailed;
 
-    const stages = allocator.alloc(CommonStage, infos.len) catch return VkError.OutOfHostMemory;
+    const stages = allocator.alloc(CompiledStage, common_stages.len) catch return VkError.OutOfHostMemory;
     var initialized: usize = 0;
     errdefer {
         for (stages[0..initialized]) |*stage|
@@ -90,42 +101,21 @@ fn compileStages(allocator: std.mem.Allocator, io: std.Io, infos: []const vk.Pip
         allocator.free(stages);
     }
 
-    for (infos, stages) |*info, *stage| {
-        stage.* = try compileStage(allocator, io, info, pipeline_kind, device_info);
+    for (common_stages, infos, stages) |*common_stage, *info, *stage| {
+        stage.* = try compileStage(allocator, io, common_stage, info, device_info);
         initialized += 1;
     }
     return stages;
 }
 
-fn compileStage(allocator: std.mem.Allocator, io: std.Io, info: *const vk.PipelineShaderStageCreateInfo, pipeline_kind: PipelineKind, device_info: ?compiler.device.DeviceInfo) VkError!CommonStage {
-    const specializations = try specializationValues(allocator, info.p_specialization_info);
-    defer if (specializations.len != 0) allocator.free(specializations);
-
-    const expected_stage = commonStage(info.stage) orelse return VkError.ValidationFailed;
-    switch (pipeline_kind) {
-        .compute => if (expected_stage != .compute) return VkError.ValidationFailed,
-        .graphics => if (expected_stage == .compute) return VkError.ValidationFailed,
-    }
-
-    const shader_module = try base.NonDispatchable(base.ShaderModule).fromHandleObject(info.module);
-    var module = shader_module.instantiateIr(allocator, .{
-        .entry_point = std.mem.span(info.p_name),
-        .stage = expected_stage,
-        .specializations = specializations,
-    }) catch |err| {
-        std.log.scoped(.FlintPipeline).err("common shader translation failed: {s}", .{@errorName(err)});
-        return switch (err) {
-            error.OutOfMemory => VkError.OutOfHostMemory,
-            else => VkError.ValidationFailed,
-        };
-    };
-    errdefer module.deinit();
-
-    std.debug.assert(module.stage == expected_stage);
-    if (base.config.flint_dump_common_ir)
-        dumpCommonIr(allocator, io, std.mem.span(info.p_name), &module);
-
-    var artifact = try lowerToFlint(allocator, &module, device_info);
+fn compileStage(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    common_stage: *base.Pipeline.CommonStage,
+    info: *const vk.PipelineShaderStageCreateInfo,
+    device_info: ?compiler.device.DeviceInfo,
+) VkError!CompiledStage {
+    var artifact = try lowerToFlint(allocator, &common_stage.module, device_info);
     errdefer if (artifact) |*value| value.deinit(allocator);
     if (base.config.flint_dump_ir) {
         if (artifact) |*value|
@@ -133,24 +123,9 @@ fn compileStage(allocator: std.mem.Allocator, io: std.Io, info: *const vk.Pipeli
     }
 
     return .{
-        .stage = expected_stage,
-        .module = module,
+        .stage = common_stage.stage,
         .artifact = artifact,
     };
-}
-
-fn dumpCommonIr(allocator: std.mem.Allocator, io: std.Io, entry_point: []const u8, module: *const base.ShaderModule.IrModule) void {
-    const text = shader_ir.ir.printer.allocPrint(allocator, module) catch |err| {
-        std.log.scoped(.FlintPipeline).err("could not print backend-agnostic IR: {s}", .{@errorName(err)});
-        return;
-    };
-    defer allocator.free(text);
-
-    var stdout_buffer: [1024]u8 = undefined;
-    var stdout_file_writer: std.Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
-    const stdout_writer = &stdout_file_writer.interface;
-    stdout_writer.print("\n=== backend-agnostic IR: {s} ===\n{s}\n", .{ entry_point, text }) catch @panic("Debug printing failed");
-    stdout_writer.flush() catch @panic("Debug printing failed");
 }
 
 fn dumpFlintIr(allocator: std.mem.Allocator, io: std.Io, entry_point: []const u8, program: *const compiler.program.Program) void {
@@ -200,51 +175,7 @@ fn compilerDeviceInfo(device: *const base.Device) ?compiler.device.DeviceInfo {
     return physical_device.compiler_info;
 }
 
-fn specializationValues(allocator: std.mem.Allocator, info: ?*const vk.SpecializationInfo) VkError![]shader_ir.spirv.translator.SpecializationValue {
-    const specialization = info orelse return &.{};
-    if (specialization.map_entry_count == 0)
-        return &.{};
-
-    const entries = specialization.p_map_entries orelse return VkError.ValidationFailed;
-    const data: []const u8 = if (specialization.data_size == 0)
-        &.{}
-    else
-        @as([*]const u8, @ptrCast(@alignCast(specialization.p_data)))[0..specialization.data_size];
-
-    const values = allocator.alloc(shader_ir.spirv.translator.SpecializationValue, specialization.map_entry_count) catch
-        return VkError.OutOfHostMemory;
-    errdefer allocator.free(values);
-
-    for (entries[0..specialization.map_entry_count], values) |entry, *value| {
-        const offset: usize = entry.offset;
-        const end = std.math.add(usize, offset, entry.size) catch return VkError.ValidationFailed;
-        if (end > data.len)
-            return VkError.ValidationFailed;
-        value.* = .{
-            .constant_id = entry.constant_id,
-            .data = data[offset..end],
-        };
-    }
-    return values;
-}
-
-fn commonStage(stage: vk.ShaderStageFlags) ?shader_ir.ir.module.Stage {
-    const bits: u32 = @bitCast(stage);
-    const vertex_bits: u32 = @bitCast(vk.ShaderStageFlags{ .vertex = true });
-    const fragment_bits: u32 = @bitCast(vk.ShaderStageFlags{ .fragment = true });
-    const compute_bits: u32 = @bitCast(vk.ShaderStageFlags{ .compute = true });
-
-    return if (bits == vertex_bits)
-        .vertex
-    else if (bits == fragment_bits)
-        .fragment
-    else if (bits == compute_bits)
-        .compute
-    else
-        null;
-}
-
-fn deinitStages(allocator: std.mem.Allocator, stages: []CommonStage) void {
+fn deinitStages(allocator: std.mem.Allocator, stages: []CompiledStage) void {
     for (stages) |*stage|
         stage.deinit(allocator);
     if (stages.len != 0)

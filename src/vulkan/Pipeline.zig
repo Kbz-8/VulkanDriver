@@ -1,5 +1,7 @@
 const std = @import("std");
 const vk = @import("vulkan");
+const shader_ir = @import("shader_ir");
+const config = @import("config");
 
 const NonDispatchable = @import("NonDispatchable.zig").NonDispatchable;
 
@@ -9,9 +11,20 @@ const Device = @import("Device.zig");
 const PipelineCache = @import("PipelineCache.zig");
 const PipelineLayout = @import("PipelineLayout.zig");
 const RenderPass = @import("RenderPass.zig");
+const ShaderModule = @import("ShaderModule.zig");
 
 const Self = @This();
 pub const ObjectType: vk.ObjectType = .pipeline;
+
+pub const CommonStage = struct {
+    stage: shader_ir.ir.module.Stage,
+    module: ShaderModule.IrModule,
+
+    fn deinit(self: *CommonStage) void {
+        self.module.deinit();
+        self.* = undefined;
+    }
+};
 
 const DynamicState = struct {
     viewport: bool = false,
@@ -30,6 +43,7 @@ owner: *Device,
 vtable: *const VTable,
 bind_point: vk.PipelineBindPoint,
 stages: vk.ShaderStageFlags,
+common_stages: []CommonStage,
 layout: *PipelineLayout,
 mode: union(enum) {
     compute: struct {},
@@ -81,12 +95,16 @@ pub fn initCompute(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipel
     layout.ref();
     errdefer layout.unref(allocator);
 
+    const common_stages = try instantiateCommonStages(device, allocator, &.{info.stage}, .compute);
+    errdefer deinitCommonStages(allocator, common_stages);
+
     return .{
         .owner = device,
         // SAFETY: the backend assigns the vtable before returning the compute pipeline.
         .vtable = undefined,
         .bind_point = .compute,
         .stages = info.stage.stage,
+        .common_stages = common_stages,
         .layout = layout,
         .mode = .{ .compute = .{} },
     };
@@ -99,12 +117,19 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
     layout.ref();
     errdefer layout.unref(allocator);
 
+    const stage_infos = if (info.p_stages) |stages|
+        stages[0..info.stage_count]
+    else
+        return VkError.ValidationFailed;
+    if (stage_infos.len == 0)
+        return VkError.ValidationFailed;
+
     var stages: vk.ShaderStageFlags = .{};
-    if (info.p_stages) |p_stages| {
-        for (p_stages[0..info.stage_count]) |stage| {
-            stages = stages.merge(stage.stage);
-        }
-    }
+    for (stage_infos) |stage|
+        stages = stages.merge(stage.stage);
+
+    const common_stages = try instantiateCommonStages(device, allocator, stage_infos, .graphics);
+    errdefer deinitCommonStages(allocator, common_stages);
 
     var binding_description: ?[]vk.VertexInputBindingDescription = null;
     errdefer if (binding_description) |value| allocator.free(value);
@@ -137,6 +162,7 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
         .vtable = undefined,
         .bind_point = .graphics,
         .stages = stages,
+        .common_stages = common_stages,
         .layout = layout,
         .mode = .{
             .graphics = .{
@@ -265,6 +291,108 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
     };
 }
 
+const PipelineKind = enum { compute, graphics };
+
+fn instantiateCommonStages(device: *Device, allocator: std.mem.Allocator, infos: []const vk.PipelineShaderStageCreateInfo, kind: PipelineKind) VkError![]CommonStage {
+    const stages = allocator.alloc(CommonStage, infos.len) catch return VkError.OutOfHostMemory;
+    var initialized: usize = 0;
+    errdefer {
+        for (stages[0..initialized]) |*stage|
+            stage.deinit();
+        allocator.free(stages);
+    }
+
+    for (infos, stages) |*info, *stage| {
+        stage.* = try instantiateCommonStage(allocator, info, kind);
+        initialized += 1;
+        if (comptime config.dump_common_ir)
+            dumpCommonIr(allocator, device.io(), std.mem.span(info.p_name), &stage.module);
+    }
+    return stages;
+}
+
+fn instantiateCommonStage(allocator: std.mem.Allocator, info: *const vk.PipelineShaderStageCreateInfo, kind: PipelineKind) VkError!CommonStage {
+    const stage = commonStage(info.stage) orelse return VkError.ValidationFailed;
+    switch (kind) {
+        .compute => if (stage != .compute) return VkError.ValidationFailed,
+        .graphics => if (stage == .compute) return VkError.ValidationFailed,
+    }
+
+    const specializations = try specializationValues(allocator, info.p_specialization_info);
+    defer if (specializations.len != 0) allocator.free(specializations);
+
+    const shader_module = try NonDispatchable(ShaderModule).fromHandleObject(info.module);
+    const module = shader_module.instantiateIr(allocator, .{
+        .entry_point = std.mem.span(info.p_name),
+        .stage = stage,
+        .specializations = specializations,
+    }) catch |err| return switch (err) {
+        error.OutOfMemory => VkError.OutOfHostMemory,
+        else => VkError.ValidationFailed,
+    };
+    return .{ .stage = stage, .module = module };
+}
+
+fn dumpCommonIr(allocator: std.mem.Allocator, io: std.Io, entry_point: []const u8, module: *const ShaderModule.IrModule) void {
+    const text = shader_ir.ir.printer.allocPrint(allocator, module) catch |err| {
+        std.log.scoped(.Pipeline).err("could not print backend-agnostic IR: {s}", .{@errorName(err)});
+        return;
+    };
+    defer allocator.free(text);
+
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_file_writer: std.Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
+    const stdout_writer = &stdout_file_writer.interface;
+    stdout_writer.print("\n=== backend-agnostic IR: {s} ===\n{s}\n", .{ entry_point, text }) catch @panic("Debug printing failed");
+    stdout_writer.flush() catch @panic("Debug printing failed");
+}
+
+fn specializationValues(allocator: std.mem.Allocator, info: ?*const vk.SpecializationInfo) VkError![]shader_ir.spirv.translator.SpecializationValue {
+    const specialization = info orelse return &.{};
+    if (specialization.map_entry_count == 0)
+        return &.{};
+
+    const entries = specialization.p_map_entries orelse return VkError.ValidationFailed;
+    const data: []const u8 = if (specialization.data_size == 0)
+        &.{}
+    else
+        @as([*]const u8, @ptrCast(@alignCast(specialization.p_data)))[0..specialization.data_size];
+
+    const values = allocator.alloc(shader_ir.spirv.translator.SpecializationValue, specialization.map_entry_count) catch
+        return VkError.OutOfHostMemory;
+    errdefer allocator.free(values);
+
+    for (entries[0..specialization.map_entry_count], values) |entry, *value| {
+        const offset: usize = entry.offset;
+        const end = std.math.add(usize, offset, entry.size) catch return VkError.ValidationFailed;
+        if (end > data.len)
+            return VkError.ValidationFailed;
+        value.* = .{ .constant_id = entry.constant_id, .data = data[offset..end] };
+    }
+    return values;
+}
+
+fn commonStage(stage: vk.ShaderStageFlags) ?shader_ir.ir.module.Stage {
+    const bits: u32 = @bitCast(stage);
+    const vertex_bits: u32 = @bitCast(vk.ShaderStageFlags{ .vertex = true });
+    const fragment_bits: u32 = @bitCast(vk.ShaderStageFlags{ .fragment = true });
+    const compute_bits: u32 = @bitCast(vk.ShaderStageFlags{ .compute = true });
+    return if (bits == vertex_bits)
+        .vertex
+    else if (bits == fragment_bits)
+        .fragment
+    else if (bits == compute_bits)
+        .compute
+    else
+        null;
+}
+
+fn deinitCommonStages(allocator: std.mem.Allocator, stages: []CommonStage) void {
+    for (stages) |*stage|
+        stage.deinit();
+    allocator.free(stages);
+}
+
 fn parseDynamicState(info: ?*const vk.PipelineDynamicStateCreateInfo) VkError!DynamicState {
     var state: DynamicState = .{};
     const dynamic_state = info orelse return state;
@@ -327,6 +455,7 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
             }
         },
     }
+    deinitCommonStages(allocator, self.common_stages);
     self.layout.unref(allocator);
     self.vtable.destroy(self, allocator);
 }

@@ -231,10 +231,10 @@ side-effect free by the rewriter. A block's terminator is stored separately from
 its ordinary instructions.
 
 Most arithmetic operations are intended for scalars or vectors of their named
-category and act component by component where vectors are allowed. The current
-foundational validator often checks only that operand and result types match.
-The stricter integer, float, boolean, bit-width, and vector-shape requirements
-below describe semantic intent and still need more complete validation.
+category and act component by component where vectors are allowed. The validator
+checks the integer, float, boolean, bit-width, aggregate, and vector or matrix
+shape requirements described below. Any intentionally weaker checks are called
+out in the relevant opcode section.
 
 ## Unary opcodes
 
@@ -244,15 +244,23 @@ Form:
 %result: <type> = <opcode> %operand
 ```
 
-| Opcode        | Arity | Description                                       | Usage                                                             | Small printed example       |
-| ------------- | ----: | ------------------------------------------------- | ----------------------------------------------------------------- | --------------------------- |
-| `negate`      |     1 | Changes the arithmetic sign.                      | Signed integer or floating operand; the result has the same type. | `%2: i32 = negate %1`       |
-| `logical_not` |     1 | Inverts a boolean value.                          | Boolean operand and boolean result.                               | `%2: bool = logical_not %1` |
-| `bitwise_not` |     1 | Inverts every bit.                                | Integer operand; the result has the same type.                    | `%2: u32 = bitwise_not %1`  |
-| `all`         |     1 | True when all components of the operand are true. | Boolean vector operand; scalar boolean result.                    | `%2: bool = all %1`         |
+| Opcode        | Description                                                | Usage                                                                     | Small printed example            |
+| ------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------- | -------------------------------- |
+| `absolute`    | Computes the floating-point absolute value component-wise. | Floating scalar or vector; the result has the same type.                  | `%2: f32 = absolute %1`          |
+| `all`         | True when all components of the operand are true.          | Boolean vector operand; scalar boolean result.                            | `%2: bool = all %1`              |
+| `bit_count`   | Counts the set bits in each component.                     | Integer scalar or vector; result has the same width and shape.            | `%2: u32 = bit_count %1`         |
+| `bit_reverse` | Reverses the bits in each component.                       | Integer scalar or vector; result has the same width and shape.            | `%2: u32 = bit_reverse %1`       |
+| `bitwise_not` | Inverts every bit.                                         | Integer scalar or vector; result has the same width and shape.            | `%2: u32 = bitwise_not %1`       |
+| `is_inf`      | Tests each component for positive or negative infinity.    | Floating scalar or vector; result is a matching boolean scalar or vector. | `%2: bool = is_inf %1`           |
+| `is_nan`      | Tests each component for NaN.                              | Floating scalar or vector; result is a matching boolean scalar or vector. | `%2: vec4[bool] = is_nan %1`     |
+| `logical_not` | Inverts a boolean value.                                   | Boolean operand and boolean result.                                       | `%2: bool = logical_not %1`      |
+| `negate`      | Changes the arithmetic sign.                               | Signed integer or floating operand; the result has the same type.         | `%2: i32 = negate %1`            |
+| `normalize`   | Produces a floating value with unit length.                | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = normalize %1`   |
+| `transpose`   | Exchanges the rows and columns of a floating-point matrix. | Floating matrix; result has reversed row and column counts.               | `%2: mat2x3[f32] = transpose %1` |
 
 `negate` is one normalized opcode: the operand type distinguishes integer
-negation from floating negation.
+negation from floating negation. Unary integer and floating operations apply
+component-wise when their operand is a vector.
 
 ## Binary opcodes
 
@@ -262,19 +270,25 @@ Form:
 %result: <type> = <opcode> %lhs, %rhs
 ```
 
-The two operands and result currently must have the same IR type.
+Most binary operations require equal operand and result types. Product operations,
+extended integer operations, and operations that reduce vectors or construct matrices
+have the specialized type rules described below.
 
 ### Integer arithmetic
 
-| Opcode             | Description                                             | Usage                                                                       | Small printed example               |
-| ------------------ | ------------------------------------------------------- | --------------------------------------------------------------------------- | ----------------------------------- |
-| `integer_add`      | Adds fixed-width integers.                              | Integer operands of one type.                                               | `%3: u32 = integer_add %1, %2`      |
-| `integer_subtract` | Subtracts the right operand from the left.              | Integer operands of one type.                                               | `%3: u32 = integer_subtract %1, %2` |
-| `integer_multiply` | Multiplies fixed-width integers.                        | Integer operands of one type.                                               | `%3: u32 = integer_multiply %1, %2` |
-| `unsigned_divide`  | Divides unsigned integers.                              | Unsigned integer operands.                                                  | `%3: u32 = unsigned_divide %1, %2`  |
-| `signed_divide`    | Divides signed integers.                                | Signed integer operands.                                                    | `%3: i32 = signed_divide %1, %2`    |
-| `unsigned_modulo`  | Produces the unsigned remainder.                        | Unsigned integer operands.                                                  | `%3: u32 = unsigned_modulo %1, %2`  |
-| `signed_modulo`    | Produces signed modulo, whose sign follows the divisor. | Signed integer operands; this corresponds to SPIR-V `OpSMod`, not `OpSRem`. | `%3: i32 = signed_modulo %1, %2`    |
+| Opcode                       | Description                                             | Usage                                                                       | Small printed example                                      |
+| ---------------------------- | ------------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `integer_add`                | Adds fixed-width integers.                              | Integer operands of one type.                                               | `%3: u32 = integer_add %1, %2`                             |
+| `integer_subtract`           | Subtracts the right operand from the left.              | Integer operands of one type.                                               | `%3: u32 = integer_subtract %1, %2`                        |
+| `integer_multiply`           | Multiplies fixed-width integers.                        | Integer operands of one type.                                               | `%3: u32 = integer_multiply %1, %2`                        |
+| `integer_add_carry`          | Returns the low sum and unsigned carry.                 | Equal unsigned operands; result is `struct[T, T]`.                          | `%3: struct[u32, u32] = integer_add_carry %1, %2`          |
+| `integer_subtract_borrow`    | Returns the low difference and unsigned borrow.         | Equal unsigned operands; result is `struct[T, T]`.                          | `%3: struct[u32, u32] = integer_subtract_borrow %1, %2`    |
+| `unsigned_multiply_extended` | Returns the low and high halves of an unsigned product. | Equal unsigned operands; result is `struct[T, T]`.                          | `%3: struct[u32, u32] = unsigned_multiply_extended %1, %2` |
+| `signed_multiply_extended`   | Returns the low and high halves of a signed product.    | Equal signed operands; result is `struct[T, T]`.                            | `%3: struct[i32, i32] = signed_multiply_extended %1, %2`   |
+| `unsigned_divide`            | Divides unsigned integers.                              | Unsigned integer operands.                                                  | `%3: u32 = unsigned_divide %1, %2`                         |
+| `signed_divide`              | Divides signed integers.                                | Signed integer operands.                                                    | `%3: i32 = signed_divide %1, %2`                           |
+| `unsigned_modulo`            | Produces the unsigned remainder.                        | Unsigned integer operands.                                                  | `%3: u32 = unsigned_modulo %1, %2`                         |
+| `signed_modulo`              | Produces signed modulo, whose sign follows the divisor. | Signed integer operands; this corresponds to SPIR-V `OpSMod`, not `OpSRem`. | `%3: i32 = signed_modulo %1, %2`                           |
 
 Integer addition, subtraction, and multiplication are signedness-neutral at the
 opcode level; the type retains signedness. Exceptional division, overflow,
@@ -282,31 +296,35 @@ and poison rules are not yet separately recorded by the IR.
 
 ### Floating arithmetic
 
-| Opcode           | Description                                                  | Usage                                                               | Small printed example             |
-| ---------------- | ------------------------------------------------------------ | ------------------------------------------------------------------- | --------------------------------- |
-| `float_add`      | Adds floating-point values.                                  | Floating operands of one type.                                      | `%3: f32 = float_add %1, %2`      |
-| `float_subtract` | Subtracts the right operand from the left.                   | Floating operands of one type.                                      | `%3: f32 = float_subtract %1, %2` |
-| `float_multiply` | Multiplies floating-point values.                            | Floating operands of one type.                                      | `%3: f32 = float_multiply %1, %2` |
-| `float_divide`   | Divides the left operand by the right.                       | Floating operands of one type.                                      | `%3: f32 = float_divide %1, %2`   |
-| `float_modulo`   | Produces floating modulo, similar to `x - y * floor(x / y)`. | Floating operands of one type; this corresponds to SPIR-V `OpFMod`. | `%3: f32 = float_modulo %1, %2`   |
+| Opcode            | Description                                             | Usage                                                               | Small printed example              |
+| ----------------- | ------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------- |
+| `float_add`       | Adds floating-point values.                             | Floating operands of one type.                                      | `%3: f32 = float_add %1, %2`       |
+| `float_subtract`  | Subtracts the right operand from the left.              | Floating operands of one type.                                      | `%3: f32 = float_subtract %1, %2`  |
+| `float_multiply`  | Multiplies floating-point values.                       | Floating operands of one type.                                      | `%3: f32 = float_multiply %1, %2`  |
+| `float_divide`    | Divides the left operand by the right.                  | Floating operands of one type.                                      | `%3: f32 = float_divide %1, %2`    |
+| `float_modulo`    | Produces `x - y * floor(x / y)`.                        | Floating operands of one type; this corresponds to SPIR-V `OpFMod`. | `%3: f32 = float_modulo %1, %2`    |
+| `float_remainder` | Produces `x - y * trunc(x / y)`.                        | Floating operands of one type; this corresponds to SPIR-V `OpFRem`. | `%3: f32 = float_remainder %1, %2` |
+| `atan2`           | Computes the quadrant-aware arc tangent of `lhs / rhs`. | Floating operands of one type; maps GLSL.std.450 `Atan2`.           | `%3: f32 = atan2 %1, %2`           |
 
 Instructions do not yet carry fast-math flags, rounding modes, contraction
 permission, or NaN guarantees.
 
 ### Vector arithmetic
 
-| Opcode                | Description                     | Usage                          | Small printed example                        |
-| --------------------- | ------------------------------- | ------------------------------ | -------------------------------------------- |
-| `vector_times_scalar` | Multiplies a vector by a scalar | Floating operands of one type. | `%3: vec4[f32] = vector_times_scalar %1, %2` |
-| `vector_times_matrix` | Multiplies a vector by a matrix | Floating operands of one type. | `%3: vec4[f32] = vector_times_matrix %1, %2` |
+| Opcode                | Description                              | Usage                                                            | Small printed example                        |
+| --------------------- | ---------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------- |
+| `vector_times_scalar` | Multiplies a vector by a scalar.         | Floating vector and matching scalar; result has the vector type. | `%3: vec4[f32] = vector_times_scalar %1, %2` |
+| `vector_times_matrix` | Multiplies a row vector by a matrix.     | Compatible floating vector and matrix dimensions.                | `%3: vec4[f32] = vector_times_matrix %1, %2` |
+| `dot`                 | Computes the dot product of two vectors. | Equal floating vectors; result is their scalar element type.     | `%3: f32 = dot %1, %2`                       |
 
 ### Matrix arithmetic
 
-| Opcode                | Description                     | Usage                          | Small printed example                          |
-| --------------------- | ------------------------------- | ------------------------------ | ---------------------------------------------- |
-| `matrix_times_matrix` | Multiplies a matrix by a matrix | Floating operands of one type. | `%3: mat4x4[f32] = matrix_times_matrix %1, %2` |
-| `matrix_times_scalar` | Multiplies a matrix by a scalar | Floating operands of one type. | `%3: mat4x4[f32] = matrix_times_scalar %1, %2` |
-| `matrix_times_vector` | Multiplies a matrix by a vector | Floating operands of one type. | `%3: mat4x4[f32] = matrix_times_vector %1, %2` |
+| Opcode                | Description                                        | Usage                                                 | Small printed example                          |
+| --------------------- | -------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------- |
+| `matrix_times_matrix` | Multiplies compatible floating-point matrices.     | Inner dimensions and scalar element types must match. | `%3: mat4x4[f32] = matrix_times_matrix %1, %2` |
+| `matrix_times_scalar` | Multiplies every matrix element by a scalar.       | Floating matrix and matching scalar.                  | `%3: mat4x4[f32] = matrix_times_scalar %1, %2` |
+| `matrix_times_vector` | Multiplies a matrix by a compatible column vector. | Floating matrix and vector with matching dimensions.  | `%3: vec4[f32] = matrix_times_vector %1, %2`   |
+| `outer_product`       | Constructs a matrix from two vectors' products.    | Floating vectors with a shared scalar element type.   | `%3: mat3x2[f32] = outer_product %1, %2`       |
 
 ### Shifts and bitwise arithmetic
 
@@ -329,35 +347,68 @@ type as the shifted value. More flexible shift typing is not implemented yet.
 | `logical_and` | Is true only when both operands are true. | Boolean operands and result. | `%3: bool = logical_and %1, %2` |
 | `logical_or`  | Is true when either operand is true.      | Boolean operands and result. | `%3: bool = logical_or %1, %2`  |
 
+## Ternary opcodes
+
+Form:
+
+```text
+%result: <type> = <opcode> %first, %second, %third
+```
+
+| Opcode        | Description                                                | Usage                                                      | Small printed example              |
+| ------------- | ---------------------------------------------------------- | ---------------------------------------------------------- | ---------------------------------- |
+| `smooth_step` | Performs Hermite interpolation from edge 0 through edge 1. | Three equal floating scalars or vectors; same result type. | `%4: f32 = smooth_step %1, %2, %3` |
+
 ## Comparison opcodes
 
 All comparisons are printed with the `cmp_` prefix as one opcode token:
 
 ```text
-%result: bool = cmp_<opcode> %lhs, %rhs
+%result: <bool-or-bool-vector> = cmp_<opcode> %lhs, %rhs
 ```
 
-The operands must share one type, and the current validator requires the result
-to be the scalar `bool` type.
+The operands must share one type. Scalar comparisons produce `bool`; vector
+comparisons produce a boolean vector with the same component count.
 
-| Opcode                          | Description                                             | Usage                                    | Small printed example                             |
-| ------------------------------- | ------------------------------------------------------- | ---------------------------------------- | ------------------------------------------------- |
-| `cmp_equal`                     | Tests whether two booleans or integers are equal.       | Equal-typed boolean or integer operands. | `%3: bool = cmp_equal %1, %2`                     |
-| `cmp_not_equal`                 | Tests whether two booleans or integers differ.          | Equal-typed boolean or integer operands. | `%3: bool = cmp_not_equal %1, %2`                 |
-| `cmp_unsigned_less`             | Compares integer bit patterns as unsigned.              | Unsigned integer operands.               | `%3: bool = cmp_unsigned_less %1, %2`             |
-| `cmp_signed_less`               | Compares integers as signed.                            | Signed integer operands.                 | `%3: bool = cmp_signed_less %1, %2`               |
-| `cmp_ordered_float_equal`       | Is true when neither operand is NaN and they are equal. | Floating operands.                       | `%3: bool = cmp_ordered_float_equal %1, %2`       |
-| `cmp_unordered_float_equal`     | Is true when either operand is NaN, or they are equal.  | Floating operands.                       | `%3: bool = cmp_unordered_float_equal %1, %2`     |
-| `cmp_ordered_float_not_equal`   | Is true when neither operand is NaN and they differ.    | Floating operands.                       | `%3: bool = cmp_ordered_float_not_equal %1, %2`   |
-| `cmp_unordered_float_not_equal` | Is true when either operand is NaN, or they differ.     | Floating operands.                       | `%3: bool = cmp_unordered_float_not_equal %1, %2` |
-| `cmp_ordered_float_less`        | Is true when neither operand is NaN and left is less.   | Floating operands.                       | `%3: bool = cmp_ordered_float_less %1, %2`        |
-| `cmp_unordered_float_less`      | Is true when either operand is NaN, or left is less.    | Floating operands.                       | `%3: bool = cmp_unordered_float_less %1, %2`      |
+| Opcode                          | Description                                                    | Usage                                    | Small printed example                             |
+| ------------------------------- | -------------------------------------------------------------- | ---------------------------------------- | ------------------------------------------------- |
+| `cmp_equal`                     | Tests whether two booleans or integers are equal.              | Equal-typed boolean or integer operands. | `%3: bool = cmp_equal %1, %2`                     |
+| `cmp_not_equal`                 | Tests whether two booleans or integers differ.                 | Equal-typed boolean or integer operands. | `%3: bool = cmp_not_equal %1, %2`                 |
+| `cmp_unsigned_less`             | Compares integer bit patterns as unsigned.                     | Unsigned integer operands.               | `%3: bool = cmp_unsigned_less %1, %2`             |
+| `cmp_signed_less`               | Compares integers as signed.                                   | Signed integer operands.                 | `%3: bool = cmp_signed_less %1, %2`               |
+| `cmp_ordered_float_equal`       | Is true when neither operand is NaN and they are equal.        | Floating operands.                       | `%3: bool = cmp_ordered_float_equal %1, %2`       |
+| `cmp_unordered_float_equal`     | Is true when either operand is NaN, or they are equal.         | Floating operands.                       | `%3: bool = cmp_unordered_float_equal %1, %2`     |
+| `cmp_ordered_float_not_equal`   | Is true when neither operand is NaN and they differ.           | Floating operands.                       | `%3: bool = cmp_ordered_float_not_equal %1, %2`   |
+| `cmp_unordered_float_not_equal` | Is true when either operand is NaN, or they differ.            | Floating operands.                       | `%3: bool = cmp_unordered_float_not_equal %1, %2` |
+| `cmp_ordered_float_less`        | Is true when neither operand is NaN and left is less.          | Floating operands.                       | `%3: bool = cmp_ordered_float_less %1, %2`        |
+| `cmp_ordered_float_less_equal`  | Is true when neither operand is NaN and left is at most right. | Floating operands.                       | `%3: bool = cmp_ordered_float_less_equal %1, %2`  |
+| `cmp_unordered_float_less`      | Is true when either operand is NaN, or left is less.           | Floating operands.                       | `%3: bool = cmp_unordered_float_less %1, %2`      |
 
 There are no greater-than opcodes in the current instruction set. Swap the
-operands and use the appropriate less-than form. Less-or-equal forms are also
-not defined yet.
+operands and use the appropriate less-than form.
 
 ## Other opcodes
+
+### `bit_field_extract`
+
+Extracts a contiguous bit range and either sign-extends or zero-extends it as
+selected by the `signed` or `unsigned` variant. The offset and count are integer
+scalars; the base and result are integer scalars or vectors with equal width and
+shape.
+
+```text
+%4: i32 = bit_field_extract signed %1, %2, %3
+```
+
+### `bit_field_insert`
+
+Replaces a contiguous bit range in the base value. The base and inserted value
+are integer scalars or vectors with equal width and shape; offset and count are
+integer scalars.
+
+```text
+%5: u32 = bit_field_insert %1, %2, %3, %4
+```
 
 ### `select`
 
@@ -385,30 +436,32 @@ width.
 
 ### `convert`
 
-Converts a 32-bit integer to a floating-point value. The variant selects the
-operand's signedness: `signed_to_float` for signed integers and
-`unsigned_to_float` for unsigned integers.
+Performs numeric conversion between 32-bit floating-point and integer values.
+The variants are `signed_to_float`, `unsigned_to_float`, `float_to_signed`, and
+`float_to_unsigned`.
 
 ```text
 %2: f32 = convert signed_to_float %1
+%4: u32 = convert float_to_unsigned %3
 ```
 
-The operand must be an `i32`/`u32` scalar or a vector of one of those types,
-with the signedness matching the variant. The result is an `f32` scalar or a
-vector of `f32` with the same component count.
+The operand and result are scalars or vectors with equal component counts. The
+integer side must be `i32` or `u32` as selected by the variant, and the floating
+side must be `f32`. Floating-point values outside the destination integer's
+representable range have unspecified conversion results rather than trapping.
 
 ### `composite_construct`
 
-Constructs a vector, matrix or structure from its immediate elements.
+Constructs a vector, matrix, array, or structure from its immediate elements.
 
 ```text
 %5: vec4[f32] = composite_construct %1, %2, %3, %4
 ```
 
-For a vector, every element must have the vector's element type and their count
-must equal its length. For matrix, all elements must be vectors of matrix row size
-and matrix primitive type. For a structure, each element must match the member at
-the same position. The validator does not support array construction yet.
+For a vector or array, every element must have the composite's element type and
+their count must equal its length. For a matrix, all elements must have its column
+vector type and their count must equal its column count. For a structure, each
+element must match the member at the same position.
 
 ### `composite_extract`
 
@@ -806,8 +859,11 @@ module. The translator lowers a defined subset:
   specialized elements. `OpSpecConstantOp` is not evaluated yet.
 - Functions, blocks, branches, structured merge marks, and returns.
 - `OpPhi` into block parameters and edge arguments.
-- The arithmetic, comparison, select, bitcast, and composite operations named
-  in the reference above where mappings currently exist.
+- The arithmetic, comparison, select, bitcast, conversion, bit-field, and
+  composite operations named in the reference above where mappings currently
+  exist, including extended integer arithmetic, matrix products and transpose,
+  floating remainder, classification, and ordered less-or-equal.
+- GLSL.std.450 `FAbs`, `Atan2`, `SmoothStep`, `Normalize`, and `NClamp`.
 - Decorated stage inputs and outputs, with interface load and store.
 - `OpName` debug names for functions, blocks, parameters, constants, and
   instruction results when they are valid textual IR identifiers.

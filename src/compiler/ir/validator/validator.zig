@@ -46,6 +46,22 @@ const ConversionIntegerShape = struct {
     components: u8,
 };
 
+const FloatShape = struct {
+    bits: u16,
+    components: u8,
+};
+
+const FloatVectorShape = struct {
+    element_type: ids.TypeId,
+    length: u8,
+};
+
+const FloatMatrixShape = struct {
+    element_type: ids.TypeId,
+    rows: u8,
+    columns: u8,
+};
+
 pub const Error = ValidationError || std.mem.Allocator.Error;
 
 pub fn validate(module: *const module_ir.Module) Error!void {
@@ -277,7 +293,7 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                         return ValidationError.WrongOperandType;
                 },
 
-                .bitwise_not => {
+                .bit_count, .bit_reverse, .bitwise_not => {
                     if (!isIntegerScalarOrVector(module, operand_type))
                         return ValidationError.WrongOperandType;
 
@@ -285,6 +301,18 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                         return ValidationError.WrongResultType;
 
                     if (!haveSameIntegerShape(module, operand_type, result))
+                        return ValidationError.WrongResultType;
+                },
+
+                .is_inf, .is_nan => {
+                    const operand_shape = floatShape(module, operand_type) orelse return ValidationError.WrongOperandType;
+                    if (booleanComponentCount(module, result) != operand_shape.components)
+                        return ValidationError.WrongResultType;
+                },
+
+                .absolute, .normalize => {
+                    _ = floatShape(module, operand_type) orelse return ValidationError.WrongOperandType;
+                    if (result != operand_type)
                         return ValidationError.WrongResultType;
                 },
 
@@ -300,6 +328,15 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                     if (result != operand_type)
                         return ValidationError.WrongResultType;
                 },
+
+                .transpose => {
+                    const operand_shape = floatMatrixShape(module, operand_type) orelse return ValidationError.WrongOperandType;
+                    const result_shape = floatMatrixShape(module, result) orelse return ValidationError.WrongResultType;
+                    if (result_shape.element_type != operand_shape.element_type or
+                        result_shape.rows != operand_shape.columns or
+                        result_shape.columns != operand_shape.rows)
+                        return ValidationError.WrongResultType;
+                },
             }
         },
         .binary => |op| {
@@ -307,6 +344,59 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             const rhs_type = try operandType(module, function_id, op.rhs);
 
             switch (op.opcode) {
+                .atan2, .float_remainder => {
+                    if (lhs_type != rhs_type or floatShape(module, lhs_type) == null)
+                        return ValidationError.WrongOperandType;
+                    if (result_type == null or result_type.? != lhs_type)
+                        return ValidationError.WrongResultType;
+                },
+                .dot => {
+                    if (lhs_type != rhs_type)
+                        return ValidationError.WrongOperandType;
+                    const vector = floatVectorShape(module, lhs_type) orelse return ValidationError.WrongOperandType;
+                    if (result_type == null or result_type.? != vector.element_type)
+                        return ValidationError.WrongResultType;
+                },
+                .outer_product => {
+                    const lhs = floatVectorShape(module, lhs_type) orelse return ValidationError.WrongOperandType;
+                    const rhs = floatVectorShape(module, rhs_type) orelse return ValidationError.WrongOperandType;
+                    if (lhs.element_type != rhs.element_type)
+                        return ValidationError.WrongOperandType;
+
+                    const result = result_type orelse return ValidationError.WrongResultPresence;
+                    const matrix = floatMatrixShape(module, result) orelse return ValidationError.WrongResultType;
+                    if (matrix.element_type != lhs.element_type or
+                        matrix.rows != lhs.length or
+                        matrix.columns != rhs.length)
+                        return ValidationError.WrongResultType;
+                },
+                .integer_add_carry,
+                .integer_subtract_borrow,
+                .signed_multiply_extended,
+                .unsigned_multiply_extended,
+                => {
+                    if (lhs_type != rhs_type)
+                        return ValidationError.WrongOperandType;
+
+                    const operand_shape = conversionIntegerShape(module, lhs_type) orelse return ValidationError.WrongOperandType;
+                    const expected_signedness: type_ir.Signedness = switch (op.opcode) {
+                        .signed_multiply_extended => .signed,
+                        .integer_add_carry, .integer_subtract_borrow, .unsigned_multiply_extended => .unsigned,
+                        else => unreachable,
+                    };
+                    if (operand_shape.signedness != expected_signedness)
+                        return ValidationError.WrongOperandType;
+
+                    const result = module.types.get(result_type orelse return ValidationError.WrongResultPresence) orelse return ValidationError.InvalidType;
+                    const structure = switch (result.*) {
+                        .structure => |structure| structure,
+                        else => return ValidationError.WrongResultType,
+                    };
+                    if (structure.members.len != 2 or
+                        structure.members[0] != lhs_type or
+                        structure.members[1] != lhs_type)
+                        return ValidationError.WrongResultType;
+                },
                 .matrix_times_matrix => {
                     const lhs = module.types.get(lhs_type) orelse return ValidationError.InvalidType;
                     const lhs_matrix = switch (lhs.*) {
@@ -462,6 +552,44 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                 },
             }
         },
+        .ternary => |op| {
+            const first_type = try operandType(module, function_id, op.first);
+            if (try operandType(module, function_id, op.second) != first_type or
+                try operandType(module, function_id, op.third) != first_type or
+                floatShape(module, first_type) == null)
+                return ValidationError.WrongOperandType;
+            if (result_type == null or result_type.? != first_type)
+                return ValidationError.WrongResultType;
+        },
+        .bit_field_extract => |op| {
+            const base_type = try operandType(module, function_id, op.base);
+            if (!isIntegerScalarOrVector(module, base_type))
+                return ValidationError.WrongOperandType;
+            if (!isIntegerScalar(module, try operandType(module, function_id, op.offset)) or
+                !isIntegerScalar(module, try operandType(module, function_id, op.count)))
+                return ValidationError.WrongOperandType;
+
+            const result = result_type orelse return ValidationError.WrongResultPresence;
+            if (!isIntegerScalarOrVector(module, result) or
+                !haveSameIntegerShape(module, base_type, result))
+                return ValidationError.WrongResultType;
+        },
+        .bit_field_insert => |op| {
+            const base_type = try operandType(module, function_id, op.base);
+            const insert_type = try operandType(module, function_id, op.insert);
+            if (!isIntegerScalarOrVector(module, base_type) or
+                !isIntegerScalarOrVector(module, insert_type) or
+                !haveSameIntegerShape(module, base_type, insert_type))
+                return ValidationError.WrongOperandType;
+            if (!isIntegerScalar(module, try operandType(module, function_id, op.offset)) or
+                !isIntegerScalar(module, try operandType(module, function_id, op.count)))
+                return ValidationError.WrongOperandType;
+
+            const result = result_type orelse return ValidationError.WrongResultPresence;
+            if (!isIntegerScalarOrVector(module, result) or
+                !haveSameIntegerShape(module, base_type, result))
+                return ValidationError.WrongResultType;
+        },
         .compare => |op| {
             const lhs_type = try operandType(module, function_id, op.lhs);
             if (try operandType(module, function_id, op.rhs) != lhs_type)
@@ -472,12 +600,22 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                 return ValidationError.WrongResultType;
         },
         .select => |op| {
-            if (!isBoolean(module, try operandType(module, function_id, op.condition)))
-                return ValidationError.WrongOperandType;
+            const condition_type = try operandType(module, function_id, op.condition);
+            const condition_components = booleanComponentCount(module, condition_type) orelse return ValidationError.WrongOperandType;
 
             const true_type = try operandType(module, function_id, op.true_value);
             if (try operandType(module, function_id, op.false_value) != true_type)
                 return ValidationError.WrongOperandType;
+
+            if (condition_components != 1) {
+                const selected_type = module.types.get(true_type) orelse return ValidationError.InvalidType;
+                const selected_components = switch (selected_type.*) {
+                    .vector => |vector| vector.length,
+                    else => return ValidationError.WrongOperandType,
+                };
+                if (condition_components != selected_components)
+                    return ValidationError.WrongOperandType;
+            }
 
             if (result_type == null or result_type.? != true_type)
                 return ValidationError.WrongResultType;
@@ -489,18 +627,29 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
         },
         .convert => |op| {
             const operand_type = try operandType(module, function_id, op.operand);
-            const operand_shape = conversionIntegerShape(module, operand_type) orelse return ValidationError.WrongOperandType;
-            const expected_signedness: type_ir.Signedness = switch (op.opcode) {
-                .signed_to_float => .signed,
-                .unsigned_to_float => .unsigned,
-            };
-            if (operand_shape.bits != 32 or operand_shape.signedness != expected_signedness)
-                return ValidationError.WrongOperandType;
-
             const result = result_type orelse return ValidationError.WrongResultPresence;
-            const result_components = floatComponentCount(module, result, 32) orelse return ValidationError.WrongResultType;
-            if (result_components != operand_shape.components)
-                return ValidationError.WrongResultType;
+
+            switch (op.opcode) {
+                .signed_to_float, .unsigned_to_float => {
+                    const operand_shape = conversionIntegerShape(module, operand_type) orelse return ValidationError.WrongOperandType;
+                    const expected_signedness: type_ir.Signedness = if (op.opcode == .signed_to_float) .signed else .unsigned;
+                    if (operand_shape.bits != 32 or operand_shape.signedness != expected_signedness)
+                        return ValidationError.WrongOperandType;
+
+                    const result_components = floatComponentCount(module, result, 32) orelse return ValidationError.WrongResultType;
+                    if (result_components != operand_shape.components)
+                        return ValidationError.WrongResultType;
+                },
+                .float_to_signed, .float_to_unsigned => {
+                    const operand_components = floatComponentCount(module, operand_type, 32) orelse return ValidationError.WrongOperandType;
+                    const result_shape = conversionIntegerShape(module, result) orelse return ValidationError.WrongResultType;
+                    const expected_signedness: type_ir.Signedness = if (op.opcode == .float_to_signed) .signed else .unsigned;
+                    if (result_shape.bits != 32 or
+                        result_shape.signedness != expected_signedness or
+                        result_shape.components != operand_components)
+                        return ValidationError.WrongResultType;
+                },
+            }
         },
         .composite_construct => |op| {
             const result = result_type orelse return ValidationError.WrongResultPresence;
@@ -926,11 +1075,58 @@ fn isFloat(module: *const module_ir.Module, type_id: ids.TypeId, bits: u16) bool
 }
 
 fn floatComponentCount(module: *const module_ir.Module, type_id: ids.TypeId, bits: u16) ?u8 {
+    const shape = floatShape(module, type_id) orelse return null;
+    return if (shape.bits == bits) shape.components else null;
+}
+
+fn floatShape(module: *const module_ir.Module, type_id: ids.TypeId) ?FloatShape {
     const ty = module.types.get(type_id) orelse return null;
     return switch (ty.*) {
-        .floating => |float| if (float.bits == bits) 1 else null,
-        .vector => |vector| if (isFloat(module, vector.element_type, bits)) vector.length else null,
+        .floating => |float| .{
+            .bits = float.bits,
+            .components = 1,
+        },
+        .vector => |vector| blk: {
+            const element = module.types.get(vector.element_type) orelse return null;
+            const float = switch (element.*) {
+                .floating => |float| float,
+                else => return null,
+            };
+            break :blk .{
+                .bits = float.bits,
+                .components = vector.length,
+            };
+        },
         else => null,
+    };
+}
+
+fn floatVectorShape(module: *const module_ir.Module, type_id: ids.TypeId) ?FloatVectorShape {
+    const ty = module.types.get(type_id) orelse return null;
+    const vector = switch (ty.*) {
+        .vector => |vector| vector,
+        else => return null,
+    };
+    const element = module.types.get(vector.element_type) orelse return null;
+    if (element.* != .floating)
+        return null;
+    return .{
+        .element_type = vector.element_type,
+        .length = vector.length,
+    };
+}
+
+fn floatMatrixShape(module: *const module_ir.Module, type_id: ids.TypeId) ?FloatMatrixShape {
+    const ty = module.types.get(type_id) orelse return null;
+    const matrix = switch (ty.*) {
+        .matrix => |matrix| matrix,
+        else => return null,
+    };
+    const column = floatVectorShape(module, matrix.element_type) orelse return null;
+    return .{
+        .element_type = column.element_type,
+        .rows = column.length,
+        .columns = matrix.column_count,
     };
 }
 
@@ -950,6 +1146,17 @@ fn isBooleanVector(module: *const module_ir.Module, type_id: ids.TypeId) bool {
             return element_type.* == .boolean;
         },
         else => false,
+    };
+}
+
+fn booleanComponentCount(module: *const module_ir.Module, type_id: ids.TypeId) ?u8 {
+    if (isBoolean(module, type_id))
+        return 1;
+
+    const ty = module.types.get(type_id) orelse return null;
+    return switch (ty.*) {
+        .vector => |vector| if (isBoolean(module, vector.element_type)) vector.length else null,
+        else => null,
     };
 }
 
@@ -1030,6 +1237,11 @@ fn conversionIntegerShape(module: *const module_ir.Module, type_id: ids.TypeId) 
         },
         else => null,
     };
+}
+
+fn isIntegerScalar(module: *const module_ir.Module, type_id: ids.TypeId) bool {
+    const ty = module.types.get(type_id) orelse return false;
+    return ty.* == .integer;
 }
 
 fn isIntegerScalarOrVector(module: *const module_ir.Module, type_id: ids.TypeId) bool {
@@ -1306,6 +1518,160 @@ test "Validator: check unary, binary, compare, and select types" {
         \\    }
         \\}
     );
+
+    const parser = @import("../parser/parser.zig");
+    var module = try parser.parseString(std.testing.allocator,
+        \\shader compute @main
+        \\{
+        \\    %condition: constant vec2[bool] = null
+        \\    %yes: constant vec2[u32] = null
+        \\    %no: constant vec2[u32] = null
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec2[u32] = select %condition, %yes, %no
+        \\            return
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+    try validate(&module);
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    %condition: constant vec3[bool] = null
+        \\    %yes: constant vec2[u32] = null
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec2[u32] = select %condition, %yes, %yes
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Validator: bit and extended integer operations" {
+    const parser = @import("../parser/parser.zig");
+
+    var module = try parser.parseString(std.testing.allocator,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%unsigned: u32, %signed: i32, %vector: vec2[u32], %offset: u32, %count: i32) -> void
+        \\    {
+        \\        .entry():
+        \\            %bit_counted: u32 = bit_count %unsigned
+        \\            %bit_reversed: vec2[u32] = bit_reverse %vector
+        \\            %carry: struct[u32, u32] = integer_add_carry %unsigned, %unsigned
+        \\            %borrow: struct[u32, u32] = integer_subtract_borrow %unsigned, %unsigned
+        \\            %signed_extended: struct[i32, i32] = signed_multiply_extended %signed, %signed
+        \\            %unsigned_extended: struct[u32, u32] = unsigned_multiply_extended %unsigned, %unsigned
+        \\            %signed_extract: i32 = bit_field_extract signed %signed, %offset, %count
+        \\            %unsigned_extract: vec2[u32] = bit_field_extract unsigned %vector, %offset, %count
+        \\            %inserted: vec2[u32] = bit_field_insert %vector, %vector, %offset, %count
+        \\            return
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+    try validate(&module);
+
+    try expectValidationError(Error.WrongResultType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%value: u32) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec2[u32] = bit_count %value
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%value: f32) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: u32 = bit_reverse %value
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%value: i32) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: struct[i32, i32] = integer_add_carry %value, %value
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%value: u32) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: struct[u32, u32] = signed_multiply_extended %value, %value
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%value: u32) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: struct[u32, i32] = unsigned_multiply_extended %value, %value
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%base: u32, %offset: vec2[u32], %count: u32) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: u32 = bit_field_extract unsigned %base, %offset, %count
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%base: u32, %insert: u64, %offset: u32, %count: u32) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: u32 = bit_field_insert %base, %insert, %offset, %count
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%base: i32, %offset: u32, %count: u32) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: i64 = bit_field_extract signed %base, %offset, %count
+        \\            return
+        \\    }
+        \\}
+    );
 }
 
 test "Validator: matrix arithmetic types and dimensions" {
@@ -1419,6 +1785,127 @@ test "Validator: matrix arithmetic types and dimensions" {
         \\    {
         \\        .entry():
         \\            %result: mat4x2[f32] = matrix_times_matrix %lhs, %rhs
+        \\            return
+        \\    }
+        \\}
+    );
+}
+
+test "Validator: float classification, matrix, product, and conversion operations" {
+    const parser = @import("../parser/parser.zig");
+
+    var module = try parser.parseString(std.testing.allocator,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%scalar: f32, %lhs: vec2[f32], %rhs: vec3[f32], %matrix: mat2x3[f32]) -> void
+        \\    {
+        \\        .entry():
+        \\            %infinite: bool = is_inf %scalar
+        \\            %nan: vec2[bool] = is_nan %lhs
+        \\            %transposed: mat3x2[f32] = transpose %matrix
+        \\            %remainder: vec2[f32] = float_remainder %lhs, %lhs
+        \\            %product: f32 = dot %lhs, %lhs
+        \\            %outer: mat3x2[f32] = outer_product %lhs, %rhs
+        \\            %signed: vec2[i32] = convert float_to_signed %lhs
+        \\            %unsigned: u32 = convert float_to_unsigned %scalar
+        \\            return
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+    try validate(&module);
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%value: u32) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: bool = is_nan %value
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%value: vec2[f32]) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: bool = is_inf %value
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%value: mat2x3[f32]) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: mat2x3[f32] = transpose %value
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%float: f32, %integer: u32) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: f32 = float_remainder %float, %integer
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%lhs: vec2[f32], %rhs: vec3[f32]) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: f32 = dot %lhs, %rhs
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%lhs: vec2[f32], %rhs: vec3[f32]) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: mat2x3[f32] = outer_product %lhs, %rhs
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongOperandType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%value: f64) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: i32 = convert float_to_signed %value
+        \\            return
+        \\    }
+        \\}
+    );
+
+    try expectValidationError(Error.WrongResultType,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%value: vec2[f32]) -> void
+        \\    {
+        \\        .entry():
+        \\            %result: vec2[i32] = convert float_to_unsigned %value
         \\            return
         \\    }
         \\}

@@ -422,6 +422,10 @@ const LoweringState = struct {
         switch (source_instruction.operation) {
             .unary => |operation| try self.lowerUnary(block_id, source_instruction.result, operation),
             .binary => |operation| try self.lowerBinary(block_id, source_instruction.result, operation),
+            .ternary,
+            .bit_field_extract,
+            .bit_field_insert,
+            => return Error.UnsupportedOperation,
             .compare => |operation| try self.lowerCompare(block_id, source_instruction.result, operation),
             .select => |operation| try self.lowerSelect(block_id, source_instruction.result, operation),
             .bitcast => |value_id| try self.lowerBitcast(block_id, source_instruction.result, value_id),
@@ -458,6 +462,16 @@ const LoweringState = struct {
 
     fn lowerUnary(self: *LoweringState, block_id: ids.BlockId, result: ?shader_ir.id.ValueId, operation: shader_ir.instruction.Unary) Error!void {
         const result_id = try requireResult(result);
+        switch (operation.opcode) {
+            .absolute,
+            .is_inf,
+            .is_nan,
+            .normalize,
+            .transpose,
+            => return Error.UnsupportedOperation,
+            else => {},
+        }
+
         if (operation.opcode == .logical_not) {
             const source_predicate = try self.predicate(operation.operand);
             const inverted: PredicateValue = switch (source_predicate) {
@@ -507,13 +521,31 @@ const LoweringState = struct {
                         },
                     });
                 },
-                .logical_not => unreachable,
+                .logical_not,
+                .absolute,
+                .is_inf,
+                .is_nan,
+                .normalize,
+                .transpose,
+                => unreachable,
+                .bit_count,
+                .bit_reverse,
+                => return Error.UnsupportedOperation,
             }
         }
     }
 
     fn lowerBinary(self: *LoweringState, block_id: ids.BlockId, result: ?shader_ir.id.ValueId, operation: shader_ir.instruction.Binary) Error!void {
         const result_id = try requireResult(result);
+        switch (operation.opcode) {
+            .atan2,
+            .float_remainder,
+            .dot,
+            .outer_product,
+            => return Error.UnsupportedOperation,
+            else => {},
+        }
+
         const lhs_components = try self.components(operation.lhs);
         const rhs_components = try self.components(operation.rhs);
         const result_components = try self.addRegisterLocation(result_id, .temporary);
@@ -571,14 +603,22 @@ const LoweringState = struct {
 
             .unsigned_divide,
             .signed_divide,
+            .atan2,
+            .float_remainder,
+            .dot,
+            .outer_product,
             => unreachable,
 
             .unsigned_modulo,
             .signed_modulo,
             .float_divide,
             .float_modulo,
+            .integer_add_carry,
+            .integer_subtract_borrow,
             .logical_and,
             .logical_or,
+            .signed_multiply_extended,
+            .unsigned_multiply_extended,
             => return Error.UnsupportedOperation,
         };
 
@@ -668,6 +708,7 @@ const LoweringState = struct {
             .ordered_float_not_equal,
             .unordered_float_not_equal,
             .ordered_float_less,
+            .ordered_float_less_equal,
             .unordered_float_less,
             => return Error.UnsupportedOperation,
         };

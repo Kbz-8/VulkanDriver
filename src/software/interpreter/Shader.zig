@@ -1,11 +1,9 @@
 const std = @import("std");
-const vk = @import("vulkan");
 const base = @import("base");
 const shader_ir = @import("shader_ir");
 
 const Program = @import("Program.zig");
 const Runtime = @import("Runtime.zig");
-const SoftShaderModule = @import("../SoftShaderModule.zig");
 
 const VkError = base.VkError;
 const ir = shader_ir.ir;
@@ -22,28 +20,10 @@ runtimes: []RuntimeSlot,
 workgroup_size: ?[3]u32,
 early_fragment_tests: bool = false,
 
-pub fn compile(allocator: std.mem.Allocator, module: *SoftShaderModule, stage: *const vk.PipelineShaderStageCreateInfo, runtime_count: usize) VkError!Self {
-    const expected_stage = commonStage(stage.stage) orelse {
-        std.log.scoped(.IrInterpreter).err("unsupported shader stage", .{});
-        return VkError.ValidationFailed;
-    };
+pub fn compile(allocator: std.mem.Allocator, module: *const ir.module.Module, runtime_count: usize) VkError!Self {
+    const expected_stage = module.stage;
 
-    const specializations = try specializationValues(allocator, stage.p_specialization_info);
-    defer if (specializations.len != 0) allocator.free(specializations);
-
-    var module_ir = module.interface.instantiateIr(allocator, .{
-        .entry_point = std.mem.span(stage.p_name),
-        .stage = expected_stage,
-        .specializations = specializations,
-    }) catch |err| {
-        if (err == error.OutOfMemory)
-            return VkError.OutOfDeviceMemory;
-        std.log.scoped(.IrInterpreter).err("IR translation failed: {s}", .{@errorName(err)});
-        return VkError.ValidationFailed;
-    };
-    defer module_ir.deinit();
-
-    var program = Program.compile(allocator, &module_ir) catch |err| {
+    var program = Program.compile(allocator, module) catch |err| {
         if (err == error.OutOfMemory)
             return VkError.OutOfDeviceMemory;
         std.log.scoped(.IrInterpreter).err("bytecode lowering failed: {s}", .{@errorName(err)});
@@ -75,8 +55,8 @@ pub fn compile(allocator: std.mem.Allocator, module: *SoftShaderModule, stage: *
     return .{
         .program = program,
         .runtimes = runtimes,
-        .workgroup_size = module_ir.execution_modes.workgroup_size,
-        .early_fragment_tests = module_ir.execution_modes.early_fragment_tests,
+        .workgroup_size = module.execution_modes.workgroup_size,
+        .early_fragment_tests = module.execution_modes.early_fragment_tests,
     };
 }
 
@@ -133,44 +113,6 @@ fn hasCompatibleInterface(program: *const Program, stage: ir.module.Stage) bool 
         }
     }
     return stage != .vertex or has_position;
-}
-
-fn specializationValues(allocator: std.mem.Allocator, info: ?*const vk.SpecializationInfo) VkError![]shader_ir.spirv.translator.SpecializationValue {
-    const specialization = info orelse return &.{};
-    if (specialization.map_entry_count == 0)
-        return &.{};
-    const entries = specialization.p_map_entries orelse return VkError.ValidationFailed;
-    const data: []const u8 = if (specialization.data_size == 0)
-        &.{}
-    else
-        @as([*]const u8, @ptrCast(@alignCast(specialization.p_data)))[0..specialization.data_size];
-
-    const values = allocator.alloc(shader_ir.spirv.translator.SpecializationValue, specialization.map_entry_count) catch
-        return VkError.OutOfDeviceMemory;
-    errdefer allocator.free(values);
-    for (entries[0..specialization.map_entry_count], values) |entry, *value| {
-        const offset: usize = entry.offset;
-        const end = std.math.add(usize, offset, entry.size) catch return VkError.ValidationFailed;
-        if (end > data.len)
-            return VkError.ValidationFailed;
-        value.* = .{ .constant_id = entry.constant_id, .data = data[offset..end] };
-    }
-    return values;
-}
-
-fn commonStage(stage: vk.ShaderStageFlags) ?ir.module.Stage {
-    const bits: u32 = @bitCast(stage);
-    const vertex_bits: u32 = @bitCast(vk.ShaderStageFlags{ .vertex = true });
-    const fragment_bits: u32 = @bitCast(vk.ShaderStageFlags{ .fragment = true });
-    const compute_bits: u32 = @bitCast(vk.ShaderStageFlags{ .compute = true });
-    return if (bits == vertex_bits)
-        .vertex
-    else if (bits == fragment_bits)
-        .fragment
-    else if (bits == compute_bits)
-        .compute
-    else
-        null;
 }
 
 test "IR interpreter accepts scalar vertex PointSize output" {

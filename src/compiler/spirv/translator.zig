@@ -714,7 +714,10 @@ pub fn instantiate(allocator: std.mem.Allocator, source: *const SourceModule, op
         var manager = ir.transformer_manager.Manager.init(scratch);
         defer manager.deinit();
         try manager.add(ir.inline_all_functions.transformer);
-        var transformer_context: ir.transformer_manager.Context = .{ .allocator = scratch };
+        var transformer_context: ir.transformer_manager.Context = .{
+            .allocator = scratch,
+            .validate_after_each_transformer = builtin_info.mode == .debug,
+        };
         _ = try manager.run(&module, &transformer_context);
     } else {
         module.properties.no_function_calls = true;
@@ -1927,16 +1930,26 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
 
         .all,
         .f_negate,
+        .is_inf,
+        .is_nan,
         .logical_not,
         .not,
         .s_negate,
+        .transpose,
+        .bit_reverse,
+        .bit_count,
         => {
             try expectOperandCount(operands, 3);
 
             const opcode: ir.instruction.UnaryOpcode = switch (instruction.opcode) {
                 .all => .all,
+                .is_inf => .is_inf,
+                .is_nan => .is_nan,
                 .logical_not => .logical_not,
                 .not => .bitwise_not,
+                .transpose => .transpose,
+                .bit_reverse => .bit_reverse,
+                .bit_count => .bit_count,
 
                 .f_negate,
                 .s_negate,
@@ -2022,6 +2035,27 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             try context.setValue(operands[1], result);
         },
 
+        .i_add_carry,
+        .i_sub_borrow,
+        .u_mul_extended,
+        .s_mul_extended,
+        .f_rem,
+        .dot,
+        .outer_product,
+        => {
+            try expectOperandCount(operands, 4);
+
+            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+                .binary = .{
+                    .opcode = translateBinaryOpcode(instruction.opcode),
+                    .lhs = try context.resolveValue(operands[2]),
+                    .rhs = try context.resolveValue(operands[3]),
+                },
+            }, context.nameOf(operands[1]))).?;
+
+            try context.setValue(operands[1], result);
+        },
+
         .i_add,
         .i_sub,
         .i_mul,
@@ -2057,6 +2091,42 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             try context.setValue(operands[1], result);
         },
 
+        .bit_field_s_extract,
+        .bit_field_u_extract,
+        => {
+            try expectOperandCount(operands, 5);
+
+            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+                .bit_field_extract = .{
+                    .opcode = switch (instruction.opcode) {
+                        .bit_field_s_extract => .signed,
+                        .bit_field_u_extract => .unsigned,
+                        else => unreachable,
+                    },
+                    .base = try context.resolveValue(operands[2]),
+                    .offset = try context.resolveValue(operands[3]),
+                    .count = try context.resolveValue(operands[4]),
+                },
+            }, context.nameOf(operands[1]))).?;
+
+            try context.setValue(operands[1], result);
+        },
+
+        .bit_field_insert => {
+            try expectOperandCount(operands, 6);
+
+            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+                .bit_field_insert = .{
+                    .base = try context.resolveValue(operands[2]),
+                    .insert = try context.resolveValue(operands[3]),
+                    .offset = try context.resolveValue(operands[4]),
+                    .count = try context.resolveValue(operands[5]),
+                },
+            }, context.nameOf(operands[1]))).?;
+
+            try context.setValue(operands[1], result);
+        },
+
         .u_greater_than_equal => {
             try expectOperandCount(operands, 4);
             const result_type = try context.translateType(operands[0]);
@@ -2083,6 +2153,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
         .f_ord_not_equal,
         .f_unord_not_equal,
         .f_ord_less_than,
+        .f_ord_less_than_equal,
         .f_unord_less_than,
         => {
             try expectOperandCount(operands, 4);
@@ -2112,6 +2183,8 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             try context.setValue(operands[1], result);
         },
 
+        .convert_f_to_s,
+        .convert_f_to_u,
         .convert_s_to_f,
         .convert_u_to_f,
         => {
@@ -2120,6 +2193,8 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
                 .convert = .{
                     .opcode = switch (instruction.opcode) {
+                        .convert_f_to_s => .float_to_signed,
+                        .convert_f_to_u => .float_to_unsigned,
                         .convert_s_to_f => .signed_to_float,
                         .convert_u_to_f => .unsigned_to_float,
                         else => unreachable,
@@ -2216,9 +2291,61 @@ fn translateExtendedInstruction(context: *Context, block: ir.id.BlockId, operand
     if (operands.len < 4 or !try isGlslStd450(context, operands[2]))
         return TranslationError.UnsupportedOpcode;
     switch (operands[3]) {
+        4 => try translateGlslUnary(context, block, operands, .absolute), // FAbs
+        25 => try translateGlslBinary(context, block, operands, .atan2), // Atan2
+        49 => try translateGlslTernary(context, block, operands, .smooth_step), // SmoothStep
+        69 => try translateGlslUnary(context, block, operands, .normalize), // Normalize
         81 => try translateNClamp(context, block, operands),
         else => return TranslationError.UnsupportedOpcode,
     }
+}
+
+fn translateGlslUnary(context: *Context, block: ir.id.BlockId, operands: []const u32, opcode: ir.instruction.UnaryOpcode) !void {
+    try expectOperandCount(operands, 5);
+    const result_type = try context.translateType(operands[0]);
+    const operand = try context.resolveValue(operands[4]);
+    if (context.module.typeOf(operand) != result_type)
+        return TranslationError.InvalidInstruction;
+
+    const result = (try context.builder.appendInstruction(block, result_type, .{ .unary = .{
+        .opcode = opcode,
+        .operand = operand,
+    } }, context.nameOf(operands[1]))).?;
+    try context.setValue(operands[1], result);
+}
+
+fn translateGlslBinary(context: *Context, block: ir.id.BlockId, operands: []const u32, opcode: ir.instruction.BinaryOpcode) !void {
+    try expectOperandCount(operands, 6);
+    const result_type = try context.translateType(operands[0]);
+    const lhs = try context.resolveValue(operands[4]);
+    const rhs = try context.resolveValue(operands[5]);
+    if (context.module.typeOf(lhs) != result_type or context.module.typeOf(rhs) != result_type)
+        return TranslationError.InvalidInstruction;
+
+    const result = (try context.builder.appendInstruction(block, result_type, .{ .binary = .{
+        .opcode = opcode,
+        .lhs = lhs,
+        .rhs = rhs,
+    } }, context.nameOf(operands[1]))).?;
+    try context.setValue(operands[1], result);
+}
+
+fn translateGlslTernary(context: *Context, block: ir.id.BlockId, operands: []const u32, opcode: ir.instruction.TernaryOpcode) !void {
+    try expectOperandCount(operands, 7);
+    const result_type = try context.translateType(operands[0]);
+    const first = try context.resolveValue(operands[4]);
+    const second = try context.resolveValue(operands[5]);
+    const third = try context.resolveValue(operands[6]);
+    if (context.module.typeOf(first) != result_type or context.module.typeOf(second) != result_type or context.module.typeOf(third) != result_type)
+        return TranslationError.InvalidInstruction;
+
+    const result = (try context.builder.appendInstruction(block, result_type, .{ .ternary = .{
+        .opcode = opcode,
+        .first = first,
+        .second = second,
+        .third = third,
+    } }, context.nameOf(operands[1]))).?;
+    try context.setValue(operands[1], result);
 }
 
 fn isGlslStd450(context: *const Context, import_id: u32) !bool {
@@ -2554,17 +2681,7 @@ fn translateBufferAccessChain(context: *Context, block: ir.id.BlockId, operands:
 
                 const stride = context.decorations[try context.idIndex(current_type)].array_stride orelse return TranslationError.InvalidInstruction;
                 const index = try unsignedOffsetValue(context, block, index_id);
-                const stride_value = try context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = stride });
-
-                const term = (try context.builder.appendInstruction(block, try unsigned32Type(context), .{
-                    .binary = .{
-                        .opcode = .integer_multiply,
-                        .lhs = index,
-                        .rhs = stride_value,
-                    },
-                }, null)).?;
-
-                byte_offset = try addByteOffset(context, block, byte_offset, term);
+                byte_offset = try addByteOffset(context, block, byte_offset, try scaledByteOffset(context, block, index, stride));
                 current_type = type_definition.operands[1];
             },
             .type_matrix => {
@@ -2639,11 +2756,7 @@ fn translatePushConstantAccessChain(context: *Context, block: ir.id.BlockId, ope
                 try expectOperandCount(type_definition.operands, if (type_definition.opcode == .type_array) 3 else 2);
                 const stride = context.decorations[try context.idIndex(current_type)].array_stride orelse return TranslationError.InvalidInstruction;
                 const index = try unsignedOffsetValue(context, block, index_id);
-                const stride_value = try context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = stride });
-                const term = (try context.builder.appendInstruction(block, try unsigned32Type(context), .{
-                    .binary = .{ .opcode = .integer_multiply, .lhs = index, .rhs = stride_value },
-                }, null)).?;
-                byte_offset = try addByteOffset(context, block, byte_offset, term);
+                byte_offset = try addByteOffset(context, block, byte_offset, try scaledByteOffset(context, block, index, stride));
                 current_type = type_definition.operands[1];
             },
             .type_matrix => {
@@ -2714,11 +2827,7 @@ fn translateWorkgroupAccessChain(context: *Context, block: ir.id.BlockId, operan
                 const element_type = type_definition.operands[1];
                 const stride = try workgroupTypeSize(context, element_type);
                 const index = try unsignedOffsetValue(context, block, index_id);
-                const stride_value = try context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = stride });
-                const term = (try context.builder.appendInstruction(block, try unsigned32Type(context), .{
-                    .binary = .{ .opcode = .integer_multiply, .lhs = index, .rhs = stride_value },
-                }, null)).?;
-                byte_offset = try addByteOffset(context, block, byte_offset, term);
+                byte_offset = try addByteOffset(context, block, byte_offset, try scaledByteOffset(context, block, index, stride));
                 current_type = element_type;
             },
             else => return TranslationError.UnsupportedType,
@@ -3074,6 +3183,8 @@ fn unsignedOffsetValue(context: *Context, block: ir.id.BlockId, spv_id: u32) !ir
         return TranslationError.UnsupportedType;
     if (integer.signedness == .unsigned)
         return value;
+    if (constantIntegerBits(context, value)) |bits|
+        return context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = bits });
 
     return (try context.builder.appendInstruction(block, try unsigned32Type(context), .{
         .bitcast = value,
@@ -3122,11 +3233,7 @@ fn matrixElementMemoryOffset(layout: MatrixMemoryLayout, element_size: u32, colu
 
 fn addIndexedByteOffset(context: *Context, block: ir.id.BlockId, base: ?ir.id.ValueId, spv_index: u32, stride: u32) !ir.id.ValueId {
     const index = try unsignedOffsetValue(context, block, spv_index);
-    const stride_value = try context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = stride });
-    const term = (try context.builder.appendInstruction(block, try unsigned32Type(context), .{
-        .binary = .{ .opcode = .integer_multiply, .lhs = index, .rhs = stride_value },
-    }, null)).?;
-    return addByteOffset(context, block, base, term);
+    return addByteOffset(context, block, base, try scaledByteOffset(context, block, index, stride));
 }
 
 fn addConstantByteOffset(context: *Context, block: ir.id.BlockId, base: ?ir.id.ValueId, offset: u32) !ir.id.ValueId {
@@ -3139,6 +3246,7 @@ fn addConstantByteOffset(context: *Context, block: ir.id.BlockId, base: ?ir.id.V
 const VectorTypeInfo = struct {
     vector_type: ir.id.TypeId,
     element_type: ir.id.TypeId,
+    element_size: u32,
     length: u32,
 };
 
@@ -3150,12 +3258,21 @@ fn vectorTypeInfo(context: *Context, spv_type: u32) !VectorTypeInfo {
     return .{
         .vector_type = try context.translateType(spv_type),
         .element_type = try context.translateType(vector.operands[1]),
+        .element_size = try workgroupTypeSize(context, vector.operands[1]),
         .length = vector.operands[2],
     };
 }
 
 fn translateBufferStridedVectorLoad(context: *Context, block: ir.id.BlockId, address: BufferAddress, stride: u32, name: ?[]const u8) !ir.id.ValueId {
     const info = try vectorTypeInfo(context, address.pointee_type);
+    if (stride == info.element_size) {
+        return (try context.builder.appendInstruction(block, info.vector_type, .{ .load_buffer = .{
+            .resource = address.resource,
+            .descriptor_index = address.descriptor_index,
+            .byte_offset = try bufferByteOffset(context, address),
+        } }, name)).?;
+    }
+
     const elements = try context.scratch.alloc(ir.id.ValueId, info.length);
     for (elements, 0..) |*element, index| {
         const relative_offset = std.math.mul(u32, @intCast(index), stride) catch return TranslationError.InvalidInstruction;
@@ -3172,6 +3289,12 @@ fn translateBufferStridedVectorLoad(context: *Context, block: ir.id.BlockId, add
 
 fn translatePushConstantStridedVectorLoad(context: *Context, block: ir.id.BlockId, address: PushConstantAddress, stride: u32, name: ?[]const u8) !ir.id.ValueId {
     const info = try vectorTypeInfo(context, address.pointee_type);
+    if (stride == info.element_size) {
+        return (try context.builder.appendInstruction(block, info.vector_type, .{ .load_push_constant = .{
+            .byte_offset = try pushConstantByteOffset(context, address),
+        } }, name)).?;
+    }
+
     const elements = try context.scratch.alloc(ir.id.ValueId, info.length);
     for (elements, 0..) |*element, index| {
         const relative_offset = std.math.mul(u32, @intCast(index), stride) catch return TranslationError.InvalidInstruction;
@@ -3203,10 +3326,29 @@ fn translateBufferStridedVectorStore(context: *Context, block: ir.id.BlockId, ad
 
 fn translateBufferMatrixLoad(context: *Context, block: ir.id.BlockId, address: BufferAddress, layout: MatrixMemoryLayout, name: ?[]const u8) !ir.id.ValueId {
     const info = try matrixTypeInfo(context, address.pointee_type);
+    const column_size = std.math.mul(u32, info.rows, info.element_size) catch return TranslationError.InvalidInstruction;
+    if (layout.major == .column and layout.stride == column_size) {
+        return (try context.builder.appendInstruction(block, info.matrix_type, .{ .load_buffer = .{
+            .resource = address.resource,
+            .descriptor_index = address.descriptor_index,
+            .byte_offset = try bufferByteOffset(context, address),
+        } }, name)).?;
+    }
+
     const columns = try context.scratch.alloc(ir.id.ValueId, info.columns);
     const elements = try context.scratch.alloc(ir.id.ValueId, info.rows);
 
     for (columns, 0..) |*column, column_index| {
+        if (layout.major == .column) {
+            const relative_offset = std.math.mul(u32, @intCast(column_index), layout.stride) catch return TranslationError.InvalidInstruction;
+            column.* = (try context.builder.appendInstruction(block, info.column_type, .{ .load_buffer = .{
+                .resource = address.resource,
+                .descriptor_index = address.descriptor_index,
+                .byte_offset = try addConstantByteOffset(context, block, address.byte_offset, relative_offset),
+            } }, null)).?;
+            continue;
+        }
+
         for (elements, 0..) |*element, row_index| {
             const relative_offset = try matrixElementMemoryOffset(layout, info.element_size, @intCast(column_index), @intCast(row_index));
             element.* = (try context.builder.appendInstruction(block, info.element_type, .{ .load_buffer = .{
@@ -3227,10 +3369,25 @@ fn translateBufferMatrixLoad(context: *Context, block: ir.id.BlockId, address: B
 
 fn translatePushConstantMatrixLoad(context: *Context, block: ir.id.BlockId, address: PushConstantAddress, layout: MatrixMemoryLayout, name: ?[]const u8) !ir.id.ValueId {
     const info = try matrixTypeInfo(context, address.pointee_type);
+    const column_size = std.math.mul(u32, info.rows, info.element_size) catch return TranslationError.InvalidInstruction;
+    if (layout.major == .column and layout.stride == column_size) {
+        return (try context.builder.appendInstruction(block, info.matrix_type, .{ .load_push_constant = .{
+            .byte_offset = try pushConstantByteOffset(context, address),
+        } }, name)).?;
+    }
+
     const columns = try context.scratch.alloc(ir.id.ValueId, info.columns);
     const elements = try context.scratch.alloc(ir.id.ValueId, info.rows);
 
     for (columns, 0..) |*column, column_index| {
+        if (layout.major == .column) {
+            const relative_offset = std.math.mul(u32, @intCast(column_index), layout.stride) catch return TranslationError.InvalidInstruction;
+            column.* = (try context.builder.appendInstruction(block, info.column_type, .{ .load_push_constant = .{
+                .byte_offset = try addConstantByteOffset(context, block, address.byte_offset, relative_offset),
+            } }, null)).?;
+            continue;
+        }
+
         for (elements, 0..) |*element, row_index| {
             const relative_offset = try matrixElementMemoryOffset(layout, info.element_size, @intCast(column_index), @intCast(row_index));
             element.* = (try context.builder.appendInstruction(block, info.element_type, .{ .load_push_constant = .{
@@ -3268,6 +3425,10 @@ fn translateBufferMatrixStore(context: *Context, block: ir.id.BlockId, address: 
 
 fn addByteOffset(context: *Context, block: ir.id.BlockId, current: ?ir.id.ValueId, term: ir.id.ValueId) !ir.id.ValueId {
     const lhs = current orelse return term;
+    if (constantIntegerBits(context, lhs)) |lhs_bits| {
+        if (constantIntegerBits(context, term)) |term_bits|
+            return context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = lhs_bits +% term_bits });
+    }
     return (try context.builder.appendInstruction(block, try unsigned32Type(context), .{
         .binary = .{
             .opcode = .integer_add,
@@ -3275,6 +3436,27 @@ fn addByteOffset(context: *Context, block: ir.id.BlockId, current: ?ir.id.ValueI
             .rhs = term,
         },
     }, null)).?;
+}
+
+fn scaledByteOffset(context: *Context, block: ir.id.BlockId, index: ir.id.ValueId, stride: u32) !ir.id.ValueId {
+    if (constantIntegerBits(context, index)) |bits|
+        return context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = bits *% stride });
+
+    const stride_value = try context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = stride });
+    return (try context.builder.appendInstruction(block, try unsigned32Type(context), .{
+        .binary = .{ .opcode = .integer_multiply, .lhs = index, .rhs = stride_value },
+    }, null)).?;
+}
+
+fn constantIntegerBits(context: *const Context, value_id: ir.id.ValueId) ?u32 {
+    const value = context.module.values.get(value_id) orelse return null;
+    if (value.definition != .constant)
+        return null;
+    const constant = context.module.constants.get(value.definition.constant) orelse return null;
+    return switch (constant.value) {
+        .integer_bits => |bits| @truncate(bits),
+        else => null,
+    };
 }
 
 fn bufferByteOffset(context: *Context, address: BufferAddress) !ir.id.ValueId {
@@ -3543,6 +3725,10 @@ fn translateBinaryOpcode(opcode: spirv.Opcode) ir.instruction.BinaryOpcode {
         .i_add => .integer_add,
         .i_sub => .integer_subtract,
         .i_mul => .integer_multiply,
+        .i_add_carry => .integer_add_carry,
+        .i_sub_borrow => .integer_subtract_borrow,
+        .u_mul_extended => .unsigned_multiply_extended,
+        .s_mul_extended => .signed_multiply_extended,
         .u_div => .unsigned_divide,
         .s_div => .signed_divide,
         .u_mod => .unsigned_modulo,
@@ -3552,6 +3738,9 @@ fn translateBinaryOpcode(opcode: spirv.Opcode) ir.instruction.BinaryOpcode {
         .f_mul => .float_multiply,
         .f_div => .float_divide,
         .f_mod => .float_modulo,
+        .f_rem => .float_remainder,
+        .dot => .dot,
+        .outer_product => .outer_product,
         .shift_left_logical => .shift_left,
         .shift_right_logical => .logical_shift_right,
         .shift_right_arithmetic => .arithmetic_shift_right,
@@ -3576,6 +3765,7 @@ fn translateCompareOpcode(opcode: spirv.Opcode) ir.instruction.CompareOpcode {
         .f_ord_not_equal => .ordered_float_not_equal,
         .f_unord_not_equal => .unordered_float_not_equal,
         .f_ord_less_than => .ordered_float_less,
+        .f_ord_less_than_equal => .ordered_float_less_equal,
         .f_unord_less_than => .unordered_float_less,
 
         else => unreachable,
@@ -4109,7 +4299,7 @@ test "SPIR-V: row-major and column-major matrix memory layouts" {
         }
     }
 
-    try std.testing.expectEqual(@as(usize, 17), buffer_loads);
+    try std.testing.expectEqual(@as(usize, 13), buffer_loads);
     try std.testing.expectEqual(@as(usize, 17), buffer_stores);
     try std.testing.expectEqual(@as(usize, 9), push_loads);
     try std.testing.expectEqual(@as(u32, 36), try matrixElementMemoryOffset(.{ .stride = 16, .major = .row }, 4, 1, 2));
@@ -4502,6 +4692,286 @@ test "SPIR-V: operation mappings to backend-agnostic IR" {
 
     const extract = module.instructions.get(block.instructions.items[8]).?;
     try std.testing.expectEqualSlices(u32, &.{1}, extract.operation.composite_extract.indices);
+}
+
+test "SPIR-V: core floating, matrix, and conversion operation mappings" {
+    const assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint GLCompute %main "main"
+        \\OpExecutionMode %main LocalSize 1 1 1
+        \\%void = OpTypeVoid
+        \\%bool = OpTypeBool
+        \\%int = OpTypeInt 32 1
+        \\%uint = OpTypeInt 32 0
+        \\%float = OpTypeFloat 32
+        \\%bvec3 = OpTypeVector %bool 3
+        \\%ivec3 = OpTypeVector %int 3
+        \\%uvec2 = OpTypeVector %uint 2
+        \\%vec2 = OpTypeVector %float 2
+        \\%vec3 = OpTypeVector %float 3
+        \\%mat2x3 = OpTypeMatrix %vec3 2
+        \\%mat3x2 = OpTypeMatrix %vec2 3
+        \\%fn_void = OpTypeFunction %void
+        \\%one = OpConstant %float 1
+        \\%two = OpConstant %float 2
+        \\%vector2 = OpConstantComposite %vec2 %one %two
+        \\%vector3 = OpConstantComposite %vec3 %one %two %one
+        \\%matrix2x3 = OpConstantComposite %mat2x3 %vector3 %vector3
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    %infinite = OpIsInf %bvec3 %vector3
+        \\    %nan = OpIsNan %bool %one
+        \\    %transposed = OpTranspose %mat3x2 %matrix2x3
+        \\    %remainder = OpFRem %vec3 %vector3 %vector3
+        \\    %dot = OpDot %float %vector3 %vector3
+        \\    %outer = OpOuterProduct %mat2x3 %vector3 %vector2
+        \\    %signed = OpConvertFToS %ivec3 %vector3
+        \\    %unsigned = OpConvertFToU %uvec2 %vector2
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+
+    const function = module.functions.get(module.entry_point.?).?;
+    const block = module.blocks.get(function.entry_block.?).?;
+    try std.testing.expectEqual(@as(usize, 8), block.instructions.items.len);
+
+    const infinite = module.instructions.get(block.instructions.items[0]).?;
+    try std.testing.expectEqual(ir.instruction.UnaryOpcode.is_inf, infinite.operation.unary.opcode);
+    try expectVectorLength(&module, infinite.operation.unary.operand, 3);
+    try expectVectorLength(&module, infinite.result.?, 3);
+
+    const nan = module.instructions.get(block.instructions.items[1]).?;
+    try std.testing.expectEqual(ir.instruction.UnaryOpcode.is_nan, nan.operation.unary.opcode);
+
+    const transposed = module.instructions.get(block.instructions.items[2]).?;
+    try std.testing.expectEqual(ir.instruction.UnaryOpcode.transpose, transposed.operation.unary.opcode);
+    try expectMatrixShape(&module, transposed.operation.unary.operand, 2, 3);
+    try expectMatrixShape(&module, transposed.result.?, 3, 2);
+
+    const remainder = module.instructions.get(block.instructions.items[3]).?;
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.float_remainder, remainder.operation.binary.opcode);
+    try expectVectorLength(&module, remainder.operation.binary.lhs, 3);
+    try expectVectorLength(&module, remainder.operation.binary.rhs, 3);
+    try expectVectorLength(&module, remainder.result.?, 3);
+
+    const dot = module.instructions.get(block.instructions.items[4]).?;
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.dot, dot.operation.binary.opcode);
+    try expectVectorLength(&module, dot.operation.binary.lhs, 3);
+    try expectVectorLength(&module, dot.operation.binary.rhs, 3);
+    try std.testing.expect(module.types.get(module.typeOf(dot.result.?).?).?.* == .floating);
+
+    const outer = module.instructions.get(block.instructions.items[5]).?;
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.outer_product, outer.operation.binary.opcode);
+    try expectVectorLength(&module, outer.operation.binary.lhs, 3);
+    try expectVectorLength(&module, outer.operation.binary.rhs, 2);
+    try expectMatrixShape(&module, outer.result.?, 2, 3);
+
+    const signed = module.instructions.get(block.instructions.items[6]).?;
+    try std.testing.expectEqual(ir.instruction.ConvertOpcode.float_to_signed, signed.operation.convert.opcode);
+    try expectVectorLength(&module, signed.operation.convert.operand, 3);
+    try expectVectorLength(&module, signed.result.?, 3);
+
+    const unsigned = module.instructions.get(block.instructions.items[7]).?;
+    try std.testing.expectEqual(ir.instruction.ConvertOpcode.float_to_unsigned, unsigned.operation.convert.opcode);
+    try expectVectorLength(&module, unsigned.operation.convert.operand, 2);
+    try expectVectorLength(&module, unsigned.result.?, 2);
+}
+
+fn expectVectorLength(module: *const ir.module.Module, value: ir.id.ValueId, expected_length: u8) !void {
+    const value_type = module.typeOf(value) orelse return error.MissingValueType;
+    const type_data = module.types.get(value_type) orelse return error.MissingValueType;
+    try std.testing.expect(type_data.* == .vector);
+    try std.testing.expectEqual(expected_length, type_data.vector.length);
+}
+
+fn expectMatrixShape(module: *const ir.module.Module, value: ir.id.ValueId, expected_columns: u8, expected_rows: u8) !void {
+    const value_type = module.typeOf(value) orelse return error.MissingValueType;
+    const type_data = module.types.get(value_type) orelse return error.MissingValueType;
+    try std.testing.expect(type_data.* == .matrix);
+    try std.testing.expectEqual(expected_columns, type_data.matrix.column_count);
+
+    const column_type = module.types.get(type_data.matrix.element_type) orelse return error.MissingValueType;
+    try std.testing.expect(column_type.* == .vector);
+    try std.testing.expectEqual(expected_rows, column_type.vector.length);
+}
+
+test "SPIR-V: core integer extended and bit-field operations" {
+    const assembly =
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint GLCompute %main "main"
+        \\OpExecutionMode %main LocalSize 1 1 1
+        \\%void = OpTypeVoid
+        \\%uint = OpTypeInt 32 0
+        \\%int = OpTypeInt 32 1
+        \\%uint_pair = OpTypeStruct %uint %uint
+        \\%int_pair = OpTypeStruct %int %int
+        \\%fn_void = OpTypeFunction %void
+        \\%one = OpConstant %uint 1
+        \\%two = OpConstant %uint 2
+        \\%offset = OpConstant %uint 4
+        \\%count = OpConstant %uint 8
+        \\%signed_two = OpConstant %int 2
+        \\%signed_three = OpConstant %int 3
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    %add_carry = OpIAddCarry %uint_pair %one %two
+        \\    %add_value = OpCompositeExtract %uint %add_carry 0
+        \\    %carry = OpCompositeExtract %uint %add_carry 1
+        \\    %subtract_borrow = OpISubBorrow %uint_pair %two %one
+        \\    %subtract_value = OpCompositeExtract %uint %subtract_borrow 0
+        \\    %borrow = OpCompositeExtract %uint %subtract_borrow 1
+        \\    %unsigned_extended = OpUMulExtended %uint_pair %one %two
+        \\    %unsigned_low = OpCompositeExtract %uint %unsigned_extended 0
+        \\    %unsigned_high = OpCompositeExtract %uint %unsigned_extended 1
+        \\    %signed_extended = OpSMulExtended %int_pair %signed_two %signed_three
+        \\    %signed_low = OpCompositeExtract %int %signed_extended 0
+        \\    %signed_high = OpCompositeExtract %int %signed_extended 1
+        \\    %signed_extract = OpBitFieldSExtract %int %signed_three %offset %count
+        \\    %unsigned_extract = OpBitFieldUExtract %uint %two %offset %count
+        \\    %insert = OpBitFieldInsert %uint %one %two %offset %count
+        \\    %reverse = OpBitReverse %uint %one
+        \\    %population = OpBitCount %uint %two
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+
+    const function = module.functions.get(module.entry_point.?).?;
+    const block = module.blocks.get(function.entry_block.?).?;
+    try std.testing.expectEqual(@as(usize, 17), block.instructions.items.len);
+
+    try expectExtendedIntegerOperation(&module, block.instructions.items, 0, .integer_add_carry, 1, 2);
+    try expectExtendedIntegerOperation(&module, block.instructions.items, 3, .integer_subtract_borrow, 2, 1);
+    try expectExtendedIntegerOperation(&module, block.instructions.items, 6, .unsigned_multiply_extended, 1, 2);
+    try expectExtendedIntegerOperation(&module, block.instructions.items, 9, .signed_multiply_extended, 2, 3);
+
+    const signed_extract = module.instructions.get(block.instructions.items[12]).?;
+    try std.testing.expect(signed_extract.operation == .bit_field_extract);
+    try std.testing.expect(signed_extract.operation.bit_field_extract.opcode == .signed);
+    try expectIntegerValue(&module, signed_extract.operation.bit_field_extract.base, 3);
+    try expectIntegerValue(&module, signed_extract.operation.bit_field_extract.offset, 4);
+    try expectIntegerValue(&module, signed_extract.operation.bit_field_extract.count, 8);
+
+    const unsigned_extract = module.instructions.get(block.instructions.items[13]).?;
+    try std.testing.expect(unsigned_extract.operation == .bit_field_extract);
+    try std.testing.expect(unsigned_extract.operation.bit_field_extract.opcode == .unsigned);
+    try expectIntegerValue(&module, unsigned_extract.operation.bit_field_extract.base, 2);
+    try expectIntegerValue(&module, unsigned_extract.operation.bit_field_extract.offset, 4);
+    try expectIntegerValue(&module, unsigned_extract.operation.bit_field_extract.count, 8);
+
+    const insert = module.instructions.get(block.instructions.items[14]).?;
+    try std.testing.expect(insert.operation == .bit_field_insert);
+    try expectIntegerValue(&module, insert.operation.bit_field_insert.base, 1);
+    try expectIntegerValue(&module, insert.operation.bit_field_insert.insert, 2);
+    try expectIntegerValue(&module, insert.operation.bit_field_insert.offset, 4);
+    try expectIntegerValue(&module, insert.operation.bit_field_insert.count, 8);
+
+    const reverse = module.instructions.get(block.instructions.items[15]).?;
+    try std.testing.expect(reverse.operation == .unary);
+    try std.testing.expect(reverse.operation.unary.opcode == .bit_reverse);
+    try expectIntegerValue(&module, reverse.operation.unary.operand, 1);
+
+    const population = module.instructions.get(block.instructions.items[16]).?;
+    try std.testing.expect(population.operation == .unary);
+    try std.testing.expect(population.operation.unary.opcode == .bit_count);
+    try expectIntegerValue(&module, population.operation.unary.operand, 2);
+}
+
+fn expectExtendedIntegerOperation(
+    module: *const ir.module.Module,
+    instructions: []const ir.id.InstructionId,
+    instruction_index: usize,
+    expected_opcode: ir.instruction.BinaryOpcode,
+    expected_lhs: u64,
+    expected_rhs: u64,
+) !void {
+    const instruction = module.instructions.get(instructions[instruction_index]).?;
+    try std.testing.expect(instruction.operation == .binary);
+    try std.testing.expectEqual(expected_opcode, instruction.operation.binary.opcode);
+    try expectIntegerValue(module, instruction.operation.binary.lhs, expected_lhs);
+    try expectIntegerValue(module, instruction.operation.binary.rhs, expected_rhs);
+
+    const result = instruction.result orelse return error.MissingInstructionResult;
+    const result_type = module.typeOf(result) orelse return error.MissingResultType;
+    const result_type_data = module.types.get(result_type) orelse return error.MissingResultType;
+    try std.testing.expect(result_type_data.* == .structure);
+    try std.testing.expectEqual(@as(usize, 2), result_type_data.structure.members.len);
+    try std.testing.expectEqual(result_type_data.structure.members[0], module.typeOf(instruction.operation.binary.lhs).?);
+    try std.testing.expectEqual(result_type_data.structure.members[1], module.typeOf(instruction.operation.binary.rhs).?);
+
+    for (0..2) |index| {
+        const extract = module.instructions.get(instructions[instruction_index + index + 1]).?;
+        try std.testing.expect(extract.operation == .composite_extract);
+        try std.testing.expectEqual(result, extract.operation.composite_extract.composite);
+        try std.testing.expectEqualSlices(u32, &.{@as(u32, @intCast(index))}, extract.operation.composite_extract.indices);
+        try std.testing.expectEqual(result_type_data.structure.members[index], module.typeOf(extract.result.?).?);
+    }
+}
+
+fn expectIntegerValue(module: *const ir.module.Module, value_id: ir.id.ValueId, expected: u64) !void {
+    const value = module.values.get(value_id) orelse return error.MissingValue;
+    try std.testing.expect(value.definition == .constant);
+    const constant = module.constants.get(value.definition.constant) orelse return error.MissingConstant;
+    try std.testing.expect(constant.value == .integer_bits);
+    try std.testing.expectEqual(expected, constant.value.integer_bits);
+}
+
+test "SPIR-V: translates common GLSL extended floating instructions" {
+    const assembly =
+        \\OpCapability Shader
+        \\%glsl = OpExtInstImport "GLSL.std.450"
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint GLCompute %main "main"
+        \\OpExecutionMode %main LocalSize 1 1 1
+        \\%void = OpTypeVoid
+        \\%float = OpTypeFloat 32
+        \\%vec2 = OpTypeVector %float 2
+        \\%fn_void = OpTypeFunction %void
+        \\%zero = OpConstant %float 0
+        \\%one = OpConstant %float 1
+        \\%negative = OpConstant %float -2
+        \\%vector = OpConstantComposite %vec2 %negative %one
+        \\%main = OpFunction %void None %fn_void
+        \\    %entry = OpLabel
+        \\    %absolute = OpExtInst %float %glsl FAbs %negative
+        \\    %normalized = OpExtInst %vec2 %glsl Normalize %vector
+        \\    %smooth = OpExtInst %float %glsl SmoothStep %zero %one %negative
+        \\    %angle = OpExtInst %float %glsl Atan2 %one %one
+        \\    OpReturn
+        \\OpFunctionEnd
+    ;
+    const words = try assembleSpirv(std.testing.allocator, assembly);
+    defer std.testing.allocator.free(words);
+
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+
+    const function = module.functions.get(module.entry_point.?).?;
+    const block = module.blocks.get(function.entry_block.?).?;
+    try std.testing.expectEqual(@as(usize, 4), block.instructions.items.len);
+
+    const absolute = module.instructions.get(block.instructions.items[0]).?;
+    try std.testing.expectEqual(ir.instruction.UnaryOpcode.absolute, absolute.operation.unary.opcode);
+
+    const normalized = module.instructions.get(block.instructions.items[1]).?;
+    try std.testing.expectEqual(ir.instruction.UnaryOpcode.normalize, normalized.operation.unary.opcode);
+
+    const smooth = module.instructions.get(block.instructions.items[2]).?;
+    try std.testing.expectEqual(ir.instruction.TernaryOpcode.smooth_step, smooth.operation.ternary.opcode);
+
+    const angle = module.instructions.get(block.instructions.items[3]).?;
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.atan2, angle.operation.binary.opcode);
 }
 
 test "SPIR-V: combined cube-array descriptor and implicit-LOD sampling" {

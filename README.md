@@ -636,7 +636,7 @@ Assume thou that functions lacking in this array are, for now, not intended to b
 
 ## PSVK (PlayStation Vita)
 
-Psvk is an implementation of Vulkan wrought for the PS Vita. Beneath its guise doth lie the SceGxm graphics API, bound and wrapped that Vulkan’s ways might yet be imitated upon this ancient machine.
+Psvk is an implementation of Vulkan wrought for the PS Vita. Beneath its guise doth lie the SceGxm graphics API, bound and wrapped that Vulkan's ways might yet be imitated upon this ancient machine.
 
 Much shall it strive to bring forth, though not all things may be summoned so easily. Certain features may prove beyond mortal effort, their making too arduous, or their nature ill-suited to the vessel.
 

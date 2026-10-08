@@ -14,6 +14,7 @@ pub const Error = std.mem.Allocator.Error || error{
 
 allocator: std.mem.Allocator,
 blocks: []ids.BlockId,
+indices_by_block: []?usize,
 predecessors_by_block: []std.ArrayList(ids.BlockId),
 reachable: []bool,
 dominators: []bool,
@@ -23,6 +24,15 @@ pub fn init(allocator: std.mem.Allocator, module: *const module_ir.Module, funct
     const entry = function.entry_block orelse return Error.MissingEntryBlock;
     const blocks = try allocator.dupe(ids.BlockId, function.blocks.items);
     errdefer allocator.free(blocks);
+
+    const indices_by_block = try allocator.alloc(?usize, module.blocks.entries.items.len);
+    errdefer allocator.free(indices_by_block);
+    @memset(indices_by_block, null);
+    for (blocks, 0..) |block, index| {
+        if (block.index() >= indices_by_block.len or indices_by_block[block.index()] != null)
+            return Error.InvalidBlock;
+        indices_by_block[block.index()] = index;
+    }
 
     const predecessor_lists = try allocator.alloc(std.ArrayList(ids.BlockId), blocks.len);
     errdefer allocator.free(predecessor_lists);
@@ -43,6 +53,7 @@ pub fn init(allocator: std.mem.Allocator, module: *const module_ir.Module, funct
     var self: Self = .{
         .allocator = allocator,
         .blocks = blocks,
+        .indices_by_block = indices_by_block,
         .predecessors_by_block = predecessor_lists,
         .reachable = reachable,
         .dominators = dominators,
@@ -60,6 +71,7 @@ pub fn deinit(self: *Self) void {
         list.deinit(self.allocator);
 
     self.allocator.free(self.predecessors_by_block);
+    self.allocator.free(self.indices_by_block);
     self.allocator.free(self.blocks);
     self.allocator.free(self.reachable);
     self.allocator.free(self.dominators);
@@ -183,10 +195,9 @@ fn markReachable(self: *Self, queue: *std.ArrayList(ids.BlockId), target: ids.Bl
 }
 
 fn indexOf(self: *const Self, block: ids.BlockId) ?usize {
-    for (self.blocks, 0..) |candidate, index| {
-        if (candidate == block) return index;
-    }
-    return null;
+    if (block.index() >= self.indices_by_block.len)
+        return null;
+    return self.indices_by_block[block.index()];
 }
 
 fn getDominates(self: *const Self, block_index: usize, candidate_index: usize) bool {

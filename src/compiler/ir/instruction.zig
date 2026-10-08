@@ -17,14 +17,22 @@ pub const SourceLocation = struct {
 };
 
 pub const UnaryOpcode = enum {
+    absolute,
     all,
+    bit_count,
+    bit_reverse,
     bitwise_not,
+    is_inf,
+    is_nan,
     logical_not,
     negate,
+    normalize,
+    transpose,
 };
 
 pub const BinaryOpcode = enum {
     arithmetic_shift_right,
+    atan2,
     bitwise_and,
     bitwise_or,
     bitwise_xor,
@@ -32,26 +40,44 @@ pub const BinaryOpcode = enum {
     float_divide,
     float_modulo,
     float_multiply,
+    float_remainder,
     float_subtract,
     integer_add,
+    integer_add_carry,
     integer_multiply,
     integer_subtract,
+    integer_subtract_borrow,
     logical_and,
     logical_or,
     logical_shift_right,
+    dot,
     matrix_times_matrix,
     matrix_times_scalar,
     matrix_times_vector,
+    outer_product,
     shift_left,
     signed_divide,
     signed_modulo,
+    signed_multiply_extended,
     unsigned_divide,
     unsigned_modulo,
+    unsigned_multiply_extended,
     vector_times_matrix,
     vector_times_scalar,
 };
 
+pub const TernaryOpcode = enum {
+    smooth_step,
+};
+
+pub const BitFieldExtractOpcode = enum {
+    signed,
+    unsigned,
+};
+
 pub const ConvertOpcode = enum {
+    float_to_signed,
+    float_to_unsigned,
     signed_to_float,
     unsigned_to_float,
 };
@@ -61,6 +87,7 @@ pub const CompareOpcode = enum {
     not_equal,
     ordered_float_equal,
     ordered_float_less,
+    ordered_float_less_equal,
     ordered_float_not_equal,
     signed_less,
     unordered_float_equal,
@@ -78,6 +105,27 @@ pub const Binary = struct {
     opcode: BinaryOpcode,
     lhs: ValueId,
     rhs: ValueId,
+};
+
+pub const Ternary = struct {
+    opcode: TernaryOpcode,
+    first: ValueId,
+    second: ValueId,
+    third: ValueId,
+};
+
+pub const BitFieldExtract = struct {
+    opcode: BitFieldExtractOpcode,
+    base: ValueId,
+    offset: ValueId,
+    count: ValueId,
+};
+
+pub const BitFieldInsert = struct {
+    base: ValueId,
+    insert: ValueId,
+    offset: ValueId,
+    count: ValueId,
 };
 
 pub const Compare = struct {
@@ -197,6 +245,9 @@ pub const ArrayLength = struct {
 pub const Operation = union(enum) {
     unary: Unary,
     binary: Binary,
+    ternary: Ternary,
+    bit_field_extract: BitFieldExtract,
+    bit_field_insert: BitFieldInsert,
     compare: Compare,
     select: Select,
     bitcast: ValueId,
@@ -225,6 +276,22 @@ pub const Operation = union(enum) {
             .binary => |op| {
                 visitor(context, op.lhs);
                 visitor(context, op.rhs);
+            },
+            .ternary => |op| {
+                visitor(context, op.first);
+                visitor(context, op.second);
+                visitor(context, op.third);
+            },
+            .bit_field_extract => |op| {
+                visitor(context, op.base);
+                visitor(context, op.offset);
+                visitor(context, op.count);
+            },
+            .bit_field_insert => |op| {
+                visitor(context, op.base);
+                visitor(context, op.insert);
+                visitor(context, op.offset);
+                visitor(context, op.count);
             },
             .compare => |op| {
                 visitor(context, op.lhs);
@@ -296,6 +363,22 @@ pub const Operation = union(enum) {
             .binary => |*op| {
                 replaceOne(&op.lhs, old, replacement, &count);
                 replaceOne(&op.rhs, old, replacement, &count);
+            },
+            .ternary => |*op| {
+                replaceOne(&op.first, old, replacement, &count);
+                replaceOne(&op.second, old, replacement, &count);
+                replaceOne(&op.third, old, replacement, &count);
+            },
+            .bit_field_extract => |*op| {
+                replaceOne(&op.base, old, replacement, &count);
+                replaceOne(&op.offset, old, replacement, &count);
+                replaceOne(&op.count, old, replacement, &count);
+            },
+            .bit_field_insert => |*op| {
+                replaceOne(&op.base, old, replacement, &count);
+                replaceOne(&op.insert, old, replacement, &count);
+                replaceOne(&op.offset, old, replacement, &count);
+                replaceOne(&op.count, old, replacement, &count);
             },
             .compare => |*op| {
                 replaceOne(&op.lhs, old, replacement, &count);

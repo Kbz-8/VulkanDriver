@@ -7,6 +7,7 @@ const VkError = @import("error_set.zig").VkError;
 const Device = @import("Device.zig");
 
 const Self = @This();
+
 pub const ObjectType: vk.ObjectType = .shader_module;
 pub const IrModule = shader_ir.ir.module.Module;
 pub const InstantiateOptions = shader_ir.spirv.translator.Options;

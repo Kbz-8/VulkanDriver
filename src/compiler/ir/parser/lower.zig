@@ -159,7 +159,7 @@ fn lowerOperation(
                         .operand = operand,
                     },
                 },
-                .inferred_type = module.typeOf(operand),
+                .inferred_type = try inferUnaryType(module, op.opcode, operand),
             };
         },
         .binary => |op| blk: {
@@ -174,7 +174,53 @@ fn lowerOperation(
                         .rhs = rhs,
                     },
                 },
-                .inferred_type = module.typeOf(lhs),
+                .inferred_type = try inferBinaryType(module, op.opcode, lhs, rhs),
+            };
+        },
+        .ternary => |op| blk: {
+            const first = resolveValue(values, op.first) orelse return error.UnknownValue;
+            const second = resolveValue(values, op.second) orelse return error.UnknownValue;
+            const third = resolveValue(values, op.third) orelse return error.UnknownValue;
+
+            break :blk .{
+                .operation = .{ .ternary = .{
+                    .opcode = op.opcode,
+                    .first = first,
+                    .second = second,
+                    .third = third,
+                } },
+                .inferred_type = module.typeOf(first),
+            };
+        },
+        .bit_field_extract => |op| blk: {
+            const base = resolveValue(values, op.base) orelse return error.UnknownValue;
+            const offset = resolveValue(values, op.offset) orelse return error.UnknownValue;
+            const count = resolveValue(values, op.count) orelse return error.UnknownValue;
+
+            break :blk .{
+                .operation = .{ .bit_field_extract = .{
+                    .opcode = op.opcode,
+                    .base = base,
+                    .offset = offset,
+                    .count = count,
+                } },
+                .inferred_type = module.typeOf(base),
+            };
+        },
+        .bit_field_insert => |op| blk: {
+            const base = resolveValue(values, op.base) orelse return error.UnknownValue;
+            const insert = resolveValue(values, op.insert) orelse return error.UnknownValue;
+            const offset = resolveValue(values, op.offset) orelse return error.UnknownValue;
+            const count = resolveValue(values, op.count) orelse return error.UnknownValue;
+
+            break :blk .{
+                .operation = .{ .bit_field_insert = .{
+                    .base = base,
+                    .insert = insert,
+                    .offset = offset,
+                    .count = count,
+                } },
+                .inferred_type = module.typeOf(base),
             };
         },
         .compare => |op| blk: {
@@ -216,7 +262,7 @@ fn lowerOperation(
             const operand = resolveValue(values, op.operand) orelse return error.UnknownValue;
             break :blk .{
                 .operation = .{ .convert = .{ .opcode = op.opcode, .operand = operand } },
-                .inferred_type = null,
+                .inferred_type = try inferConvertType(module, op.opcode, operand),
             };
         },
         .composite_construct => |printed_elements| blk: {
@@ -488,6 +534,130 @@ fn lowerEdge(
         try arguments.append(allocator, resolveValue(values, printed_argument) orelse return error.UnknownValue);
 
     return builder.edge(blocks.get(parsed.block_name) orelse return error.UnknownBlock, arguments.items);
+}
+
+fn inferUnaryType(module: *module_ir.Module, opcode: inst_ir.UnaryOpcode, operand: ids.ValueId) !?ids.TypeId {
+    const operand_type = module.typeOf(operand) orelse return null;
+    return switch (opcode) {
+        .is_inf, .is_nan => inferBooleanShape(module, operand_type),
+        .transpose => inferTransposeType(module, operand_type),
+        else => operand_type,
+    };
+}
+
+fn inferBinaryType(module: *module_ir.Module, opcode: inst_ir.BinaryOpcode, lhs: ids.ValueId, rhs: ids.ValueId) !?ids.TypeId {
+    const lhs_type = module.typeOf(lhs) orelse return null;
+    return switch (opcode) {
+        .integer_add_carry,
+        .integer_subtract_borrow,
+        .signed_multiply_extended,
+        .unsigned_multiply_extended,
+        => try module.internType(.{ .structure = .{ .members = &.{ lhs_type, lhs_type } } }),
+
+        .dot => switch ((module.types.get(lhs_type) orelse return null).*) {
+            .vector => |vector| vector.element_type,
+            else => null,
+        },
+        .outer_product => blk: {
+            const lhs_vector = switch ((module.types.get(lhs_type) orelse return null).*) {
+                .vector => |vector| vector,
+                else => break :blk null,
+            };
+            const rhs_type = module.typeOf(rhs) orelse return null;
+            const rhs_vector = switch ((module.types.get(rhs_type) orelse return null).*) {
+                .vector => |vector| vector,
+                else => break :blk null,
+            };
+            const column_type = try module.internType(.{
+                .vector = .{
+                    .element_type = lhs_vector.element_type,
+                    .length = lhs_vector.length,
+                },
+            });
+            break :blk try module.internType(.{
+                .matrix = .{
+                    .element_type = column_type,
+                    .column_count = rhs_vector.length,
+                },
+            });
+        },
+        else => lhs_type,
+    };
+}
+
+fn inferConvertType(module: *module_ir.Module, opcode: inst_ir.ConvertOpcode, operand: ids.ValueId) !?ids.TypeId {
+    return switch (opcode) {
+        .float_to_signed, .float_to_unsigned => blk: {
+            const operand_type = module.typeOf(operand) orelse return null;
+            const components = floatComponentCount(module, operand_type, 32) orelse break :blk null;
+            const element_type = try module.internType(.{ .integer = .{
+                .bits = 32,
+                .signedness = if (opcode == .float_to_signed) .signed else .unsigned,
+            } });
+            break :blk if (components == 1)
+                element_type
+            else
+                try module.internType(.{ .vector = .{
+                    .element_type = element_type,
+                    .length = components,
+                } });
+        },
+        .signed_to_float, .unsigned_to_float => null,
+    };
+}
+
+fn inferBooleanShape(module: *module_ir.Module, operand_type: ids.TypeId) !?ids.TypeId {
+    const operand = module.types.get(operand_type) orelse return null;
+    return switch (operand.*) {
+        .floating => try module.internType(.boolean),
+        .vector => |vector| switch ((module.types.get(vector.element_type) orelse return null).*) {
+            .floating => blk: {
+                const boolean = try module.internType(.boolean);
+                break :blk try module.internType(.{ .vector = .{
+                    .element_type = boolean,
+                    .length = vector.length,
+                } });
+            },
+            else => null,
+        },
+        else => null,
+    };
+}
+
+fn inferTransposeType(module: *module_ir.Module, operand_type: ids.TypeId) !?ids.TypeId {
+    const matrix = switch ((module.types.get(operand_type) orelse return null).*) {
+        .matrix => |matrix| matrix,
+        else => return null,
+    };
+    const column = switch ((module.types.get(matrix.element_type) orelse return null).*) {
+        .vector => |vector| vector,
+        else => return null,
+    };
+    const transposed_column = try module.internType(.{
+        .vector = .{
+            .element_type = column.element_type,
+            .length = matrix.column_count,
+        },
+    });
+    const transposed = try module.internType(.{
+        .matrix = .{
+            .element_type = transposed_column,
+            .column_count = column.length,
+        },
+    });
+    return transposed;
+}
+
+fn floatComponentCount(module: *module_ir.Module, type_id: ids.TypeId, bits: u16) ?u8 {
+    const ty = module.types.get(type_id) orelse return null;
+    return switch (ty.*) {
+        .floating => |float| if (float.bits == bits) 1 else null,
+        .vector => |vector| switch ((module.types.get(vector.element_type) orelse return null).*) {
+            .floating => |float| if (float.bits == bits) vector.length else null,
+            else => null,
+        },
+        else => null,
+    };
 }
 
 fn inferCompositeType(module: *module_ir.Module, element_types: []const ids.TypeId) !ids.TypeId {

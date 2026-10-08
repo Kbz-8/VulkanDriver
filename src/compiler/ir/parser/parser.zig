@@ -359,6 +359,44 @@ const Parser = struct {
             return .{ .binary = .{ .opcode = opcode, .lhs = lhs, .rhs = try self.parseValueRef() } };
         }
 
+        if (std.meta.stringToEnum(inst_ir.TernaryOpcode, name)) |opcode| {
+            const first = try self.parseValueRef();
+            try self.expectDiscard(.comma);
+            const second = try self.parseValueRef();
+            try self.expectDiscard(.comma);
+            return .{ .ternary = .{ .opcode = opcode, .first = first, .second = second, .third = try self.parseValueRef() } };
+        }
+
+        if (std.mem.eql(u8, name, "bit_field_extract")) {
+            const opcode_name = (try self.expect(.identifier)).text;
+            const opcode = std.meta.stringToEnum(inst_ir.BitFieldExtractOpcode, opcode_name) orelse return Error.InvalidOpcode;
+            const base = try self.parseValueRef();
+            try self.expectDiscard(.comma);
+            const offset = try self.parseValueRef();
+            try self.expectDiscard(.comma);
+            return .{ .bit_field_extract = .{
+                .opcode = opcode,
+                .base = base,
+                .offset = offset,
+                .count = try self.parseValueRef(),
+            } };
+        }
+
+        if (std.mem.eql(u8, name, "bit_field_insert")) {
+            const base = try self.parseValueRef();
+            try self.expectDiscard(.comma);
+            const insert = try self.parseValueRef();
+            try self.expectDiscard(.comma);
+            const offset = try self.parseValueRef();
+            try self.expectDiscard(.comma);
+            return .{ .bit_field_insert = .{
+                .base = base,
+                .insert = insert,
+                .offset = offset,
+                .count = try self.parseValueRef(),
+            } };
+        }
+
         if (std.mem.eql(u8, name, "select")) {
             const condition = try self.parseValueRef();
             try self.expectDiscard(.comma);
@@ -1137,6 +1175,7 @@ test "Parser: types, operations, calls, terminators" {
         \\     %5: constant struct[u32, u32] = [#1, #2]
         \\     %6: constant ptr[private, u32] = null
         \\     %7: constant resourceHandle[sampler] = null
+        \\     %signed_one: constant i32 = bits(0x1)
         \\
         \\     fn @main() -> void
         \\     {
@@ -1152,6 +1191,15 @@ test "Parser: types, operations, calls, terminators" {
         \\             %17: f32 = float_add %3, %16
         \\             %18: u32 = call @helper(%15)
         \\             %19: mat3x3[u32] = composite_construct %14, %14, %14
+        \\             %20: u32 = bit_count %1
+        \\             %21: vec3[u32] = bit_reverse %14
+        \\             %22 = integer_add_carry %1, %2
+        \\             %23: struct[u32, u32] = integer_subtract_borrow %1, %2
+        \\             %24: struct[i32, i32] = signed_multiply_extended %signed_one, %signed_one
+        \\             %25: struct[u32, u32] = unsigned_multiply_extended %1, %2
+        \\             %26: i32 = bit_field_extract signed %signed_one, %1, %2
+        \\             %27: u32 = bit_field_extract unsigned %1, %1, %2
+        \\             %28: u32 = bit_field_insert %1, %2, %1, %2
         \\             return
         \\     }
         \\
@@ -1187,6 +1235,52 @@ test "Parser: types, operations, calls, terminators" {
     try std.testing.expectEqualStrings(printed, printed_again);
     try std.testing.expect(std.mem.indexOf(u8, printed, "cmp_equal %1, %2") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "cmp.") == null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "struct[u32, u32] = integer_add_carry %1, %2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "bit_field_extract signed %signed_one, %1, %2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "bit_field_extract unsigned %1, %1, %2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "bit_field_insert %1, %2, %1, %2") != null);
+}
+
+test "Parser: infer and print float classification, matrix, and conversion operations" {
+    const printer = @import("../printer.zig");
+
+    var module = try parseString(std.testing.allocator,
+        \\shader compute @main
+        \\{
+        \\    fn @main(%scalar: f32, %lhs: vec2[f32], %rhs: vec3[f32], %matrix: mat2x3[f32]) -> void
+        \\    {
+        \\        .entry():
+        \\            %infinite = is_inf %scalar
+        \\            %nan = is_nan %lhs
+        \\            %transposed = transpose %matrix
+        \\            %remainder = float_remainder %lhs, %lhs
+        \\            %product = dot %lhs, %lhs
+        \\            %outer = outer_product %lhs, %rhs
+        \\            %signed = convert float_to_signed %lhs
+        \\            %unsigned = convert float_to_unsigned %scalar
+        \\            return
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+
+    const printed = try printer.allocPrint(std.testing.allocator, &module);
+    defer std.testing.allocator.free(printed);
+
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%infinite: bool = is_inf %scalar") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%nan: vec2[bool] = is_nan %lhs") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%transposed: mat3x2[f32] = transpose %matrix") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%remainder: vec2[f32] = float_remainder %lhs, %lhs") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%product: f32 = dot %lhs, %lhs") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%outer: mat3x2[f32] = outer_product %lhs, %rhs") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%signed: vec2[i32] = convert float_to_signed %lhs") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%unsigned: u32 = convert float_to_unsigned %scalar") != null);
+
+    var reparsed = try parseString(std.testing.allocator, printed);
+    defer reparsed.deinit();
+    const printed_again = try printer.allocPrint(std.testing.allocator, &reparsed);
+    defer std.testing.allocator.free(printed_again);
+    try std.testing.expectEqualStrings(printed, printed_again);
 }
 
 test "Parser: named value IDs" {

@@ -99,6 +99,9 @@ pub const ParsedTerminator = union(enum) {
 pub const ParsedOperation = union(enum) {
     unary: struct { opcode: inst_ir.UnaryOpcode, operand: ValueRef },
     binary: struct { opcode: inst_ir.BinaryOpcode, lhs: ValueRef, rhs: ValueRef },
+    ternary: struct { opcode: inst_ir.TernaryOpcode, first: ValueRef, second: ValueRef, third: ValueRef },
+    bit_field_extract: struct { opcode: inst_ir.BitFieldExtractOpcode, base: ValueRef, offset: ValueRef, count: ValueRef },
+    bit_field_insert: struct { base: ValueRef, insert: ValueRef, offset: ValueRef, count: ValueRef },
     compare: struct { opcode: inst_ir.CompareOpcode, lhs: ValueRef, rhs: ValueRef },
     select: struct { condition: ValueRef, true_value: ValueRef, false_value: ValueRef },
     bitcast: ValueRef,

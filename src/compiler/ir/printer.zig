@@ -214,6 +214,32 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             try writer.writeAll(", ");
             try writeValueRef(module, writer, op.rhs);
         },
+        .ternary => |op| {
+            try writer.print("{t} ", .{op.opcode});
+            try writeValueRef(module, writer, op.first);
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.second);
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.third);
+        },
+        .bit_field_extract => |op| {
+            try writer.print("bit_field_extract {t} ", .{op.opcode});
+            try writeValueRef(module, writer, op.base);
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.offset);
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.count);
+        },
+        .bit_field_insert => |op| {
+            try writer.writeAll("bit_field_insert ");
+            try writeValueRef(module, writer, op.base);
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.insert);
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.offset);
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.count);
+        },
         .compare => |op| {
             try writer.print("cmp_{t} ", .{op.opcode});
             try writeValueRef(module, writer, op.lhs);

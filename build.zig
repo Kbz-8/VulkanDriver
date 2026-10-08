@@ -126,11 +126,13 @@ pub fn build(b: *std.Build) !void {
 
     const logs_option: LogType = b.option(LogType, "logs", "Driver logs") orelse .none;
     const debug_allocator_option = b.option(bool, "device-debug-allocator", "Debug device allocator") orelse false;
+    const dump_common_ir_option = b.option(bool, "dump-common-ir", "Print backend-agnostic shader IR after translation") orelse false;
 
     const options = b.addOptions();
     options.addOption(std.SemanticVersion, "driver_version", driver_version);
     options.addOption(LogType, "logs", logs_option);
     options.addOption(bool, "device_debug_allocator", debug_allocator_option);
+    options.addOption(bool, "dump_common_ir", dump_common_ir_option);
 
     const shared_dependencies = SharedDependencies{
         .vulkan = vulkan,
@@ -581,10 +583,8 @@ fn customFlint(
     lib_mod.addImport("intel_c", base_c_mod);
     lib_mod.addImport("shader_ir", shader_ir_mod);
 
-    const dump_common_ir = b.option(bool, "flint-dump-common-ir", "Print backend-agnostic shader IR after translation") orelse false;
     const dump_ir = b.option(bool, "flint-dump-ir", "Print final Flint IR after backend lowering") orelse false;
 
-    options.addOption(bool, "flint_dump_common_ir", dump_common_ir);
     options.addOption(bool, "flint_dump_ir", dump_ir);
 }
 
