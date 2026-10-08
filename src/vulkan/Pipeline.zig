@@ -323,6 +323,7 @@ fn instantiateCommonStage(result: *CommonStage, allocator: std.mem.Allocator, in
 
     result.* = .{
         .stage = stage,
+        // SAFETY: properly initialized just after
         .module = undefined,
         .allocator = VulkanAllocator.from(allocator).clone(),
     };
