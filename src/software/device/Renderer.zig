@@ -427,6 +427,7 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
     var draw_call = try DrawCall.init(allocator, vertex_count, instance_count, self);
     defer draw_call.deinit(allocator);
 
+    // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
     const profile_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
     defer if (comptime base.config.soft_profile) {
         draw_call.profile.draw_wall_ns = profileElapsedNs(profile_timer, io);
@@ -446,6 +447,7 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
         }
     }
 
+    // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
     const vertex_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
     self.vertexShaderStage(allocator, &draw_call, vertex_count, instance_count, first_vertex, first_instance, indices, primitive_restart) catch |err| {
         std.log.scoped(.@"Vertex stage").err("catched a '{s}'", .{@errorName(err)});
@@ -466,6 +468,7 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
     draw_call.viewport = try self.resolveViewport(0);
     draw_call.scissor = try self.resolveScissor(0);
 
+    // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
     const raster_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
     try rasterizer.processThenFragmentStage(self, allocator, &draw_call);
     if (comptime base.config.soft_profile)

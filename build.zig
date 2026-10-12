@@ -3,7 +3,7 @@ const Step = std.Build.Step;
 const builtin = @import("builtin");
 const zon = @import("build.zig.zon");
 
-const driver_version = std.SemanticVersion.parse(zon.version) catch unreachable;
+const driver_version = std.SemanticVersion.parse(zon.version) catch @panic("Failed to parse sementic version from build.zig.zon");
 
 const InstallFn = *const fn (*std.Build, *const ImplementationDesc, *Step.Compile) *Step;
 

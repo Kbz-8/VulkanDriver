@@ -168,6 +168,7 @@ fn shaderWaveMasked(worker: *Worker, invocations: *const [Runtime.lane_count]Wav
     if (resources.buffers.len != program.resources.len or resources.images.len != program.resources.len or resources.samplers.len != program.resources.len)
         return SpvRuntimeError.InvalidSpirV;
 
+    // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
     const input_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
     for (0..Runtime.lane_count) |lane| {
         const bit = @as(Runtime.LaneMask, 1) << @intCast(lane);
@@ -177,6 +178,7 @@ fn shaderWaveMasked(worker: *Worker, invocations: *const [Runtime.lane_count]Wav
     if (comptime base.config.soft_profile)
         worker.input_ns += Renderer.profileElapsedNs(input_timer, worker.io);
 
+    // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
     const shader_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
     const outcome = runtime.runWave(program, .{
         .resource_buffers = resources.buffers,
@@ -197,6 +199,7 @@ fn shaderWaveMasked(worker: *Worker, invocations: *const [Runtime.lane_count]Wav
     if (outcome.barrier_mask != 0)
         return SpvRuntimeError.InvalidSpirV;
 
+    // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
     const output_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
     const results = try readOutputsWave(program, runtime);
     if (comptime base.config.soft_profile)
@@ -354,14 +357,15 @@ fn writeInputsLane(
 }
 
 const WaveOutputs = struct {
-    outputs: rasterizer_common.FragmentWaveOutputs = undefined,
+    outputs: rasterizer_common.FragmentWaveOutputs,
     output_components: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]u4 = @splat(0),
     depths: @Vector(Runtime.lane_count, f32) = @splat(0.0),
     depth_mask: Runtime.LaneMask = 0,
 };
 
 fn readOutputsWave(program: *const Program, runtime: *const Runtime) SpvRuntimeError!WaveOutputs {
-    var result: WaveOutputs = .{};
+    // SAFETY: each output vector is initialized before its output_components bit is set; consumers only read marked components
+    var result: WaveOutputs = .{ .outputs = undefined };
     for (program.interfaces, 0..) |optional_binding, index| {
         const binding = optional_binding orelse continue;
         if (binding.direction != .output)

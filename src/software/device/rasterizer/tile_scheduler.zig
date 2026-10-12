@@ -54,6 +54,7 @@ pub const Batch = struct {
             return;
 
         const io = self.state.draw_call.renderer.device.interface.io();
+        // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
         const binning_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
         const framebuffer = self.state.draw_call.framebuffer.interface;
         var bins = try Bins.build(
@@ -80,6 +81,7 @@ pub const Batch = struct {
         };
 
         const worker_count = @min(self.state.worker_capacity, bins.active_tiles.len);
+        // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
         const tile_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
         var group: std.Io.Group = .init;
         for (0..worker_count) |worker_index|
@@ -237,6 +239,7 @@ fn workerWrapper(context: *WorkerContext, worker_index: usize) void {
 fn worker(context: *WorkerContext, worker_index: usize) VkError!void {
     const state = &context.batch.state;
     const io = state.draw_call.renderer.device.interface.io();
+    // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
     const worker_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
     defer if (comptime base.config.soft_profile)
         Renderer.DrawProfile.add(&state.draw_call.profile.raster_worker_ns, Renderer.profileElapsedNs(worker_timer, io));

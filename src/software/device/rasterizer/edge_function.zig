@@ -498,6 +498,7 @@ fn rasterizeTriangleInRectWave(
             var early_applied: [lane_count]bool = undefined;
             var mask: interpreter_simd.LaneMask = 0;
 
+            // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
             const coverage_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
             for (0..lane_count) |lane| {
                 const lane_x = x + @as(i32, @intCast(lane));
@@ -525,6 +526,7 @@ fn rasterizeTriangleInRectWave(
             if (mask == 0)
                 continue;
 
+            // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
             const depth_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
             for (0..lane_count) |lane| {
                 const bit = interpreter_simd.laneBit(@intCast(lane));
@@ -544,6 +546,7 @@ fn rasterizeTriangleInRectWave(
             if (mask == 0)
                 continue;
 
+            // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
             const interpolation_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
             for (0..lane_count) |lane| {
                 const bit = interpreter_simd.laneBit(@intCast(lane));
@@ -565,6 +568,7 @@ fn rasterizeTriangleInRectWave(
                 return VkError.Unknown;
             };
 
+            // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
             const target_output_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
             if (state.opaque_single_sample_output) {
                 var output_depths = depths;

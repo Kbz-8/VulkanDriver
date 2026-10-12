@@ -456,6 +456,7 @@ const F32x4 = @Vector(lane_count, f32);
 
 fn loadRegisterVector(self: *const Self, register: bc.Register) U32x4 {
     const index: usize = @backingInt(register);
+    // SAFETY: the following loop initializes every vector lane before result is returned
     var result: U32x4 = undefined;
     inline for (0..lane_count) |lane|
         result[lane] = self.register_backing[lane * self.register_count + index];
@@ -482,6 +483,7 @@ fn storeRegisterVectorMasked(self: *Self, register: bc.Register, values: U32x4, 
 }
 
 fn loadScratchVector(self: *const Self, index: usize) U32x4 {
+    // SAFETY: the following loop initializes every vector lane before result is returned
     var result: U32x4 = undefined;
     inline for (0..lane_count) |lane|
         result[lane] = self.scratch_backing[lane * self.scratch_count + index];
@@ -506,6 +508,7 @@ fn storeScratchVectorMasked(self: *Self, index: usize, values: U32x4, mask: Lane
 }
 
 fn laneMaskVector(mask: LaneMask) @Vector(lane_count, bool) {
+    // SAFETY: the following loop initializes every vector lane before result is returned
     var result: @Vector(lane_count, bool) = undefined;
     inline for (0..lane_count) |lane|
         result[lane] = (mask & laneBit(lane)) != 0;

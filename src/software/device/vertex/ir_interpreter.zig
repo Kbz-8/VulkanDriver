@@ -114,6 +114,7 @@ pub fn run(data: RunData) VkError!void {
             continue;
 
         slot.runtime.resetWave(&shader.program, mask, mask);
+        // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
         const input_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
         for (0..Runtime.lane_count) |lane| {
             const bit = @as(Runtime.LaneMask, 1) << @intCast(lane);
@@ -135,6 +136,7 @@ pub fn run(data: RunData) VkError!void {
         if (comptime base.config.soft_profile)
             input_ns += Renderer.profileElapsedNs(input_timer, io);
 
+        // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
         const shader_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
         const outcome = slot.runtime.runWave(&shader.program, .{
             .resource_buffers = resource_buffers,
@@ -155,6 +157,7 @@ pub fn run(data: RunData) VkError!void {
                 full_waves += 1;
         }
 
+        // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
         const output_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
         for (0..Runtime.lane_count) |lane| {
             const bit = @as(Runtime.LaneMask, 1) << @intCast(lane);

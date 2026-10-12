@@ -1,5 +1,5 @@
-const std = @import("std");
 const vk = @import("vulkan");
+const std = @import("std");
 const shader_ir = @import("shader_ir");
 const config = @import("config");
 
@@ -20,7 +20,7 @@ pub const ObjectType: vk.ObjectType = .pipeline;
 pub const CommonStage = struct {
     stage: shader_ir.ir.module.Stage,
     module: ShaderModule.IrModule,
-    // Module's arena retains this allocator's address, so the stage is initialized in place.
+    // Module's arena retains this allocator's address, so the stage is initialized in place
     allocator: VulkanAllocator,
 
     fn deinit(self: *CommonStage) void {
