@@ -19,14 +19,22 @@ pub const SourceLocation = struct {
 pub const UnaryOpcode = enum {
     absolute,
     all,
+    any,
     bit_count,
     bit_reverse,
     bitwise_not,
+    ceil,
+    exp,
+    floor,
+    fwidth,
     is_inf,
     is_nan,
+    length,
     logical_not,
     negate,
     normalize,
+    round,
+    sign,
     transpose,
 };
 
@@ -36,8 +44,11 @@ pub const BinaryOpcode = enum {
     bitwise_and,
     bitwise_or,
     bitwise_xor,
+    dot,
     float_add,
     float_divide,
+    float_max,
+    float_min,
     float_modulo,
     float_multiply,
     float_remainder,
@@ -50,11 +61,11 @@ pub const BinaryOpcode = enum {
     logical_and,
     logical_or,
     logical_shift_right,
-    dot,
     matrix_times_matrix,
     matrix_times_scalar,
     matrix_times_vector,
     outer_product,
+    pow,
     shift_left,
     signed_divide,
     signed_modulo,
@@ -62,11 +73,13 @@ pub const BinaryOpcode = enum {
     unsigned_divide,
     unsigned_modulo,
     unsigned_multiply_extended,
+    vector_extract_dynamic,
     vector_times_matrix,
     vector_times_scalar,
 };
 
 pub const TernaryOpcode = enum {
+    float_mix,
     smooth_step,
 };
 

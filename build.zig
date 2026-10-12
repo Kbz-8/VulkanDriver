@@ -1,8 +1,9 @@
 const std = @import("std");
 const Step = std.Build.Step;
 const builtin = @import("builtin");
+const zon = @import("build.zig.zon");
 
-const driver_version: std.SemanticVersion = .{ .major = 26, .minor = 0, .patch = 0 };
+const driver_version = std.SemanticVersion.parse(zon.version) catch unreachable;
 
 const InstallFn = *const fn (*std.Build, *const ImplementationDesc, *Step.Compile) *Step;
 
@@ -127,12 +128,14 @@ pub fn build(b: *std.Build) !void {
     const logs_option: LogType = b.option(LogType, "logs", "Driver logs") orelse .none;
     const debug_allocator_option = b.option(bool, "device-debug-allocator", "Debug device allocator") orelse false;
     const dump_common_ir_option = b.option(bool, "dump-common-ir", "Print backend-agnostic shader IR after translation") orelse false;
+    const dump_spirv_option = b.option(bool, "dump-spirv", "Dump the SPIR-V shaders to file") orelse false;
 
     const options = b.addOptions();
     options.addOption(std.SemanticVersion, "driver_version", driver_version);
     options.addOption(LogType, "logs", logs_option);
     options.addOption(bool, "device_debug_allocator", debug_allocator_option);
     options.addOption(bool, "dump_common_ir", dump_common_ir_option);
+    options.addOption(bool, "dump_spirv", dump_spirv_option);
 
     const shared_dependencies = SharedDependencies{
         .vulkan = vulkan,
@@ -214,7 +217,7 @@ pub fn build(b: *std.Build) !void {
         lib_mod.pic = context.pic;
 
         const lib = b.addLibrary(.{
-            .name = b.fmt("vulkan_{s}", .{impl.name}),
+            .name = b.fmt("vulkan_ape_{s}", .{impl.name}),
             .root_module = lib_mod,
             .linkage = context.linkage,
             .use_llvm = impl_use_llvm,
@@ -489,7 +492,7 @@ fn addMultithreadedCTS(
         "deqp-runner",
         "run",
         "--timeout",
-        "60",
+        "500",
         "--output",
         "./cts",
     });
@@ -552,6 +555,7 @@ fn customSoft(
 
     const single_threaded_option = b.option(bool, "soft-single-threaded", "Single threaded runtime mode") orelse false;
     const ir_interpreter_option = b.option(bool, "soft-ir-interpreter", "Enable the experimental backend-agnostic IR interpreter") orelse false;
+    const profile_option = b.option(bool, "soft-profile", "Profile software rendering stages per draw") orelse false;
     const shaders_simd_option = b.option(bool, "soft-shader-simd", "Shaders SIMD acceleration") orelse true;
     const compute_dump_early_results_table_option = b.option(u32, "soft-compute-dump-early-results-table", "Dump compute shaders results table before invocation");
     const compute_dump_final_results_table_option = b.option(u32, "soft-compute-dump-final-results-table", "Dump compute shaders results table after invocation");
@@ -559,6 +563,7 @@ fn customSoft(
 
     options.addOption(bool, "soft_single_threaded", single_threaded_option);
     options.addOption(bool, "soft_ir_interpreter", ir_interpreter_option);
+    options.addOption(bool, "soft_profile", profile_option);
     options.addOption(bool, "soft_shaders_simd", shaders_simd_option);
     options.addOption(?u32, "soft_compute_dump_early_results_table", compute_dump_early_results_table_option);
     options.addOption(?u32, "soft_compute_dump_final_results_table", compute_dump_final_results_table_option);

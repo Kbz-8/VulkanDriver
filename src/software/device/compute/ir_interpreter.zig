@@ -112,7 +112,7 @@ pub fn runBatch(context: Context, batch: Batch) !void {
     defer slot.mutex.unlock(context.io);
 
     var barrier_runtimes: []Runtime = &.{};
-    var statuses: []Runtime.Outcome = &.{};
+    var statuses: []Runtime.WaveResult = &.{};
     var initialized: usize = 0;
 
     defer {
@@ -123,8 +123,9 @@ pub fn runBatch(context: Context, batch: Batch) !void {
     }
 
     if (shader.program.uses_control_barriers) {
-        barrier_runtimes = try context.allocator.alloc(Runtime, context.local_count);
-        statuses = try context.allocator.alloc(Runtime.Outcome, context.local_count);
+        const wave_count = std.math.divCeil(usize, context.local_count, invocationsPerWave(&shader.program)) catch return VkError.ValidationFailed;
+        barrier_runtimes = try context.allocator.alloc(Runtime, wave_count);
+        statuses = try context.allocator.alloc(Runtime.WaveResult, wave_count);
         for (barrier_runtimes) |*runtime| {
             runtime.* = try Runtime.init(context.allocator, &shader.program);
             initialized += 1;
@@ -152,56 +153,95 @@ fn runSimpleWorkgroup(context: Context, batch: Batch, runtime: *Runtime, group_i
     defer context.allocator.free(memory);
     @memset(memory, 0);
 
-    for (0..context.local_count) |local_index| {
-        runtime.resetInvocation(program);
-        try setupInputs(context, batch, runtime, group_id, local_index);
-        const outcome = try runtime.run(program, .{ .resource_buffers = context.resource_buffers, .resource_images = context.resource_images, .resource_samplers = context.resource_samplers, .push_constants = context.push_constants, .workgroup_memory = memory });
-        if (outcome != .returned)
+    const wave_width = invocationsPerWave(program);
+    const wave_count = std.math.divCeil(usize, context.local_count, wave_width) catch return VkError.ValidationFailed;
+    for (0..wave_count) |wave_index| {
+        const mask = waveMask(context.local_count, wave_index, wave_width);
+        runtime.resetWave(program, mask, mask);
+        try setupWaveInputs(context, batch, runtime, group_id, wave_index, wave_width, mask);
+        const outcome = try runtime.runWave(program, runOptions(context, memory));
+        if (outcome.returned_mask != mask or outcome.discarded_mask != 0 or outcome.barrier_mask != 0)
             return Runtime.RuntimeError.BarrierDivergence;
     }
 }
 
-fn runBarrierWorkgroup(context: Context, batch: Batch, runtimes: []Runtime, statuses: []Runtime.Outcome, group_id: [3]u32) !void {
+fn runBarrierWorkgroup(context: Context, batch: Batch, runtimes: []Runtime, statuses: []Runtime.WaveResult, group_id: [3]u32) !void {
     const program = &context.shader.program;
     const memory = try context.allocator.alloc(u8, program.workgroup_memory_size);
     defer context.allocator.free(memory);
     @memset(memory, 0);
 
-    for (runtimes, statuses, 0..) |*runtime, *status, local_index| {
-        runtime.resetInvocation(program);
-        try setupInputs(context, batch, runtime, group_id, local_index);
-        status.* = try runtime.run(program, .{ .resource_buffers = context.resource_buffers, .resource_images = context.resource_images, .resource_samplers = context.resource_samplers, .push_constants = context.push_constants, .workgroup_memory = memory });
+    const wave_width = invocationsPerWave(program);
+    for (runtimes, statuses, 0..) |*runtime, *status, wave_index| {
+        const mask = waveMask(context.local_count, wave_index, wave_width);
+        runtime.resetWave(program, mask, mask);
+        try setupWaveInputs(context, batch, runtime, group_id, wave_index, wave_width, mask);
+        status.* = try runtime.runWave(program, runOptions(context, memory));
     }
 
     while (true) {
         var all_returned = true;
         var all_barrier = true;
-        for (statuses) |status| switch (status) {
-            .returned => all_barrier = false,
-            .barrier => all_returned = false,
-            .discarded => return Runtime.RuntimeError.BarrierDivergence,
-        };
+        for (statuses, 0..) |status, wave_index| {
+            const mask = waveMask(context.local_count, wave_index, wave_width);
+            const returned = status.returned_mask == mask and status.discarded_mask == 0 and status.barrier_mask == 0;
+            const barrier = status.returned_mask == 0 and status.discarded_mask == 0 and status.barrier_mask == mask;
+            all_returned = all_returned and returned;
+            all_barrier = all_barrier and barrier;
+        }
         if (all_returned)
             return;
         if (!all_barrier)
             return Runtime.RuntimeError.BarrierDivergence;
 
         for (runtimes, statuses) |*runtime, *status|
-            status.* = try runtime.continueExecution(program, .{ .resource_buffers = context.resource_buffers, .resource_images = context.resource_images, .resource_samplers = context.resource_samplers, .push_constants = context.push_constants, .workgroup_memory = memory });
+            status.* = try runtime.runWave(program, runOptions(context, memory));
     }
 }
 
-fn setupInputs(context: Context, batch: Batch, runtime: *Runtime, group_id: [3]u32, local_index: usize) !void {
+fn runOptions(context: Context, memory: []u8) Runtime.RunOptions {
+    return .{
+        .resource_buffers = context.resource_buffers,
+        .resource_images = context.resource_images,
+        .resource_samplers = context.resource_samplers,
+        .push_constants = context.push_constants,
+        .workgroup_memory = memory,
+    };
+}
+
+fn invocationsPerWave(program: *const Program) usize {
+    return if (program.uses_atomics) 1 else Runtime.lane_count;
+}
+
+fn waveMask(local_count: usize, wave_index: usize, wave_width: usize) Runtime.LaneMask {
+    const first = wave_index * wave_width;
+    const remaining = @min(local_count - first, wave_width);
+    return if (remaining == Runtime.lane_count)
+        Runtime.full_lane_mask
+    else
+        (@as(Runtime.LaneMask, 1) << @intCast(remaining)) - 1;
+}
+
+fn setupWaveInputs(context: Context, batch: Batch, runtime: *Runtime, group_id: [3]u32, wave_index: usize, wave_width: usize, mask: Runtime.LaneMask) !void {
+    for (0..Runtime.lane_count) |lane| {
+        const bit = @as(Runtime.LaneMask, 1) << @intCast(lane);
+        if ((mask & bit) == 0)
+            continue;
+        try setupInputsLane(context, batch, runtime, lane, group_id, wave_index * wave_width + lane);
+    }
+}
+
+fn setupInputsLane(context: Context, batch: Batch, runtime: *Runtime, lane: usize, group_id: [3]u32, local_index: usize) !void {
     const program = &context.shader.program;
 
     if (context.num_workgroups) |variable|
-        try runtime.writeInput(program, variable, &.{ @intCast(batch.group_count[0]), @intCast(batch.group_count[1]), @intCast(batch.group_count[2]) });
+        try runtime.writeInputLane(program, lane, variable, &.{ @intCast(batch.group_count[0]), @intCast(batch.group_count[1]), @intCast(batch.group_count[2]) });
 
     if (context.workgroup_size) |variable|
-        try runtime.writeInput(program, variable, &context.local_size);
+        try runtime.writeInputLane(program, lane, variable, &context.local_size);
 
     if (context.workgroup_id) |variable|
-        try runtime.writeInput(program, variable, &group_id);
+        try runtime.writeInputLane(program, lane, variable, &group_id);
 
     const local_z = local_index / context.local_xy;
     const local_remainder = local_index - local_z * context.local_xy;
@@ -210,17 +250,17 @@ fn setupInputs(context: Context, batch: Batch, runtime: *Runtime, group_id: [3]u
     const local_id = [3]u32{ @intCast(local_x), @intCast(local_y), @intCast(local_z) };
 
     if (context.global_id) |variable|
-        try runtime.writeInput(program, variable, &.{
+        try runtime.writeInputLane(program, lane, variable, &.{
             group_id[0] * context.local_size[0] + local_id[0],
             group_id[1] * context.local_size[1] + local_id[1],
             group_id[2] * context.local_size[2] + local_id[2],
         });
 
     if (context.local_id) |variable|
-        try runtime.writeInput(program, variable, &local_id);
+        try runtime.writeInputLane(program, lane, variable, &local_id);
 
     if (context.local_index) |variable|
-        try runtime.writeInput(program, variable, &.{@intCast(local_index)});
+        try runtime.writeInputLane(program, lane, variable, &.{@intCast(local_index)});
 }
 
 fn findInputBuiltin(program: *const Program, builtin: ir.module.Builtin) ?ir.id.InterfaceVariableId {

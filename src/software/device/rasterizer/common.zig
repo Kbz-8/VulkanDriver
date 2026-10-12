@@ -6,6 +6,7 @@ const spv = @import("spv");
 
 const blitter = @import("../blitter.zig");
 const Renderer = @import("../Renderer.zig");
+const interpreter_simd = @import("../../interpreter/simd.zig");
 
 const VkError = base.VkError;
 const F32x4 = zm.F32x4;
@@ -98,6 +99,8 @@ pub const FragmentInputs = if (base.config.soft_ir_interpreter)
     PackedFragmentInputs
 else
     [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation;
+
+pub const FragmentWaveOutputs = [spv.SPIRV_MAX_OUTPUT_LOCATIONS][4]@Vector(interpreter_simd.lane_count, u32);
 
 pub fn depthBiasConstantUnit(format: vk.Format, z: f32) f32 {
     return switch (format) {
@@ -674,6 +677,178 @@ inline fn applyColorWriteMask(blended: F32x4, dst: F32x4, mask: vk.ColorComponen
     };
 }
 
+fn writesAllColorComponents(mask: vk.ColorComponentFlags) bool {
+    return mask.r and mask.g and mask.b and mask.a;
+}
+
+fn colorAttachmentReplacesDestination(color_blend: anytype, location: usize) bool {
+    const attachments = color_blend.attachments orelse return true;
+    if (location >= attachments.len)
+        return true;
+    const attachment = attachments[location];
+    return attachment.blend_enable == .false and writesAllColorComponents(attachment.color_write_mask);
+}
+
+pub fn canUseOpaqueSingleSampleOutput(
+    draw_call: *const Renderer.DrawCall,
+    color_attachment_access: []const ?RenderTargetAccess,
+    depth_stencil_state: ?vk.PipelineDepthStencilStateCreateInfo,
+    stencil_attachment_access: ?*const RenderTargetAccess,
+) bool {
+    const pipeline_data = draw_call.renderer.state.pipeline.?.interface.mode.graphics;
+    if (pipeline_data.multisample.rasterization_samples.toInt() != 1 or
+        draw_call.renderer.active_occlusion_queries.items.len != 0)
+        return false;
+
+    if (stencil_attachment_access != null) {
+        if (depth_stencil_state) |state| {
+            if (state.stencil_test_enable == .true)
+                return false;
+        }
+    }
+
+    for (color_attachment_access, 0..) |maybe_color, location| {
+        if (maybe_color != null and !colorAttachmentReplacesDestination(pipeline_data.color_blend, location))
+            return false;
+    }
+    return true;
+}
+
+pub fn writeOpaqueSingleSampleToTargets(
+    outputs: *const [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8,
+    draw_call: *Renderer.DrawCall,
+    color_attachment_access: []const ?RenderTargetAccess,
+    depth_attachment_access: ?*RenderTargetAccess,
+    depth_stencil_state: ?vk.PipelineDepthStencilStateCreateInfo,
+    x: usize,
+    y: usize,
+    z: f32,
+    coverage_sample_mask: ?vk.SampleMask,
+    fragment_sample_mask: ?vk.SampleMask,
+    depth_already_applied: bool,
+    ordering: AttachmentOrdering,
+) VkError!void {
+    const pipeline_data = draw_call.renderer.state.pipeline.?.interface.mode.graphics;
+    if (!sampleMaskEnablesSample(pipeline_data.multisample, coverage_sample_mask, fragment_sample_mask, 0))
+        return;
+    if (x >= draw_call.framebuffer.interface.width or y >= draw_call.framebuffer.interface.height)
+        return;
+    if (draw_call.renderer.render_area) |render_area| {
+        if (!rectContainsPixel(render_area, x, y))
+            return;
+    }
+
+    if (!depth_already_applied) {
+        if (depth_attachment_access) |depth| {
+            if (!try depthTestSampleAndUpdate(
+                draw_call.renderer.device.interface.io(),
+                depth,
+                x,
+                y,
+                0,
+                z,
+                depth_stencil_state,
+                ordering,
+            )) return;
+        }
+    }
+
+    for (color_attachment_access, 0..) |maybe_color, location| {
+        const color = maybe_color orelse continue;
+        const color_offset = targetOffset(color, x, y) orelse continue;
+        if (base.format.isUnnormalizedInteger(color.format)) {
+            const value = std.mem.bytesToValue(U32x4, &outputs[location]);
+            blitter.writeInt4(value, color.base[color_offset..], color.format);
+        } else {
+            const src = fragmentOutputFloat4(outputs[location], color.format);
+            const encoded_color = if (base.format.isSrgb(color.format)) zm.rgbToSrgb(src) else src;
+            blitter.writeFloat4(encoded_color, color.base[color_offset..], color.format);
+        }
+    }
+}
+
+pub fn writeOpaqueSingleSampleWaveToTargets(
+    outputs: *const FragmentWaveOutputs,
+    output_components: *const [spv.SPIRV_MAX_OUTPUT_LOCATIONS]u4,
+    draw_call: *Renderer.DrawCall,
+    color_attachment_access: []const ?RenderTargetAccess,
+    depth_attachment_access: ?*RenderTargetAccess,
+    depth_stencil_state: ?vk.PipelineDepthStencilStateCreateInfo,
+    base_x: usize,
+    y: usize,
+    lane_mask: interpreter_simd.LaneMask,
+    depths: *const [interpreter_simd.lane_count]f32,
+    depth_already_applied: *const [interpreter_simd.lane_count]bool,
+    ordering: AttachmentOrdering,
+) VkError!void {
+    const pipeline_data = draw_call.renderer.state.pipeline.?.interface.mode.graphics;
+    if (!sampleMaskEnablesSample(pipeline_data.multisample, 1, null, 0))
+        return;
+
+    var output_mask = lane_mask;
+    for (0..interpreter_simd.lane_count) |lane| {
+        const bit = interpreter_simd.laneBit(@intCast(lane));
+        if ((output_mask & bit) == 0)
+            continue;
+        const x = base_x + lane;
+        if (x >= draw_call.framebuffer.interface.width or y >= draw_call.framebuffer.interface.height) {
+            output_mask &= ~bit;
+            continue;
+        }
+        if (draw_call.renderer.render_area) |render_area| {
+            if (!rectContainsPixel(render_area, x, y)) {
+                output_mask &= ~bit;
+                continue;
+            }
+        }
+        if (!depth_already_applied[lane]) {
+            if (depth_attachment_access) |depth| {
+                if (!try depthTestSampleAndUpdate(
+                    draw_call.renderer.device.interface.io(),
+                    depth,
+                    x,
+                    y,
+                    0,
+                    depths[lane],
+                    depth_stencil_state,
+                    ordering,
+                )) output_mask &= ~bit;
+            }
+        }
+    }
+    if (output_mask == 0)
+        return;
+
+    for (color_attachment_access, 0..) |maybe_color, location| {
+        const color = maybe_color orelse continue;
+        var component_lanes: [4][interpreter_simd.lane_count]u32 = @splat(@splat(0));
+        for (0..4) |component| {
+            const component_bit = @as(u4, 1) << @intCast(component);
+            if ((output_components[location] & component_bit) != 0)
+                component_lanes[component] = @bitCast(outputs[location][component]);
+        }
+        for (0..interpreter_simd.lane_count) |lane| {
+            const bit = interpreter_simd.laneBit(@intCast(lane));
+            if ((output_mask & bit) == 0)
+                continue;
+            const color_offset = targetOffset(color, base_x + lane, y) orelse continue;
+            const words = U32x4{
+                component_lanes[0][lane],
+                component_lanes[1][lane],
+                component_lanes[2][lane],
+                component_lanes[3][lane],
+            };
+            if (base.format.isUnnormalizedInteger(color.format)) {
+                blitter.writeInt4(words, color.base[color_offset..], color.format);
+            } else {
+                const src: F32x4 = @bitCast(words);
+                const encoded_color = if (base.format.isSrgb(color.format)) zm.rgbToSrgb(src) else src;
+                blitter.writeFloat4(encoded_color, color.base[color_offset..], color.format);
+            }
+        }
+    }
+}
+
 pub fn writeToTargets(
     outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8,
     draw_call: *Renderer.DrawCall,
@@ -771,15 +946,16 @@ pub fn writeToTargets(
                 blitter.writeInt4(value, color.base[color_offset..], color.format);
             } else {
                 const src = fragmentOutputFloat4(outputs[location], color.format);
-                const encoded_dst = blitter.readFloat4(color.base[color_offset..], color.format);
-                const dst = if (base.format.isSrgb(color.format)) zm.srgbToRgb(encoded_dst) else encoded_dst;
-                const final_color = if (pipeline_data.color_blend.attachments) |attachments| blk: {
-                    if (location >= attachments.len)
-                        break :blk src;
+                const final_color = if (colorAttachmentReplacesDestination(pipeline_data.color_blend, location))
+                    src
+                else blk: {
+                    const encoded_dst = blitter.readFloat4(color.base[color_offset..], color.format);
+                    const dst = if (base.format.isSrgb(color.format)) zm.srgbToRgb(encoded_dst) else encoded_dst;
+                    const attachment = pipeline_data.color_blend.attachments.?[location];
                     const constants = draw_call.renderer.dynamic_state.blend_constants orelse pipeline_data.color_blend.constants;
-                    const blended = blendColor(src, dst, attachments[location], constants, color.format);
-                    break :blk applyColorWriteMask(blended, dst, attachments[location].color_write_mask);
-                } else src;
+                    const blended = blendColor(src, dst, attachment, constants, color.format);
+                    break :blk applyColorWriteMask(blended, dst, attachment.color_write_mask);
+                };
                 const encoded_color = if (base.format.isSrgb(color.format)) zm.rgbToSrgb(final_color) else final_color;
                 blitter.writeFloat4(encoded_color, color.base[color_offset..], color.format);
             }

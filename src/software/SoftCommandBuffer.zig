@@ -338,6 +338,10 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
             device.renderer.subpass_index = 0;
             device.renderer.resetInputAttachmentSnapshots();
 
+            const io = device.renderer.device.interface.io();
+
+            var group: std.Io.Group = .init;
+
             for (impl.render_pass.interface.attachments, impl.framebuffer.interface.attachments, 0..) |desc, attachment, index| {
                 if (!attachmentIsReferencedBySubpass(impl.render_pass, @intCast(index)))
                     continue;
@@ -357,45 +361,65 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
 
                 clear_mask = clear_mask.intersect(base.format.toAspect(attachment.format));
 
+                const clearWrapper = struct {
+                    fn clear(pixel: vk.ClearValue, format: vk.Format, dst: *SoftImage, view_format: vk.Format, range: vk.ImageSubresourceRange, area: ?vk.Rect2D) void {
+                        blitter.clear(pixel, format, dst, view_format, range, area) catch @panic("blitter failed in a thread");
+                    }
+                }.clear;
+
                 if (clear_mask.toInt() != 0) {
                     if (clear_mask.color) {
-                        try blitter.clear(
-                            (impl.clear_values orelse return VkError.Unknown)[index],
-                            try SoftImage.getClearFormatFor(attachment.format),
-                            image,
-                            attachment.format,
-                            attachment.subresource_range,
-                            impl.render_area,
+                        group.async(
+                            io,
+                            clearWrapper,
+                            .{
+                                (impl.clear_values orelse return VkError.Unknown)[index],
+                                try SoftImage.getClearFormatFor(attachment.format),
+                                image,
+                                attachment.format,
+                                attachment.subresource_range,
+                                impl.render_area,
+                            },
                         );
                     } else {
                         var subresource_range = attachment.subresource_range;
 
                         if (clear_mask.depth) {
                             subresource_range.aspect_mask = .{ .depth = true };
-                            try blitter.clear(
-                                (impl.clear_values orelse return VkError.Unknown)[index],
-                                .d32_sfloat,
-                                image,
-                                attachment.format,
-                                subresource_range,
-                                impl.render_area,
+                            group.async(
+                                io,
+                                clearWrapper,
+                                .{
+                                    (impl.clear_values orelse return VkError.Unknown)[index],
+                                    .d32_sfloat,
+                                    image,
+                                    attachment.format,
+                                    subresource_range,
+                                    impl.render_area,
+                                },
                             );
                         }
 
                         if (clear_mask.stencil) {
                             subresource_range.aspect_mask = .{ .stencil = true };
-                            try blitter.clear(
-                                (impl.clear_values orelse return VkError.Unknown)[index],
-                                .s8_uint,
-                                image,
-                                attachment.format,
-                                subresource_range,
-                                impl.render_area,
+                            group.async(
+                                io,
+                                clearWrapper,
+                                .{
+                                    (impl.clear_values orelse return VkError.Unknown)[index],
+                                    .s8_uint,
+                                    image,
+                                    attachment.format,
+                                    subresource_range,
+                                    impl.render_area,
+                                },
                             );
                         }
                     }
                 }
             }
+
+            group.await(io) catch return VkError.DeviceLost;
         }
     };
 

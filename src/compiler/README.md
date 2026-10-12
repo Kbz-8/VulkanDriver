@@ -251,12 +251,20 @@ Form:
 | `bit_count`   | Counts the set bits in each component.                     | Integer scalar or vector; result has the same width and shape.            | `%2: u32 = bit_count %1`         |
 | `bit_reverse` | Reverses the bits in each component.                       | Integer scalar or vector; result has the same width and shape.            | `%2: u32 = bit_reverse %1`       |
 | `bitwise_not` | Inverts every bit.                                         | Integer scalar or vector; result has the same width and shape.            | `%2: u32 = bitwise_not %1`       |
+| `exp`         | Computes the natural exponential component-wise.           | Floating scalar or vector; the result has the same type.                  | `%2: f32 = exp %1`               |
+| `floor`       | Rounds each component toward negative infinity.            | Floating scalar or vector; the result has the same type.                  | `%2: f32 = floor %1`             |
 | `is_inf`      | Tests each component for positive or negative infinity.    | Floating scalar or vector; result is a matching boolean scalar or vector. | `%2: bool = is_inf %1`           |
 | `is_nan`      | Tests each component for NaN.                              | Floating scalar or vector; result is a matching boolean scalar or vector. | `%2: vec4[bool] = is_nan %1`     |
-| `logical_not` | Inverts a boolean value.                                   | Boolean operand and boolean result.                                       | `%2: bool = logical_not %1`      |
+| `logical_not` | Inverts each boolean component.                            | Boolean scalar or vector; the result has the same type.                   | `%2: bool = logical_not %1`      |
 | `negate`      | Changes the arithmetic sign.                               | Signed integer or floating operand; the result has the same type.         | `%2: i32 = negate %1`            |
 | `normalize`   | Produces a floating value with unit length.                | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = normalize %1`   |
+| `sign`        | Produces -1, 0, or 1 according to the operand's sign.      | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = sign %1`        |
 | `transpose`   | Exchanges the rows and columns of a floating-point matrix. | Floating matrix; result has reversed row and column counts.               | `%2: mat2x3[f32] = transpose %1` |
+
+`length` accepts a floating scalar or vector and returns the scalar element type
+(with matching precision); scalar length is the absolute value. `fwidth` accepts a
+floating scalar or vector, preserves its type, and is fragment-only. It represents
+`abs(dFdx(x)) + abs(dFdy(x))` with the default derivative granularity.
 
 `negate` is one normalized opcode: the operand type distinguishes integer
 negation from floating negation. Unary integer and floating operations apply
@@ -302,9 +310,11 @@ and poison rules are not yet separately recorded by the IR.
 | `float_subtract`  | Subtracts the right operand from the left.              | Floating operands of one type.                                      | `%3: f32 = float_subtract %1, %2`  |
 | `float_multiply`  | Multiplies floating-point values.                       | Floating operands of one type.                                      | `%3: f32 = float_multiply %1, %2`  |
 | `float_divide`    | Divides the left operand by the right.                  | Floating operands of one type.                                      | `%3: f32 = float_divide %1, %2`    |
+| `float_max`       | Selects the greater operand component-wise.             | Floating operands of one type; maps GLSL.std.450 `FMax`.            | `%3: f32 = float_max %1, %2`       |
 | `float_modulo`    | Produces `x - y * floor(x / y)`.                        | Floating operands of one type; this corresponds to SPIR-V `OpFMod`. | `%3: f32 = float_modulo %1, %2`    |
 | `float_remainder` | Produces `x - y * trunc(x / y)`.                        | Floating operands of one type; this corresponds to SPIR-V `OpFRem`. | `%3: f32 = float_remainder %1, %2` |
 | `atan2`           | Computes the quadrant-aware arc tangent of `lhs / rhs`. | Floating operands of one type; maps GLSL.std.450 `Atan2`.           | `%3: f32 = atan2 %1, %2`           |
+| `pow`             | Raises the left operand to the power of the right.      | Floating operands of one type; maps GLSL.std.450 `Pow`.             | `%3: f32 = pow %1, %2`             |
 
 Instructions do not yet carry fast-math flags, rounding modes, contraction
 permission, or NaN guarantees.
@@ -316,6 +326,15 @@ permission, or NaN guarantees.
 | `vector_times_scalar` | Multiplies a vector by a scalar.         | Floating vector and matching scalar; result has the vector type. | `%3: vec4[f32] = vector_times_scalar %1, %2` |
 | `vector_times_matrix` | Multiplies a row vector by a matrix.     | Compatible floating vector and matrix dimensions.                | `%3: vec4[f32] = vector_times_matrix %1, %2` |
 | `dot`                 | Computes the dot product of two vectors. | Equal floating vectors; result is their scalar element type.     | `%3: f32 = dot %1, %2`                       |
+
+`vector_extract_dynamic` takes a vector and a scalar signed or unsigned integer
+index and returns the vector's scalar element type. It supports floating, integer,
+and boolean vectors; it does not accept matrices. An out-of-range index has an
+undefined result, matching SPIR-V `OpVectorExtractDynamic`.
+
+GLSL.std.450 `Length` maps directly to unary `length`. `FClamp` lowers to
+`float_max(x, min)` followed by `float_min(lower, max)`; all three operands and the
+result must have the same floating scalar or vector type.
 
 ### Matrix arithmetic
 
@@ -849,7 +868,9 @@ defer module.deinit();
 
 `translator.translate` remains a convenience wrapper for borrowed words. Each
 translation selects one entry point and returns an independent mutable IR
-module. The translator lowers a defined subset:
+module. Only functions in that entry point's static call tree are declared and
+translated; unused helpers and other entry points cannot require interfaces
+omitted from the selected entry point. The translator lowers a defined subset:
 
 - Vertex, fragment, and compute stages.
 - Basic scalar, vector, array, structure, pointer, and function types.
@@ -857,14 +878,27 @@ module. The translator lowers a defined subset:
   specialization constants selected through `SpecId`. Missing overrides use the
   SPIR-V defaults, and specialization composites are rebuilt from their
   specialized elements. `OpSpecConstantOp` is not evaluated yet.
-- Functions, blocks, branches, structured merge marks, and returns.
+- Functions, blocks, branches, structured merge marks, and returns. `OpSwitch`
+  is lowered to a chain of integer equality tests and conditional branches.
 - `OpPhi` into block parameters and edge arguments.
 - The arithmetic, comparison, select, bitcast, conversion, bit-field, and
   composite operations named in the reference above where mappings currently
   exist, including extended integer arithmetic, matrix products and transpose,
-  floating remainder, classification, and ordered less-or-equal.
-- GLSL.std.450 `FAbs`, `Atan2`, `SmoothStep`, `Normalize`, and `NClamp`.
-- Decorated stage inputs and outputs, with interface load and store.
+  floating remainder and classification, plus the complete scalar/vector
+  integer and floating-point comparison families. Redundant greater-than forms
+  are canonicalized by reversing less-than operands; integer and unordered
+  floating-point `<=`/`>=` forms use a comparison followed by `logical_not`.
+- GLSL.std.450 `Exp`, `FAbs`, `FSign`, `FMax`, `Atan2`, `Pow`, `SmoothStep`,
+  `Normalize`, and `NClamp`.
+  `OpExtInstImport` declarations are classified once and dispatched through
+  `src/compiler/spirv/extensions/`; set-specific translation lives below the
+  corresponding extension subdirectory.
+- Decorated stage inputs and outputs, with interface load and store. Partial
+  output stores reconstruct the aggregate while preserving untouched components,
+  including nested constant and dynamic indices. After inlining, output reads
+  are promoted to invocation-local SSA state carried through block parameters
+  and edge arguments; unwritten components start as `undef`. Returned IR retains
+  whole-output stores and does not load output interfaces.
 - `OpName` debug names for functions, blocks, parameters, constants, and
   instruction results when they are valid textual IR identifiers.
 

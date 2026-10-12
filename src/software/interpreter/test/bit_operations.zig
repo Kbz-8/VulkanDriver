@@ -143,6 +143,7 @@ test "[interpreter] shared integer operations lower to bytecode" {
     );
     defer module.deinit();
 
+    try @import("liveness.zig").makeResultsObservable(&module);
     var program = try Program.compile(std.testing.allocator, &module);
     defer program.deinit();
 
@@ -203,4 +204,218 @@ test "[interpreter] homogeneous structures flatten and extract by member shape" 
     var output: [2]u32 = undefined;
     try runtime.readOutput(&program, ir.id.InterfaceVariableId.fromIndex(0), &output);
     try std.testing.expectEqualSlices(u32, &.{ 3, 4 }, &output);
+}
+
+test "[interpreter] mixed nested constants and constructs preserve typed extraction" {
+    var module = ir.module.Module.init(std.testing.allocator, .compute);
+    defer module.deinit();
+    var builder = ir.Builder.init(&module);
+    const void_type = try builder.internType(.void);
+    const bool_type = try builder.internType(.boolean);
+    const float_type = try builder.internType(.{ .floating = .{ .bits = 32 } });
+    const signed_type = try builder.internType(.{ .integer = .{ .bits = 32, .signedness = .signed } });
+    const unsigned_type = try builder.internType(.{ .integer = .{ .bits = 32, .signedness = .unsigned } });
+    const child_type = try builder.internType(.{ .structure = .{ .members = &.{ float_type, signed_type, unsigned_type } } });
+    const array_type = try builder.internType(.{ .array = .{ .element_type = child_type, .length = 2 } });
+    const root_type = try builder.internType(.{ .structure = .{ .members = &.{ bool_type, array_type } } });
+    const leaf_types = [_]ir.id.TypeId{ bool_type, float_type, signed_type, unsigned_type };
+    const root_output = try builder.addInterfaceVariable(root_type, .output, .{ .location = .{ .location = 0 } }, "root");
+    var leaf_outputs: [4]ir.id.InterfaceVariableId = undefined;
+    for (leaf_types, 0..) |ty, index|
+        leaf_outputs[index] = try builder.addInterfaceVariable(ty, .output, .{ .location = .{ .location = @intCast(index + 1) } }, null);
+
+    const flag = try builder.internConstant(bool_type, .{ .boolean = true });
+    const float = try builder.internConstant(float_type, .{ .float_bits = 0x3fc00000 });
+    const signed = try builder.internConstant(signed_type, .{ .integer_bits = 0xfffffffe });
+    const unsigned = try builder.internConstant(unsigned_type, .{ .integer_bits = 0xdeadbeef });
+    const child_elements = [_]ir.id.ValueId{ float, signed, unsigned };
+    var child_constants: [3]ir.id.ConstantId = undefined;
+    for (child_elements, 0..) |value, index|
+        child_constants[index] = module.values.get(value).?.definition.constant;
+    const child = try builder.internConstant(child_type, .{ .composite = &child_constants });
+    const child_constant = module.values.get(child).?.definition.constant;
+    const array = try builder.internConstant(array_type, .{ .composite = &.{ child_constant, child_constant } });
+    const constant_root = try builder.internConstant(root_type, .{ .composite = &.{ module.values.get(flag).?.definition.constant, module.values.get(array).?.definition.constant } });
+
+    const function = try builder.addFunction(void_type, "main");
+    builder.setEntryPoint(function);
+    const block = try builder.addBlock(function, "entry");
+    const constructed_child = (try builder.appendInstruction(block, child_type, .{ .composite_construct = .{ .elements = &child_elements } }, null)).?;
+    const constructed_array = (try builder.appendInstruction(block, array_type, .{ .composite_construct = .{ .elements = &.{ child, constructed_child } } }, null)).?;
+    const constructed_root = (try builder.appendInstruction(block, root_type, .{ .composite_construct = .{ .elements = &.{ flag, constructed_array } } }, null)).?;
+    const selected = (try builder.appendInstruction(block, root_type, .{ .select = .{ .condition = flag, .true_value = constructed_root, .false_value = constant_root } }, null)).?;
+    const paths = [_][]const u32{ &.{0}, &.{ 1, 1, 0 }, &.{ 1, 1, 1 }, &.{ 1, 1, 2 } };
+    for (leaf_types, paths, leaf_outputs, 0..) |ty, path, output, index| {
+        const leaf = (try builder.appendInstruction(block, ty, .{ .composite_extract = .{ .composite = if (index < 2) constant_root else selected, .indices = path } }, null)).?;
+        _ = try builder.appendInstruction(block, null, .{ .store_interface = .{ .variable = output, .value = leaf } }, null);
+    }
+    _ = try builder.appendInstruction(block, null, .{ .store_interface = .{ .variable = root_output, .value = selected } }, null);
+    try builder.setTerminator(block, .return_void);
+    var program = try Program.compile(std.testing.allocator, &module);
+    defer program.deinit();
+    try std.testing.expectEqual(bc.ValueKind.mixed, program.interfaces[0].?.span.kind);
+    try std.testing.expectEqual(@as(u8, 7), program.interfaces[0].?.span.components);
+    var runtime = try Runtime.init(std.testing.allocator, &program);
+    defer runtime.deinit();
+    try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
+    var root: [7]u32 = undefined;
+    try runtime.readOutput(&program, ir.id.InterfaceVariableId.fromIndex(0), &root);
+    try std.testing.expectEqualSlices(u32, &.{ 1, 0x3fc00000, 0xfffffffe, 0xdeadbeef, 0x3fc00000, 0xfffffffe, 0xdeadbeef }, &root);
+    var leaves: [4]u32 = undefined;
+    for (leaf_outputs, 0..) |output, index| {
+        try std.testing.expectEqual(([_]bc.ValueKind{ .boolean, .floating, .signed_integer, .unsigned_integer })[index], program.interfaceBinding(output).?.span.kind);
+        try runtime.readOutput(&program, output, leaves[index..][0..1]);
+    }
+    try std.testing.expectEqualSlices(u32, &.{ 1, 0x3fc00000, 0xfffffffe, 0xdeadbeef }, &leaves);
+}
+
+test "[interpreter] mixed aggregates branch select and swap block arguments in parallel" {
+    var module = try ir.parser.parseString(std.testing.allocator,
+        \\shader compute @main
+        \\{
+        \\    @condition: bool = input[location(0), component(0), index(0)]
+        \\    @output: struct[f32, u32] = output[location(0), component(0), index(0)]
+        \\    %f1: constant f32 = bits(0x3f800000)
+        \\    %f2: constant f32 = bits(0x40000000)
+        \\    %one: constant u32 = 1
+        \\    %two: constant u32 = 2
+        \\    %zero: constant u32 = 0
+        \\    %first: constant struct[f32, u32] = [#0, #2]
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %condition: bool = load_interface @condition
+        \\            %second: struct[f32, u32] = composite_construct %f2, %two
+        \\            conditional_branch %condition, .yes(), .no()
+        \\        .yes():
+        \\            branch .loop(%first, %second, %zero)
+        \\        .no():
+        \\            branch .loop(%second, %first, %zero)
+        \\        .loop(%a: struct[f32, u32], %b: struct[f32, u32], %index: u32):
+        \\            %continue: bool = cmp_unsigned_less %index, %one
+        \\            conditional_branch %continue, .body(), .exit()
+        \\        .body():
+        \\            %next: u32 = integer_add %index, %one
+        \\            branch .loop(%b, %a, %next)
+        \\        .exit():
+        \\            %selected: struct[f32, u32] = select %condition, %a, %b
+        \\            store_interface @output, %selected
+        \\            return
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+    var program = try Program.compile(std.testing.allocator, &module);
+    defer program.deinit();
+    try std.testing.expectEqual(bc.ValueKind.mixed, program.interfaces[1].?.span.kind);
+    try std.testing.expect(program.scratch_count >= 4);
+    var runtime = try Runtime.init(std.testing.allocator, &program);
+    defer runtime.deinit();
+    for ([_]u32{ 0, 1 }) |condition| {
+        runtime.resetInvocation(&program);
+        try runtime.writeInput(&program, ir.id.InterfaceVariableId.fromIndex(0), &.{condition});
+        try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
+        var output: [2]u32 = undefined;
+        try runtime.readOutput(&program, ir.id.InterfaceVariableId.fromIndex(1), &output);
+        try std.testing.expectEqualSlices(u32, &.{ 0x40000000, 2 }, &output);
+    }
+}
+
+test "[interpreter] mixed aggregate component counts remain checked" {
+    const sources = [_][]const u8{
+        \\shader compute @main
+        \\{
+        \\    %large: constant struct[array[u32, 255], f32] = null
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\}
+        ,
+        \\shader compute @main
+        \\{
+        \\    %large: constant array[struct[u32, f32], 128] = null
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\}
+        ,
+    };
+    for (sources) |source| {
+        var module = try ir.parser.parseString(std.testing.allocator, source);
+        defer module.deinit();
+        var builder = ir.Builder.init(&module);
+        const value = module.values.get(ir.id.ValueId.fromIndex(0)).?;
+        _ = try builder.addInterfaceVariable(value.type, .output, .{ .location = .{ .location = 0 } }, null);
+        try std.testing.expectError(Program.CompileError.UnsupportedType, Program.compile(std.testing.allocator, &module));
+    }
+}
+
+test "[interpreter] scalar unary arithmetic does not interpret mixed spans" {
+    for ([_]ir.instruction.UnaryOpcode{ .bit_count, .bit_reverse, .negate }) |opcode| {
+        var module = ir.module.Module.init(std.testing.allocator, .compute);
+        defer module.deinit();
+        var builder = ir.Builder.init(&module);
+        const void_type = try builder.internType(.void);
+        const float_type = try builder.internType(.{ .floating = .{ .bits = 32 } });
+        const uint_type = try builder.internType(.{ .integer = .{ .bits = 32, .signedness = .unsigned } });
+        const mixed_type = try builder.internType(.{ .structure = .{ .members = &.{ float_type, uint_type } } });
+        const value = try builder.internConstant(mixed_type, .null);
+        const function = try builder.addFunction(void_type, "main");
+        builder.setEntryPoint(function);
+        const block = try builder.addBlock(function, "entry");
+        _ = try builder.appendInstruction(block, mixed_type, .{ .unary = .{ .opcode = opcode, .operand = value } }, null);
+        try @import("liveness.zig").makeResultsObservable(&module);
+        try builder.setTerminator(block, .return_void);
+        // Bypass typed IR validation to exercise the lowerer's own scalar-kind guard.
+        module.properties.valid_cfg = true;
+        module.properties.valid_ssa = true;
+        try std.testing.expectError(Program.CompileError.InvalidOperation, Program.compile(std.testing.allocator, &module));
+    }
+}
+
+test "[interpreter] inlined function mixed return bundle executes with typed members" {
+    var module = try ir.parser.parseString(std.testing.allocator,
+        \\shader compute @main
+        \\{
+        \\    @output: vec2[u32] = output[location(0), component(0), index(0)]
+        \\    %float: constant f32 = bits(0x3fc00000)
+        \\    %uint: constant u32 = bits(0xdeadbeef)
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %bundle: struct[f32, u32] = call @helper(%float, %uint)
+        \\            %f: f32 = composite_extract %bundle[0]
+        \\            %u: u32 = composite_extract %bundle[1]
+        \\            %bits: u32 = bitcast %f
+        \\            %words: vec2[u32] = composite_construct %bits, %u
+        \\            store_interface @output, %words
+        \\            return
+        \\    }
+        \\    fn @helper(%f_arg: f32, %u_arg: u32) -> struct[f32, u32]
+        \\    {
+        \\        .entry():
+        \\            %result: struct[f32, u32] = composite_construct %f_arg, %u_arg
+        \\            return %result
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+    var manager = ir.transformer_manager.Manager.init(std.testing.allocator);
+    defer manager.deinit();
+    try manager.add(ir.inline_all_functions.transformer);
+    var context: ir.transformer_manager.Context = .{ .allocator = std.testing.allocator };
+    try std.testing.expect(try manager.run(&module, &context));
+    try ir.validator.validate(&module);
+    var program = try Program.compile(std.testing.allocator, &module);
+    defer program.deinit();
+    var runtime = try Runtime.init(std.testing.allocator, &program);
+    defer runtime.deinit();
+    try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
+    var output: [2]u32 = undefined;
+    try runtime.readOutput(&program, ir.id.InterfaceVariableId.fromIndex(0), &output);
+    try std.testing.expectEqualSlices(u32, &.{ 0x3fc00000, 0xdeadbeef }, &output);
 }

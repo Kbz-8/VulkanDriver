@@ -28,6 +28,7 @@ test "[interpreter] generalized image samples lower dimensions, arrayedness, res
     );
     defer module.deinit();
 
+    try @import("liveness.zig").makeResultsObservable(&module);
     var program = try Program.compile(std.testing.allocator, &module);
     defer program.deinit();
 
@@ -67,6 +68,7 @@ test "[interpreter] 2D image gather lowers component selection" {
     );
     defer module.deinit();
 
+    try @import("liveness.zig").makeResultsObservable(&module);
     var program = try Program.compile(std.testing.allocator, &module);
     defer program.deinit();
 
@@ -78,7 +80,7 @@ test "[interpreter] 2D image gather lowers component selection" {
     try std.testing.expect(program.code[0].c != .invalid_register);
 }
 
-test "[interpreter] cube-array image sampling is rejected" {
+test "[interpreter] only live cube-array image sampling is rejected" {
     var module = try shader_ir.ir.parser.parseString(std.testing.allocator,
         \\shader fragment @main
         \\{
@@ -95,5 +97,13 @@ test "[interpreter] cube-array image sampling is rejected" {
     );
     defer module.deinit();
 
+    {
+        var dead_program = try Program.compile(std.testing.allocator, &module);
+        defer dead_program.deinit();
+        try std.testing.expectEqual(@as(usize, 0), dead_program.image_sampler_pairs.len);
+        try std.testing.expectEqual(@as(usize, 1), dead_program.code.len);
+        try std.testing.expectEqual(bc.Opcode.return_void, dead_program.code[0].opcode);
+    }
+    try @import("liveness.zig").makeResultsObservable(&module);
     try std.testing.expectError(Program.CompileError.UnsupportedOperation, Program.compile(std.testing.allocator, &module));
 }

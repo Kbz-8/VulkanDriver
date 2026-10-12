@@ -611,16 +611,14 @@ fn removeUnreachableBlocks(module: *module_ir.Module, scratch_allocator: std.mem
                 },
                 else => {},
             }
-        }
 
-        for (queue.items) |block_id| {
-            const block = module.blocks.get(block_id) orelse return Error.InvalidModule;
             switch (block.structured_control) {
                 .none => {},
-                .selection => |selection| if (!isReachable(reachable, selection.merge_block))
-                    return Error.InvalidModule,
-                .loop => |loop| if (!isReachable(reachable, loop.merge_block) or !isReachable(reachable, loop.continue_block))
-                    return Error.InvalidModule,
+                .selection => |selection| try enqueueReachable(module, scratch_allocator, function_id, reachable, &queue, selection.merge_block),
+                .loop => |loop| {
+                    try enqueueReachable(module, scratch_allocator, function_id, reachable, &queue, loop.merge_block);
+                    try enqueueReachable(module, scratch_allocator, function_id, reachable, &queue, loop.continue_block);
+                },
             }
         }
 
@@ -785,6 +783,127 @@ test "Inline All Functions: nested calls and multiple returns" {
         const inst = entry orelse continue;
         try std.testing.expect(inst.operation != .call);
     }
+}
+
+test "Inline All Functions: preserve unreachable selection merge" {
+    const parser = @import("../parser/parser.zig");
+    const validator = @import("../validator/validator.zig");
+
+    var module = try parser.parseString(std.testing.allocator,
+        \\shader fragment @main
+        \\{
+        \\    %condition: constant bool = true
+        \\    %one: constant u32 = bits(0x1)
+        \\    %two: constant u32 = bits(0x2)
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %result: u32 = call @choose()
+        \\            return
+        \\    }
+        \\    fn @choose() -> u32
+        \\    {
+        \\        .entry():
+        \\            conditional_branch %condition, .left(), .right()
+        \\        .left():
+        \\            return %one
+        \\        .right():
+        \\            return %two
+        \\        .merge():
+        \\            unreachable
+        \\        .dead():
+        \\            unreachable
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+
+    const helper = module.functions.get(ids.FunctionId.fromIndex(1)).?;
+    module.blocks.getMut(helper.entry_block.?).?.structured_control = .{
+        .selection = .{ .merge_block = helper.blocks.items[3] },
+    };
+    try validator.validate(&module);
+
+    try std.testing.expect(try runForTest(&module));
+    try validator.validate(&module);
+    try std.testing.expect(module.properties.no_function_calls);
+    try std.testing.expectEqual(@as(usize, 1), liveFunctionCount(&module));
+    const function = module.functions.get(module.entry_point.?).?;
+    try std.testing.expectEqual(@as(usize, 6), function.blocks.items.len);
+
+    var found_selection = false;
+    for (function.blocks.items) |block_id| {
+        const block = module.blocks.get(block_id).?;
+        if (block.structured_control == .selection) {
+            const merge = module.blocks.get(block.structured_control.selection.merge_block).?;
+            try std.testing.expect(merge.terminator.? == .@"unreachable");
+            found_selection = true;
+        }
+    }
+    try std.testing.expect(found_selection);
+}
+
+test "Inline All Functions: preserve unreachable loop targets and their successors" {
+    const parser = @import("../parser/parser.zig");
+    const validator = @import("../validator/validator.zig");
+
+    var module = try parser.parseString(std.testing.allocator,
+        \\shader vertex @main
+        \\{
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            call @helper()
+        \\            return
+        \\    }
+        \\    fn @helper() -> void
+        \\    {
+        \\        .entry():
+        \\            branch .header()
+        \\        .header():
+        \\            return
+        \\        .continue():
+        \\            branch .backedge()
+        \\        .backedge():
+        \\            branch .header()
+        \\        .merge():
+        \\            unreachable
+        \\        .dead():
+        \\            unreachable
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+
+    const helper = module.functions.get(ids.FunctionId.fromIndex(1)).?;
+    module.blocks.getMut(helper.blocks.items[1]).?.structured_control = .{
+        .loop = .{
+            .merge_block = helper.blocks.items[4],
+            .continue_block = helper.blocks.items[2],
+        },
+    };
+    try validator.validate(&module);
+
+    try std.testing.expect(try runForTest(&module));
+    try validator.validate(&module);
+    try std.testing.expect(module.properties.no_function_calls);
+    try std.testing.expectEqual(@as(usize, 1), liveFunctionCount(&module));
+    const function = module.functions.get(module.entry_point.?).?;
+    try std.testing.expectEqual(@as(usize, 7), function.blocks.items.len);
+
+    var found_loop = false;
+    for (function.blocks.items) |block_id| {
+        const block = module.blocks.get(block_id).?;
+        if (block.structured_control == .loop) {
+            const loop = block.structured_control.loop;
+            try std.testing.expect(module.blocks.get(loop.merge_block).?.terminator.? == .@"unreachable");
+            const continue_block = module.blocks.get(loop.continue_block).?;
+            const backedge = module.blocks.get(continue_block.terminator.?.branch.target).?;
+            try std.testing.expectEqual(block_id, backedge.terminator.?.branch.target);
+            found_loop = true;
+        }
+    }
+    try std.testing.expect(found_loop);
 }
 
 test "Inline All Functions: remap conversion and image sampling" {

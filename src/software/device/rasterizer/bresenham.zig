@@ -135,7 +135,7 @@ fn drawLineBresenham(
     const pipeline = draw_call.renderer.state.pipeline orelse return;
     const fragment_stage = pipeline.stages.getPtr(.fragment);
     const runtimes_count = if (fragment_stage) |stage|
-        stage.runtimes.len
+        if (comptime base.config.soft_ir_interpreter) stage.workerCount() else stage.runtimes.len
     else
         1;
     if (runtimes_count == 0)
@@ -233,7 +233,7 @@ fn drawLineDiamond(
                     null,
                     true,
                     try common.interpolateLineOutputs(allocator, v0, v1, v0, t),
-                    null,
+                    try lineQuadHelpers(&fragment_worker, allocator, v0, v1, v0, t, zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, z, frag_w)),
                 ) catch |err| {
                     if (err == SpvRuntimeError.Killed)
                         continue;
@@ -432,6 +432,27 @@ fn runWrapper(data: RunData) void {
     };
 }
 
+fn lineQuadHelpers(worker: *const fragment.Worker, allocator: std.mem.Allocator, v0: *const Renderer.Vertex, v1: *const Renderer.Vertex, provoking_vertex: *const Renderer.Vertex, t: f32, position: F32x4) VkError!?fragment.DerivativeInputs {
+    if (comptime base.config.soft_ir_interpreter) {
+        if (!worker.program.uses_derivatives)
+            return null;
+        var positions = fragment.quadPositions(position);
+        var inputs: [4]fragment.FragmentInputs = undefined;
+        const dx = v1.position[0] - v0.position[0];
+        const dy = v1.position[1] - v0.position[1];
+        const squared_length = dx * dx + dy * dy;
+        for (&positions, &inputs) |*helper, *helper_inputs| {
+            const offset = if (squared_length > 0) ((helper.*[0] - position[0]) * dx + (helper.*[1] - position[1]) * dy) / squared_length else 0;
+            const helper_t = t + offset;
+            helper.*[2] = (1 - helper_t) * v0.position[2] + helper_t * v1.position[2];
+            helper.*[3] = (1 - helper_t) / v0.position[3] + helper_t / v1.position[3];
+            helper_inputs.* = try common.interpolateLineOutputs(allocator, v0, v1, provoking_vertex, helper_t);
+        }
+        return .{ .dx = inputs[1], .dy = inputs[2], .quad_inputs = inputs, .quad_positions = positions, .quad_lane = fragment.quadLane(position) };
+    }
+    return null;
+}
+
 inline fn run(data: RunData) !void {
     // SAFETY: only used if data.has_fragment_shader
     var fragment_worker: fragment.Worker = if (data.has_fragment_shader) try fragment.acquireWorker(data.draw_call, data.batch_id) else undefined;
@@ -468,7 +489,7 @@ inline fn run(data: RunData) !void {
                 null,
                 true,
                 try common.interpolateLineOutputs(data.allocator, data.start_vertex, data.end_vertex, data.provoking_vertex, t),
-                null,
+                try lineQuadHelpers(&fragment_worker, data.allocator, data.start_vertex, data.end_vertex, data.provoking_vertex, t, zm.f32x4(@as(f32, @floatFromInt(pixel_x)) + 0.5, @as(f32, @floatFromInt(pixel_y)) + 0.5, z, frag_w)),
             ) catch |err| {
                 if (err == SpvRuntimeError.Killed)
                     continue;

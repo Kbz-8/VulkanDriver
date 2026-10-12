@@ -1,5 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
+const config = @import("config");
 const shader_ir = @import("shader_ir");
 
 const VkError = @import("error_set.zig").VkError;
@@ -33,6 +34,41 @@ pub fn init(device: *Device, _: std.mem.Allocator, info: *const vk.ShaderModuleC
     };
     errdefer source.deinit(source_allocator);
 
+    if (comptime config.dump_spirv) {
+        const io = device.io();
+
+        const file = blk: {
+            while (true) {
+                var random_bytes: [16]u8 = @splat(0);
+                io.random(&random_bytes);
+
+                var name: [51]u8 = @splat(0);
+                @memcpy(name[0..15], "ape_spirv_dump_");
+                @memcpy(name[47..51], ".spv");
+
+                for (random_bytes, 0..) |byte, i| {
+                    name[15 + i * 2] = std.fmt.hex_charset[byte >> 4];
+                    name[16 + i * 2] = std.fmt.hex_charset[byte & 0x0f];
+                }
+
+                break :blk std.Io.Dir.cwd().createFile(io, &name, .{ .exclusive = true }) catch |err| switch (err) {
+                    error.PathAlreadyExists => continue,
+                    else => {
+                        std.log.scoped(.vkCreateShaderModule).warn("Failed to dump SPIR-V shader, {t}", .{err});
+                        break :blk null;
+                    },
+                };
+            }
+        };
+        if (file) |f| {
+            defer f.close(io);
+
+            var buffer: [1024]u8 = @splat(0);
+            var writer = f.writer(io, buffer[0..]);
+            writer.interface.writeAll(std.mem.sliceAsBytes(words)) catch |err| std.log.scoped(.vkCreateShaderModule).warn("Failed to dump SPIR-V shader, {t}", .{err});
+        }
+    }
+
     return .{
         .owner = device,
         .source = source,
@@ -49,8 +85,7 @@ pub fn code(self: *const Self) []const u32 {
     return self.source.code();
 }
 
-/// Instantiates one entry point as a fresh, backend-agnostic IR module.
-/// The returned module does not borrow from this shader module.
+/// The returned module does not borrow from this shader module
 pub fn instantiateIr(self: *const Self, allocator: std.mem.Allocator, options: InstantiateOptions) !IrModule {
     return shader_ir.spirv.translator.instantiate(allocator, &self.source, options);
 }

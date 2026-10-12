@@ -14,6 +14,7 @@ comptime {
     _ = @import("floating_operations.zig");
     _ = @import("image_sampling.zig");
     _ = @import("loops.zig");
+    _ = @import("liveness.zig");
     _ = @import("resources.zig");
     _ = @import("storage_buffers.zig");
     _ = @import("termination.zig");

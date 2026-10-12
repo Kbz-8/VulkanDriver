@@ -8,7 +8,7 @@ const fragment = @import("../fragment/dispatcher.zig");
 const Renderer = @import("../Renderer.zig");
 const VkError = base.VkError;
 
-const tile_size: usize = 32;
+const tile_size: usize = 16;
 
 pub const Batch = struct {
     arena: std.heap.ArenaAllocator,
@@ -53,6 +53,8 @@ pub const Batch = struct {
         if (self.triangles.items.len == 0)
             return;
 
+        const io = self.state.draw_call.renderer.device.interface.io();
+        const binning_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
         const framebuffer = self.state.draw_call.framebuffer.interface;
         var bins = try Bins.build(
             self.state.allocator,
@@ -61,6 +63,10 @@ pub const Batch = struct {
             framebuffer.height,
         );
         defer bins.deinit(self.state.allocator);
+        if (comptime base.config.soft_profile) {
+            self.state.draw_call.profile.binning_wall_ns = Renderer.profileElapsedNs(binning_timer, io);
+            self.state.draw_call.profile.active_tiles = bins.active_tiles.len;
+        }
         if (bins.active_tiles.len == 0)
             return;
 
@@ -73,13 +79,15 @@ pub const Batch = struct {
             .first_error = null,
         };
 
-        const io = self.state.draw_call.renderer.device.interface.io();
         const worker_count = @min(self.state.worker_capacity, bins.active_tiles.len);
+        const tile_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
         var group: std.Io.Group = .init;
         for (0..worker_count) |worker_index|
             group.async(io, workerWrapper, .{ &context, worker_index });
 
         group.await(io) catch return VkError.DeviceLost;
+        if (comptime base.config.soft_profile)
+            self.state.draw_call.profile.tile_wall_ns = Renderer.profileElapsedNs(tile_timer, io);
 
         if (context.first_error) |err|
             return err;
@@ -228,6 +236,10 @@ fn workerWrapper(context: *WorkerContext, worker_index: usize) void {
 
 fn worker(context: *WorkerContext, worker_index: usize) VkError!void {
     const state = &context.batch.state;
+    const io = state.draw_call.renderer.device.interface.io();
+    const worker_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
+    defer if (comptime base.config.soft_profile)
+        Renderer.DrawProfile.add(&state.draw_call.profile.raster_worker_ns, Renderer.profileElapsedNs(worker_timer, io));
 
     // SAFETY: only used if state.has_fragment_shader
     var fragment_worker: fragment.Worker = if (state.has_fragment_shader) try fragment.acquireWorker(state.draw_call, worker_index) else undefined;

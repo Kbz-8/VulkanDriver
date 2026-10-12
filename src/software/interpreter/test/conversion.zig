@@ -60,6 +60,7 @@ test "[interpreter] integer-to-float conversions lower component-wise" {
     );
     defer module.deinit();
 
+    try @import("liveness.zig").makeResultsObservable(&module);
     var program = try Program.compile(std.testing.allocator, &module);
     defer program.deinit();
 

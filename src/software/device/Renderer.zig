@@ -116,6 +116,169 @@ pub const FragmentResources = struct {
     samplers: []?*SoftSampler = &.{},
 };
 
+pub const DrawProfile = struct {
+    draw_wall_ns: u64 = 0,
+    vertex_wall_ns: u64 = 0,
+    raster_wall_ns: u64 = 0,
+    binning_wall_ns: u64 = 0,
+    tile_wall_ns: u64 = 0,
+    active_tiles: usize = 0,
+    raster_worker_ns: std.atomic.Value(u64) = .init(0),
+    raster_coverage_ns: std.atomic.Value(u64) = .init(0),
+    raster_depth_ns: std.atomic.Value(u64) = .init(0),
+    raster_interpolation_ns: std.atomic.Value(u64) = .init(0),
+    raster_target_output_ns: std.atomic.Value(u64) = .init(0),
+    vertex_input_ns: std.atomic.Value(u64) = .init(0),
+    vertex_shader_ns: std.atomic.Value(u64) = .init(0),
+    vertex_output_ns: std.atomic.Value(u64) = .init(0),
+    fragment_input_ns: std.atomic.Value(u64) = .init(0),
+    fragment_shader_ns: std.atomic.Value(u64) = .init(0),
+    fragment_output_ns: std.atomic.Value(u64) = .init(0),
+    vertex_invocations: std.atomic.Value(u64) = .init(0),
+    fragment_invocations: std.atomic.Value(u64) = .init(0),
+    vertex_instructions: std.atomic.Value(u64) = .init(0),
+    vertex_fast_path_instructions: std.atomic.Value(u64) = .init(0),
+    vertex_waves: std.atomic.Value(u64) = .init(0),
+    vertex_full_waves: std.atomic.Value(u64) = .init(0),
+    fragment_instructions: std.atomic.Value(u64) = .init(0),
+    fragment_fast_path_instructions: std.atomic.Value(u64) = .init(0),
+    fragment_waves: std.atomic.Value(u64) = .init(0),
+    fragment_full_waves: std.atomic.Value(u64) = .init(0),
+
+    pub fn add(counter: *std.atomic.Value(u64), value: u64) void {
+        _ = counter.fetchAdd(value, .monotonic);
+    }
+
+    fn milliseconds(nanoseconds: u64) f64 {
+        return @as(f64, @floatFromInt(nanoseconds)) / std.time.ns_per_ms;
+    }
+
+    fn percentage(numerator: u64, denominator: u64) f64 {
+        if (denominator == 0)
+            return 0;
+        return 100.0 * @as(f64, @floatFromInt(numerator)) / @as(f64, @floatFromInt(denominator));
+    }
+
+    pub fn report(self: *const DrawProfile, bounded_allocator: *BoundedAllocator, polygons: usize) void {
+        const vertex_input_ns = self.vertex_input_ns.load(.monotonic);
+        const vertex_shader_ns = self.vertex_shader_ns.load(.monotonic);
+        const vertex_output_ns = self.vertex_output_ns.load(.monotonic);
+        const fragment_input_ns = self.fragment_input_ns.load(.monotonic);
+        const fragment_shader_ns = self.fragment_shader_ns.load(.monotonic);
+        const fragment_output_ns = self.fragment_output_ns.load(.monotonic);
+        const raster_worker_ns = self.raster_worker_ns.load(.monotonic);
+        const raster_coverage_ns = self.raster_coverage_ns.load(.monotonic);
+        const raster_depth_ns = self.raster_depth_ns.load(.monotonic);
+        const raster_interpolation_ns = self.raster_interpolation_ns.load(.monotonic);
+        const raster_target_output_ns = self.raster_target_output_ns.load(.monotonic);
+        const fragment_frontend_ns = fragment_input_ns + fragment_output_ns;
+        const fixed_function_worker_ns = raster_worker_ns -| (fragment_frontend_ns + fragment_shader_ns);
+        const measured_fixed_function_ns = raster_coverage_ns + raster_depth_ns + raster_interpolation_ns + raster_target_output_ns;
+        const other_fixed_function_ns = fixed_function_worker_ns -| measured_fixed_function_ns;
+        const vertex_invocations = self.vertex_invocations.load(.monotonic);
+        const vertex_instructions = self.vertex_instructions.load(.monotonic);
+        const vertex_fast_path_instructions = self.vertex_fast_path_instructions.load(.monotonic);
+        const vertex_waves = self.vertex_waves.load(.monotonic);
+        const vertex_full_waves = self.vertex_full_waves.load(.monotonic);
+        const fragment_invocations = self.fragment_invocations.load(.monotonic);
+        const fragment_instructions = self.fragment_instructions.load(.monotonic);
+        const fragment_fast_path_instructions = self.fragment_fast_path_instructions.load(.monotonic);
+        const fragment_waves = self.fragment_waves.load(.monotonic);
+        const fragment_full_waves = self.fragment_full_waves.load(.monotonic);
+        const memory_footprint = @as(f32, @floatFromInt(bounded_allocator.queryFootprint())) / 1_000_000;
+        const peak_memory_footprint = @as(f32, @floatFromInt(bounded_allocator.queryPeakFootprint())) / 1_000_000;
+
+        const log = std.log.scoped(.SoftwareRenderer);
+        log.debug(
+            \\Draw profile:
+            \\>   wall:
+            \\>   >    total:               {d:.3}ms
+            \\>   >    vertex:              {d:.3}ms
+            \\>   >    raster:              {d:.3}ms
+            \\>   vertex CPU:
+            \\>   >    input:               {d:.3}ms
+            \\>   >    shader:              {d:.3}ms
+            \\>   >    output:              {d:.3}ms
+            \\>   >    invocations:         {d}
+            \\>   >    instructions:        {d}
+            \\>   >    waves:               {d} ({d:.1}% full, {d:.1}% lane occupancy)
+            \\>   >    SIMD fast path:      {d} lane-instructions ({d:.1}%)
+        , .{
+            milliseconds(self.draw_wall_ns),
+            milliseconds(self.vertex_wall_ns),
+            milliseconds(self.raster_wall_ns),
+            milliseconds(vertex_input_ns),
+            milliseconds(vertex_shader_ns),
+            milliseconds(vertex_output_ns),
+            vertex_invocations,
+            vertex_instructions,
+            vertex_waves,
+            percentage(vertex_full_waves, vertex_waves),
+            percentage(vertex_invocations, vertex_waves * 4),
+            vertex_fast_path_instructions,
+            percentage(vertex_fast_path_instructions, vertex_instructions),
+        });
+        log.debug(
+            \\>   raster:
+            \\>   >    binning:             {d:.3}ms
+            \\>   >    tiles:               {d:.3}ms
+            \\>   >    active_tiles:        {d}
+            \\>   >    polygons:            {d}
+            \\>   raster worker CPU:
+            \\>   >    total:               {d:.3}ms
+            \\>   >    fixed_function:      {d:.3}ms
+            \\>   >    >    coverage/setup: {d:.3}ms
+            \\>   >    >    early depth:    {d:.3}ms
+            \\>   >    >    interpolation:  {d:.3}ms
+            \\>   >    >    target output:  {d:.3}ms
+            \\>   >    >    other/scalar:   {d:.3}ms
+        , .{
+            milliseconds(self.binning_wall_ns),
+            milliseconds(self.tile_wall_ns),
+            self.active_tiles,
+            polygons,
+            milliseconds(raster_worker_ns),
+            milliseconds(fixed_function_worker_ns),
+            milliseconds(raster_coverage_ns),
+            milliseconds(raster_depth_ns),
+            milliseconds(raster_interpolation_ns),
+            milliseconds(raster_target_output_ns),
+            milliseconds(other_fixed_function_ns),
+        });
+        log.debug(
+            \\>   fragment CPU:
+            \\>   >    input:               {d:.3}ms
+            \\>   >    shader:              {d:.3}ms
+            \\>   >    output:              {d:.3}ms
+            \\>   >    invocations:         {d}
+            \\>   >    instructions:        {d}
+            \\>   >    waves:               {d} ({d:.1}% full, {d:.1}% lane occupancy)
+            \\>   >    SIMD fast path:      {d} lane-instructions ({d:.1}%)
+        , .{
+            milliseconds(fragment_input_ns),
+            milliseconds(fragment_shader_ns),
+            milliseconds(fragment_output_ns),
+            fragment_invocations,
+            fragment_instructions,
+            fragment_waves,
+            percentage(fragment_full_waves, fragment_waves),
+            percentage(fragment_invocations, fragment_waves * 4),
+            fragment_fast_path_instructions,
+            percentage(fragment_fast_path_instructions, fragment_instructions),
+        });
+        log.debug(
+            \\>   memory:
+            \\>   >    total:               {d:.3}MB
+            \\>   >    peak concurrent:     {d:.3}MB
+        , .{ memory_footprint, peak_memory_footprint });
+    }
+};
+
+pub fn profileElapsedNs(start: std.Io.Timestamp, io: std.Io) u64 {
+    const elapsed = start.untilNow(io, .real).toNanoseconds();
+    return if (elapsed > 0) @intCast(elapsed) else 0;
+}
+
 pub const DrawCall = struct {
     renderer: *Self,
     vertices: []Vertex,
@@ -134,6 +297,7 @@ pub const DrawCall = struct {
     framebuffer: *SoftFramebuffer,
 
     rasterizer_wait_group: std.Io.Group,
+    profile: DrawProfile,
 
     stats: struct {
         polygons_drawn: usize,
@@ -159,6 +323,7 @@ pub const DrawCall = struct {
             .render_pass = render_pass,
             .framebuffer = framebuffer,
             .rasterizer_wait_group = .init,
+            .profile = .{},
             .stats = .{
                 .polygons_drawn = 0,
             },
@@ -262,32 +427,10 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
     var draw_call = try DrawCall.init(allocator, vertex_count, instance_count, self);
     defer draw_call.deinit(allocator);
 
-    const timer = std.Io.Timestamp.now(io, .real);
-    defer if (comptime base.config.logs != .none) {
-        const duration = timer.untilNow(io, .real);
-        const ms: f32 = @floatFromInt(duration.toMicroseconds());
-        const memory_footprint = @divTrunc(bounded_allocator.queryFootprint(), 1000);
-        const peak_memory_footprint = @divTrunc(bounded_allocator.queryPeakFootprint(), 1000);
-
-        const fmt =
-            \\Drawcall stats:
-            \\>   Took {d:.3}ms
-            \\>   Total allocation of {d} KB
-            \\>   Peak concurrent allocation of {d} KB
-            \\>   Total polygons drawn {d}
-        ;
-        const args = .{
-            ms / 1000,
-            memory_footprint,
-            peak_memory_footprint,
-            draw_call.stats.polygons_drawn,
-        };
-
-        const logger = std.log.scoped(.SoftwareRenderer);
-        if (memory_footprint > 256_000)
-            logger.warn(fmt, args)
-        else
-            logger.debug(fmt, args);
+    const profile_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
+    defer if (comptime base.config.soft_profile) {
+        draw_call.profile.draw_wall_ns = profileElapsedNs(profile_timer, io);
+        draw_call.profile.report(bounded_allocator, draw_call.stats.polygons_drawn);
     };
 
     const pipeline = self.state.pipeline orelse return VkError.InvalidPipelineDrv;
@@ -303,6 +446,7 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
         }
     }
 
+    const vertex_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
     self.vertexShaderStage(allocator, &draw_call, vertex_count, instance_count, first_vertex, first_instance, indices, primitive_restart) catch |err| {
         std.log.scoped(.@"Vertex stage").err("catched a '{s}'", .{@errorName(err)});
         if (comptime base.config.logs == .verbose) {
@@ -313,6 +457,8 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
 
         return VkError.Unknown;
     };
+    if (comptime base.config.soft_profile)
+        draw_call.profile.vertex_wall_ns = profileElapsedNs(vertex_timer, io);
 
     if (pipeline.interface.mode.graphics.rasterization.rasterizer_discard_enable)
         return;
@@ -320,22 +466,68 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
     draw_call.viewport = try self.resolveViewport(0);
     draw_call.scissor = try self.resolveScissor(0);
 
+    const raster_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
     try rasterizer.processThenFragmentStage(self, allocator, &draw_call);
+    if (comptime base.config.soft_profile)
+        draw_call.profile.raster_wall_ns = profileElapsedNs(raster_timer, io);
 }
 
 fn vertexShaderStage(self: *Self, allocator: std.mem.Allocator, draw_call: *DrawCall, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize, indices: ?[]const u32, primitive_restart: ?[]const bool) !void {
     const pipeline = self.state.pipeline orelse return;
-    const batch_size = (pipeline.stages.getPtr(.vertex) orelse return).runtimes.len;
+    const vertex_shader = pipeline.stages.getPtr(.vertex) orelse return;
+    const batch_size = if (comptime base.config.soft_ir_interpreter) vertex_shader.workerCount() else vertex_shader.runtimes.len;
 
+    var vertex_reuse: ?VertexReuse = if (comptime base.config.soft_ir_interpreter)
+        if (indices) |draw_indices|
+            if (vertexProgramAllowsReuse(&vertex_shader.program)) try VertexReuse.init(allocator, draw_indices, primitive_restart) else null
+        else
+            null
+    else
+        null;
+    defer if (vertex_reuse) |*reuse| reuse.deinit(allocator);
+    const invocation_indices: ?[]const usize = if (vertex_reuse) |*reuse| reuse.uniqueInvocations() else null;
+    const shader_vertex_count = if (invocation_indices) |items| items.len else vertex_count;
+
+    if (comptime base.config.soft_ir_interpreter) {
+        const invocation_count = std.math.mul(usize, shader_vertex_count, instance_count) catch std.math.maxInt(usize);
+        if (invocation_count == 0)
+            return;
+        const estimated_work = std.math.mul(usize, invocation_count, vertex_shader.program.code.len) catch std.math.maxInt(usize);
+        const inline_vertex_work_limit = 4096;
+        if (estimated_work <= inline_vertex_work_limit) {
+            for (0..instance_count) |instance_index| {
+                try vertex_dispatcher.runInline(.{
+                    .allocator = allocator,
+                    .pipeline = pipeline,
+                    .batch_id = 0,
+                    .batch_size = 1,
+                    .vertex_count = vertex_count,
+                    .invocation_indices = invocation_indices,
+                    .first_vertex = first_vertex,
+                    .first_instance = first_instance,
+                    .indices = indices,
+                    .primitive_restart = primitive_restart,
+                    .instance_index = instance_index,
+                    .draw_call = draw_call,
+                });
+            }
+            if (vertex_reuse) |reuse|
+                reuse.copyReusedVertices(draw_call, vertex_count, instance_count);
+            return;
+        }
+    }
+
+    const batch_count = std.math.divCeil(usize, shader_vertex_count, vertex_dispatcher.batch_width) catch return VkError.ValidationFailed;
     var wg: std.Io.Group = .init;
     for (0..instance_count) |instance_index| {
-        for (0..@min(batch_size, vertex_count)) |batch_id| {
+        for (0..@min(batch_size, batch_count)) |batch_id| {
             const run_data: vertex_dispatcher.RunData = .{
                 .allocator = allocator,
                 .pipeline = pipeline,
                 .batch_id = batch_id,
                 .batch_size = batch_size,
                 .vertex_count = vertex_count,
+                .invocation_indices = invocation_indices,
                 .first_vertex = first_vertex,
                 .first_instance = first_instance,
                 .indices = indices,
@@ -348,7 +540,85 @@ fn vertexShaderStage(self: *Self, allocator: std.mem.Allocator, draw_call: *Draw
         }
     }
     wg.await(self.device.interface.io()) catch return VkError.DeviceLost;
+    if (vertex_reuse) |reuse|
+        reuse.copyReusedVertices(draw_call, vertex_count, instance_count);
 }
+
+fn vertexProgramAllowsReuse(program: anytype) bool {
+    if (program.uses_atomics)
+        return false;
+    for (program.code) |instruction| switch (instruction.opcode) {
+        .image_write, .image_write_float, .store_buffer, .store_workgroup => return false,
+        else => {},
+    };
+    return true;
+}
+
+const VertexReuse = struct {
+    representatives: []usize,
+    unique_storage: []usize,
+    unique_count: usize,
+
+    fn init(allocator: std.mem.Allocator, indices: []const u32, primitive_restart: ?[]const bool) VkError!?VertexReuse {
+        const representatives = allocator.alloc(usize, indices.len) catch return VkError.OutOfDeviceMemory;
+        errdefer allocator.free(representatives);
+        const unique_storage = allocator.alloc(usize, indices.len) catch return VkError.OutOfDeviceMemory;
+        errdefer allocator.free(unique_storage);
+
+        var first_occurrences = std.AutoHashMap(u32, usize).init(allocator);
+        defer first_occurrences.deinit();
+        var unique_count: usize = 0;
+        for (indices, 0..) |index, invocation_index| {
+            if (primitive_restart) |restart| {
+                if (restart[invocation_index]) {
+                    representatives[invocation_index] = invocation_index;
+                    unique_storage[unique_count] = invocation_index;
+                    unique_count += 1;
+                    continue;
+                }
+            }
+
+            const entry = first_occurrences.getOrPut(index) catch return VkError.OutOfDeviceMemory;
+            if (!entry.found_existing) {
+                entry.value_ptr.* = invocation_index;
+                unique_storage[unique_count] = invocation_index;
+                unique_count += 1;
+            }
+            representatives[invocation_index] = entry.value_ptr.*;
+        }
+
+        if (unique_count == indices.len) {
+            allocator.free(representatives);
+            allocator.free(unique_storage);
+            return null;
+        }
+        return .{
+            .representatives = representatives,
+            .unique_storage = unique_storage,
+            .unique_count = unique_count,
+        };
+    }
+
+    fn deinit(self: *VertexReuse, allocator: std.mem.Allocator) void {
+        allocator.free(self.representatives);
+        allocator.free(self.unique_storage);
+        self.* = undefined;
+    }
+
+    fn uniqueInvocations(self: *const VertexReuse) []const usize {
+        return self.unique_storage[0..self.unique_count];
+    }
+
+    fn copyReusedVertices(self: VertexReuse, draw_call: *DrawCall, vertex_count: usize, instance_count: usize) void {
+        for (0..instance_count) |instance_index| {
+            const instance_base = instance_index * vertex_count;
+            for (self.representatives, 0..) |representative, invocation_index| {
+                if (representative != invocation_index)
+                    draw_call.vertices[instance_base + invocation_index] = draw_call.vertices[instance_base + representative];
+            }
+        }
+    }
+};
 
 const IndexedDrawData = struct {
     indices: []u32,

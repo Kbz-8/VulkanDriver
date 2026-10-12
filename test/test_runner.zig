@@ -10,6 +10,51 @@ const border: [80]u8 = @splat('=');
 // use in custom panic handler
 var current_test: ?[]const u8 = null;
 
+pub const std_options: std.Options = .{ .logFn = TestLogs.log };
+
+const TestLogs = struct {
+    // Keep capture independent of the test allocator and bounded even for noisy tests.
+    var buffer: [64 * 1024]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buffer);
+    var mutex: std.Io.Mutex = .init;
+    var capturing = false;
+    var truncated = false;
+
+    fn begin() void {
+        mutex.lockUncancelable(std.Options.debug_io);
+        defer mutex.unlock(std.Options.debug_io);
+        writer = .fixed(&buffer);
+        truncated = false;
+        capturing = true;
+    }
+
+    fn finish(failed: bool) void {
+        mutex.lockUncancelable(std.Options.debug_io);
+        defer mutex.unlock(std.Options.debug_io);
+        capturing = false;
+        if (failed) {
+            Printer.fmt("{s}", .{writer.buffered()});
+            if (truncated)
+                Printer.fmt("\n[test logs truncated after 64 KiB]\n", .{});
+        }
+        writer = .fixed(&buffer);
+    }
+
+    fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), comptime format: []const u8, args: anytype) void {
+        mutex.lockUncancelable(std.Options.debug_io);
+        defer mutex.unlock(std.Options.debug_io);
+        if (!capturing) {
+            std.log.defaultLog(level, scope, format, args);
+            return;
+        }
+        if (truncated) return;
+        const prefix = comptime level.asText() ++ if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
+        writer.print(prefix ++ format ++ "\n", args) catch {
+            truncated = true;
+        };
+    }
+};
+
 pub fn main() !void {
     var mem: [8192]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&mem);
@@ -28,10 +73,13 @@ pub fn main() !void {
 
     for (builtin.test_functions) |t| {
         if (isSetup(t)) {
+            TestLogs.begin();
             t.func() catch |err| {
+                TestLogs.finish(true);
                 Printer.status(.fail, "\nsetup \"{s}\" failed: {}\n", .{ t.name, err });
                 return err;
             };
+            TestLogs.finish(false);
         }
     }
 
@@ -46,13 +94,19 @@ pub fn main() !void {
         const friendly_name = friendlyName(t.name);
 
         current_test = friendly_name;
+        TestLogs.begin();
         std.testing.allocator_instance = .init(std.heap.page_allocator, .{});
         const result = t.func();
-        current_test = null;
 
         const ns_taken = slowest.endTiming(allocator, friendly_name);
 
-        if (std.testing.allocator_instance.deinit() != 0) {
+        const leaked = std.testing.allocator_instance.deinit() != 0;
+        const failed = if (result) |_| false else |err| err != error.SkipZigTest;
+        TestLogs.finish(failed or leaked);
+        current_test = null;
+
+        if (leaked) {
+            status = .fail;
             leak += 1;
             Printer.status(.fail, "\n{s}\n\"{s}\" - Memory Leak\n{s}\n", .{ border, friendly_name, border });
         }
@@ -80,15 +134,18 @@ pub fn main() !void {
 
     for (builtin.test_functions) |t| {
         if (isTeardown(t)) {
+            TestLogs.begin();
             t.func() catch |err| {
+                TestLogs.finish(true);
                 Printer.status(.fail, "\nteardown \"{s}\" failed: {}\n", .{ t.name, err });
                 return err;
             };
+            TestLogs.finish(false);
         }
     }
 
     const total_tests = pass + fail;
-    const status = if (fail == 0) Status.pass else Status.fail;
+    const status = if (fail == 0 and leak == 0) Status.pass else Status.fail;
     Printer.status(status, "\n{d} of {d} test{s} passed\n", .{ pass, total_tests, if (total_tests != 1) "s" else "" });
     if (skip > 0) {
         Printer.status(.skip, "{d} test{s} skipped\n", .{ skip, if (skip != 1) "s" else "" });
@@ -99,7 +156,7 @@ pub fn main() !void {
     Printer.fmt("\n", .{});
     try slowest.display();
     Printer.fmt("\n", .{});
-    std.process.exit(if (fail == 0) 0 else 1);
+    std.process.exit(if (fail == 0 and leak == 0) 0 else 1);
 }
 
 const Printer = struct {
@@ -203,6 +260,7 @@ const SlowTracker = struct {
 
 pub const panic = std.debug.FullPanic(struct {
     pub fn panicFn(msg: []const u8, first_trace_addr: ?usize) noreturn {
+        TestLogs.finish(true);
         if (current_test) |ct| {
             Printer.fmt("\x1b[31m{s}\npanic running \"{s}\"\n{s}\x1b[0m\n", .{ border, ct, border });
         }

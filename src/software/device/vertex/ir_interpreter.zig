@@ -23,6 +23,8 @@ pub fn run(data: RunData) VkError!void {
     const batch_id = data.batch_id;
     const batch_size = data.batch_size;
     const vertex_count = data.vertex_count;
+    const invocation_indices = data.invocation_indices;
+    const invocation_count = if (invocation_indices) |items| items.len else vertex_count;
     const first_vertex = data.first_vertex;
     const first_instance = data.first_instance;
     const indices = data.indices;
@@ -36,6 +38,25 @@ pub fn run(data: RunData) VkError!void {
     const io = draw_call.renderer.device.interface.io();
     slot.mutex.lock(io) catch return VkError.DeviceLost;
     defer slot.mutex.unlock(io);
+
+    var input_ns: u64 = 0;
+    var shader_ns: u64 = 0;
+    var output_ns: u64 = 0;
+    var invocations: u64 = 0;
+    var instructions: u64 = 0;
+    var fast_path_instructions: u64 = 0;
+    var waves: u64 = 0;
+    var full_waves: u64 = 0;
+    defer if (comptime base.config.soft_profile) {
+        Renderer.DrawProfile.add(&draw_call.profile.vertex_input_ns, input_ns);
+        Renderer.DrawProfile.add(&draw_call.profile.vertex_shader_ns, shader_ns);
+        Renderer.DrawProfile.add(&draw_call.profile.vertex_output_ns, output_ns);
+        Renderer.DrawProfile.add(&draw_call.profile.vertex_invocations, invocations);
+        Renderer.DrawProfile.add(&draw_call.profile.vertex_instructions, instructions);
+        Renderer.DrawProfile.add(&draw_call.profile.vertex_fast_path_instructions, fast_path_instructions);
+        Renderer.DrawProfile.add(&draw_call.profile.vertex_waves, waves);
+        Renderer.DrawProfile.add(&draw_call.profile.vertex_full_waves, full_waves);
+    };
 
     const resource_buffers = allocator.alloc(?[]u8, shader.program.resources.len) catch return VkError.OutOfDeviceMemory;
     defer allocator.free(resource_buffers);
@@ -70,131 +91,183 @@ pub fn run(data: RunData) VkError!void {
             sampler.* = try ExecutionDevice.mapSampler(draw_call.renderer.state, resource.set, resource.binding, resource.array_element);
     }
 
-    var invocation_index = batch_id;
-    while (invocation_index < vertex_count) : (invocation_index += batch_size) {
-        const output = &draw_call.vertices[(instance_index * vertex_count) + invocation_index];
-        if (primitive_restart) |restart| {
-            if (restart[invocation_index]) {
-                output.primitive_restart = true;
+    const wave_stride = std.math.mul(usize, batch_size, Runtime.lane_count) catch return VkError.ValidationFailed;
+    var wave_base = std.math.mul(usize, batch_id, Runtime.lane_count) catch return VkError.ValidationFailed;
+    while (wave_base < invocation_count) : (wave_base += wave_stride) {
+        var mask: Runtime.LaneMask = 0;
+        for (0..Runtime.lane_count) |lane| {
+            const work_index = wave_base + lane;
+            if (work_index >= invocation_count)
                 continue;
-            }
-        }
+            const invocation_index = if (invocation_indices) |items| items[work_index] else work_index;
 
-        slot.runtime.resetInvocation(&shader.program);
-        const vertex_index: u32 = if (indices) |draw_indices| draw_indices[invocation_index] else @intCast(first_vertex + invocation_index);
-        try populateInputs(
-            &slot.runtime,
-            &shader.program,
-            pipeline,
-            draw_call,
-            vertex_index,
-            @intCast(first_instance + instance_index),
-        );
-        const outcome = slot.runtime.run(&shader.program, .{
+            const output = &draw_call.vertices[(instance_index * vertex_count) + invocation_index];
+            if (primitive_restart) |restart| {
+                if (restart[invocation_index]) {
+                    output.primitive_restart = true;
+                    continue;
+                }
+            }
+            mask |= @as(Runtime.LaneMask, 1) << @intCast(lane);
+        }
+        if (mask == 0)
+            continue;
+
+        slot.runtime.resetWave(&shader.program, mask, mask);
+        const input_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
+        for (0..Runtime.lane_count) |lane| {
+            const bit = @as(Runtime.LaneMask, 1) << @intCast(lane);
+            if ((mask & bit) == 0)
+                continue;
+            const work_index = wave_base + lane;
+            const invocation_index = if (invocation_indices) |items| items[work_index] else work_index;
+            const vertex_index: u32 = if (indices) |draw_indices| draw_indices[invocation_index] else @intCast(first_vertex + invocation_index);
+            try populateInputsLane(
+                &slot.runtime,
+                &shader.program,
+                lane,
+                pipeline,
+                draw_call,
+                vertex_index,
+                @intCast(first_instance + instance_index),
+            );
+        }
+        if (comptime base.config.soft_profile)
+            input_ns += Renderer.profileElapsedNs(input_timer, io);
+
+        const shader_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
+        const outcome = slot.runtime.runWave(&shader.program, .{
             .resource_buffers = resource_buffers,
             .resource_images = resource_images,
             .resource_samplers = resource_samplers,
             .push_constants = draw_call.renderer.state.push_constant_blob[0..],
         }) catch return VkError.Unknown;
-        if (outcome == .discarded)
-            continue;
-        try collectOutputs(&slot.runtime, &shader.program, output);
+        if (outcome.barrier_mask != 0)
+            return VkError.Unknown;
+
+        if (comptime base.config.soft_profile) {
+            shader_ns += Renderer.profileElapsedNs(shader_timer, io);
+            invocations += @popCount(mask);
+            instructions += slot.runtime.executedSteps();
+            fast_path_instructions += slot.runtime.fastPathExecutedSteps();
+            waves += 1;
+            if (mask == Runtime.full_lane_mask)
+                full_waves += 1;
+        }
+
+        const output_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
+        for (0..Runtime.lane_count) |lane| {
+            const bit = @as(Runtime.LaneMask, 1) << @intCast(lane);
+            if ((outcome.returned_mask & bit) == 0)
+                continue;
+            const work_index = wave_base + lane;
+            const invocation_index = if (invocation_indices) |items| items[work_index] else work_index;
+            const output = &draw_call.vertices[(instance_index * vertex_count) + invocation_index];
+            try collectOutputsLane(&slot.runtime, &shader.program, lane, output);
+        }
+        if (comptime base.config.soft_profile)
+            output_ns += Renderer.profileElapsedNs(output_timer, io);
     }
 }
 
-fn populateInputs(runtime: anytype, program: *const Program, pipeline: *SoftPipeline, draw_call: *Renderer.DrawCall, vertex_index: u32, instance_index: u32) VkError!void {
+fn populateInputsLane(runtime: *Runtime, program: *const Program, lane: usize, pipeline: *SoftPipeline, draw_call: *Renderer.DrawCall, vertex_index: u32, instance_index: u32) VkError!void {
     for (program.interfaces, 0..) |optional_binding, index| {
         const binding = optional_binding orelse continue;
         if (binding.direction != .input)
             continue;
 
         const variable = ir.id.InterfaceVariableId.fromIndex(index);
-        var values: [4]u32 = @splat(0);
+        var values: [255]u32 = @splat(0);
         switch (binding.semantic) {
             .builtin => |builtin| values[0] = switch (builtin) {
                 .vertex_index => vertex_index,
                 .instance_index => instance_index,
                 else => return VkError.InvalidPipelineDrv,
             },
-            .location => |location| {
-                const attribute = findAttribute(
-                    pipeline.interface.mode.graphics.input_assembly.attribute_description orelse &.{},
-                    location.location,
-                ) orelse {
-                    runtime.writeInput(program, variable, values[0..binding.span.components]) catch return VkError.Unknown;
-                    continue;
-                };
+            .location => {
+                if (!binding.validLocation()) return VkError.ValidationFailed;
+                var cached_location: ?u32 = null;
+                var attribute_words: [4]u32 = @splat(0);
+                for (binding.words, 0..) |word, word_index| {
+                    if (cached_location == null or cached_location.? != word.location) {
+                        cached_location = word.location;
+                        attribute_words = @splat(0);
+                        const attribute = findAttribute(
+                            pipeline.interface.mode.graphics.input_assembly.attribute_description orelse &.{},
+                            word.location,
+                        ) orelse continue;
 
-                const binding_description = findBinding(
-                    pipeline.interface.mode.graphics.input_assembly.binding_description orelse return VkError.ValidationFailed,
-                    attribute.binding,
-                ) orelse return VkError.ValidationFailed;
+                        const binding_description = findBinding(
+                            pipeline.interface.mode.graphics.input_assembly.binding_description orelse return VkError.ValidationFailed,
+                            attribute.binding,
+                        ) orelse return VkError.ValidationFailed;
 
-                const vertex_buffer = draw_call.renderer.state.data.graphics.vertex_buffers[attribute.binding];
-                const buffer = vertex_buffer.buffer;
-                const memory = buffer.interface.memory orelse return VkError.InvalidDeviceMemoryDrv;
-                const input_index = switch (binding_description.input_rate) {
-                    .vertex => @as(usize, vertex_index),
-                    .instance => @as(usize, instance_index),
-                    else => return VkError.ValidationFailed,
-                };
+                        const vertex_buffer = draw_call.renderer.state.data.graphics.vertex_buffers[attribute.binding];
+                        const buffer = vertex_buffer.buffer;
+                        const memory = buffer.interface.memory orelse return VkError.InvalidDeviceMemoryDrv;
+                        const input_index = switch (binding_description.input_rate) {
+                            .vertex => @as(usize, vertex_index),
+                            .instance => @as(usize, instance_index),
+                            else => return VkError.ValidationFailed,
+                        };
 
-                const offset = buffer.interface.offset + vertex_buffer.offset + binding_description.stride * input_index + attribute.offset;
-                const input_size = base.format.texelSize(attribute.format);
-                var robust_bytes: [64]u8 = @splat(0);
-                if (input_size > robust_bytes.len)
-                    return VkError.Unknown;
+                        const offset = buffer.interface.offset + vertex_buffer.offset + binding_description.stride * input_index + attribute.offset;
+                        const input_size = base.format.texelSize(attribute.format);
+                        var robust_bytes: [64]u8 = @splat(0);
+                        if (input_size > robust_bytes.len)
+                            return VkError.Unknown;
 
-                if (offset < memory.size) {
-                    const available = @min(input_size, @as(usize, @intCast(memory.size - offset)));
-                    const mapped = memory.map(offset, available) catch &.{};
-                    @memcpy(robust_bytes[0..mapped.len], mapped);
+                        if (offset < memory.size) {
+                            const available = @min(input_size, @as(usize, @intCast(memory.size - offset)));
+                            const mapped = memory.map(offset, available) catch &.{};
+                            @memcpy(robust_bytes[0..mapped.len], mapped);
+                        }
+
+                        attribute_words = if (base.format.isUnnormalizedInteger(attribute.format))
+                            blitter.readInt4(robust_bytes[0..input_size], attribute.format)
+                        else
+                            @bitCast(blitter.readFloat4(robust_bytes[0..input_size], attribute.format));
+                    }
+                    values[word_index] = attribute_words[word.component];
                 }
-
-                values = if (base.format.isUnnormalizedInteger(attribute.format))
-                    blitter.readInt4(robust_bytes[0..input_size], attribute.format)
-                else
-                    @bitCast(blitter.readFloat4(robust_bytes[0..input_size], attribute.format));
-
-                const first_component: usize = location.component;
-                const end_component = first_component + binding.span.components;
-                runtime.writeInput(program, variable, values[first_component..end_component]) catch return VkError.Unknown;
-                continue;
             },
         }
-        runtime.writeInput(program, variable, values[0..binding.span.components]) catch return VkError.Unknown;
+        runtime.writeInputLane(program, lane, variable, values[0..binding.span.components]) catch return VkError.Unknown;
     }
 }
 
-fn collectOutputs(runtime: anytype, program: *const Program, output: *Renderer.Vertex) VkError!void {
+fn collectOutputsLane(runtime: *const Runtime, program: *const Program, lane: usize, output: *Renderer.Vertex) VkError!void {
     for (program.interfaces, 0..) |optional_binding, index| {
         const binding = optional_binding orelse continue;
 
         if (binding.direction != .output)
             continue;
+        if (binding.span.kind == .mixed)
+            return VkError.InvalidPipelineDrv;
 
         const variable = ir.id.InterfaceVariableId.fromIndex(index);
-        var values: [4]u32 = @splat(0);
-        runtime.readOutput(program, variable, values[0..binding.span.components]) catch return VkError.Unknown;
+        var values: [255]u32 = @splat(0);
+        runtime.readOutputLane(program, lane, variable, values[0..binding.span.components]) catch return VkError.Unknown;
         switch (binding.semantic) {
             .builtin => |builtin| switch (builtin) {
-                .position => @memcpy(std.mem.asBytes(&output.position), std.mem.asBytes(&values)),
+                .position => {
+                    if (binding.span.components != 4) return VkError.ValidationFailed;
+                    @memcpy(std.mem.asBytes(&output.position), std.mem.sliceAsBytes(values[0..4]));
+                },
                 .point_size => output.point_size = @bitCast(values[0]),
                 else => return VkError.InvalidPipelineDrv,
             },
-            .location => |location| {
-                const first_component: usize = location.component;
-                const end_component = first_component + binding.span.components;
-                if (location.location >= output.packed_outputs.len or end_component > output.packed_outputs[0].len)
-                    return VkError.ValidationFailed;
+            .location => {
+                if (!binding.validLocation()) return VkError.ValidationFailed;
 
                 const interpolation_type: Renderer.InterpolationType = switch (binding.span.kind) {
                     .signed_integer, .unsigned_integer, .boolean => .flat,
                     .floating => .smooth,
+                    .mixed => return VkError.InvalidPipelineDrv,
                 };
-                for (values[0..binding.span.components], first_component..) |word, component| {
-                    output.packed_outputs[location.location][component] = .{
-                        .word = word,
+                for (values[0..binding.span.components], binding.words) |value, word| {
+                    output.packed_outputs[word.location][word.component] = .{
+                        .word = value,
                         .interpolation_type = interpolation_type,
                         .centroid = false,
                     };
@@ -270,7 +343,7 @@ test "vertex IR collects Position and PointSize outputs" {
         .point_size = 1.0,
     };
 
-    try collectOutputs(&runtime, &program, &output);
+    try collectOutputsLane(&runtime, &program, 0, &output);
 
     try std.testing.expectEqual(@as(base.zm.F32x4, @bitCast(position_values)), output.position);
     try std.testing.expectEqual(expected_point_size, output.point_size);
@@ -278,5 +351,58 @@ test "vertex IR collects Position and PointSize outputs" {
         const packed_output = output.packed_outputs[2][component].?;
         try std.testing.expectEqual(@as(u32, @bitCast(value)), packed_output.word);
         try std.testing.expectEqual(Renderer.InterpolationType.smooth, packed_output.interpolation_type);
+    }
+}
+
+test "vertex IR collects every aggregate word with per-location interpolation" {
+    var module = ir.module.Module.init(std.testing.allocator, .vertex);
+    defer module.deinit();
+    var builder = ir.Builder.init(&module);
+    const void_type = try builder.internType(.void);
+    const float = try builder.internType(.{ .floating = .{ .bits = 32 } });
+    const uint = try builder.internType(.{ .integer = .{ .bits = 32, .signedness = .unsigned } });
+    const vec4 = try builder.internType(.{ .vector = .{ .element_type = float, .length = 4 } });
+    const vec2 = try builder.internType(.{ .vector = .{ .element_type = uint, .length = 2 } });
+    const array = try builder.internType(.{ .array = .{ .element_type = vec4, .length = 3 } });
+    const array2 = try builder.internType(.{ .array = .{ .element_type = vec2, .length = 2 } });
+    const input = try builder.addInterfaceVariable(array, .input, .{ .location = .{ .location = 0 } }, null);
+    const output = try builder.addInterfaceVariable(array, .output, .{ .location = .{ .location = 2 } }, null);
+    const flat_input = try builder.addInterfaceVariable(array2, .input, .{ .location = .{ .location = 4, .component = 2 } }, null);
+    const flat_output = try builder.addInterfaceVariable(array2, .output, .{ .location = .{ .location = 6, .component = 2 } }, null);
+    const function = try builder.addFunction(void_type, "main");
+    builder.setEntryPoint(function);
+    const block = try builder.addBlock(function, "entry");
+    for ([_]ir.id.TypeId{ array, array2 }, [_]ir.id.InterfaceVariableId{ input, flat_input }, [_]ir.id.InterfaceVariableId{ output, flat_output }) |ty, src, dst| {
+        const value = (try builder.appendInstruction(block, ty, .{ .load_interface = .{ .variable = src } }, null)).?;
+        _ = try builder.appendInstruction(block, null, .{ .store_interface = .{ .variable = dst, .value = value } }, null);
+    }
+    try builder.setTerminator(block, .return_void);
+    var program = try Program.compile(std.testing.allocator, &module);
+    defer program.deinit();
+    var runtime = try Runtime.init(std.testing.allocator, &program);
+    defer runtime.deinit();
+    var words: [12]u32 = undefined;
+    for (&words, 0..) |*word, i| word.* = @bitCast(@as(f32, @floatFromInt(i + 1)));
+    const flat_words = [_]u32{ 11, 22, 33, 44 };
+    runtime.resetWave(&program, Runtime.full_lane_mask, Runtime.full_lane_mask);
+    for (0..Runtime.lane_count) |lane| {
+        try runtime.writeInputLane(&program, lane, input, &words);
+        try runtime.writeInputLane(&program, lane, flat_input, &flat_words);
+    }
+    _ = try runtime.runWave(&program, .{});
+    for (0..Runtime.lane_count) |lane| {
+        var vertex: Renderer.Vertex = .{ .primitive_restart = false, .position = @splat(0), .point_size = 1 };
+        try collectOutputsLane(&runtime, &program, lane, &vertex);
+        for (words, 0..) |word, i| {
+            const packed_output = vertex.packed_outputs[2 + i / 4][i % 4].?;
+            try std.testing.expectEqual(word, packed_output.word);
+            try std.testing.expectEqual(Renderer.InterpolationType.smooth, packed_output.interpolation_type);
+        }
+        for (flat_words, 0..) |word, i| {
+            const packed_output = vertex.packed_outputs[6 + i / 2][2 + i % 2].?;
+            try std.testing.expectEqual(word, packed_output.word);
+            try std.testing.expectEqual(Renderer.InterpolationType.flat, packed_output.interpolation_type);
+        }
+        try std.testing.expectEqual(@as(?Renderer.PackedVertexOutput, null), vertex.packed_outputs[6][0]);
     }
 }

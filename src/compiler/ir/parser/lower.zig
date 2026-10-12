@@ -541,6 +541,11 @@ fn inferUnaryType(module: *module_ir.Module, opcode: inst_ir.UnaryOpcode, operan
     return switch (opcode) {
         .is_inf, .is_nan => inferBooleanShape(module, operand_type),
         .transpose => inferTransposeType(module, operand_type),
+        .length => switch ((module.types.get(operand_type) orelse return null).*) {
+            .floating => operand_type,
+            .vector => |vector| vector.element_type,
+            else => null,
+        },
         else => operand_type,
     };
 }
@@ -554,7 +559,7 @@ fn inferBinaryType(module: *module_ir.Module, opcode: inst_ir.BinaryOpcode, lhs:
         .unsigned_multiply_extended,
         => try module.internType(.{ .structure = .{ .members = &.{ lhs_type, lhs_type } } }),
 
-        .dot => switch ((module.types.get(lhs_type) orelse return null).*) {
+        .dot, .vector_extract_dynamic => switch ((module.types.get(lhs_type) orelse return null).*) {
             .vector => |vector| vector.element_type,
             else => null,
         },

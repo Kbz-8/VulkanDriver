@@ -9,12 +9,18 @@ const backend = if (base.config.soft_ir_interpreter)
 else
     @import("spirv_interpreter.zig");
 
+pub const batch_width = if (base.config.soft_ir_interpreter)
+    @import("../../interpreter/Runtime.zig").lane_count
+else
+    1;
+
 pub const RunData = struct {
     allocator: std.mem.Allocator,
     pipeline: *SoftPipeline,
     batch_id: usize,
     batch_size: usize,
     vertex_count: usize,
+    invocation_indices: ?[]const usize = null,
     first_vertex: usize,
     first_instance: usize,
     indices: ?[]const u32,
@@ -22,6 +28,10 @@ pub const RunData = struct {
     instance_index: usize,
     draw_call: *Renderer.DrawCall,
 };
+
+pub fn runInline(data: RunData) base.VkError!void {
+    return backend.run(data);
+}
 
 pub fn runWrapper(data: RunData) void {
     @call(.always_inline, backend.run, .{data}) catch |err| {

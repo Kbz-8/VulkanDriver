@@ -285,7 +285,9 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             const operand_type = try operandType(module, function_id, op.operand);
 
             switch (op.opcode) {
-                .all => {
+                .all,
+                .any,
+                => {
                     if (!isBoolean(module, result))
                         return ValidationError.WrongResultType;
 
@@ -310,17 +312,40 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                         return ValidationError.WrongResultType;
                 },
 
-                .absolute, .normalize => {
+                .length => {
+                    _ = floatShape(module, operand_type) orelse return ValidationError.WrongOperandType;
+                    const operand = module.types.get(operand_type).?;
+                    const scalar = if (operand.* == .vector) operand.vector.element_type else operand_type;
+                    if (result != scalar)
+                        return ValidationError.WrongResultType;
+                },
+
+                .fwidth => {
+                    if (module.stage != .fragment)
+                        return ValidationError.InvalidInstruction;
+                    _ = floatShape(module, operand_type) orelse return ValidationError.WrongOperandType;
+                    if (result != operand_type)
+                        return ValidationError.WrongResultType;
+                },
+
+                .absolute,
+                .ceil,
+                .exp,
+                .floor,
+                .normalize,
+                .round,
+                .sign,
+                => {
                     _ = floatShape(module, operand_type) orelse return ValidationError.WrongOperandType;
                     if (result != operand_type)
                         return ValidationError.WrongResultType;
                 },
 
                 .logical_not => {
-                    if (!isBoolean(module, operand_type))
+                    if (booleanComponentCount(module, operand_type) == null)
                         return ValidationError.WrongOperandType;
 
-                    if (!isBoolean(module, result))
+                    if (result != operand_type)
                         return ValidationError.WrongResultType;
                 },
 
@@ -344,10 +369,25 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             const rhs_type = try operandType(module, function_id, op.rhs);
 
             switch (op.opcode) {
-                .atan2, .float_remainder => {
+                .atan2,
+                .float_max,
+                .float_min,
+                .float_remainder,
+                .pow,
+                => {
                     if (lhs_type != rhs_type or floatShape(module, lhs_type) == null)
                         return ValidationError.WrongOperandType;
                     if (result_type == null or result_type.? != lhs_type)
+                        return ValidationError.WrongResultType;
+                },
+                .vector_extract_dynamic => {
+                    const lhs = module.types.get(lhs_type) orelse return ValidationError.InvalidType;
+                    if (lhs.* != .vector)
+                        return ValidationError.WrongOperandType;
+                    const rhs = module.types.get(rhs_type) orelse return ValidationError.InvalidType;
+                    if (rhs.* != .integer)
+                        return ValidationError.WrongOperandType;
+                    if (result_type == null or result_type.? != lhs.vector.element_type)
                         return ValidationError.WrongResultType;
                 },
                 .dot => {
@@ -1269,6 +1309,63 @@ fn expectValidationError(expected: Error, source: []const u8) !void {
     try std.testing.expectError(expected, parser.parseString(std.testing.allocator, source));
 }
 
+test "Validator: length, fwidth, and dynamic extraction inferred types" {
+    const parser = @import("../parser/parser.zig");
+    var module = try parser.parseString(std.testing.allocator,
+        \\shader fragment @main
+        \\{
+        \\    fn @main(%scalar: f64, %vector: vec3[f64], %flags: vec2[bool], %index: i32) -> void
+        \\    {
+        \\        .entry():
+        \\            %scalar_length = length %scalar
+        \\            %vector_length = length %vector
+        \\            %scalar_width = fwidth %scalar
+        \\            %vector_width = fwidth %vector
+        \\            %element = vector_extract_dynamic %vector, %index
+        \\            %flag = vector_extract_dynamic %flags, %index
+        \\            return
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+    try validate(&module);
+    const printer = @import("../printer.zig");
+    const text = try printer.allocPrint(std.testing.allocator, &module);
+    defer std.testing.allocator.free(text);
+    for ([_][]const u8{
+        "%scalar_length: f64 = length",
+        "%vector_length: f64 = length",
+        "%scalar_width: f64 = fwidth",
+        "%vector_width: vec3[f64] = fwidth",
+        "%element: f64 = vector_extract_dynamic",
+        "%flag: bool = vector_extract_dynamic",
+    }) |expected| {
+        try std.testing.expect(std.mem.indexOf(u8, text, expected) != null);
+    }
+
+    const cases = .{
+        .{ "vec3[f64]", "length %vector", ValidationError.WrongResultType },
+        .{ "f32", "length %vector", ValidationError.WrongResultType },
+        .{ "f64", "length %matrix", ValidationError.WrongOperandType },
+        .{ "f64", "length %index", ValidationError.WrongOperandType },
+    };
+    inline for (cases) |case| {
+        const source = try std.fmt.allocPrint(std.testing.allocator,
+            \\shader fragment @main
+            \\{{
+            \\    fn @main(%vector: vec3[f64], %matrix: mat2x3[f64], %index: i32) -> void
+            \\    {{
+            \\        .entry():
+            \\            %result: {s} = {s}
+            \\            return
+            \\    }}
+            \\}}
+        , .{ case[0], case[1] });
+        defer std.testing.allocator.free(source);
+        try expectValidationError(case[2], source);
+    }
+}
+
 test "Validator: well-typed control flow and operations" {
     const parser = @import("../parser/parser.zig");
 
@@ -1939,6 +2036,34 @@ test "Validator: check composite operations" {
         \\    }
         \\}
     );
+}
+
+test "Validator: exp requires matching floating scalar or vector types" {
+    const cases = .{
+        .{ "%result: u32 = exp %integer", Error.WrongOperandType },
+        .{ "%result: mat2x2[f32] = exp %matrix", Error.WrongOperandType },
+        .{ "%result: vec2[f32] = exp %scalar", Error.WrongResultType },
+        .{ "%result: f32 = exp %vector", Error.WrongResultType },
+    };
+    inline for (cases) |case| {
+        const text = try std.fmt.allocPrint(std.testing.allocator,
+            \\shader vertex @main
+            \\{{
+            \\    %integer: constant u32 = null
+            \\    %scalar: constant f32 = null
+            \\    %vector: constant vec2[f32] = null
+            \\    %matrix: constant mat2x2[f32] = null
+            \\    fn @main() -> void
+            \\    {{
+            \\        .entry():
+            \\            {s}
+            \\            return
+            \\    }}
+            \\}}
+        , .{case[0]});
+        defer std.testing.allocator.free(text);
+        try expectValidationError(case[1], text);
+    }
 }
 
 test "Validator: check interface direction and value types" {

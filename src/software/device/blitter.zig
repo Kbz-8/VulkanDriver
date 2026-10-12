@@ -437,13 +437,20 @@ fn blit(state: State, data: BlitData) void {
     const is_dst_int = base.format.isUint(state.dst_format) or base.format.isSint(state.dst_format);
     const are_both_int = is_src_int and is_dst_int;
 
-    var clear_color_i: ?U32x4 = null;
-    var clear_color_f: ?F32x4 = null;
+    var clear_texel: [16]u8 = @splat(0);
+    const dst_texel_size = base.format.texelSize(state.dst_format);
     if (state.clear) {
+        if (dst_texel_size > clear_texel.len) {
+            base.unsupported("Blitter: clear destination format {any} has a {d}-byte texel", .{ state.dst_format, dst_texel_size });
+            return;
+        }
+
+        const packed_texel = clear_texel[0..dst_texel_size];
         if (are_both_int) {
-            clear_color_i = readInt4(data.src_map, state.src_format);
+            writeInt4(readInt4(data.src_map, state.src_format), packed_texel, state.dst_format);
         } else {
-            clear_color_f = applyScaleAndClamp(readFloat4(data.src_map, state.src_format), state, true);
+            const color = applyScaleAndClamp(readFloat4(data.src_map, state.src_format), state, true);
+            writeFloat4(color, packed_texel, state.dst_format);
         }
     }
 
@@ -463,19 +470,16 @@ fn blit(state: State, data: BlitData) void {
 
             for (@intCast(data.dst_offset_0.x)..@intCast(data.dst_offset_1.x)) |i| {
                 const x = if (state.clear) data.pos[0] else data.pos[0] + @as(f32, @floatFromInt(i)) * data.width_ratio;
-                const x_offset = i * base.format.texelSize(state.dst_format);
+                const x_offset = i * dst_texel_size;
                 if (x_offset > dst_line.len)
                     break;
                 var dst_pixel = dst_line[x_offset..];
 
-                if (clear_color_i) |color| {
+                if (state.clear) {
                     for (0..state.dst_samples) |_| {
-                        writeInt4(color, dst_pixel, state.dst_format);
-                        dst_pixel = if (dst_pixel.len < data.dst_slice_pitch_bytes) break else dst_pixel[data.dst_slice_pitch_bytes..];
-                    }
-                } else if (clear_color_f) |color| {
-                    for (0..state.dst_samples) |_| {
-                        writeFloat4(color, dst_pixel, state.dst_format);
+                        if (dst_pixel.len < dst_texel_size)
+                            break;
+                        @memcpy(dst_pixel[0..dst_texel_size], clear_texel[0..dst_texel_size]);
                         dst_pixel = if (dst_pixel.len < data.dst_slice_pitch_bytes) break else dst_pixel[data.dst_slice_pitch_bytes..];
                     }
                 } else if (are_both_int) {

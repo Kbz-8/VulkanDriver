@@ -509,15 +509,17 @@ fn rasterizeTransformedPoint(
                     (frag_y - point_min_y) / point_size,
                 };
 
+                const position = zm.f32x4(frag_x, frag_y, vertex.position[2], 1.0 / vertex.position[3]);
+                const inputs = try common.interpolateVertexOutputs(allocator, vertex, vertex, vertex, vertex, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
                 fragment_result = fragment.shaderInvocation(
                     &fragment_worker,
                     allocator,
-                    zm.f32x4(frag_x, frag_y, vertex.position[2], 1.0 / vertex.position[3]),
+                    position,
                     point_coord,
                     null,
                     true,
-                    try common.interpolateVertexOutputs(allocator, vertex, vertex, vertex, vertex, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0),
-                    null,
+                    inputs,
+                    fragment.constantQuadHelpers(&fragment_worker, position, inputs),
                 ) catch |err| {
                     if (err == SpvRuntimeError.Killed)
                         continue;

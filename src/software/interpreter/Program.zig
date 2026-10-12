@@ -20,10 +20,31 @@ pub const CompileError = error{
     UnsupportedType,
 };
 
+pub const InterfaceWord = struct {
+    location: u32,
+    component: u8,
+};
+
 pub const InterfaceBinding = struct {
     direction: module_ir.InterfaceDirection,
     semantic: module_ir.InterfaceSemantic,
     span: bc.Span,
+    words: []const InterfaceWord = &.{},
+
+    pub fn validLocation(self: InterfaceBinding) bool {
+        const spv = @import("spv");
+        const location = switch (self.semantic) {
+            .location => |location| location,
+            else => return false,
+        };
+        if (location.index != 0 or self.span.kind == .mixed or self.words.len != self.span.components or self.words.len == 0)
+            return false;
+        for (self.words) |word| {
+            if (word.location >= spv.SPIRV_MAX_OUTPUT_LOCATIONS or word.component >= 4)
+                return false;
+        }
+        return true;
+    }
 };
 
 pub const ResourceBinding = struct {
@@ -68,6 +89,7 @@ arena: std.heap.ArenaAllocator,
 stage: module_ir.Stage,
 uses_atomics: bool,
 uses_control_barriers: bool,
+uses_derivatives: bool = false,
 workgroup_memory_size: usize,
 entry_pc: u32,
 register_count: usize,
@@ -92,7 +114,7 @@ pub fn compile(backing_allocator: std.mem.Allocator, module: *const module_ir.Mo
     errdefer arena.deinit();
 
     var lowerer = try Lowerer.init(arena.allocator(), module);
-    try lowerer.lower();
+    try lowerer.lower(backing_allocator);
 
     return .{
         .arena = arena,
@@ -106,6 +128,12 @@ pub fn compile(backing_allocator: std.mem.Allocator, module: *const module_ir.Mo
         .array_lengths = lowerer.array_lengths.items,
         .descriptor_arrays = lowerer.descriptor_arrays.items,
         .image_sampler_pairs = lowerer.image_sampler_pairs.items,
+        .uses_derivatives = blk: {
+            for (lowerer.code.items) |instruction| {
+                if (instruction.opcode == .fwidth) break :blk true;
+            }
+            break :blk false;
+        },
         .code = lowerer.code.items,
         .edges = lowerer.edges.items,
         .copies = lowerer.copies.items,
@@ -224,9 +252,13 @@ const Lowerer = struct {
         };
     }
 
-    fn lower(self: *Lowerer) !void {
+    fn lower(self: *Lowerer, scratch_allocator: std.mem.Allocator) !void {
+        var liveness_arena = std.heap.ArenaAllocator.init(scratch_allocator);
+        defer liveness_arena.deinit();
+        const live = try ValueLiveness.compute(liveness_arena.allocator(), self.module, self.function);
         for (self.module.values.entries.items, 0..) |entry, index| {
             const value = entry orelse continue;
+            if (!live[index]) continue;
             self.values[index] = try self.allocate(value.type);
         }
         for (self.module.interface_variables.entries.items, 0..) |entry, index| {
@@ -235,6 +267,10 @@ const Lowerer = struct {
                 .direction = variable.direction,
                 .semantic = variable.semantic,
                 .span = try self.allocate(variable.type),
+                .words = switch (variable.semantic) {
+                    .location => |location| try self.interfaceWords(variable.type, location.location, location.component),
+                    .builtin => &.{},
+                },
             };
         }
         try self.initializeConstants();
@@ -244,6 +280,10 @@ const Lowerer = struct {
             self.block_pcs[block_id.index()] = try u32Index(self.code.items.len);
             for (block.instructions.items) |instruction_id| {
                 const instruction = self.module.instructions.get(instruction_id) orelse return CompileError.InvalidOperation;
+                if (!instruction.operation.hasSideEffects()) {
+                    const result = instruction.result orelse continue;
+                    if (!live[result.index()]) continue;
+                }
                 try self.lowerInstruction(instruction);
             }
             try self.lowerTerminator(block.terminator orelse return CompileError.InvalidControlFlow);
@@ -256,6 +296,42 @@ const Lowerer = struct {
             edge.target_pc = self.block_pcs[edge.target_block] orelse return CompileError.InvalidControlFlow;
         }
         self.entry_pc = self.block_pcs[self.entry_block.index()] orelse return CompileError.InvalidControlFlow;
+    }
+
+    fn interfaceWords(self: *Lowerer, type_id: ids.TypeId, location: u32, component: u8) ![]const InterfaceWord {
+        var words: std.ArrayList(InterfaceWord) = .empty;
+        _ = try self.appendInterfaceWords(type_id, location, component, &words);
+        return words.items;
+    }
+
+    // Registers flatten aggregates, but location allocation does not pack the
+    // unused components of one array element/column/member with the next.
+    fn appendInterfaceWords(self: *Lowerer, type_id: ids.TypeId, location: u32, component: u8, words: *std.ArrayList(InterfaceWord)) (CompileError || std.mem.Allocator.Error)!u32 {
+        const ty = self.module.types.get(type_id) orelse return CompileError.UnsupportedType;
+        var next = location;
+        switch (ty.*) {
+            .array => |array| {
+                for (0..array.length) |_| next = try self.appendInterfaceWords(array.element_type, next, component, words);
+            },
+            .matrix => |matrix| {
+                for (0..matrix.column_count) |_| next = try self.appendInterfaceWords(matrix.element_type, next, component, words);
+            },
+            .structure => |structure| {
+                for (structure.members) |member| next = try self.appendInterfaceWords(member, next, component, words);
+            },
+            .boolean, .integer, .floating, .vector => {
+                const shape_info = try self.shape(type_id);
+                if (component >= 4 or @as(u16, component) + shape_info.components > 4)
+                    return CompileError.InvalidInterface;
+                for (0..shape_info.components) |word| try words.append(self.allocator, .{
+                    .location = location,
+                    .component = @intCast(@as(usize, component) + word),
+                });
+                next = std.math.add(u32, location, 1) catch return CompileError.InvalidInterface;
+            },
+            else => return CompileError.UnsupportedType,
+        }
+        return next;
     }
 
     fn shape(self: *Lowerer, type_id: ids.TypeId) CompileError!bc.Span {
@@ -302,13 +378,14 @@ const Lowerer = struct {
 
                 const first = try self.shape(structure.members[0]);
                 components = first.components;
+                var aggregate_kind = first.kind;
                 for (structure.members[1..]) |member_type| {
                     const member = try self.shape(member_type);
-                    if (member.kind != first.kind)
-                        return CompileError.UnsupportedType;
+                    if (member.kind != aggregate_kind)
+                        aggregate_kind = .mixed;
                     components = std.math.add(u8, components, member.components) catch return CompileError.UnsupportedType;
                 }
-                break :blk first.kind;
+                break :blk aggregate_kind;
             },
             else => return CompileError.UnsupportedType,
         };
@@ -351,8 +428,9 @@ const Lowerer = struct {
     fn initializeConstants(self: *Lowerer) !void {
         for (self.module.values.entries.items, self.values) |entry, destination| {
             const value = entry orelse continue;
+            const span_value = destination orelse continue;
             if (value.definition == .constant)
-                try self.initializeConstant(destination orelse return CompileError.InvalidValue, value.definition.constant);
+                try self.initializeConstant(span_value, value.definition.constant);
         }
     }
 
@@ -378,7 +456,7 @@ const Lowerer = struct {
                 for (elements) |element| {
                     const child = self.module.constants.get(element) orelse return CompileError.InvalidConstant;
                     var layout = try self.shape(child.type);
-                    if (layout.kind != destination.kind or component + layout.components > destination.components)
+                    if ((destination.kind != .mixed and layout.kind != destination.kind) or component + layout.components > destination.components)
                         return CompileError.InvalidConstant;
                     layout.base = try offset(destination.base, component);
                     try self.initializeConstant(layout, element);
@@ -403,6 +481,13 @@ const Lowerer = struct {
                     return;
                 }
 
+                if (op.opcode == .length) {
+                    if (dst.kind != .floating or dst.components != 1 or src.kind != .floating)
+                        return CompileError.InvalidOperation;
+                    try self.emit(.length, src.components, dst.base, src.base, .invalid_register, .invalid_register, 0);
+                    return;
+                }
+
                 if (op.opcode == .transpose) {
                     const result_id = instruction.result orelse return CompileError.InvalidOperation;
                     const src_layout = try self.matrixLayout(self.module.typeOf(op.operand) orelse return CompileError.InvalidValue);
@@ -423,25 +508,33 @@ const Lowerer = struct {
 
                 const opcode: bc.Opcode = switch (op.opcode) {
                     .absolute => if (dst.kind == .floating) .absolute else return CompileError.InvalidOperation,
-                    .all => {
+                    .all,
+                    .any,
+                    => {
                         if (dst.kind != .boolean or dst.components != 1 or src.kind != .boolean)
                             return CompileError.InvalidOperation;
-                        try self.emit(.all, src.components, dst.base, src.base, .invalid_register, .invalid_register, 0);
+                        try self.emit(if (op.opcode == .all) .all else .any, src.components, dst.base, src.base, .invalid_register, .invalid_register, 0);
                         return;
                     },
+                    .bitwise_not => switch (dst.kind) {
+                        .signed_integer, .unsigned_integer => .bitwise_not,
+                        else => return CompileError.InvalidOperation,
+                    },
+                    .bit_count => if (isIntegerKind(dst.kind)) .bit_count else return CompileError.InvalidOperation,
+                    .bit_reverse => if (isIntegerKind(dst.kind)) .bit_reverse else return CompileError.InvalidOperation,
+                    .ceil => if (dst.kind == .floating) .ceil else return CompileError.InvalidOperation,
+                    .exp => if (dst.kind == .floating) .exp else return CompileError.InvalidOperation,
+                    .floor => if (dst.kind == .floating) .floor else return CompileError.InvalidOperation,
+                    .fwidth => if (dst.kind == .floating and self.module.stage == .fragment) .fwidth else return CompileError.InvalidOperation,
+                    .logical_not => if (dst.kind == .boolean) .logical_not else return CompileError.InvalidOperation,
                     .negate => switch (dst.kind) {
                         .signed_integer => .negate_i32,
                         .floating => .negate_f32,
                         else => return CompileError.InvalidOperation,
                     },
                     .normalize => if (dst.kind == .floating) .normalize else return CompileError.InvalidOperation,
-                    .logical_not => if (dst.kind == .boolean) .logical_not else return CompileError.InvalidOperation,
-                    .bitwise_not => switch (dst.kind) {
-                        .signed_integer, .unsigned_integer => .bitwise_not,
-                        else => return CompileError.InvalidOperation,
-                    },
-                    .bit_count => .bit_count,
-                    .bit_reverse => .bit_reverse,
+                    .round => if (dst.kind == .floating) .round else return CompileError.InvalidOperation,
+                    .sign => if (dst.kind == .floating) .sign else return CompileError.InvalidOperation,
                     else => return CompileError.UnsupportedOperation,
                 };
                 if (!dst.sameShape(src))
@@ -452,6 +545,12 @@ const Lowerer = struct {
                 const dst = result orelse return CompileError.InvalidOperation;
                 const lhs = try self.span(op.lhs);
                 const rhs = try self.span(op.rhs);
+                if (op.opcode == .vector_extract_dynamic) {
+                    if (dst.components != 1 or dst.kind != lhs.kind or !isScalarInteger(rhs))
+                        return CompileError.InvalidOperation;
+                    try self.emit(.vector_extract_dynamic, lhs.components, dst.base, lhs.base, rhs.base, .invalid_register, 0);
+                    return;
+                }
                 const opcode = try binaryOpcode(op.opcode, dst.kind);
 
                 if (op.opcode == .dot) {
@@ -555,6 +654,7 @@ const Lowerer = struct {
                     return CompileError.InvalidOperation;
 
                 const opcode: bc.Opcode = switch (op.opcode) {
+                    .float_mix => .float_mix,
                     .smooth_step => .smooth_step,
                 };
                 try self.emit(opcode, dst.components, dst.base, first.base, second.base, third.base, 0);
@@ -639,7 +739,7 @@ const Lowerer = struct {
                 var component: usize = 0;
                 for (op.elements) |id| {
                     const src = try self.span(id);
-                    if (src.kind != dst.kind or component + src.components > dst.components)
+                    if ((dst.kind != .mixed and src.kind != dst.kind) or component + src.components > dst.components)
                         return CompileError.InvalidOperation;
                     try self.emit(.copy, src.components, try offset(dst.base, component), src.base, .invalid_register, .invalid_register, 0);
                     component += src.components;
@@ -1045,6 +1145,7 @@ const Lowerer = struct {
         const first = try u32Index(self.copies.items.len);
         var scratch: usize = 0;
         for (edge.arguments, target.parameters.items) |source_id, destination_id| {
+            if (self.values[destination_id.index()] == null) continue;
             const source = try self.span(source_id);
             const destination = try self.span(destination_id);
 
@@ -1106,7 +1207,85 @@ const Lowerer = struct {
     }
 };
 
-pub fn imageCoordinateComponents(dimension: ImageDimension, arrayed: bool) u8 {
+// Each value is queued once. Incoming edges are indexed by target block so
+// loop-carried parameters do not require repeated scans of the entire CFG.
+const ValueLiveness = struct {
+    live: []bool,
+    queue: []ids.ValueId,
+    queue_len: usize = 0,
+    invalid_value: bool = false,
+
+    fn mark(self: *ValueLiveness, value: ids.ValueId) void {
+        if (value.index() >= self.live.len) {
+            self.invalid_value = true;
+            return;
+        }
+        if (self.live[value.index()]) return;
+        self.live[value.index()] = true;
+        self.queue[self.queue_len] = value;
+        self.queue_len += 1;
+    }
+
+    fn compute(allocator: std.mem.Allocator, module: *const module_ir.Module, function: *const module_ir.Function) ![]const bool {
+        var self: ValueLiveness = .{
+            .live = try allocator.alloc(bool, module.values.entries.items.len),
+            .queue = try allocator.alloc(ids.ValueId, module.values.entries.items.len),
+        };
+        @memset(self.live, false);
+        const incoming = try allocator.alloc(std.ArrayList(module_ir.Edge), module.blocks.entries.items.len);
+        for (incoming) |*edges| edges.* = .empty;
+
+        for (function.blocks.items) |block_id| {
+            const block = module.blocks.get(block_id) orelse return CompileError.InvalidControlFlow;
+            for (block.instructions.items) |instruction_id| {
+                const instruction = module.instructions.get(instruction_id) orelse return CompileError.InvalidOperation;
+                if (instruction.operation.hasSideEffects()) {
+                    instruction.operation.visitValueUses(&self, mark);
+                    if (instruction.result) |result| self.mark(result);
+                }
+            }
+            switch (block.terminator orelse return CompileError.InvalidControlFlow) {
+                .branch => |edge| try addIncoming(allocator, module, incoming, edge),
+                .conditional_branch => |branch| {
+                    self.mark(branch.condition);
+                    try addIncoming(allocator, module, incoming, branch.true_edge);
+                    try addIncoming(allocator, module, incoming, branch.false_edge);
+                },
+                .return_value => |value| self.mark(value),
+                .return_void, .discard, .@"unreachable" => {},
+            }
+        }
+
+        var cursor: usize = 0;
+        while (cursor < self.queue_len) : (cursor += 1) {
+            const value = module.values.get(self.queue[cursor]) orelse return CompileError.InvalidValue;
+            switch (value.definition) {
+                .instruction => |instruction_id| {
+                    const instruction = module.instructions.get(instruction_id) orelse return CompileError.InvalidOperation;
+                    instruction.operation.visitValueUses(&self, mark);
+                },
+                .block_parameter => |parameter| {
+                    if (parameter.block.index() >= incoming.len) return CompileError.InvalidControlFlow;
+                    for (incoming[parameter.block.index()].items) |edge| {
+                        if (parameter.index >= edge.arguments.len) return CompileError.InvalidControlFlow;
+                        self.mark(edge.arguments[parameter.index]);
+                    }
+                },
+                .constant, .function_parameter, .undef => {},
+            }
+        }
+        if (self.invalid_value) return CompileError.InvalidValue;
+        return self.live;
+    }
+
+    fn addIncoming(allocator: std.mem.Allocator, module: *const module_ir.Module, incoming: []std.ArrayList(module_ir.Edge), edge: module_ir.Edge) !void {
+        const target = module.blocks.get(edge.target) orelse return CompileError.InvalidControlFlow;
+        if (target.parameters.items.len != edge.arguments.len) return CompileError.InvalidControlFlow;
+        try incoming[edge.target.index()].append(allocator, edge);
+    }
+};
+
+pub fn imageCoordinateComponents(dimension: ImageDimension, arrayed: bool) u16 {
     const dimension_components: u8 = switch (dimension) {
         .one_d => 1,
         .two_d => 2,
@@ -1152,6 +1331,8 @@ fn binaryOpcode(op: inst_ir.BinaryOpcode, kind: bc.ValueKind) !bc.Opcode {
         .dot => if (kind == .floating) .dot else CompileError.InvalidOperation,
         .float_add => if (kind == .floating) .float_add else CompileError.InvalidOperation,
         .float_divide => if (kind == .floating) .float_divide else CompileError.InvalidOperation,
+        .float_max => if (kind == .floating) .float_max else CompileError.InvalidOperation,
+        .float_min => if (kind == .floating) .float_min else CompileError.InvalidOperation,
         .float_modulo => if (kind == .floating) .float_modulo else CompileError.InvalidOperation,
         .float_multiply => if (kind == .floating) .float_multiply else CompileError.InvalidOperation,
         .float_remainder => if (kind == .floating) .float_remainder else CompileError.InvalidOperation,
@@ -1168,6 +1349,7 @@ fn binaryOpcode(op: inst_ir.BinaryOpcode, kind: bc.ValueKind) !bc.Opcode {
         .matrix_times_scalar => if (kind == .floating) .matrix_times_scalar else CompileError.InvalidOperation,
         .matrix_times_vector => if (kind == .floating) .matrix_times_vector else CompileError.InvalidOperation,
         .outer_product => if (kind == .floating) .outer_product else CompileError.InvalidOperation,
+        .pow => if (kind == .floating) .pow else CompileError.InvalidOperation,
         .shift_left => if (kind == .signed_integer or kind == .unsigned_integer) .shift_left else CompileError.InvalidOperation,
         .signed_divide => if (kind == .signed_integer) .signed_divide else CompileError.InvalidOperation,
         .signed_modulo => if (kind == .signed_integer) .signed_modulo else CompileError.InvalidOperation,
@@ -1177,6 +1359,7 @@ fn binaryOpcode(op: inst_ir.BinaryOpcode, kind: bc.ValueKind) !bc.Opcode {
         .unsigned_multiply_extended => if (kind == .unsigned_integer) .unsigned_multiply_extended else CompileError.InvalidOperation,
         .vector_times_matrix => if (kind == .floating) .vector_times_matrix else CompileError.InvalidOperation,
         .vector_times_scalar => if (kind == .floating) .vector_times_scalar else CompileError.InvalidOperation,
+        .vector_extract_dynamic => .vector_extract_dynamic,
     };
 }
 
