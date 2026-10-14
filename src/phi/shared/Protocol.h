@@ -1,8 +1,10 @@
 #ifndef APE_PHI_PROTOCOL_H
 #define APE_PHI_PROTOCOL_H
 
-#include "Commands.h" // IWYU pragma: keep
 #include <stdint.h>
+
+#include "Commands.h"  // IWYU pragma: keep
+#include "KernelAbi.h" // IWYU pragma: keep
 
 #define PHI_MEMORY_ALIGNMENT 64
 

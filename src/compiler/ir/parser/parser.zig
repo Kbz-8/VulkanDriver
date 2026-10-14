@@ -442,9 +442,10 @@ const Parser = struct {
         }
 
         if (std.mem.eql(u8, name, "load_interface"))
-            return .{
-                .load_interface = (try self.expect(.at_name)).text,
-            };
+            return .{ .load_interface = .{
+                .interface_name = (try self.expect(.at_name)).text,
+                .element_index = try self.parseOptionalElementIndex(),
+            } };
 
         if (std.mem.eql(u8, name, "store_interface")) {
             const interface_name = (try self.expect(.at_name)).text;
@@ -453,6 +454,7 @@ const Parser = struct {
                 .store_interface = .{
                     .interface_name = interface_name,
                     .value = try self.parseValueRef(),
+                    .element_index = try self.parseOptionalElementIndex(),
                 },
             };
         }
@@ -508,6 +510,27 @@ const Parser = struct {
             return .{ .store_workgroup = .{
                 .variable_name = variable_name,
                 .byte_offset = byte_offset,
+                .value = try self.parseValueRef(),
+            } };
+        }
+
+        if (std.mem.eql(u8, name, "image_read")) {
+            const resource_name = (try self.expect(.at_name)).text;
+            try self.expectDiscard(.comma);
+            return .{ .image_read = .{
+                .resource_name = resource_name,
+                .coordinate = try self.parseValueRef(),
+            } };
+        }
+
+        if (std.mem.eql(u8, name, "image_write")) {
+            const resource_name = (try self.expect(.at_name)).text;
+            try self.expectDiscard(.comma);
+            const coordinate = try self.parseValueRef();
+            try self.expectDiscard(.comma);
+            return .{ .image_write = .{
+                .resource_name = resource_name,
+                .coordinate = coordinate,
                 .value = try self.parseValueRef(),
             } };
         }
@@ -639,6 +662,13 @@ const Parser = struct {
             return Error.UnexpectedToken;
 
         return .{ .dimension = dimension, .arrayed = arrayed };
+    }
+
+    fn parseOptionalElementIndex(self: *Parser) !?ValueRef {
+        if (!try self.consume(.comma))
+            return null;
+        try self.expectIdentifier("element_index");
+        return try self.parseValueRef();
     }
 
     fn parseOptionalDescriptorIndex(self: *Parser) !?ValueRef {
@@ -1096,6 +1126,97 @@ test "Parser: interface" {
     try std.testing.expect(std.mem.indexOf(u8, printed, "@position: vec4[f32] = output[builtin(position)]") != null);
 }
 
+test "Parser: syntax model covers every IR operation" {
+    comptime {
+        for (std.meta.tags(std.meta.Tag(inst_ir.Operation))) |tag| {
+            if (!@hasField(ParsedOperation, @tagName(tag)))
+                @compileError("Missing parsed IR operation: " ++ @tagName(tag));
+        }
+    }
+}
+
+test "Parser: indexed and unindexed interface operations round trip" {
+    const printer = @import("../printer.zig");
+    var module = try parseString(std.testing.allocator,
+        \\shader vertex @main
+        \\{
+        \\    @input: vec4[f32] = input[location(0), component(0), index(0)]
+        \\    @output: vec4[f32] = output[location(0), component(0), index(0)]
+        \\    %index: constant u32 = 1
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %whole = load_interface @input
+        \\            %element = load_interface @input, element_index %index
+        \\            store_interface @output, %whole
+        \\            store_interface @output, %element, element_index %index
+        \\            return
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+    const printed = try printer.allocPrint(std.testing.allocator, &module);
+    defer std.testing.allocator.free(printed);
+
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%whole: vec4[f32] = load_interface @input\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%element: vec4[f32] = load_interface @input, element_index %index\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "store_interface @output, %whole\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "store_interface @output, %element, element_index %index\n") != null);
+
+    var reparsed = try parseString(std.testing.allocator, printed);
+    defer reparsed.deinit();
+    const printed_again = try printer.allocPrint(std.testing.allocator, &reparsed);
+    defer std.testing.allocator.free(printed_again);
+    try std.testing.expectEqualStrings(printed, printed_again);
+}
+
+test "Parser: image and indexed interface operation errors" {
+    const cases = [_]struct { operation: []const u8, expected: anyerror }{
+        .{ .operation = "%read: vec4[f32] = image_read @missing, %coord", .expected = Error.UnknownResource },
+        .{ .operation = "%read: vec4[f32] = image_read @image, %missing", .expected = Error.UnknownValue },
+        .{ .operation = "%read = image_read @image, %coord", .expected = Error.MissingResultType },
+        .{ .operation = "image_read @image, %coord", .expected = validator.ValidationError.WrongResultPresence },
+        .{ .operation = "%read: vec4[f32] = image_read @buffer, %coord", .expected = validator.ValidationError.WrongResourceKind },
+        .{ .operation = "%read: vec4[f32] = image_read @image %coord", .expected = Error.UnexpectedToken },
+        .{ .operation = "%read: vec4[f32] = image_read @image,", .expected = Error.UnexpectedToken },
+        .{ .operation = "image_write @missing, %coord, %pixel", .expected = Error.UnknownResource },
+        .{ .operation = "image_write @image, %missing, %pixel", .expected = Error.UnknownValue },
+        .{ .operation = "image_write @image, %coord, %missing", .expected = Error.UnknownValue },
+        .{ .operation = "%write: vec4[f32] = image_write @image, %coord, %pixel", .expected = validator.ValidationError.WrongResultPresence },
+        .{ .operation = "image_write @buffer, %coord, %pixel", .expected = validator.ValidationError.WrongResourceKind },
+        .{ .operation = "image_write @image, %coord", .expected = Error.UnexpectedToken },
+        .{ .operation = "image_write @image, %coord,", .expected = Error.UnexpectedToken },
+        .{ .operation = "%load = load_interface @input, element_index %missing", .expected = Error.UnknownValue },
+        .{ .operation = "store_interface @output, %pixel, element_index %missing", .expected = Error.UnknownValue },
+        .{ .operation = "%load = load_interface @input, element_index", .expected = Error.UnexpectedToken },
+        .{ .operation = "store_interface @output, %pixel, element_index", .expected = Error.UnexpectedToken },
+        .{ .operation = "%load = load_interface @input, descriptor_index %index", .expected = Error.UnexpectedToken },
+        .{ .operation = "store_interface @output, %pixel, descriptor_index %index", .expected = Error.UnexpectedToken },
+    };
+    for (cases) |case| {
+        const source = try std.testing.allocator.print(
+            \\shader vertex @main
+            \\{{
+            \\    @image: vec4[f32] = storage_image[set(0), binding(0)]
+            \\    @buffer: u32 = storage_buffer[set(0), binding(1)]
+            \\    @input: vec4[f32] = input[location(0), component(0), index(0)]
+            \\    @output: vec4[f32] = output[location(0), component(0), index(0)]
+            \\    %coord: constant vec2[f32] = null
+            \\    %pixel: constant vec4[f32] = null
+            \\    %index: constant u32 = 1
+            \\    fn @main() -> void
+            \\    {{
+            \\        .entry():
+            \\            {s}
+            \\            return
+            \\    }}
+            \\}}
+        , .{case.operation});
+        defer std.testing.allocator.free(source);
+        try std.testing.expectError(case.expected, parseString(std.testing.allocator, source));
+    }
+}
+
 test "Parser: resources and buffer operations" {
     const printer = @import("../printer.zig");
 
@@ -1128,6 +1249,8 @@ test "Parser: resources and buffer operations" {
         \\             %sample: vec4[f32] = image_sample_explicit_lod @texture, @linear_sampler, %coordinate, %lod, dimension two_d, arrayed false
         \\             %implicit_sample: vec4[f32] = image_sample_implicit_lod @texture, @linear_sampler, %arrayed_coordinate, dimension two_d, arrayed true
         \\             %gather: vec4[f32] = image_gather @texture, @linear_sampler, %coordinate, %component, dimension two_d, arrayed false
+        \\             %pixel: vec4[f32] = image_read @image, %coordinate
+        \\             image_write @image, %coordinate, %pixel
         \\             return
         \\     }
         \\ }
@@ -1153,6 +1276,8 @@ test "Parser: resources and buffer operations" {
     try std.testing.expect(std.mem.indexOf(u8, printed, "%sample: vec4[f32] = image_sample_explicit_lod @texture, @linear_sampler, %coordinate, %lod, dimension two_d, arrayed false") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "%implicit_sample: vec4[f32] = image_sample_implicit_lod @texture, @linear_sampler, %arrayed_coordinate, dimension two_d, arrayed true") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "%gather: vec4[f32] = image_gather @texture, @linear_sampler, %coordinate, %component, dimension two_d, arrayed false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%pixel: vec4[f32] = image_read @image, %coordinate") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "image_write @image, %coordinate, %pixel") != null);
 
     var reparsed = try parseString(std.testing.allocator, printed);
     defer reparsed.deinit();

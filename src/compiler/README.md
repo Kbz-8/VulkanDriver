@@ -500,12 +500,15 @@ Reads one declared shader input. It cannot read an output declaration.
 
 ```text
 %1: vec4[f32] = load_interface @in_color
+%2: vec4[f32] = load_interface @in_color, element_index %index
 ```
 
-The result type must equal the interface variable's type. An optional dynamic
-`element_index` exists in memory for future arrayed interfaces, but the current
-printer does not show it and the validator does not use it to change the
-result type.
+The optional dynamic `element_index` for arrayed interfaces is printed as a
+trailing `, element_index %index` operand. When it is null, the printer omits
+that operand and preserves the unindexed syntax.
+
+The result type must equal the interface variable's type. The current validator
+does not use `element_index` to change the result type.
 
 ### `store_interface`
 
@@ -514,11 +517,16 @@ input declaration.
 
 ```text
 store_interface @out_color, %1
+store_interface @out_color, %1, element_index %index
 ```
 
-The stored value must equal the interface variable's type. As with
-`load_interface`, an optional unprinted `element_index` is reserved for later
-arrayed-interface work. This operation has side effects.
+As with `load_interface`, the optional dynamic `element_index` for arrayed
+interfaces is printed after the value as `, element_index %index`. When it is
+null, the printer preserves the unindexed syntax.
+
+The stored value must equal the interface variable's type; the current validator
+does not use `element_index` to change that requirement. This operation has side
+effects.
 
 ### `load_push_constant`
 

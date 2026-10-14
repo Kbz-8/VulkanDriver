@@ -21,21 +21,33 @@ pub const Options = struct {
     dispatch_width: u8 = 16,
 };
 
-pub fn compileCompute(allocator: std.mem.Allocator, module: *shader_ir.module.Module, options: Options) Error!Artifact {
-    _ = allocator;
+pub fn compile(_: std.mem.Allocator, module: *shader_ir.module.Module, options: Options) Error!Artifact {
+    switch (module.stage) {
+        .compute => {},
+        .vertex, .fragment => return Error.UnsupportedStage,
+    }
 
-    if (module.stage != .compute)
-        return error.UnsupportedStage;
-    if (module.entry_point == null)
-        return error.MissingEntryPoint;
-    if (module.execution_modes.workgroup_size == null)
-        return error.MissingWorkgroupSize;
-    if (!module.properties.structured_control_flow)
-        return error.UnstructuredControlFlow;
     if (options.dispatch_width != 16)
-        return error.UnsupportedType;
+        return Error.UnsupportedDispatchWidth;
 
-    return error.CodeGenerationNotImplemented;
+    if (module.entry_point == null)
+        return Error.MissingEntryPoint;
+
+    const workgroup_size = module.execution_modes.workgroup_size orelse return Error.MissingWorkgroupSize;
+
+    var invocation_count: u64 = 1;
+    for (workgroup_size) |size| {
+        if (size == 0) return Error.UnsupportedWorkgroupSize;
+        invocation_count = std.math.mul(u64, invocation_count, size) catch return Error.UnsupportedWorkgroupSize;
+    }
+
+    shader_ir.validator.validate(module) catch |err| return switch (err) {
+        error.OutOfMemory => Error.OutOfMemory,
+        else => Error.InvalidModule,
+    };
+
+    // Opcode and type support belong to code generation, not an input whitelist.
+    return Error.CodeGenerationNotImplemented;
 }
 
 test "[compiler] foundation declarations compile" {
@@ -52,9 +64,34 @@ test "[compiler] foundation declarations compile" {
     std.testing.refAllDecls(register_allocator);
 }
 
-test "[compiler] rejects non-compute modules before code generation" {
-    var module = shader_ir.module.Module.init(std.testing.allocator, .vertex);
+test "[compiler] validate compute configuration before code generation" {
+    var module = try shader_ir.parser.parseString(std.testing.allocator,
+        \\shader compute @main
+        \\{
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            return
+        \\    }
+        \\}
+    );
     defer module.deinit();
 
-    try std.testing.expectError(error.UnsupportedStage, compileCompute(std.testing.allocator, &module, .{}));
+    try std.testing.expectError(Error.UnsupportedDispatchWidth, compile(std.testing.allocator, &module, .{ .dispatch_width = 8 }));
+    try std.testing.expectError(Error.MissingWorkgroupSize, compile(std.testing.allocator, &module, .{}));
+
+    module.execution_modes.workgroup_size = .{ 1, 0, 1 };
+    try std.testing.expectError(Error.UnsupportedWorkgroupSize, compile(std.testing.allocator, &module, .{}));
+    module.execution_modes.workgroup_size = @splat(std.math.maxInt(u32));
+    try std.testing.expectError(Error.UnsupportedWorkgroupSize, compile(std.testing.allocator, &module, .{}));
+    module.execution_modes.workgroup_size = .{ 1, 1, 1 };
+
+    const entry_point = module.entry_point.?;
+    module.entry_point = null;
+    try std.testing.expectError(Error.MissingEntryPoint, compile(std.testing.allocator, &module, .{}));
+    module.entry_point = entry_point;
+
+    const block = module.blocks.getMut(module.functions.get(entry_point).?.entry_block.?).?;
+    block.terminator = null;
+    try std.testing.expectError(Error.InvalidModule, compile(std.testing.allocator, &module, .{}));
 }

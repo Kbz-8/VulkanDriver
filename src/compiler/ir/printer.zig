@@ -275,6 +275,10 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             try writer.writeAll("load_interface ");
             const variable = module.interface_variables.get(op.variable);
             try writeNamedRef(writer, if (variable) |v| v.name else null, "interface", op.variable.index());
+            if (op.element_index) |index| {
+                try writer.writeAll(", element_index ");
+                try writeValueRef(module, writer, index);
+            }
         },
         .store_interface => |op| {
             try writer.writeAll("store_interface ");
@@ -282,6 +286,10 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             try writeNamedRef(writer, if (variable) |v| v.name else null, "interface", op.variable.index());
             try writer.writeAll(", ");
             try writeValueRef(module, writer, op.value);
+            if (op.element_index) |index| {
+                try writer.writeAll(", element_index ");
+                try writeValueRef(module, writer, index);
+            }
         },
         .load_push_constant => |op| {
             try writer.writeAll("load_push_constant ");

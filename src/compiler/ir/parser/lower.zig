@@ -296,13 +296,18 @@ fn lowerOperation(
                 .inferred_type = try extractedType(module, module.typeOf(composite) orelse return error.UnknownValue, op.indices),
             };
         },
-        .load_interface => |name| blk: {
-            const interface_id = interfaces.get(name) orelse return error.UnknownInterface;
+        .load_interface => |op| blk: {
+            const interface_id = interfaces.get(op.interface_name) orelse return error.UnknownInterface;
+            const element_index = if (op.element_index) |index|
+                resolveValue(values, index) orelse return error.UnknownValue
+            else
+                null;
 
             break :blk .{
                 .operation = .{
                     .load_interface = .{
                         .variable = interface_id,
+                        .element_index = element_index,
                     },
                 },
                 .inferred_type = module.interface_variables.get(interface_id).?.type,
@@ -311,12 +316,17 @@ fn lowerOperation(
         .store_interface => |op| blk: {
             const interface_id = interfaces.get(op.interface_name) orelse return error.UnknownInterface;
             const value = resolveValue(values, op.value) orelse return error.UnknownValue;
+            const element_index = if (op.element_index) |index|
+                resolveValue(values, index) orelse return error.UnknownValue
+            else
+                null;
 
             break :blk .{
                 .operation = .{
                     .store_interface = .{
                         .variable = interface_id,
                         .value = value,
+                        .element_index = element_index,
                     },
                 },
                 .inferred_type = null,
@@ -388,6 +398,30 @@ fn lowerOperation(
                 .operation = .{ .store_workgroup = .{
                     .variable = variable,
                     .byte_offset = byte_offset,
+                    .value = value,
+                } },
+                .inferred_type = null,
+            };
+        },
+        .image_read => |op| blk: {
+            const resource = resources.get(op.resource_name) orelse return error.UnknownResource;
+            const coordinate = resolveValue(values, op.coordinate) orelse return error.UnknownValue;
+            break :blk .{
+                .operation = .{ .image_read = .{
+                    .resource = resource,
+                    .coordinate = coordinate,
+                } },
+                .inferred_type = null,
+            };
+        },
+        .image_write => |op| blk: {
+            const resource = resources.get(op.resource_name) orelse return error.UnknownResource;
+            const coordinate = resolveValue(values, op.coordinate) orelse return error.UnknownValue;
+            const value = resolveValue(values, op.value) orelse return error.UnknownValue;
+            break :blk .{
+                .operation = .{ .image_write = .{
+                    .resource = resource,
+                    .coordinate = coordinate,
                     .value = value,
                 } },
                 .inferred_type = null,
