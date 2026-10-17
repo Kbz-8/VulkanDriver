@@ -12,6 +12,21 @@ jobs:
     if: ${{ github.event_name != 'push' || !contains(github.event.head_commit.message, 'ci skip') }}
 
     steps:
+      - name: Debug connectivity
+        run: |
+          echo "=== DNS ==="
+          getent ahosts git.kbz8.me || true
+
+          echo "=== IPv4 ==="
+          curl -4 -v --connect-timeout 5 \
+            --max-time 10 \
+            https://git.kbz8.me/ || true
+
+          echo "=== IPv6 ==="
+          curl -6 -v --connect-timeout 5 \
+            --max-time 10 \
+            https://git.kbz8.me/ || true
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
