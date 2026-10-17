@@ -1,4 +1,4 @@
-name: Mirror Gitea refs to GitHub
+name: Mirror GitGud refs to GitHub
 
 on:
   push:
@@ -18,11 +18,11 @@ jobs:
       MIRROR_GITHUB_SSH_KEY: ${{ secrets.MIRROR_GITHUB_SSH_KEY }}
       MIRROR_GITHUB_KNOWN_HOSTS: ${{ secrets.MIRROR_GITHUB_KNOWN_HOSTS }}
 
-      MIRROR_REF_TYPE: ${{ gitea.ref_type }}
-      MIRROR_REF_NAME: ${{ gitea.ref_name }}
+      MIRROR_REF_TYPE: ${{ forgejo.ref_type }}
+      MIRROR_REF_NAME: ${{ forgejo.ref_name }}
 
     steps:
-      - name: Check out the authoritative Gitea repository
+      - name: Check out the authoritative GitGud repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -125,12 +125,12 @@ jobs:
 
               echo \
                 "GitHub ${remote_sha} is not an ancestor" \
-                "of Gitea ${local_sha}." \
+                "of GitGud ${local_sha}." \
                 >&2
 
               echo \
                 "Import and resolve the GitHub commit" \
-                "on Gitea first." \
+                "on GitGud first." \
                 >&2
 
               exit 1
@@ -177,7 +177,7 @@ jobs:
 
             echo \
               "GitHub has ${remote_tag_sha};" \
-              "Gitea has ${local_tag_sha}." \
+              "GitGud has ${local_tag_sha}." \
               >&2
 
             exit 1

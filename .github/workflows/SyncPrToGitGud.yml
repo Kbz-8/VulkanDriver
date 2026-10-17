@@ -1,4 +1,4 @@
-name: Sync GitHub PR to Gitea
+name: Sync GitHub PR to GitGud
 
 on:
   pull_request_target:
