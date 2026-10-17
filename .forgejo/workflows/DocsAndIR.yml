@@ -53,7 +53,7 @@ jobs:
 
       - name: Deploying IR docs
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
-        uses: https://github.com/milanmk/actions-file-deployer
+        uses: https://github.com/milanmk/actions-file-deployer@master
         with:
           remote-protocol: sftp
           remote-host: ${{ secrets.SFTP_HOST_DOCS_IR }}
