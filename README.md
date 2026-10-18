@@ -632,7 +632,7 @@ Assume thou that functions lacking in this array are, for now, not intended to b
 
 </details>
 
-[herein](https://vulkan-driver.kbz8.me/cts/flint/) is the reckoning of the vulkan 1.0 conformance trials laid bare. judge it as thou wilt.
+[Herein](https://vulkan-driver.kbz8.me/cts/flint/) is the reckoning of the vulkan 1.0 conformance trials laid bare. judge it as thou wilt.
 
 ## PSVK (PlayStation Vita)
 
