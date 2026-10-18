@@ -244,27 +244,55 @@ Form:
 %result: <type> = <opcode> %operand
 ```
 
-| Opcode        | Description                                                | Usage                                                                     | Small printed example            |
-| ------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------- | -------------------------------- |
-| `absolute`    | Computes the floating-point absolute value component-wise. | Floating scalar or vector; the result has the same type.                  | `%2: f32 = absolute %1`          |
-| `all`         | True when all components of the operand are true.          | Boolean vector operand; scalar boolean result.                            | `%2: bool = all %1`              |
-| `bit_count`   | Counts the set bits in each component.                     | Integer scalar or vector; result has the same width and shape.            | `%2: u32 = bit_count %1`         |
-| `bit_reverse` | Reverses the bits in each component.                       | Integer scalar or vector; result has the same width and shape.            | `%2: u32 = bit_reverse %1`       |
-| `bitwise_not` | Inverts every bit.                                         | Integer scalar or vector; result has the same width and shape.            | `%2: u32 = bitwise_not %1`       |
-| `exp`         | Computes the natural exponential component-wise.           | Floating scalar or vector; the result has the same type.                  | `%2: f32 = exp %1`               |
-| `floor`       | Rounds each component toward negative infinity.            | Floating scalar or vector; the result has the same type.                  | `%2: f32 = floor %1`             |
-| `is_inf`      | Tests each component for positive or negative infinity.    | Floating scalar or vector; result is a matching boolean scalar or vector. | `%2: bool = is_inf %1`           |
-| `is_nan`      | Tests each component for NaN.                              | Floating scalar or vector; result is a matching boolean scalar or vector. | `%2: vec4[bool] = is_nan %1`     |
-| `logical_not` | Inverts each boolean component.                            | Boolean scalar or vector; the result has the same type.                   | `%2: bool = logical_not %1`      |
-| `negate`      | Changes the arithmetic sign.                               | Signed integer or floating operand; the result has the same type.         | `%2: i32 = negate %1`            |
-| `normalize`   | Produces a floating value with unit length.                | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = normalize %1`   |
-| `sign`        | Produces -1, 0, or 1 according to the operand's sign.      | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = sign %1`        |
-| `transpose`   | Exchanges the rows and columns of a floating-point matrix. | Floating matrix; result has reversed row and column counts.               | `%2: mat2x3[f32] = transpose %1` |
+| Opcode        | Description                                                        | Usage                                                                     | Small printed example            |
+| ------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------- | -------------------------------- |
+| `absolute`    | Computes the floating-point absolute value component-wise.         | Floating scalar or vector; the result has the same type.                  | `%2: f32 = absolute %1`          |
+| `acos`        | Computes the arc cosine in radians component-wise.                 | Floating scalar or vector; the result has the same type.                  | `%2: f32 = acos %1`              |
+| `acosh`       | Computes the inverse hyperbolic cosine component-wise.             | Floating scalar or vector; the result has the same type.                  | `%2: f32 = acosh %1`             |
+| `all`         | True when all components of the operand are true.                  | Boolean vector operand; scalar boolean result.                            | `%2: bool = all %1`              |
+| `any`         | True when any component of the operand is true.                    | Boolean vector operand; scalar boolean result.                            | `%2: bool = any %1`              |
+| `asin`        | Computes the arc sine in radians component-wise.                   | Floating scalar or vector; the result has the same type.                  | `%2: f32 = asin %1`              |
+| `asinh`       | Computes the inverse hyperbolic sine component-wise.               | Floating scalar or vector; the result has the same type.                  | `%2: f32 = asinh %1`             |
+| `atan`        | Computes the arc tangent in radians component-wise.                | Floating scalar or vector; the result has the same type.                  | `%2: f32 = atan %1`              |
+| `atanh`       | Computes the inverse hyperbolic tangent component-wise.            | Floating scalar or vector; the result has the same type.                  | `%2: f32 = atanh %1`             |
+| `bit_count`   | Counts the set bits in each component.                             | Integer scalar or vector; result has the same width and shape.            | `%2: u32 = bit_count %1`         |
+| `bit_reverse` | Reverses the bits in each component.                               | Integer scalar or vector; result has the same width and shape.            | `%2: u32 = bit_reverse %1`       |
+| `bitwise_not` | Inverts every bit.                                                 | Integer scalar or vector; result has the same width and shape.            | `%2: u32 = bitwise_not %1`       |
+| `ceil`        | Rounds each component toward positive infinity.                    | Floating scalar or vector; the result has the same type.                  | `%2: f32 = ceil %1`              |
+| `cos`         | Computes the cosine of an angle in radians component-wise.         | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = cos %1`         |
+| `cosh`        | Computes the hyperbolic cosine component-wise.                     | Floating scalar or vector; the result has the same type.                  | `%2: f32 = cosh %1`              |
+| `d_pdx`       | Computes the partial derivative with respect to screen x.          | Fragment-only floating scalar or vector; result has the same type.        | `%2: f32 = d_pdx %1`             |
+| `d_pdy`       | Computes the partial derivative with respect to screen y.          | Fragment-only floating scalar or vector; result has the same type.        | `%2: vec3[f32] = d_pdy %1`       |
+| `exp`         | Computes the natural exponential component-wise.                   | Floating scalar or vector; the result has the same type.                  | `%2: f32 = exp %1`               |
+| `exp2`        | Computes the base-two exponential component-wise.                  | Floating scalar or vector; the result has the same type.                  | `%2: f32 = exp2 %1`              |
+| `floor`       | Rounds each component toward negative infinity.                    | Floating scalar or vector; the result has the same type.                  | `%2: f32 = floor %1`             |
+| `fwidth`      | Computes `abs(dFdx(x)) + abs(dFdy(x))` component-wise.             | Fragment-only floating scalar or vector; result has the same type.        | `%2: vec3[f32] = fwidth %1`      |
+| `is_inf`      | Tests each component for positive or negative infinity.            | Floating scalar or vector; result is a matching boolean scalar or vector. | `%2: bool = is_inf %1`           |
+| `is_nan`      | Tests each component for NaN.                                      | Floating scalar or vector; result is a matching boolean scalar or vector. | `%2: vec4[bool] = is_nan %1`     |
+| `length`      | Computes a vector's Euclidean length or a scalar's absolute value. | Floating scalar or vector; result is the scalar element type.             | `%2: f32 = length %1`            |
+| `log`         | Computes the natural logarithm component-wise.                     | Floating scalar or vector; the result has the same type.                  | `%2: f32 = log %1`               |
+| `log2`        | Computes the base-two logarithm component-wise.                    | Floating scalar or vector; the result has the same type.                  | `%2: f32 = log2 %1`              |
+| `logical_not` | Inverts each boolean component.                                    | Boolean scalar or vector; the result has the same type.                   | `%2: bool = logical_not %1`      |
+| `negate`      | Changes the arithmetic sign.                                       | Signed integer or floating operand; the result has the same type.         | `%2: i32 = negate %1`            |
+| `normalize`   | Produces a floating value with unit length.                        | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = normalize %1`   |
+| `round`       | Rounds each component to the nearest integer.                      | Floating scalar or vector; the result has the same type.                  | `%2: f32 = round %1`             |
+| `sign`        | Produces -1, 0, or 1 according to the operand's sign.              | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = sign %1`        |
+| `sin`         | Computes the sine of an angle in radians component-wise.           | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = sin %1`         |
+| `sinh`        | Computes the hyperbolic sine component-wise.                       | Floating scalar or vector; the result has the same type.                  | `%2: f32 = sinh %1`              |
+| `tan`         | Computes the tangent of an angle in radians component-wise.        | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = tan %1`         |
+| `tanh`        | Computes the hyperbolic tangent component-wise.                    | Floating scalar or vector; the result has the same type.                  | `%2: f32 = tanh %1`              |
+| `transpose`   | Exchanges the rows and columns of a floating-point matrix.         | Floating matrix; result has reversed row and column counts.               | `%2: mat2x3[f32] = transpose %1` |
 
 `length` accepts a floating scalar or vector and returns the scalar element type
 (with matching precision); scalar length is the absolute value. `fwidth` accepts a
 floating scalar or vector, preserves its type, and is fragment-only. It represents
 `abs(dFdx(x)) + abs(dFdy(x))` with the default derivative granularity.
+`d_pdx` and `d_pdy` preserve the floating scalar/vector operand type and use the
+same fragment-only restriction. They represent `OpDPdx` and `OpDPdy` with default
+(implementation-selected fine or coarse) derivative granularity, not explicit
+fine/coarse derivatives. Their result type may be omitted in textual IR and is
+inferred from the operand. Frontend/IR support does not imply backend execution
+support; Intel common-IR lowering explicitly rejects these derivative operations.
 
 `negate` is one normalized opcode: the operand type distinguishes integer
 negation from floating negation. Unary integer and floating operations apply
@@ -297,6 +325,13 @@ have the specialized type rules described below.
 | `signed_divide`              | Divides signed integers.                                | Signed integer operands.                                                    | `%3: i32 = signed_divide %1, %2`                           |
 | `unsigned_modulo`            | Produces the unsigned remainder.                        | Unsigned integer operands.                                                  | `%3: u32 = unsigned_modulo %1, %2`                         |
 | `signed_modulo`              | Produces signed modulo, whose sign follows the divisor. | Signed integer operands; this corresponds to SPIR-V `OpSMod`, not `OpSRem`. | `%3: i32 = signed_modulo %1, %2`                           |
+| `unsigned_min`               | Selects the smaller unsigned value component-wise.      | Equal unsigned integer scalars or vectors; same result type.                | `%3: vec3[u32] = unsigned_min %1, %2`                      |
+| `unsigned_max`               | Selects the greater unsigned value component-wise.      | Equal unsigned integer scalars or vectors; same result type.                | `%3: vec3[u32] = unsigned_max %1, %2`                      |
+
+`unsigned_min` and `unsigned_max` map GLSL.std.450 `UMin` and `UMax`.
+Their intended operands are unsigned integer scalars or vectors, but the current
+validator only checks that both operands and the result have the same type; it
+does not yet enforce the unsigned integer category for these two opcodes.
 
 Integer addition, subtraction, and multiplication are signedness-neutral at the
 opcode level; the type retains signedness. Exceptional division, overflow,
@@ -304,28 +339,36 @@ and poison rules are not yet separately recorded by the IR.
 
 ### Floating arithmetic
 
-| Opcode            | Description                                             | Usage                                                               | Small printed example              |
-| ----------------- | ------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------- |
-| `float_add`       | Adds floating-point values.                             | Floating operands of one type.                                      | `%3: f32 = float_add %1, %2`       |
-| `float_subtract`  | Subtracts the right operand from the left.              | Floating operands of one type.                                      | `%3: f32 = float_subtract %1, %2`  |
-| `float_multiply`  | Multiplies floating-point values.                       | Floating operands of one type.                                      | `%3: f32 = float_multiply %1, %2`  |
-| `float_divide`    | Divides the left operand by the right.                  | Floating operands of one type.                                      | `%3: f32 = float_divide %1, %2`    |
-| `float_max`       | Selects the greater operand component-wise.             | Floating operands of one type; maps GLSL.std.450 `FMax`.            | `%3: f32 = float_max %1, %2`       |
-| `float_modulo`    | Produces `x - y * floor(x / y)`.                        | Floating operands of one type; this corresponds to SPIR-V `OpFMod`. | `%3: f32 = float_modulo %1, %2`    |
-| `float_remainder` | Produces `x - y * trunc(x / y)`.                        | Floating operands of one type; this corresponds to SPIR-V `OpFRem`. | `%3: f32 = float_remainder %1, %2` |
-| `atan2`           | Computes the quadrant-aware arc tangent of `lhs / rhs`. | Floating operands of one type; maps GLSL.std.450 `Atan2`.           | `%3: f32 = atan2 %1, %2`           |
-| `pow`             | Raises the left operand to the power of the right.      | Floating operands of one type; maps GLSL.std.450 `Pow`.             | `%3: f32 = pow %1, %2`             |
+| Opcode            | Description                                             | Usage                                                                     | Small printed example              |
+| ----------------- | ------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------- |
+| `float_add`       | Adds floating-point values.                             | Floating operands of one type.                                            | `%3: f32 = float_add %1, %2`       |
+| `float_subtract`  | Subtracts the right operand from the left.              | Floating operands of one type.                                            | `%3: f32 = float_subtract %1, %2`  |
+| `float_multiply`  | Multiplies floating-point values.                       | Floating operands of one type.                                            | `%3: f32 = float_multiply %1, %2`  |
+| `float_divide`    | Divides the left operand by the right.                  | Floating operands of one type.                                            | `%3: f32 = float_divide %1, %2`    |
+| `float_min`       | Selects the smaller operand component-wise.             | Floating operands of one type; maps GLSL.std.450 `FMin`.                  | `%3: f32 = float_min %1, %2`       |
+| `float_max`       | Selects the greater operand component-wise.             | Floating operands of one type; maps GLSL.std.450 `FMax`.                  | `%3: f32 = float_max %1, %2`       |
+| `float_modulo`    | Produces `x - y * floor(x / y)`.                        | Floating operands of one type; this corresponds to SPIR-V `OpFMod`.       | `%3: f32 = float_modulo %1, %2`    |
+| `float_remainder` | Produces `x - y * trunc(x / y)`.                        | Floating operands of one type; this corresponds to SPIR-V `OpFRem`.       | `%3: f32 = float_remainder %1, %2` |
+| `atan2`           | Computes the quadrant-aware arc tangent of `lhs / rhs`. | Floating operands of one type; maps GLSL.std.450 `Atan2`.                 | `%3: f32 = atan2 %1, %2`           |
+| `pow`             | Raises the left operand to the power of the right.      | Floating operands of one type; maps GLSL.std.450 `Pow`.                   | `%3: f32 = pow %1, %2`             |
+| `step`            | Returns 0 if `rhs < lhs`, otherwise 1, component-wise.  | Equal floating scalars or vectors; `lhs` is the edge and `rhs` the value. | `%3: vec3[f32] = step %1, %2`      |
+
+`step` maps GLSL.std.450 `Step`. The frontend requires both operands and the
+result to have the same type; scalar-edge broadcasting is not represented by
+this opcode. The current validator checks type equality but does not yet enforce
+the floating scalar/vector category for `step`.
 
 Instructions do not yet carry fast-math flags, rounding modes, contraction
 permission, or NaN guarantees.
 
 ### Vector arithmetic
 
-| Opcode                | Description                              | Usage                                                            | Small printed example                        |
-| --------------------- | ---------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------- |
-| `vector_times_scalar` | Multiplies a vector by a scalar.         | Floating vector and matching scalar; result has the vector type. | `%3: vec4[f32] = vector_times_scalar %1, %2` |
-| `vector_times_matrix` | Multiplies a row vector by a matrix.     | Compatible floating vector and matrix dimensions.                | `%3: vec4[f32] = vector_times_matrix %1, %2` |
-| `dot`                 | Computes the dot product of two vectors. | Equal floating vectors; result is their scalar element type.     | `%3: f32 = dot %1, %2`                       |
+| Opcode                   | Description                                       | Usage                                                                                   | Small printed example                        |
+| ------------------------ | ------------------------------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `vector_times_scalar`    | Multiplies a vector by a scalar.                  | Floating vector and matching scalar; result has the vector type.                        | `%3: vec4[f32] = vector_times_scalar %1, %2` |
+| `vector_times_matrix`    | Multiplies a row vector by a matrix.              | Compatible floating vector and matrix dimensions.                                       | `%3: vec4[f32] = vector_times_matrix %1, %2` |
+| `dot`                    | Computes the dot product of two vectors.          | Equal floating vectors; result is their scalar element type.                            | `%3: f32 = dot %1, %2`                       |
+| `vector_extract_dynamic` | Selects a vector component using a runtime index. | Floating, integer, or boolean vector and a scalar integer index; scalar element result. | `%3: f32 = vector_extract_dynamic %1, %2`    |
 
 `vector_extract_dynamic` takes a vector and a scalar signed or unsigned integer
 index and returns the vector's scalar element type. It supports floating, integer,
@@ -335,6 +378,12 @@ undefined result, matching SPIR-V `OpVectorExtractDynamic`.
 GLSL.std.450 `Length` maps directly to unary `length`. `FClamp` lowers to
 `float_max(x, min)` followed by `float_min(lower, max)`; all three operands and the
 result must have the same floating scalar or vector type.
+
+GLSL.std.450 `Cross` has no standalone IR opcode. For matching three-component
+floating vectors `a` and `b`, it constructs
+`(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x)` using
+`composite_extract`, `float_multiply`, `float_subtract`, and
+`composite_construct`, retaining the vectors' scalar precision.
 
 ### Matrix arithmetic
 
@@ -374,9 +423,18 @@ Form:
 %result: <type> = <opcode> %first, %second, %third
 ```
 
-| Opcode        | Description                                                | Usage                                                      | Small printed example              |
-| ------------- | ---------------------------------------------------------- | ---------------------------------------------------------- | ---------------------------------- |
-| `smooth_step` | Performs Hermite interpolation from edge 0 through edge 1. | Three equal floating scalars or vectors; same result type. | `%4: f32 = smooth_step %1, %2, %3` |
+| Opcode          | Description                                                     | Usage                                                      | Small printed example                  |
+| --------------- | --------------------------------------------------------------- | ---------------------------------------------------------- | -------------------------------------- |
+| `float_mix`     | Computes `first * (1 - third) + second * third` component-wise. | Three equal floating scalars or vectors; same result type. | `%4: vec3[f32] = float_mix %1, %2, %3` |
+| `float_mul_add` | Computes fused `first * second + third` component-wise.         | Three equal floating scalars or vectors; same result type. | `%4: f32 = float_mul_add %1, %2, %3`   |
+| `smooth_step`   | Performs Hermite interpolation from edge 0 through edge 1.      | Three equal floating scalars or vectors; same result type. | `%4: f32 = smooth_step %1, %2, %3`     |
+
+These map GLSL.std.450 `FMix`, `Fma`, and `SmoothStep`, respectively.
+For `float_mix`, the third operand is a floating interpolation weight, not a
+boolean selector. For `smooth_step`, operands are `(edge0, edge1, x)`.
+All three opcodes require matching types without implicit scalar broadcasting;
+`float_mul_add` explicitly requests a fused operation rather than separate
+multiplication and addition.
 
 ## Comparison opcodes
 
@@ -622,6 +680,27 @@ Samples a sampled image through a sampler using an implicit level of detail.
 
 The same rules as `image_sample_explicit_lod` apply, except no level-of-detail
 operand is supplied.
+
+### `image_gather`
+
+Gathers one selected color component from four neighboring texels of a sampled
+image through a sampler. The result's four components are samples from four
+texels, not the RGBA components of one texel.
+
+```text
+%value: vec4[f32] = image_gather @img, @sampler, %coord, %component, dimension two_d, arrayed false
+```
+
+The image and sampler resource rules are the same as for
+`image_sample_explicit_lod`. The coordinate uses `f32` components matching the
+image dimension and optional array layer. The component selector is a scalar
+32-bit signed or unsigned integer selecting color component 0 through 3, and the
+result is a four-component vector with the image's sampled element type. The
+validator checks the selector's type, but not its value range.
+
+The current SPIR-V frontend and software interpreter support only non-arrayed 2D
+gathers without optional image operands. The IR carries `dimension` and `arrayed`
+fields, but their presence does not imply support for other gather forms.
 
 ### `image_write`
 
@@ -896,11 +975,26 @@ omitted from the selected entry point. The translator lowers a defined subset:
   integer and floating-point comparison families. Redundant greater-than forms
   are canonicalized by reversing less-than operands; integer and unordered
   floating-point `<=`/`>=` forms use a comparison followed by `logical_not`.
-- GLSL.std.450 `Exp`, `FAbs`, `FSign`, `FMax`, `Atan2`, `Pow`, `SmoothStep`,
-  `Normalize`, and `NClamp`.
+- Fragment-only `OpDPdx`, `OpDPdy`, and `OpFwidth` on floating scalars/vectors,
+  mapped to `d_pdx`, `d_pdy`, and `fwidth`. Explicit fine/coarse derivative
+  instructions remain unsupported.
+- GLSL.std.450 floating unary operations `Acos`, `Acosh`, `Asin`, `Asinh`,
+  `Atan`, `Atanh`, `Ceil`, `Cos`, `Cosh`, `Exp`, `Exp2`, `FAbs`, `FSign`,
+  `Floor`, `Length`, `Log`, `Log2`, `Normalize`, `Round`, `Sin`, `Sinh`, `Tan`,
+  and `Tanh`; binary operations `Atan2`, `FMax`, `FMin`, `Pow`, and `Step`;
+  unsigned integer `UMax` and `UMin`; and ternary operations `FMix`, `Fma`, and
+  `SmoothStep`. `FClamp` lowers to floating maximum followed by minimum;
+  `NClamp` uses per-component comparisons and selects on `f32` vectors. `Cross`
+  accepts two matching three-component floating vectors and lowers to component
+  extraction, multiplication, subtraction, and vector construction, preserving
+  the operand precision without requiring a dedicated IR or interpreter opcode.
   `OpExtInstImport` declarations are classified once and dispatched through
   `src/compiler/spirv/extensions/`; set-specific translation lives below the
-  corresponding extension subdirectory.
+  corresponding extension subdirectory. Only the listed extended instructions
+  are implemented; an opcode's presence in the GLSL.std.450 enum alone does not
+  imply translation support.
+- `OpImageGather` on non-arrayed 2D sampled images without optional image
+  operands, mapped to `image_gather` with an explicit component selector.
 - Decorated stage inputs and outputs, with interface load and store. Partial
   output stores reconstruct the aggregate while preserving untouched components,
   including nested constant and dynamic indices. After inlining, output reads

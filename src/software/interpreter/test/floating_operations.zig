@@ -472,6 +472,107 @@ test "[interpreter] nonlinear scalar and vector fwidth uses same-instruction qua
     try std.testing.expectEqual(@as(Runtime.LaneMask, 0), inactive.returned_mask);
 }
 
+test "[interpreter] signed nonlinear derivatives preserve quad pairs, aliases, and helper masks" {
+    for ([_]bc.Opcode{ .d_pdx, .d_pdy }) |opcode| {
+        const code = [_]bc.Instruction{
+            .{ .opcode = .float_multiply, .components = 2, .a = reg(2), .b = reg(0), .c = reg(0) },
+            .{ .opcode = .copy, .a = reg(0), .b = reg(2) },
+            .{ .opcode = opcode, .components = 2, .a = reg(4), .b = reg(2) },
+            .{ .opcode = opcode, .a = reg(6), .b = reg(2) },
+            .{ .opcode = opcode, .a = reg(0), .b = reg(0) },
+            .{ .opcode = opcode, .components = 2, .a = reg(2), .b = reg(2) },
+            .{ .opcode = .store_buffer, .a = reg(6), .b = reg(7), .immediate = 0 },
+            .{ .opcode = .return_void },
+        };
+        var program = bytecodeProgram(&code, 8);
+        defer program.deinit();
+        program.stage = .fragment;
+        program.uses_derivatives = true;
+        program.resources = &.{.{ .kind = .storage_buffer, .set = 0, .binding = 0, .array_element = 0 }};
+        var runtime = try Runtime.init(std.testing.allocator, &program);
+        defer runtime.deinit();
+        const values = [4][2]f32{ .{ -3, 2 }, .{ 1, -1 }, .{ -2, -4 }, .{ 4, 3 } };
+        const differences: [4][2]f32 = if (opcode == .d_pdx)
+            .{ .{ -8, -3 }, .{ -8, -3 }, .{ 12, -7 }, .{ 12, -7 } }
+        else
+            .{ .{ -5, 12 }, .{ 15, 8 }, .{ -5, 12 }, .{ 15, 8 } };
+        var buffer: [Runtime.lane_count * 4]u8 = undefined;
+        // The extra case leaves the second quad wholly inactive on eight-lane waves.
+        for (0..Runtime.lane_count + 1) |case| {
+            const observable_lane = case % Runtime.lane_count;
+            const execution_mask: Runtime.LaneMask = if (case == Runtime.lane_count) 0b1111 else Runtime.full_lane_mask;
+            runtime.resetWave(&program, execution_mask, @as(Runtime.LaneMask, 1) << @intCast(observable_lane));
+            for (0..Runtime.lane_count) |lane| {
+                const registers = runtime.register_backing[lane * program.register_count ..][0..program.register_count];
+                @memset(registers, 0xaaaaaaaa);
+                const scale: f32 = @floatFromInt(lane / 4 + 1);
+                registers[0] = f32Bits(values[lane % 4][0] * scale);
+                registers[1] = f32Bits(values[lane % 4][1] * scale);
+                registers[7] = @intCast(lane * 4);
+            }
+            @memset(&buffer, 0xaa);
+            const outcome = try runtime.runWave(&program, .{ .resource_buffers = &.{&buffer} });
+            try std.testing.expectEqual(execution_mask, outcome.returned_mask);
+            for (0..Runtime.lane_count) |lane| {
+                const registers = runtime.register_backing[lane * program.register_count ..][0..program.register_count];
+                const scale: f32 = @floatFromInt(lane / 4 + 1);
+                const expected = [2]u32{ f32Bits(differences[lane % 4][0] * scale * scale), f32Bits(differences[lane % 4][1] * scale * scale) };
+                if ((execution_mask & (@as(Runtime.LaneMask, 1) << @intCast(lane))) != 0) {
+                    try std.testing.expectEqualSlices(u32, &expected, registers[2..4]);
+                    try std.testing.expectEqualSlices(u32, &expected, registers[4..6]);
+                    try std.testing.expectEqual(expected[0], registers[0]);
+                    try std.testing.expectEqual(expected[0], registers[6]);
+                } else {
+                    try std.testing.expectEqualSlices(u32, &@as([5]u32, @splat(0xaaaaaaaa)), registers[2..7]);
+                }
+                try std.testing.expectEqual(if (lane == observable_lane) expected[0] else @as(u32, 0xaaaaaaaa), std.mem.readInt(u32, buffer[lane * 4 ..][0..4], .little));
+            }
+        }
+        for ([_]Runtime.LaneMask{ 0b0111, 0b1011, 0b1101, 0b1110 }) |mask| {
+            runtime.resetWave(&program, mask, mask);
+            try std.testing.expectError(error.DerivativeUnavailable, runtime.runWave(&program, .{}));
+        }
+        runtime.resetWave(&program, 0, 0);
+        try std.testing.expectEqual(@as(Runtime.LaneMask, 0), (try runtime.runWave(&program, .{})).returned_mask);
+    }
+}
+
+test "[interpreter] each derivative alone lowers scalar and vector results and excludes dead derivatives" {
+    for ([_]bc.Opcode{ .d_pdx, .d_pdy }) |opcode| {
+        const source = try std.fmt.allocPrint(std.testing.allocator,
+            \\shader fragment @main
+            \\{{
+            \\    %scalar: constant f32 = null
+            \\    %vector: constant vec2[f32] = null
+            \\    fn @main() -> void
+            \\    {{
+            \\        .entry():
+            \\            %ds: f32 = {s} %scalar
+            \\            %dv: vec2[f32] = {s} %vector
+            \\            return
+            \\    }}
+            \\}}
+        , .{ @tagName(opcode), @tagName(opcode) });
+        defer std.testing.allocator.free(source);
+        var module = try ir.parser.parseString(std.testing.allocator, source);
+        defer module.deinit();
+        var dead = try Program.compile(std.testing.allocator, &module);
+        defer dead.deinit();
+        try std.testing.expect(!dead.uses_derivatives);
+        try std.testing.expectEqual(@as(usize, 1), dead.code.len);
+        try std.testing.expectEqual(bc.Opcode.return_void, dead.code[0].opcode);
+        try @import("liveness.zig").makeResultsObservable(&module);
+        var program = try Program.compile(std.testing.allocator, &module);
+        defer program.deinit();
+        try std.testing.expect(program.uses_derivatives);
+        try std.testing.expectEqual(@as(usize, 5), program.code.len);
+        for (program.code[0..2], 1..) |instruction, components| {
+            try std.testing.expectEqual(opcode, instruction.opcode);
+            try std.testing.expectEqual(@as(u16, @intCast(components)), instruction.components);
+        }
+    }
+}
+
 test "[interpreter] new shared operations lower for fragment execution and signed or unsigned extraction" {
     var module = try ir.parser.parseString(std.testing.allocator,
         \\shader fragment @main
@@ -508,8 +609,8 @@ test "[interpreter] new shared operations lower for fragment execution and signe
     _ = try runtime.runWave(&program, .{});
 }
 
-test "[interpreter] fwidth parks early arrivals until nonuniform branch arms reconverge" {
-    const code = [_]bc.Instruction{
+test "[interpreter] derivatives park early arrivals until nonuniform branch arms reconverge" {
+    var code = [_]bc.Instruction{
         .{ .opcode = .branch, .a = reg(0), .immediate = 0 },
         .{ .opcode = .float_multiply, .a = reg(3), .b = reg(1), .c = reg(2) },
         .{ .opcode = .jump_edge, .immediate = 2 },
@@ -530,21 +631,34 @@ test "[interpreter] fwidth parks early arrivals until nonuniform branch arms rec
     };
     var runtime = try Runtime.init(std.testing.allocator, &program);
     defer runtime.deinit();
-    for (0..3) |flip| {
-        runtime.resetWave(&program, Runtime.full_lane_mask, 1);
-        for (0..Runtime.lane_count) |lane| {
-            const registers = runtime.register_backing[lane * program.register_count ..][0..program.register_count];
-            // On wide waves the last case lets the second quad finish while the first waits.
-            registers[0] = @intFromBool((lane + flip) % 2 == 0 or (flip == 2 and lane >= 4));
-            registers[1] = f32Bits(@as(f32, @floatFromInt(lane % 4 + 1)));
-            registers[2] = f32Bits(2);
-        }
-        const outcome = try runtime.runWave(&program, .{ .max_steps = 100 });
-        try std.testing.expectEqual(Runtime.full_lane_mask, outcome.returned_mask);
-        for (0..Runtime.lane_count) |lane| {
-            const registers = runtime.register_backing[lane * program.register_count ..][0..program.register_count];
-            const expected: f32 = if (flip == 1 or (flip == 2 and lane >= 4)) 6 else 10;
-            try std.testing.expectEqual(f32Bits(expected), registers[4]);
+    for ([_]bc.Opcode{ .fwidth, .d_pdx, .d_pdy }) |opcode| {
+        code[6].opcode = opcode;
+        for (0..3) |flip| {
+            runtime.resetWave(&program, Runtime.full_lane_mask, 1);
+            var values: [Runtime.lane_count]f32 = undefined;
+            for (0..Runtime.lane_count) |lane| {
+                const registers = runtime.register_backing[lane * program.register_count ..][0..program.register_count];
+                // On wide waves the last case lets the second quad finish while the first waits
+                registers[0] = @intFromBool((lane + flip) % 2 == 0 or (flip == 2 and lane >= 4));
+                const value: f32 = @floatFromInt(lane % 4 + 1);
+                registers[1] = f32Bits(value);
+                registers[2] = f32Bits(2);
+                values[lane] = if (registers[0] != 0) value * 2 else (value + 2) * 2;
+            }
+            const outcome = try runtime.runWave(&program, .{ .max_steps = 100 });
+            try std.testing.expectEqual(Runtime.full_lane_mask, outcome.returned_mask);
+            for (0..Runtime.lane_count) |lane| {
+                const registers = runtime.register_backing[lane * program.register_count ..][0..program.register_count];
+                const dx = values[lane | 1] - values[lane & ~@as(usize, 1)];
+                const dy = values[lane | 2] - values[lane & ~@as(usize, 2)];
+                const expected = switch (opcode) {
+                    .d_pdx => dx,
+                    .d_pdy => dy,
+                    .fwidth => @abs(dx) + @abs(dy),
+                    else => unreachable,
+                };
+                try std.testing.expectEqual(f32Bits(expected), registers[4]);
+            }
         }
     }
 }
@@ -561,12 +675,15 @@ test "[interpreter] parked derivatives reject terminated or incompatible peers a
     program.edges = &.{.{ .target_block = 1, .target_pc = 1, .first_copy = 0, .copy_count = 0 }};
     var runtime = try Runtime.init(std.testing.allocator, &program);
     defer runtime.deinit();
-    for ([_]bc.Opcode{ .return_void, .discard, .control_barrier, .fwidth, .jump_edge }) |peer_opcode| {
-        code[1].opcode = peer_opcode;
-        runtime.resetWave(&program, 0b1111, 1);
-        for (1..4) |lane| runtime.pcs[lane] = 1;
-        const expected = if (peer_opcode == .jump_edge) error.StepLimitExceeded else error.DerivativeUnavailable;
-        try std.testing.expectError(expected, runtime.runWave(&program, .{ .max_steps = 12 }));
+    for ([_]bc.Opcode{ .fwidth, .d_pdx, .d_pdy }) |opcode| {
+        code[0].opcode = opcode;
+        for ([_]bc.Opcode{ .return_void, .discard, .control_barrier, .fwidth, .d_pdx, .d_pdy, .jump_edge }) |peer_opcode| {
+            code[1].opcode = peer_opcode;
+            runtime.resetWave(&program, 0b1111, 1);
+            for (1..4) |lane| runtime.pcs[lane] = 1;
+            const expected = if (peer_opcode == .jump_edge) error.StepLimitExceeded else error.DerivativeUnavailable;
+            try std.testing.expectError(expected, runtime.runWave(&program, .{ .max_steps = 12 }));
+        }
     }
 }
 

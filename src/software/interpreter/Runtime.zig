@@ -41,20 +41,22 @@ const UnaryInt = enum {
 
 const BinaryInt = enum {
     add,
-    subtract,
-    multiply,
-    unsigned_divide,
-    signed_divide,
-    unsigned_modulo,
-    signed_modulo,
-    shift_left,
-    logical_shift_right,
     arithmetic_shift_right,
     bitwise_and,
     bitwise_or,
     bitwise_xor,
+    int_max,
+    int_min,
     logical_and,
     logical_or,
+    logical_shift_right,
+    multiply,
+    shift_left,
+    signed_divide,
+    signed_modulo,
+    subtract,
+    unsigned_divide,
+    unsigned_modulo,
 };
 
 const ExtendedInt = enum {
@@ -71,25 +73,45 @@ const FloatClassification = enum {
 
 const UnaryFloat = enum {
     absolute,
+    acos,
+    acosh,
+    asin,
+    asinh,
+    atan,
+    atanh,
     ceil,
+    cos,
+    cosh,
     exp,
+    exp2,
     floor,
+    log,
+    log2,
     negate,
     round,
     sign,
+    sin,
+    sinh,
+    tan,
+    tanh,
 };
 
 const BinaryFloat = enum {
     add,
-    subtract,
-    multiply,
+    atan2,
     divide,
     max,
     min,
     modulo,
-    remainder,
-    atan2,
+    multiply,
     pow,
+    remainder,
+    step,
+    subtract,
+};
+
+const TernaryFloat = enum {
+    mul_add,
 };
 
 const CompareInt = enum {
@@ -322,8 +344,8 @@ pub fn runWave(self: *Self, program: *const Program, options: RunOptions) Runtim
         self.lane_steps += @popCount(group_mask);
 
         // Derivatives must sample operands before any lane advances or writes its result
-        if (instruction.opcode == .fwidth) {
-            try self.groupFwidth(instruction, group_mask);
+        if (instruction.opcode.isDerivative()) {
+            try self.groupDerivative(instruction, group_mask);
             self.advanceGroupPcs(group_mask);
             continue;
         }
@@ -393,7 +415,7 @@ fn nextExecutionGroup(self: *const Self, program: *const Program) RuntimeError!s
                 mask |= bit;
         }
 
-        if (program.code[pc].opcode == .fwidth) {
+        if (program.code[pc].opcode.isDerivative()) {
             const waiting = mask;
             for (0..lane_count / 4) |quad| {
                 const quad_mask = @as(LaneMask, 0b1111) << @intCast(quad * 4);
@@ -534,11 +556,16 @@ const FullGroupResult = enum { advance, pc_set };
 fn executeVectorGroup(self: *Self, program: *const Program, options: RunOptions, instruction: bc.Instruction, mask: LaneMask) RuntimeError!?FullGroupResult {
     switch (instruction.opcode) {
         .absolute => try self.groupUnaryFloat(instruction, .absolute, mask),
+        .acos => try self.groupUnaryFloat(instruction, .acos, mask),
+        .acosh => try self.groupUnaryFloat(instruction, .acosh, mask),
+        .asin => try self.groupUnaryFloat(instruction, .asin, mask),
+        .asinh => try self.groupUnaryFloat(instruction, .asinh, mask),
+        .atan => try self.groupUnaryFloat(instruction, .atan, mask),
+        .atanh => try self.groupUnaryFloat(instruction, .atanh, mask),
         .bitwise_and => try self.groupBinaryInt(instruction, .bitwise_and, mask),
         .bitwise_or => try self.groupBinaryInt(instruction, .bitwise_or, mask),
         .bitwise_xor => try self.groupBinaryInt(instruction, .bitwise_xor, mask),
         .ceil => try self.groupUnaryFloat(instruction, .ceil, mask),
-        .exp => try self.groupUnaryFloat(instruction, .exp, mask),
         .compare_equal => try self.groupCompareInt(instruction, .equal, mask),
         .compare_not_equal => try self.groupCompareInt(instruction, .not_equal, mask),
         .compare_ordered_float_equal => try self.groupCompareFloat(instruction, .ordered_equal, mask),
@@ -551,6 +578,10 @@ fn executeVectorGroup(self: *Self, program: *const Program, options: RunOptions,
         .compare_unordered_float_not_equal => try self.groupCompareFloat(instruction, .unordered_not_equal, mask),
         .compare_unsigned_less => try self.groupCompareInt(instruction, .unsigned_less, mask),
         .copy => try self.groupCopy(instruction, mask),
+        .cos => try self.groupUnaryFloat(instruction, .cos, mask),
+        .cosh => try self.groupUnaryFloat(instruction, .cosh, mask),
+        .exp => try self.groupUnaryFloat(instruction, .exp, mask),
+        .exp2 => try self.groupUnaryFloat(instruction, .exp2, mask),
         .float_add => try self.groupBinaryFloat(instruction, .add, false, mask),
         .float_divide => try self.groupBinaryFloat(instruction, .divide, false, mask),
         .float_max => try self.groupBinaryFloat(instruction, .max, false, mask),
@@ -561,12 +592,18 @@ fn executeVectorGroup(self: *Self, program: *const Program, options: RunOptions,
         .integer_add => try self.groupBinaryInt(instruction, .add, mask),
         .integer_multiply => try self.groupBinaryInt(instruction, .multiply, mask),
         .integer_subtract => try self.groupBinaryInt(instruction, .subtract, mask),
+        .log => try self.groupUnaryFloat(instruction, .log, mask),
+        .log2 => try self.groupUnaryFloat(instruction, .log2, mask),
         .logical_and => try self.groupBinaryInt(instruction, .logical_and, mask),
         .logical_or => try self.groupBinaryInt(instruction, .logical_or, mask),
         .negate_f32 => try self.groupUnaryFloat(instruction, .negate, mask),
         .pow => try self.groupBinaryFloat(instruction, .pow, false, mask),
         .select => try self.groupSelect(instruction, mask),
         .sign => try self.groupUnaryFloat(instruction, .sign, mask),
+        .sin => try self.groupUnaryFloat(instruction, .sin, mask),
+        .sinh => try self.groupUnaryFloat(instruction, .sinh, mask),
+        .tan => try self.groupUnaryFloat(instruction, .tan, mask),
+        .tanh => try self.groupUnaryFloat(instruction, .tanh, mask),
         .vector_times_scalar, .matrix_times_scalar => try self.groupBinaryFloat(instruction, .multiply, true, mask),
         .branch => {
             if (instruction.immediate >= program.branches.len or @backingInt(instruction.a) >= self.register_count)
@@ -642,12 +679,27 @@ fn groupUnaryFloat(self: *Self, instruction: bc.Instruction, comptime operation:
         const source: F32x4 = @bitCast(self.loadRegisterVector(@fromBackingInt(@intCast(@backingInt(instruction.b) + component))));
         const result = switch (operation) {
             .absolute => @abs(source),
+            .acos => std.math.acos(source),
+            .acosh => simd.acosh(source),
+            .asin => std.math.asin(source),
+            .asinh => simd.asinh(source),
+            .atan => std.math.atan(source),
+            .atanh => simd.atanh(source),
             .ceil => @ceil(source),
+            .cos => @cos(source),
+            .cosh => simd.cosh(source),
             .exp => @exp(source),
+            .exp2 => @exp2(source),
             .floor => @floor(source),
+            .log => @log(source),
+            .log2 => @log2(source),
             .negate => -source,
-            .sign => @select(f32, source > @as(F32x4, @splat(0.0)), @as(F32x4, @splat(1.0)), @select(f32, source < @as(F32x4, @splat(0.0)), @as(F32x4, @splat(-1.0)), @as(F32x4, @splat(0.0)))),
             .round => @round(source),
+            .sign => @select(f32, source > @as(F32x4, @splat(0.0)), @as(F32x4, @splat(1.0)), @select(f32, source < @as(F32x4, @splat(0.0)), @as(F32x4, @splat(-1.0)), @as(F32x4, @splat(0.0)))),
+            .sin => @sin(source),
+            .sinh => simd.sinh(source),
+            .tan => @tan(source),
+            .tanh => simd.tanh(source),
         };
         self.storeRegisterVectorMasked(@fromBackingInt(@intCast(@backingInt(instruction.a) + component)), @bitCast(result), mask);
     }
@@ -780,11 +832,17 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
     switch (instruction.opcode) {
         .@"unreachable" => return RuntimeError.UnreachableExecuted,
         .absolute => try self.unaryFloat(instruction, .absolute),
+        .acos => try self.unaryFloat(instruction, .acos),
+        .acosh => try self.unaryFloat(instruction, .acosh),
         .all => try self.all(instruction),
         .any => try self.any(instruction),
-        .atan2 => try self.binaryFloat(instruction, .atan2, false),
-        .array_length => try self.arrayLength(program, options.resource_buffers, instruction),
         .arithmetic_shift_right => try self.binaryInt(instruction, .arithmetic_shift_right),
+        .array_length => try self.arrayLength(program, options.resource_buffers, instruction),
+        .asin => try self.unaryFloat(instruction, .asin),
+        .asinh => try self.unaryFloat(instruction, .asinh),
+        .atan => try self.unaryFloat(instruction, .atan),
+        .atan2 => try self.binaryFloat(instruction, .atan2, false),
+        .atanh => try self.unaryFloat(instruction, .atanh),
         .bit_count => try self.unaryInt(instruction, .bit_count),
         .bit_field_extract_signed => try self.bitFieldExtract(instruction, true),
         .bit_field_extract_unsigned => try self.bitFieldExtract(instruction, false),
@@ -797,12 +855,10 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .branch => {
             if (instruction.immediate >= program.branches.len)
                 return RuntimeError.InvalidBytecode;
-
             const branch = program.branches[instruction.immediate];
             self.pcs[self.current_lane] = try self.applyEdge(program, if (self.registers[@backingInt(instruction.a)] != 0) branch.true_edge else branch.false_edge);
         },
         .ceil => try self.unaryFloat(instruction, .ceil),
-        .exp => try self.unaryFloat(instruction, .exp),
         .compare_equal => self.compareInt(instruction, .equal),
         .compare_not_equal => self.compareInt(instruction, .not_equal),
         .compare_ordered_float_equal => self.compareFloat(instruction, .ordered_equal),
@@ -814,74 +870,88 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .compare_unordered_float_less => self.compareFloat(instruction, .unordered_less),
         .compare_unordered_float_not_equal => self.compareFloat(instruction, .unordered_not_equal),
         .compare_unsigned_less => self.compareInt(instruction, .unsigned_less),
+        .control_barrier => return .barrier,
         .copy => self.copy(instruction),
+        .cos => try self.unaryFloat(instruction, .cos),
+        .cosh => try self.unaryFloat(instruction, .cosh),
         .discard => return .discarded,
         .dot => try self.dot(instruction),
+        .exp => try self.unaryFloat(instruction, .exp),
+        .exp2 => try self.unaryFloat(instruction, .exp2),
         .float_add => try self.binaryFloat(instruction, .add, false),
         .float_divide => try self.binaryFloat(instruction, .divide, false),
-        .floor => try self.unaryFloat(instruction, .floor),
         .float_max => try self.binaryFloat(instruction, .max, false),
         .float_min => try self.binaryFloat(instruction, .min, false),
         .float_mix => try self.fMix(instruction),
+        .float_mul_add => try self.ternaryFloat(instruction, .mul_add),
         .float_modulo => try self.binaryFloat(instruction, .modulo, false),
         .float_multiply => try self.binaryFloat(instruction, .multiply, false),
         .float_remainder => try self.binaryFloat(instruction, .remainder, false),
         .float_subtract => try self.binaryFloat(instruction, .subtract, false),
         .float_to_signed => try self.floatToInt(instruction, true),
         .float_to_unsigned => try self.floatToInt(instruction, false),
-        .vector_times_scalar => try self.binaryFloat(instruction, .multiply, true),
-        .vector_times_matrix => try self.vectorTimesMatrix(instruction),
-        .matrix_times_matrix => try self.matrixTimesMatrix(instruction),
-        .matrix_times_scalar => try self.binaryFloat(instruction, .multiply, true),
-        .matrix_times_vector => try self.matrixTimesVector(instruction),
+        .floor => try self.unaryFloat(instruction, .floor),
+        .d_pdx, .d_pdy, .fwidth => return RuntimeError.DerivativeUnavailable,
+        .image_gather => try self.imageGather(program, options.resource_images, options.resource_samplers, instruction),
+        .image_read => try self.imageRead(program, options.resource_images, instruction),
+        .image_read_float => try self.imageReadFloat(program, options.resource_images, instruction),
+        .image_sample_explicit_lod => try self.imageSample(program, options.resource_images, options.resource_samplers, instruction, true),
+        .image_sample_implicit_lod => try self.imageSample(program, options.resource_images, options.resource_samplers, instruction, false),
+        .image_write => if (self.isObservable()) try self.imageWrite(program, options.resource_images, instruction),
+        .image_write_float => if (self.isObservable()) try self.imageWriteFloat(program, options.resource_images, instruction),
+        .int_max => try self.binaryInt(instruction, .int_max),
+        .int_min => try self.binaryInt(instruction, .int_min),
         .integer_add => try self.binaryInt(instruction, .add),
         .integer_add_carry => try self.extendedInt(instruction, .add_carry),
         .integer_multiply => try self.binaryInt(instruction, .multiply),
         .integer_subtract => try self.binaryInt(instruction, .subtract),
         .integer_subtract_borrow => try self.extendedInt(instruction, .subtract_borrow),
-        .image_read => try self.imageRead(program, options.resource_images, instruction),
-        .image_read_float => try self.imageReadFloat(program, options.resource_images, instruction),
-        .image_gather => try self.imageGather(program, options.resource_images, options.resource_samplers, instruction),
-        .image_sample_explicit_lod => try self.imageSample(program, options.resource_images, options.resource_samplers, instruction, true),
-        .image_sample_implicit_lod => try self.imageSample(program, options.resource_images, options.resource_samplers, instruction, false),
-        .image_write => if (self.isObservable()) try self.imageWrite(program, options.resource_images, instruction),
-        .image_write_float => if (self.isObservable()) try self.imageWriteFloat(program, options.resource_images, instruction),
         .is_inf => try self.classifyFloat(instruction, .infinite),
         .is_nan => try self.classifyFloat(instruction, .nan),
         .jump_edge => self.pcs[self.current_lane] = try self.applyEdge(program, instruction.immediate),
+        .length => try self.vectorLength(instruction),
         .load_buffer => try self.loadBuffer(program, options.resource_buffers, instruction),
         .load_push_constant => try self.loadPushConstant(options.push_constants, instruction),
         .load_workgroup => try self.loadWorkgroup(program, options.workgroup_memory, instruction),
+        .log => try self.unaryFloat(instruction, .log),
+        .log2 => try self.unaryFloat(instruction, .log2),
         .logical_and => try self.binaryInt(instruction, .logical_and),
         .logical_not => try self.unaryInt(instruction, .logical_not),
         .logical_or => try self.binaryInt(instruction, .logical_or),
         .logical_shift_right => try self.binaryInt(instruction, .logical_shift_right),
+        .matrix_times_matrix => try self.matrixTimesMatrix(instruction),
+        .matrix_times_scalar => try self.binaryFloat(instruction, .multiply, true),
+        .matrix_times_vector => try self.matrixTimesVector(instruction),
         .negate_f32 => try self.unaryFloat(instruction, .negate),
-        .normalize => try self.normalize(instruction),
-        .length => try self.vectorLength(instruction),
-        .vector_extract_dynamic => try self.vectorExtractDynamic(instruction),
-        .fwidth => return RuntimeError.DerivativeUnavailable,
-        .sign => try self.unaryFloat(instruction, .sign),
         .negate_i32 => try self.unaryInt(instruction, .negate),
+        .normalize => try self.normalize(instruction),
         .outer_product => try self.outerProduct(instruction),
         .pow => try self.binaryFloat(instruction, .pow, false),
         .return_void => return .returned,
         .round => try self.unaryFloat(instruction, .round),
         .select => try self.select(instruction),
         .shift_left => try self.binaryInt(instruction, .shift_left),
+        .sign => try self.unaryFloat(instruction, .sign),
         .signed_divide => try self.binaryInt(instruction, .signed_divide),
         .signed_modulo => try self.binaryInt(instruction, .signed_modulo),
         .signed_multiply_extended => try self.extendedInt(instruction, .signed_multiply),
         .signed_to_float => try self.intToFloat(instruction, true),
+        .sin => try self.unaryFloat(instruction, .sin),
+        .sinh => try self.unaryFloat(instruction, .sinh),
         .smooth_step => try self.smoothStep(instruction),
+        .step => try self.binaryFloat(instruction, .step, false),
         .store_buffer => if (self.isObservable()) try self.storeBuffer(program, options.resource_buffers, instruction),
         .store_workgroup => if (self.isObservable()) try self.storeWorkgroup(program, options.workgroup_memory, instruction),
+        .tan => try self.unaryFloat(instruction, .tan),
+        .tanh => try self.unaryFloat(instruction, .tanh),
         .transpose => try self.transpose(instruction),
-        .control_barrier => return .barrier,
         .unsigned_divide => try self.binaryInt(instruction, .unsigned_divide),
         .unsigned_modulo => try self.binaryInt(instruction, .unsigned_modulo),
         .unsigned_multiply_extended => try self.extendedInt(instruction, .unsigned_multiply),
         .unsigned_to_float => try self.intToFloat(instruction, false),
+        .vector_extract_dynamic => try self.vectorExtractDynamic(instruction),
+        .vector_times_matrix => try self.vectorTimesMatrix(instruction),
+        .vector_times_scalar => try self.binaryFloat(instruction, .multiply, true),
     }
     return null;
 }
@@ -1021,18 +1091,33 @@ fn unaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Unar
         const value: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
         const result = switch (operation) {
             .absolute => @abs(value),
+            .acos => std.math.acos(value),
+            .acosh => std.math.acosh(value),
+            .asin => std.math.asin(value),
+            .asinh => std.math.asinh(value),
+            .atan => std.math.atan(value),
+            .atanh => std.math.atanh(value),
             .ceil => @ceil(value),
+            .cos => @cos(value),
+            .cosh => std.math.cosh(value),
             .exp => @exp(value),
+            .exp2 => @exp2(value),
             .floor => @floor(value),
+            .log => @log(value),
+            .log2 => @log2(value),
             .negate => -value,
             .round => @round(value),
             .sign => if (value > 0.0) @as(f32, 1.0) else if (value < 0.0) @as(f32, -1.0) else @as(f32, 0.0),
+            .sin => @sin(value),
+            .sinh => std.math.sinh(value),
+            .tan => @tan(value),
+            .tanh => std.math.tanh(value),
         };
         self.registers[@as(usize, @backingInt(instruction.a)) + component] = @bitCast(result);
     }
 }
 
-fn groupFwidth(self: *Self, instruction: bc.Instruction, mask: LaneMask) RuntimeError!void {
+fn groupDerivative(self: *Self, instruction: bc.Instruction, mask: LaneMask) RuntimeError!void {
     try self.validateUnaryInstruction(instruction);
     // Lane order is top-left, top-right, bottom-left, bottom-right
     // Divergent derivatives are undefined; reject them rather than use stale registers
@@ -1047,8 +1132,14 @@ fn groupFwidth(self: *Self, instruction: bc.Instruction, mask: LaneMask) Runtime
         const destination: bc.Register = @fromBackingInt(@intCast(@as(usize, @backingInt(instruction.a)) + component));
         const values: [lane_count]f32 = @bitCast(self.loadRegisterVector(source));
         var result: [lane_count]f32 = undefined;
-        for (0..lane_count) |lane|
-            result[lane] = @abs(values[lane ^ 1] - values[lane]) + @abs(values[lane ^ 2] - values[lane]);
+        for (0..lane_count) |lane| {
+            result[lane] = switch (instruction.opcode) {
+                .d_pdx => values[lane | 1] - values[lane & ~@as(usize, 1)],
+                .d_pdy => values[lane | 2] - values[lane & ~@as(usize, 2)],
+                .fwidth => @abs(values[lane ^ 1] - values[lane]) + @abs(values[lane ^ 2] - values[lane]),
+                else => return RuntimeError.InvalidBytecode,
+            };
+        }
         self.storeRegisterVectorMasked(destination, @bitCast(result), mask);
     }
 }
@@ -1148,8 +1239,10 @@ fn binaryInt(self: *Self, instruction: bc.Instruction, comptime operation: Binar
         const rhs = self.registers[@as(usize, @backingInt(instruction.c)) + component];
         self.registers[@as(usize, @backingInt(instruction.a)) + component] = switch (operation) {
             .add => lhs +% rhs,
-            .subtract => lhs -% rhs,
+            .int_max => @max(lhs, rhs),
+            .int_min => @min(lhs, rhs),
             .multiply => lhs *% rhs,
+            .subtract => lhs -% rhs,
             .unsigned_divide => if (rhs == 0) return RuntimeError.DivisionByZero else lhs / rhs,
             .unsigned_modulo => if (rhs == 0) return RuntimeError.DivisionByZero else lhs % rhs,
             .signed_divide => blk: {
@@ -1235,18 +1328,42 @@ fn binaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Bin
         const lhs: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
         const rhs_component = if (broadcast_rhs) 0 else component;
         const rhs: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.c)) + rhs_component]);
-        const result = switch (operation) {
+
+        const result: f32 = switch (operation) {
             .add => lhs + rhs,
-            .subtract => lhs - rhs,
-            .multiply => lhs * rhs,
+            .atan2 => std.math.atan2(lhs, rhs),
             .divide => lhs / rhs,
             .max => if (lhs < rhs) rhs else lhs,
             .min => if (lhs > rhs) rhs else lhs,
             .modulo => lhs - rhs * @floor(lhs / rhs),
-            .remainder => @rem(lhs, rhs),
-            .atan2 => std.math.atan2(lhs, rhs),
+            .multiply => lhs * rhs,
             .pow => std.math.pow(f32, lhs, rhs),
+            .remainder => @rem(lhs, rhs),
+            .step => if (rhs < lhs) 0.0 else 1.0,
+            .subtract => lhs - rhs,
         };
+
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = @bitCast(result);
+    }
+}
+
+fn ternaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: TernaryFloat) RuntimeError!void {
+    if (instruction.components == 0)
+        return RuntimeError.InvalidBytecode;
+    try self.validateRegisterRange(instruction.a, instruction.components);
+    try self.validateRegisterRange(instruction.b, instruction.components);
+    try self.validateRegisterRange(instruction.c, instruction.components);
+    try self.validateRegisterRange(instruction.d, instruction.components);
+
+    for (0..instruction.components) |component| {
+        const x: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const y: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.c)) + component]);
+        const z: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.d)) + component]);
+
+        const result: f32 = switch (operation) {
+            .mul_add => @mulAdd(f32, x, y, z),
+        };
+
         self.registers[@as(usize, @backingInt(instruction.a)) + component] = @bitCast(result);
     }
 }

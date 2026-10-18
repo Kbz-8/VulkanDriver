@@ -2237,6 +2237,8 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
 
         .all,
         .any,
+        .d_pdx,
+        .d_pdy,
         .f_negate,
         .fwidth,
         .is_inf,
@@ -2253,6 +2255,8 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             const opcode: ir.instruction.UnaryOpcode = switch (instruction.opcode) {
                 .all => .all,
                 .any => .any,
+                .d_pdx => .d_pdx,
+                .d_pdy => .d_pdy,
                 .fwidth => .fwidth,
                 .is_inf => .is_inf,
                 .is_nan => .is_nan,
@@ -5594,7 +5598,7 @@ test "SPIR-V: unsupported GLSL extended instruction reports its own error" {
         \\%one = OpConstant %float 1
         \\%main = OpFunction %void None %fn_void
         \\    %entry = OpLabel
-        \\    %result = OpExtInst %float %glsl Sin %one
+        \\    %result = OpExtInst %float %glsl Trunc %one
         \\    OpReturn
         \\OpFunctionEnd
     ;

@@ -3,112 +3,129 @@ const ir = @import("../../../ir/ir.zig");
 const ext = @import("../types.zig");
 
 pub const Opcode = enum(u32) {
-    bad = 0,
-    round = 1,
-    round_even = 2,
-    trunc = 3,
-    f_abs = 4,
-    s_abs = 5,
-    f_sign = 6,
-    s_sign = 7,
-    floor = 8,
-    ceil = 9,
-    fract = 10,
-    radians = 11,
-    degrees = 12,
-    sin = 13,
-    cos = 14,
-    tan = 15,
-    asin = 16,
     acos = 17,
-    atan = 18,
-    sinh = 19,
-    cosh = 20,
-    tanh = 21,
-    asinh = 22,
     acosh = 23,
-    atanh = 24,
+    asin = 16,
+    asinh = 22,
+    atan = 18,
     atan2 = 25,
-    pow = 26,
-    exp = 27,
-    log = 28,
-    exp2 = 29,
-    log2 = 30,
-    sqrt = 31,
-    inverse_sqrt = 32,
-    determinant = 33,
-    matrix_inverse = 34,
-    modf = 35,
-    modf_struct = 36,
-    f_min = 37,
-    u_min = 38,
-    s_min = 39,
-    f_max = 40,
-    u_max = 41,
-    s_max = 42,
-    f_clamp = 43,
-    u_clamp = 44,
-    s_clamp = 45,
-    f_mix = 46,
-    i_mix = 47,
-    step = 48,
-    smooth_step = 49,
-    fma = 50,
-    frexp = 51,
-    frexp_struct = 52,
-    ldexp = 53,
-    pack_snorm4x8 = 54,
-    pack_unorm4x8 = 55,
-    pack_snorm2x16 = 56,
-    pack_unorm2x16 = 57,
-    pack_half2x16 = 58,
-    pack_double2x32 = 59,
-    unpack_snorm2x16 = 60,
-    unpack_unorm2x16 = 61,
-    unpack_half2x16 = 62,
-    unpack_snorm4x8 = 63,
-    unpack_unorm4x8 = 64,
-    unpack_double2x32 = 65,
-    length = 66,
-    distance = 67,
+    atanh = 24,
+    bad = 0,
+    ceil = 9,
+    cos = 14,
+    cosh = 20,
     cross = 68,
-    normalize = 69,
+    degrees = 12,
+    determinant = 33,
+    distance = 67,
+    exp = 27,
+    exp2 = 29,
+    f_abs = 4,
+    f_clamp = 43,
+    f_max = 40,
+    f_min = 37,
+    f_mix = 46,
+    f_sign = 6,
     face_forward = 70,
-    reflect = 71,
-    refract = 72,
     find_i_lsb = 73,
     find_s_msb = 74,
     find_u_msb = 75,
+    floor = 8,
+    fma = 50,
+    fract = 10,
+    frexp = 51,
+    frexp_struct = 52,
+    i_mix = 47,
     interpolate_at_centroid = 76,
-    interpolate_at_sample = 77,
     interpolate_at_offset = 78,
-    n_min = 79,
-    n_max = 80,
+    interpolate_at_sample = 77,
+    inverse_sqrt = 32,
+    ldexp = 53,
+    length = 66,
+    log = 28,
+    log2 = 30,
+    matrix_inverse = 34,
+    modf = 35,
+    modf_struct = 36,
     n_clamp = 81,
+    n_max = 80,
+    n_min = 79,
+    normalize = 69,
+    pack_double2x32 = 59,
+    pack_half2x16 = 58,
+    pack_snorm2x16 = 56,
+    pack_snorm4x8 = 54,
+    pack_unorm2x16 = 57,
+    pack_unorm4x8 = 55,
+    pow = 26,
+    radians = 11,
+    reflect = 71,
+    refract = 72,
+    round = 1,
+    round_even = 2,
+    s_abs = 5,
+    s_clamp = 45,
+    s_max = 42,
+    s_min = 39,
+    s_sign = 7,
+    sin = 13,
+    sinh = 19,
+    smooth_step = 49,
+    sqrt = 31,
+    step = 48,
+    tan = 15,
+    tanh = 21,
+    trunc = 3,
+    u_clamp = 44,
+    u_max = 41,
+    u_min = 38,
+    unpack_double2x32 = 65,
+    unpack_half2x16 = 62,
+    unpack_snorm2x16 = 60,
+    unpack_snorm4x8 = 63,
+    unpack_unorm2x16 = 61,
+    unpack_unorm4x8 = 64,
 };
 
 pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
     const opcode: Opcode = @fromBackingInt(@intCast(invocation.opcode));
     return switch (opcode) {
+        .acos => translateUnary(emitter, invocation, .acos),
+        .acosh => translateUnary(emitter, invocation, .acosh),
+        .asin => translateUnary(emitter, invocation, .asin),
+        .asinh => translateUnary(emitter, invocation, .asinh),
+        .atan => translateUnary(emitter, invocation, .atan),
         .atan2 => translateBinary(emitter, invocation, .atan2),
+        .atanh => translateUnary(emitter, invocation, .atanh),
         .ceil => translateUnary(emitter, invocation, .ceil),
-        .exp => blk: {
-            _ = try floatScalarType(emitter.module, invocation.result_type);
-            break :blk try translateUnary(emitter, invocation, .exp);
-        },
+        .cos => translateUnary(emitter, invocation, .cos),
+        .cosh => translateUnary(emitter, invocation, .cosh),
+        .cross => translateCross(emitter, invocation),
+        .exp => translateUnary(emitter, invocation, .exp),
+        .exp2 => translateUnary(emitter, invocation, .exp2),
         .f_abs => translateUnary(emitter, invocation, .absolute),
         .f_clamp => translateFClamp(emitter, invocation),
         .f_max => translateBinary(emitter, invocation, .float_max),
         .f_min => translateBinary(emitter, invocation, .float_min),
         .f_mix => translateTernary(emitter, invocation, .float_mix),
         .f_sign => translateUnary(emitter, invocation, .sign),
+        .fma => translateTernary(emitter, invocation, .float_mul_add),
         .floor => translateUnary(emitter, invocation, .floor),
         .length => translateLength(emitter, invocation),
+        .log => translateUnary(emitter, invocation, .log),
+        .log2 => translateUnary(emitter, invocation, .log2),
         .n_clamp => translateNClamp(emitter, invocation),
         .normalize => translateUnary(emitter, invocation, .normalize),
         .pow => translateBinary(emitter, invocation, .pow),
         .round => translateUnary(emitter, invocation, .round),
+        .sin => translateUnary(emitter, invocation, .sin),
+        .sinh => translateUnary(emitter, invocation, .sinh),
         .smooth_step => translateTernary(emitter, invocation, .smooth_step),
+        .step => translateBinary(emitter, invocation, .step),
+        .tan => translateUnary(emitter, invocation, .tan),
+        .tanh => translateUnary(emitter, invocation, .tanh),
+        .u_max => translateBinary(emitter, invocation, .unsigned_max),
+        .u_min => translateBinary(emitter, invocation, .unsigned_min),
 
         else => {
             std.log.scoped(.spirv_translator).err("unsupported GLSL.std.450 instruction {t}", .{opcode});
@@ -147,6 +164,73 @@ fn translateBinary(emitter: *ext.Emitter, invocation: ext.Invocation, opcode: ir
             .lhs = lhs,
             .rhs = rhs,
         },
+    }, invocation.result_name)).?;
+}
+
+fn translateCross(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
+    if (invocation.operands.len != 2)
+        return error.InvalidInstruction;
+
+    const definition = emitter.module.types.get(invocation.result_type) orelse return error.InvalidId;
+    const vector = switch (definition.*) {
+        .vector => |vector| vector,
+        else => return error.InvalidInstruction,
+    };
+    if (vector.length != 3)
+        return error.InvalidInstruction;
+
+    _ = try floatScalarType(emitter.module, invocation.result_type);
+    for (invocation.operands) |operand| {
+        if (emitter.module.typeOf(operand) != invocation.result_type)
+            return error.InvalidInstruction;
+    }
+
+    var lhs: [3]ir.id.ValueId = undefined;
+    var rhs: [3]ir.id.ValueId = undefined;
+    for (0..3) |index| {
+        const indices = &.{@as(u32, @intCast(index))};
+        lhs[index] = (try emitter.builder.appendInstruction(emitter.block, vector.element_type, .{
+            .composite_extract = .{
+                .composite = invocation.operands[0],
+                .indices = indices,
+            },
+        }, null)).?;
+        rhs[index] = (try emitter.builder.appendInstruction(emitter.block, vector.element_type, .{
+            .composite_extract = .{
+                .composite = invocation.operands[1],
+                .indices = indices,
+            },
+        }, null)).?;
+    }
+
+    var elements: [3]ir.id.ValueId = undefined;
+    for (&elements, 0..) |*element, index| {
+        const j = (index + 1) % 3;
+        const k = (index + 2) % 3;
+        const positive = (try emitter.builder.appendInstruction(emitter.block, vector.element_type, .{
+            .binary = .{
+                .opcode = .float_multiply,
+                .lhs = lhs[j],
+                .rhs = rhs[k],
+            },
+        }, null)).?;
+        const negative = (try emitter.builder.appendInstruction(emitter.block, vector.element_type, .{
+            .binary = .{
+                .opcode = .float_multiply,
+                .lhs = lhs[k],
+                .rhs = rhs[j],
+            },
+        }, null)).?;
+        element.* = (try emitter.builder.appendInstruction(emitter.block, vector.element_type, .{
+            .binary = .{
+                .opcode = .float_subtract,
+                .lhs = positive,
+                .rhs = negative,
+            },
+        }, null)).?;
+    }
+    return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .composite_construct = .{ .elements = &elements },
     }, invocation.result_name)).?;
 }
 

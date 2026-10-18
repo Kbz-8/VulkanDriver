@@ -294,7 +294,6 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                     if (!isBooleanVector(module, operand_type))
                         return ValidationError.WrongOperandType;
                 },
-
                 .bit_count, .bit_reverse, .bitwise_not => {
                     if (!isIntegerScalarOrVector(module, operand_type))
                         return ValidationError.WrongOperandType;
@@ -305,13 +304,11 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                     if (!haveSameIntegerShape(module, operand_type, result))
                         return ValidationError.WrongResultType;
                 },
-
                 .is_inf, .is_nan => {
                     const operand_shape = floatShape(module, operand_type) orelse return ValidationError.WrongOperandType;
                     if (booleanComponentCount(module, result) != operand_shape.components)
                         return ValidationError.WrongResultType;
                 },
-
                 .length => {
                     _ = floatShape(module, operand_type) orelse return ValidationError.WrongOperandType;
                     const operand = module.types.get(operand_type).?;
@@ -319,28 +316,40 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                     if (result != scalar)
                         return ValidationError.WrongResultType;
                 },
-
-                .fwidth => {
+                .d_pdx, .d_pdy, .fwidth => {
                     if (module.stage != .fragment)
                         return ValidationError.InvalidInstruction;
                     _ = floatShape(module, operand_type) orelse return ValidationError.WrongOperandType;
                     if (result != operand_type)
                         return ValidationError.WrongResultType;
                 },
-
                 .absolute,
+                .acos,
+                .acosh,
+                .asin,
+                .asinh,
+                .atan,
+                .atanh,
                 .ceil,
+                .cos,
+                .cosh,
                 .exp,
+                .exp2,
                 .floor,
+                .log,
+                .log2,
                 .normalize,
                 .round,
                 .sign,
+                .sin,
+                .sinh,
+                .tan,
+                .tanh,
                 => {
                     _ = floatShape(module, operand_type) orelse return ValidationError.WrongOperandType;
                     if (result != operand_type)
                         return ValidationError.WrongResultType;
                 },
-
                 .logical_not => {
                     if (booleanComponentCount(module, operand_type) == null)
                         return ValidationError.WrongOperandType;
@@ -348,12 +357,10 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                     if (result != operand_type)
                         return ValidationError.WrongResultType;
                 },
-
                 .negate => {
                     if (result != operand_type)
                         return ValidationError.WrongResultType;
                 },
-
                 .transpose => {
                     const operand_shape = floatMatrixShape(module, operand_type) orelse return ValidationError.WrongOperandType;
                     const result_shape = floatMatrixShape(module, result) orelse return ValidationError.WrongResultType;
@@ -1363,6 +1370,52 @@ test "Validator: length, fwidth, and dynamic extraction inferred types" {
         , .{ case[0], case[1] });
         defer std.testing.allocator.free(source);
         try expectValidationError(case[2], source);
+    }
+}
+
+test "Validator: derivatives require fragment floating operands and identical result types" {
+    const cases = [_]struct {
+        stage: []const u8 = "fragment",
+        operand_type: []const u8,
+        result_type: []const u8,
+        expected: Error,
+    }{
+        .{ .stage = "vertex", .operand_type = "f32", .result_type = "f32", .expected = ValidationError.InvalidInstruction },
+        .{ .stage = "vertex", .operand_type = "vec3[f32]", .result_type = "vec3[f32]", .expected = ValidationError.InvalidInstruction },
+        .{ .stage = "compute", .operand_type = "f32", .result_type = "f32", .expected = ValidationError.InvalidInstruction },
+        .{ .stage = "compute", .operand_type = "vec3[f32]", .result_type = "vec3[f32]", .expected = ValidationError.InvalidInstruction },
+        .{ .operand_type = "i32", .result_type = "i32", .expected = ValidationError.WrongOperandType },
+        .{ .operand_type = "u32", .result_type = "u32", .expected = ValidationError.WrongOperandType },
+        .{ .operand_type = "bool", .result_type = "bool", .expected = ValidationError.WrongOperandType },
+        .{ .operand_type = "vec3[i32]", .result_type = "vec3[i32]", .expected = ValidationError.WrongOperandType },
+        .{ .operand_type = "vec2[bool]", .result_type = "vec2[bool]", .expected = ValidationError.WrongOperandType },
+        .{ .operand_type = "mat2x3[f32]", .result_type = "mat2x3[f32]", .expected = ValidationError.WrongOperandType },
+        .{ .operand_type = "f32", .result_type = "f64", .expected = ValidationError.WrongResultType },
+        .{ .operand_type = "f64", .result_type = "f32", .expected = ValidationError.WrongResultType },
+        .{ .operand_type = "f32", .result_type = "i32", .expected = ValidationError.WrongResultType },
+        .{ .operand_type = "f32", .result_type = "bool", .expected = ValidationError.WrongResultType },
+        .{ .operand_type = "f32", .result_type = "vec3[f32]", .expected = ValidationError.WrongResultType },
+        .{ .operand_type = "vec3[f32]", .result_type = "f32", .expected = ValidationError.WrongResultType },
+        .{ .operand_type = "vec3[f32]", .result_type = "vec2[f32]", .expected = ValidationError.WrongResultType },
+        .{ .operand_type = "vec3[f32]", .result_type = "vec3[f64]", .expected = ValidationError.WrongResultType },
+        .{ .operand_type = "vec3[f32]", .result_type = "vec3[i32]", .expected = ValidationError.WrongResultType },
+    };
+    for ([_][]const u8{ "d_pdx", "d_pdy" }) |opcode| {
+        for (cases) |case| {
+            const source = try std.fmt.allocPrint(std.testing.allocator,
+                \\shader {s} @main
+                \\{{
+                \\    fn @main(%operand: {s}) -> void
+                \\    {{
+                \\        .entry():
+                \\            %result: {s} = {s} %operand
+                \\            return
+                \\    }}
+                \\}}
+            , .{ case.stage, case.operand_type, case.result_type, opcode });
+            defer std.testing.allocator.free(source);
+            try expectValidationError(case.expected, source);
+        }
     }
 }
 

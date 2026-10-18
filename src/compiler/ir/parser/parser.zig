@@ -1408,6 +1408,51 @@ test "Parser: infer and print float classification, matrix, and conversion opera
     try std.testing.expectEqualStrings(printed, printed_again);
 }
 
+test "Parser: infer and round trip scalar and vector derivatives" {
+    const printer = @import("../printer.zig");
+
+    var module = try parseString(std.testing.allocator,
+        \\shader fragment @main
+        \\{
+        \\    fn @main(%scalar: f32, %vector: vec2[f32], %wide_scalar: f64, %wide_vector: vec4[f64]) -> void
+        \\    {
+        \\        .entry():
+        \\            %scalar_dx = d_pdx %scalar
+        \\            %scalar_dy = d_pdy %scalar
+        \\            %vector_dx = d_pdx %vector
+        \\            %vector_dy = d_pdy %vector
+        \\            %wide_scalar_dx = d_pdx %wide_scalar
+        \\            %wide_scalar_dy = d_pdy %wide_scalar
+        \\            %wide_vector_dx = d_pdx %wide_vector
+        \\            %wide_vector_dy = d_pdy %wide_vector
+        \\            return
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+
+    const printed = try printer.allocPrint(std.testing.allocator, &module);
+    defer std.testing.allocator.free(printed);
+    for ([_][]const u8{
+        "%scalar_dx: f32 = d_pdx %scalar",
+        "%scalar_dy: f32 = d_pdy %scalar",
+        "%vector_dx: vec2[f32] = d_pdx %vector",
+        "%vector_dy: vec2[f32] = d_pdy %vector",
+        "%wide_scalar_dx: f64 = d_pdx %wide_scalar",
+        "%wide_scalar_dy: f64 = d_pdy %wide_scalar",
+        "%wide_vector_dx: vec4[f64] = d_pdx %wide_vector",
+        "%wide_vector_dy: vec4[f64] = d_pdy %wide_vector",
+    }) |expected| {
+        try std.testing.expect(std.mem.indexOf(u8, printed, expected) != null);
+    }
+
+    var reparsed = try parseString(std.testing.allocator, printed);
+    defer reparsed.deinit();
+    const printed_again = try printer.allocPrint(std.testing.allocator, &reparsed);
+    defer std.testing.allocator.free(printed_again);
+    try std.testing.expectEqualStrings(printed, printed_again);
+}
+
 test "Parser: named value IDs" {
     const printer = @import("../printer.zig");
 
