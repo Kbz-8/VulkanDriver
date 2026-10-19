@@ -8,6 +8,7 @@ const Renderer = @import("../Renderer.zig");
 const Program = @import("../../interpreter/Program.zig");
 const Runtime = @import("../../interpreter/Runtime.zig");
 const Shader = @import("../../interpreter/Shader.zig");
+const SoftBufferView = @import("../../SoftBufferView.zig");
 const SoftImageView = @import("../../SoftImageView.zig");
 const SoftSampler = @import("../../SoftSampler.zig");
 const common = @import("dispatcher.zig");
@@ -42,6 +43,8 @@ pub fn prepareDraw(allocator: std.mem.Allocator, draw_call: *Renderer.DrawCall) 
             .uniform_buffer, .storage_buffer => buffer.* = try ExecutionDevice.mapBuffer(state, resource.set, resource.binding, resource.array_element),
             .sampled_image => image.* = try ExecutionDevice.mapSampledImage(state, resource.set, resource.binding, resource.array_element),
             .storage_image => image.* = try ExecutionDevice.mapStorageImage(state, resource.set, resource.binding, resource.array_element),
+            // Texel-buffer bindings have a per-worker lifetime, separate from image views
+            .uniform_texel_buffer, .storage_texel_buffer => {},
             .sampler => sampler.* = try ExecutionDevice.mapSampler(state, resource.set, resource.binding, resource.array_element),
         }
     }
@@ -69,6 +72,7 @@ pub const Worker = struct {
     program: *const Program,
     slot: *Shader.RuntimeSlot,
     io: std.Io,
+    resource_texel_buffers: []?*SoftBufferView = &.{},
     input_ns: u64 = 0,
     shader_ns: u64 = 0,
     output_ns: u64 = 0,
@@ -97,6 +101,9 @@ pub const Worker = struct {
             Renderer.DrawProfile.add(&self.draw_call.profile.fragment_waves, self.waves);
             Renderer.DrawProfile.add(&self.draw_call.profile.fragment_full_waves, self.full_waves);
         }
+        if (self.resource_texel_buffers.len != 0)
+            self.draw_call.renderer.device.interface.device_allocator.allocator().free(self.resource_texel_buffers);
+        self.resource_texel_buffers = &.{};
         self.slot.mutex.unlock(self.io);
     }
 };
@@ -107,6 +114,17 @@ pub fn acquireWorker(draw_call: *Renderer.DrawCall, batch_id: usize) VkError!Wor
     if (batch_id >= shader.runtimes.len)
         return VkError.InvalidPipelineDrv;
 
+    const allocator = draw_call.renderer.device.interface.device_allocator.allocator();
+    const resource_texel_buffers = allocator.alloc(?*SoftBufferView, shader.program.resources.len) catch return VkError.OutOfDeviceMemory;
+    errdefer allocator.free(resource_texel_buffers);
+    @memset(resource_texel_buffers, null);
+
+    for (shader.program.resources, resource_texel_buffers) |optional_resource, *buffer_view| {
+        const resource = optional_resource orelse continue;
+        if (resource.kind == .uniform_texel_buffer or resource.kind == .storage_texel_buffer)
+            buffer_view.* = try ExecutionDevice.mapTexelBuffer(draw_call.renderer.state, resource.set, resource.binding, resource.array_element);
+    }
+
     const io = draw_call.renderer.device.interface.io();
     const slot = &shader.runtimes[batch_id];
     slot.mutex.lock(io) catch return VkError.DeviceLost;
@@ -115,6 +133,7 @@ pub fn acquireWorker(draw_call: *Renderer.DrawCall, batch_id: usize) VkError!Wor
         .program = &shader.program,
         .slot = slot,
         .io = io,
+        .resource_texel_buffers = resource_texel_buffers,
     };
 }
 
@@ -165,7 +184,10 @@ fn shaderWaveMasked(worker: *Worker, invocations: *const [Runtime.lane_count]Wav
     runtime.resetWave(program, execution_mask, mask);
 
     const resources = draw_call.fragment_resources;
-    if (resources.buffers.len != program.resources.len or resources.images.len != program.resources.len or resources.samplers.len != program.resources.len)
+    if (resources.buffers.len != program.resources.len or
+        worker.resource_texel_buffers.len != program.resources.len or
+        resources.images.len != program.resources.len or
+        resources.samplers.len != program.resources.len)
         return SpvRuntimeError.InvalidSpirV;
 
     // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
@@ -182,6 +204,7 @@ fn shaderWaveMasked(worker: *Worker, invocations: *const [Runtime.lane_count]Wav
     const shader_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
     const outcome = runtime.runWave(program, .{
         .resource_buffers = resources.buffers,
+        .resource_texel_buffers = worker.resource_texel_buffers,
         .resource_images = resources.images,
         .resource_samplers = resources.samplers,
         .push_constants = state.push_constant_blob[0..],

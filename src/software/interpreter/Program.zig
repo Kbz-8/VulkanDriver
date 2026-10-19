@@ -74,6 +74,12 @@ pub const ImageSamplerPair = struct {
     destination_kind: bc.ValueKind,
 };
 
+pub const ImageAccess = struct {
+    resource: ids.ResourceId,
+    dimension: ImageDimension,
+    arrayed: bool,
+};
+
 pub const DescriptorCandidate = struct {
     array_element: u32,
     resource: ids.ResourceId,
@@ -97,6 +103,7 @@ scratch_count: usize,
 array_lengths: []const bc.ArrayLength,
 descriptor_arrays: []const DescriptorArray,
 image_sampler_pairs: []const ImageSamplerPair,
+image_accesses: []const ImageAccess = &.{},
 code: []const bc.Instruction,
 edges: []const bc.Edge,
 copies: []const bc.Copy,
@@ -128,6 +135,7 @@ pub fn compile(backing_allocator: std.mem.Allocator, module: *const module_ir.Mo
         .array_lengths = lowerer.array_lengths.items,
         .descriptor_arrays = lowerer.descriptor_arrays.items,
         .image_sampler_pairs = lowerer.image_sampler_pairs.items,
+        .image_accesses = lowerer.image_accesses.items,
         .uses_derivatives = blk: {
             for (lowerer.code.items) |instruction| {
                 if (instruction.opcode.isDerivative())
@@ -188,6 +196,7 @@ const Lowerer = struct {
     array_lengths: std.ArrayList(bc.ArrayLength) = .empty,
     descriptor_arrays: std.ArrayList(DescriptorArray) = .empty,
     image_sampler_pairs: std.ArrayList(ImageSamplerPair) = .empty,
+    image_accesses: std.ArrayList(ImageAccess) = .empty,
     code: std.ArrayList(bc.Instruction) = .empty,
     edges: std.ArrayList(bc.Edge) = .empty,
     copies: std.ArrayList(bc.Copy) = .empty,
@@ -865,17 +874,24 @@ const Lowerer = struct {
                 _ = try self.workgroupVariable(op.variable);
                 try self.emit(.store_workgroup, src.components, src.base, byte_offset, .invalid_register, .invalid_register, @backingInt(op.variable));
             },
-            .image_read => |op| {
-                const dst = result orelse return CompileError.InvalidOperation;
-                const coordinate = try self.span(op.coordinate);
-                _ = try self.storageImage(op.resource);
-
-                if ((dst.kind != .floating and dst.kind != .signed_integer and dst.kind != .unsigned_integer) or
-                    dst.components != 4 or coordinate.kind != .signed_integer or coordinate.components != 2)
-                    return CompileError.InvalidOperation;
-
-                try self.emit(if (dst.kind == .floating) .image_read_float else .image_read, 4, dst.base, coordinate.base, .invalid_register, .invalid_register, @backingInt(op.resource));
-            },
+            .image_read => |op| try self.lowerImageRead(
+                result orelse return CompileError.InvalidOperation,
+                op.resource,
+                op.coordinate,
+                null,
+                op.dimension,
+                op.arrayed,
+                false,
+            ),
+            .image_fetch => |op| try self.lowerImageRead(
+                result orelse return CompileError.InvalidOperation,
+                op.resource,
+                op.coordinate,
+                op.lod,
+                op.dimension,
+                op.arrayed,
+                true,
+            ),
             .image_gather => |op| {
                 try self.lowerImageGather(
                     result orelse return CompileError.InvalidOperation,
@@ -917,13 +933,11 @@ const Lowerer = struct {
 
                 const coordinate = try self.span(op.coordinate);
                 const value = try self.span(op.value);
-                _ = try self.storageImage(op.resource);
-
-                if ((value.kind != .floating and value.kind != .signed_integer and value.kind != .unsigned_integer) or
-                    value.components != 4 or coordinate.kind != .signed_integer or coordinate.components != 2)
+                const access = try self.imageAccess(op.resource, coordinate, op.dimension, op.arrayed, false);
+                if ((value.kind != .floating and !isIntegerKind(value.kind)) or value.components != 4)
                     return CompileError.InvalidOperation;
 
-                try self.emit(if (value.kind == .floating) .image_write_float else .image_write, 4, value.base, coordinate.base, .invalid_register, .invalid_register, @backingInt(op.resource));
+                try self.emit(if (value.kind == .floating) .image_write_float else .image_write, 4, value.base, coordinate.base, .invalid_register, .invalid_register, access);
             },
             .control_barrier => {
                 if (result != null)
@@ -950,6 +964,40 @@ const Lowerer = struct {
                 try self.emit(.array_length, 1, dst.base, byte_offset, .invalid_register, .invalid_register, metadata_index);
             },
         }
+    }
+
+    fn lowerImageRead(
+        self: *Lowerer,
+        dst: bc.Span,
+        resource: ids.ResourceId,
+        coordinate_id: ids.ValueId,
+        lod_id: ?ids.ValueId,
+        dimension: ImageDimension,
+        arrayed: bool,
+        fetch: bool,
+    ) !void {
+        if ((dst.kind != .floating and !isIntegerKind(dst.kind)) or dst.components != 4)
+            return CompileError.InvalidOperation;
+
+        const coordinate = try self.span(coordinate_id);
+        const access = try self.imageAccess(resource, coordinate, dimension, arrayed, fetch);
+
+        if ((fetch and dimension != .buffer) != (lod_id != null))
+            return CompileError.InvalidOperation;
+
+        const lod = if (lod_id) |id| blk: {
+            const lod_span = try self.span(id);
+            if (!isScalarInteger(lod_span))
+                return CompileError.InvalidOperation;
+            break :blk lod_span.base;
+        } else bc.Register.invalid_register;
+
+        const opcode: bc.Opcode = if (fetch)
+            (if (dst.kind == .floating) .image_fetch_float else .image_fetch)
+        else
+            (if (dst.kind == .floating) .image_read_float else .image_read);
+
+        try self.emit(opcode, 4, dst.base, coordinate.base, lod, .invalid_register, access);
     }
 
     fn lowerImageGather(
@@ -997,7 +1045,7 @@ const Lowerer = struct {
         arrayed: bool,
         opcode: bc.Opcode,
     ) !void {
-        if (dimension == .cube and arrayed)
+        if (dimension == .buffer or (dimension == .cube and arrayed))
             return CompileError.UnsupportedOperation;
 
         const coordinate = try self.span(coordinate_id);
@@ -1098,15 +1146,25 @@ const Lowerer = struct {
         return metadata_index;
     }
 
-    fn storageImage(self: *const Lowerer, id: ids.ResourceId) !ResourceBinding {
+    fn imageAccess(self: *Lowerer, id: ids.ResourceId, coordinate: bc.Span, dimension: ImageDimension, arrayed: bool, fetch: bool) !u32 {
         if (id.index() >= self.resources.len)
             return CompileError.InvalidOperation;
-
         const resource = self.resources[id.index()] orelse return CompileError.InvalidOperation;
-        if (resource.kind != .storage_image)
+        const expected: ir.types.ResourceKind = if (dimension == .buffer)
+            (if (fetch) .uniform_texel_buffer else .storage_texel_buffer)
+        else
+            (if (fetch) .sampled_image else .storage_image);
+
+        if (resource.kind != expected or (arrayed and (dimension == .three_d or dimension == .buffer)) or (fetch and dimension == .cube))
             return CompileError.InvalidOperation;
 
-        return resource;
+        const components = if (dimension == .cube) 3 else imageCoordinateComponents(dimension, arrayed);
+        if (!isIntegerKind(coordinate.kind) or coordinate.components != components)
+            return CompileError.InvalidOperation;
+
+        const index = try u32Index(self.image_accesses.items.len);
+        try self.image_accesses.append(self.allocator, .{ .resource = id, .dimension = dimension, .arrayed = arrayed });
+        return index;
     }
 
     fn sampledImage(self: *const Lowerer, id: ids.ResourceId) !ResourceBinding {
@@ -1306,7 +1364,7 @@ const ValueLiveness = struct {
 
 pub fn imageCoordinateComponents(dimension: ImageDimension, arrayed: bool) u16 {
     const dimension_components: u8 = switch (dimension) {
-        .one_d => 1,
+        .one_d, .buffer => 1,
         .two_d => 2,
         .three_d, .cube => 3,
     };

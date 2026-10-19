@@ -10,6 +10,7 @@ pub const ImageDimension = enum {
     two_d,
     three_d,
     cube,
+    buffer,
 };
 
 pub const IntegerType = struct {
@@ -67,6 +68,8 @@ pub const ResourceKind = enum {
     storage_buffer,
     sampled_image,
     storage_image,
+    uniform_texel_buffer,
+    storage_texel_buffer,
     sampler,
 };
 

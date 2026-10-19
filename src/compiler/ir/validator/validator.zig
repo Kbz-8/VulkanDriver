@@ -836,11 +836,43 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
         },
         .image_read => |op| {
             const resource = module.resources.get(op.resource) orelse return ValidationError.InvalidValue;
-            if (resource.kind != .storage_image)
-                return ValidationError.WrongResourceKind;
-            _ = try operandType(module, function_id, op.coordinate);
+            try validateStorageImageAccess(module, function_id, resource.kind, op.coordinate, op.dimension, op.arrayed);
             if (result_type == null)
                 return ValidationError.WrongResultPresence;
+        },
+        .image_fetch => |op| {
+            const resource = module.resources.get(op.resource) orelse return ValidationError.InvalidValue;
+            try validateImageShape(op.dimension, op.arrayed);
+            if (op.dimension == .cube)
+                return ValidationError.InvalidInstruction;
+
+            const expected_kind: type_ir.ResourceKind = if (op.dimension == .buffer) .uniform_texel_buffer else .sampled_image;
+
+            if (resource.kind != expected_kind)
+                return ValidationError.WrongResourceKind;
+
+            const components: u8 = (switch (op.dimension) {
+                .one_d, .buffer => @as(u8, 1),
+                .two_d => @as(u8, 2),
+                .three_d => @as(u8, 3),
+                .cube => unreachable,
+            }) + @intFromBool(op.arrayed);
+
+            const coordinate = integerShape(module, try operandType(module, function_id, op.coordinate)) orelse return ValidationError.WrongOperandType;
+            if (coordinate.bits != 32 or coordinate.components != components)
+                return ValidationError.WrongOperandType;
+
+            if (op.dimension == .buffer) {
+                if (op.lod != null)
+                    return ValidationError.InvalidInstruction;
+            } else {
+                const lod = op.lod orelse return ValidationError.InvalidInstruction;
+                const lod_type = module.types.get(try operandType(module, function_id, lod)) orelse return ValidationError.InvalidType;
+                if (lod_type.* != .integer or lod_type.integer.bits != 32)
+                    return ValidationError.WrongOperandType;
+            }
+
+            try validateImageFetchResult(module, resource, result_type);
         },
         .image_sample_explicit_lod => |op| {
             try validateImageSample(
@@ -887,9 +919,7 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             if (result_type != null)
                 return ValidationError.WrongResultPresence;
             const resource = module.resources.get(op.resource) orelse return ValidationError.InvalidValue;
-            if (resource.kind != .storage_image)
-                return ValidationError.WrongResourceKind;
-            _ = try operandType(module, function_id, op.coordinate);
+            try validateStorageImageAccess(module, function_id, resource.kind, op.coordinate, op.dimension, op.arrayed);
             _ = try operandType(module, function_id, op.value);
         },
         .control_barrier => {
@@ -941,6 +971,55 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
     }
 }
 
+fn validateImageShape(dimension: type_ir.ImageDimension, arrayed: bool) ValidationError!void {
+    if (arrayed and (dimension == .three_d or dimension == .buffer))
+        return ValidationError.InvalidInstruction;
+}
+
+fn validateStorageImageAccess(
+    module: *const module_ir.Module,
+    function_id: ids.FunctionId,
+    kind: type_ir.ResourceKind,
+    coordinate_id: ids.ValueId,
+    dimension: type_ir.ImageDimension,
+    arrayed: bool,
+) ValidationError!void {
+    try validateImageShape(dimension, arrayed);
+    const expected: type_ir.ResourceKind = if (dimension == .buffer) .storage_texel_buffer else .storage_image;
+    if (kind != expected)
+        return ValidationError.WrongResourceKind;
+
+    const coordinate_type = try operandType(module, function_id, coordinate_id);
+    if (dimension == .cube) {
+        const coordinate = integerShape(module, coordinate_type) orelse return ValidationError.WrongOperandType;
+        if (coordinate.bits != 32 or coordinate.components != 3)
+            return ValidationError.WrongOperandType;
+    }
+}
+
+fn validateImageFetchResult(module: *const module_ir.Module, resource: *const module_ir.Resource, result_type: ?ids.TypeId) ValidationError!void {
+    const result = module.types.get(result_type orelse return ValidationError.WrongResultPresence) orelse return ValidationError.InvalidType;
+    if (result.* != .vector or result.vector.length != 4)
+        return ValidationError.WrongResultType;
+
+    const element = module.types.get(result.vector.element_type) orelse return ValidationError.InvalidType;
+    if (element.* != .integer and element.* != .floating)
+        return ValidationError.WrongResultType;
+
+    const resource_type = module.types.get(resource.type) orelse return ValidationError.InvalidType;
+    const data_type = switch (resource_type.*) {
+        .resource_handle => |handle| blk: {
+            if (handle.kind != resource.kind)
+                return ValidationError.WrongResourceKind;
+            break :blk handle.data_type orelse return ValidationError.InvalidType;
+        },
+        else => resource.type,
+    };
+
+    if (data_type != result.vector.element_type)
+        return ValidationError.WrongResultType;
+}
+
 fn validateImageSample(
     module: *const module_ir.Module,
     function_id: ids.FunctionId,
@@ -951,6 +1030,8 @@ fn validateImageSample(
     dimension: type_ir.ImageDimension,
     arrayed: bool,
 ) ValidationError!void {
+    if (dimension == .buffer)
+        return ValidationError.InvalidInstruction;
     const image = module.resources.get(image_id) orelse return ValidationError.InvalidValue;
     if (image.kind != .sampled_image)
         return ValidationError.WrongResourceKind;
@@ -973,6 +1054,7 @@ fn validateImageSample(
         .one_d => 1,
         .two_d => 2,
         .three_d, .cube => 3,
+        .buffer => unreachable,
     };
     const coordinate_components = base_components + @intFromBool(arrayed);
     const coordinate_type = try operandType(module, function_id, coordinate_id);

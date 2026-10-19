@@ -458,6 +458,17 @@ fn remapOperation(module: *module_ir.Module, value_map: []const ?ids.ValueId, op
             .image_read = .{
                 .resource = op.resource,
                 .coordinate = try mappedValue(module, value_map, op.coordinate),
+                .dimension = op.dimension,
+                .arrayed = op.arrayed,
+            },
+        },
+        .image_fetch => |op| .{
+            .image_fetch = .{
+                .resource = op.resource,
+                .coordinate = try mappedValue(module, value_map, op.coordinate),
+                .lod = if (op.lod) |lod| try mappedValue(module, value_map, lod) else null,
+                .dimension = op.dimension,
+                .arrayed = op.arrayed,
             },
         },
         .image_sample_explicit_lod => |op| .{
@@ -494,6 +505,8 @@ fn remapOperation(module: *module_ir.Module, value_map: []const ?ids.ValueId, op
                 .resource = op.resource,
                 .coordinate = try mappedValue(module, value_map, op.coordinate),
                 .value = try mappedValue(module, value_map, op.value),
+                .dimension = op.dimension,
+                .arrayed = op.arrayed,
             },
         },
         .control_barrier => .control_barrier,
@@ -948,6 +961,68 @@ test "Inline All Functions: remap conversion and image sampling" {
     }
     try std.testing.expect(found_convert);
     try std.testing.expect(found_sample);
+}
+
+test "Inline All Functions: remap fetch operands and preserve storage image shape" {
+    const parser = @import("../parser/parser.zig");
+    const validator = @import("../validator/validator.zig");
+    var module = try parser.parseString(std.testing.allocator,
+        \\shader compute @main
+        \\{
+        \\    @image: f32 = sampled_image[set(0), binding(0)]
+        \\    @storage: f32 = storage_image[set(0), binding(1)]
+        \\    @buffer: f32 = uniform_texel_buffer[set(0), binding(2)]
+        \\    %coordinate: constant vec2[i32] = null
+        \\    %zero: constant i32 = 0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %fetched_pixel: vec4[f32] = call @fetch(%coordinate, %zero)
+        \\            return
+        \\    }
+        \\    fn @fetch(%coord: vec2[i32], %lod: i32) -> vec4[f32]
+        \\    {
+        \\        .entry():
+        \\            %pixel: vec4[f32] = image_fetch @image, %coord, lod %lod, dimension one_d, arrayed true
+        \\            %texel: vec4[f32] = image_fetch @buffer, %lod, dimension buffer, arrayed false
+        \\            %old: vec4[f32] = image_read @storage, %coord, dimension one_d, arrayed true
+        \\            image_write @storage, %coord, %pixel, dimension one_d, arrayed true
+        \\            return %pixel
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+    try std.testing.expect(try runForTest(&module));
+    try validator.validate(&module);
+    var count: usize = 0;
+    for (module.instructions.entries.items) |entry| {
+        const inst = entry orelse continue;
+        switch (inst.operation) {
+            .image_fetch => |op| {
+                if (op.dimension == .buffer) {
+                    try std.testing.expect(op.lod == null);
+                    try std.testing.expect(!op.arrayed);
+                } else {
+                    try std.testing.expect(op.lod != null);
+                    try std.testing.expect(op.dimension == .one_d);
+                    try std.testing.expect(op.arrayed);
+                }
+                count += 1;
+            },
+            .image_read => |op| {
+                try std.testing.expect(op.dimension == .one_d);
+                try std.testing.expect(op.arrayed);
+                count += 1;
+            },
+            .image_write => |op| {
+                try std.testing.expect(op.dimension == .one_d);
+                try std.testing.expect(op.arrayed);
+                count += 1;
+            },
+            else => {},
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 4), count);
 }
 
 test "Inline All Functions: reject reachable recursion" {

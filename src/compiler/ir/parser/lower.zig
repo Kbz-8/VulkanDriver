@@ -410,6 +410,8 @@ fn lowerOperation(
                 .operation = .{ .image_read = .{
                     .resource = resource,
                     .coordinate = coordinate,
+                    .dimension = op.dimension,
+                    .arrayed = op.arrayed,
                 } },
                 .inferred_type = null,
             };
@@ -423,6 +425,23 @@ fn lowerOperation(
                     .resource = resource,
                     .coordinate = coordinate,
                     .value = value,
+                    .dimension = op.dimension,
+                    .arrayed = op.arrayed,
+                } },
+                .inferred_type = null,
+            };
+        },
+        .image_fetch => |op| blk: {
+            const resource = resources.get(op.resource_name) orelse return error.UnknownResource;
+            const coordinate = resolveValue(values, op.coordinate) orelse return error.UnknownValue;
+            const lod = if (op.lod) |value| resolveValue(values, value) orelse return error.UnknownValue else null;
+            break :blk .{
+                .operation = .{ .image_fetch = .{
+                    .resource = resource,
+                    .coordinate = coordinate,
+                    .lod = lod,
+                    .dimension = op.dimension,
+                    .arrayed = op.arrayed,
                 } },
                 .inferred_type = null,
             };

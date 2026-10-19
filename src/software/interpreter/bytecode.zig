@@ -119,6 +119,8 @@ pub const Opcode = enum(u16) {
     float_to_unsigned,
     floor,
     fwidth,
+    image_fetch,
+    image_fetch_float,
     image_gather,
     image_read,
     image_read_float,

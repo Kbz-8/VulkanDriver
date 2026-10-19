@@ -6,6 +6,7 @@ const spv = @import("spv");
 
 const VkError = base.VkError;
 
+const SoftBufferView = @import("../SoftBufferView.zig");
 const SoftDescriptorSet = @import("../SoftDescriptorSet.zig");
 const SoftDevice = @import("../SoftDevice.zig");
 const SoftImageView = @import("../SoftImageView.zig");
@@ -303,6 +304,34 @@ pub fn mapBuffer(state: *const PipelineState, set: u32, binding: u32, array_elem
         return VkError.ValidationFailed;
 
     return try buffer.mapAsSliceWithAddedOffset(u8, effective_offset, descriptor.size);
+}
+
+pub fn mapTexelBuffer(state: *const PipelineState, set: u32, binding: u32, array_element: u32) VkError!?*SoftBufferView {
+    const set_index: usize = set;
+    if (set_index >= state.sets.len)
+        return null;
+
+    const descriptor_set = state.sets[set_index] orelse return null;
+
+    const binding_index: usize = binding;
+    if (binding_index >= descriptor_set.descriptors.len or binding_index >= descriptor_set.interface.layout.bindings.len)
+        return null;
+
+    switch (descriptor_set.interface.layout.bindings[binding_index].descriptor_type) {
+        .uniform_texel_buffer, .storage_texel_buffer => {},
+        else => return null,
+    }
+
+    const descriptors = switch (descriptor_set.descriptors[binding_index]) {
+        .texel_buffer => |descriptors| descriptors,
+        else => return null,
+    };
+
+    const descriptor_index: usize = array_element;
+    if (descriptor_index >= descriptors.len)
+        return null;
+
+    return descriptors[descriptor_index].object;
 }
 
 pub fn mapSampledImage(state: *const PipelineState, set: u32, binding: u32, array_element: u32) VkError!?*SoftImageView {

@@ -1,5 +1,7 @@
 const std = @import("std");
 const vk = @import("vulkan");
+const format_info = @import("base").format;
+const zm = @import("base").zm;
 const spv = @import("spv");
 const shader_ir = @import("shader_ir");
 const bc = @import("bytecode.zig");
@@ -7,6 +9,9 @@ const Program = @import("Program.zig");
 const simd = @import("simd.zig");
 const SoftImage = @import("../SoftImage.zig");
 const SoftImageView = @import("../SoftImageView.zig");
+const SoftBuffer = @import("../SoftBuffer.zig");
+const SoftBufferView = @import("../SoftBufferView.zig");
+const blitter = @import("../device/blitter.zig");
 const SoftSampler = @import("../SoftSampler.zig");
 
 const ids = shader_ir.ir.id;
@@ -155,6 +160,7 @@ pub const RunOptions = struct {
     push_constants: []const u8 = &.{},
     resource_buffers: []const ?[]u8 = &.{},
     resource_images: []const ?*SoftImageView = &.{},
+    resource_texel_buffers: []const ?*SoftBufferView = &.{},
     resource_samplers: []const ?*SoftSampler = &.{},
     workgroup_memory: ?[]u8 = null,
 };
@@ -893,12 +899,14 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .floor => try self.unaryFloat(instruction, .floor),
         .d_pdx, .d_pdy, .fwidth => return RuntimeError.DerivativeUnavailable,
         .image_gather => try self.imageGather(program, options.resource_images, options.resource_samplers, instruction),
-        .image_read => try self.imageRead(program, options.resource_images, instruction),
-        .image_read_float => try self.imageReadFloat(program, options.resource_images, instruction),
+        .image_read => try self.imageRead(program, options, instruction, false, false),
+        .image_read_float => try self.imageRead(program, options, instruction, true, false),
+        .image_fetch => try self.imageRead(program, options, instruction, false, true),
+        .image_fetch_float => try self.imageRead(program, options, instruction, true, true),
         .image_sample_explicit_lod => try self.imageSample(program, options.resource_images, options.resource_samplers, instruction, true),
         .image_sample_implicit_lod => try self.imageSample(program, options.resource_images, options.resource_samplers, instruction, false),
-        .image_write => if (self.isObservable()) try self.imageWrite(program, options.resource_images, instruction),
-        .image_write_float => if (self.isObservable()) try self.imageWriteFloat(program, options.resource_images, instruction),
+        .image_write => if (self.isObservable()) try self.imageWrite(program, options, instruction, false),
+        .image_write_float => if (self.isObservable()) try self.imageWrite(program, options, instruction, true),
         .int_max => try self.binaryInt(instruction, .int_max),
         .int_min => try self.binaryInt(instruction, .int_min),
         .integer_add => try self.binaryInt(instruction, .add),
@@ -1616,21 +1624,42 @@ fn storeBuffer(self: *const Self, program: *const Program, resource_buffers: []c
     }
 }
 
-fn imageRead(self: *Self, program: *const Program, resource_images: []const ?*SoftImageView, instruction: bc.Instruction) RuntimeError!void {
-    try self.validateImageInstruction(instruction);
-    const view = try resourceImage(program, resource_images, instruction.immediate);
-    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
-    const pixel = image.readInt4(imageOffset(self, instruction), imageSubresource(view), view.interface.format) catch return RuntimeError.InvalidResource;
-    const components: [4]u32 = @bitCast(pixel);
-    @memcpy(self.registers[@backingInt(instruction.a)..][0..4], &components);
-}
+fn imageRead(self: *Self, program: *const Program, options: RunOptions, instruction: bc.Instruction, comptime floating: bool, comptime fetch: bool) RuntimeError!void {
+    const access = try self.validateImageInstruction(program, instruction, fetch);
+    var components: [4]u32 = @splat(0);
+    if (access.dimension == .buffer) {
+        const view = try resourceTexelBuffer(program, options.resource_texel_buffers, access.resource, fetch);
+        if (try mapBufferTexel(view, @bitCast(self.registers[@backingInt(instruction.b)]))) |texel| {
+            components = if (floating)
+                @bitCast(blitter.readFloat4(texel, view.interface.format))
+            else
+                @bitCast(blitter.readInt4(texel, view.interface.format));
+        }
+    } else {
+        const view = if (fetch)
+            try sampledImage(program, options.resource_images, access.resource)
+        else
+            try resourceImage(program, options.resource_images, @backingInt(access.resource));
 
-fn imageReadFloat(self: *Self, program: *const Program, resource_images: []const ?*SoftImageView, instruction: bc.Instruction) RuntimeError!void {
-    try self.validateImageInstruction(instruction);
-    const view = try resourceImage(program, resource_images, instruction.immediate);
-    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
-    const pixel = image.readFloat4(imageOffset(self, instruction), imageSubresource(view), view.interface.format) catch return RuntimeError.InvalidResource;
-    const components: [4]u32 = @bitCast(pixel);
+        if (try self.imageLocation(view, access, instruction)) |location| {
+            const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
+            const format = format_info.fromAspect(view.interface.format, location.subresource.aspect_mask);
+            if (floating) {
+                var pixel = image.readFloat4(location.offset, location.subresource, format) catch return RuntimeError.InvalidResource;
+                if (fetch) {
+                    if (format_info.isSrgb(format))
+                        pixel = zm.srgbToRgb(pixel);
+                    pixel = SoftSampler.swizzleFloat4(pixel, view.interface.components);
+                }
+                components = @bitCast(pixel);
+            } else {
+                var pixel = image.readInt4(location.offset, location.subresource, format) catch return RuntimeError.InvalidResource;
+                if (fetch)
+                    pixel = SoftSampler.swizzleInt4(pixel, view.interface.components);
+                components = @bitCast(pixel);
+            }
+        }
+    }
     @memcpy(self.registers[@backingInt(instruction.a)..][0..4], &components);
 }
 
@@ -1737,6 +1766,7 @@ fn imageSample(
         .two_d => .@"2D",
         .three_d => .@"3D",
         .cube => .Cube,
+        .buffer => return RuntimeError.InvalidBytecode,
     };
 
     const components: [4]u32 = switch (pair.destination_kind) {
@@ -1747,48 +1777,135 @@ fn imageSample(
     @memcpy(self.registers[@backingInt(instruction.a)..][0..4], &components);
 }
 
-fn imageWrite(self: *const Self, program: *const Program, resource_images: []const ?*SoftImageView, instruction: bc.Instruction) RuntimeError!void {
-    try self.validateImageInstruction(instruction);
-    const view = try resourceImage(program, resource_images, instruction.immediate);
-    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
+fn imageWrite(self: *const Self, program: *const Program, options: RunOptions, instruction: bc.Instruction, comptime floating: bool) RuntimeError!void {
+    const access = try self.validateImageInstruction(program, instruction, false);
     const components: [4]u32 = self.registers[@backingInt(instruction.a)..][0..4].*;
-    const pixel: @Vector(4, u32) = @bitCast(components);
-    image.writeInt4(imageOffset(self, instruction), imageSubresource(view), view.interface.format, pixel) catch return RuntimeError.InvalidResource;
+    if (access.dimension == .buffer) {
+        const view = try resourceTexelBuffer(program, options.resource_texel_buffers, access.resource, false);
+        if (try mapBufferTexel(view, @bitCast(self.registers[@backingInt(instruction.b)]))) |texel| {
+            if (floating)
+                blitter.writeFloat4(@bitCast(components), texel, view.interface.format)
+            else
+                blitter.writeInt4(@bitCast(components), texel, view.interface.format);
+        }
+    } else {
+        const view = try resourceImage(program, options.resource_images, @backingInt(access.resource));
+        const location = (try self.imageLocation(view, access, instruction)) orelse return;
+        const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
+        const format = format_info.fromAspect(view.interface.format, location.subresource.aspect_mask);
+
+        if (floating)
+            image.writeFloat4(location.offset, location.subresource, format, @bitCast(components)) catch return RuntimeError.InvalidResource
+        else
+            image.writeInt4(location.offset, location.subresource, format, @bitCast(components)) catch return RuntimeError.InvalidResource;
+    }
 }
 
-fn imageWriteFloat(self: *const Self, program: *const Program, resource_images: []const ?*SoftImageView, instruction: bc.Instruction) RuntimeError!void {
-    try self.validateImageInstruction(instruction);
-    const view = try resourceImage(program, resource_images, instruction.immediate);
-    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
-    const components: [4]u32 = self.registers[@backingInt(instruction.a)..][0..4].*;
-    const pixel: @Vector(4, f32) = @bitCast(components);
-    image.writeFloat4(imageOffset(self, instruction), imageSubresource(view), view.interface.format, pixel) catch return RuntimeError.InvalidResource;
-}
-
-fn validateImageInstruction(self: *const Self, instruction: bc.Instruction) RuntimeError!void {
-    if (instruction.components != 4)
+fn validateImageInstruction(self: *const Self, program: *const Program, instruction: bc.Instruction, fetch: bool) RuntimeError!Program.ImageAccess {
+    if (instruction.components != 4 or instruction.d != .invalid_register or instruction.immediate >= program.image_accesses.len)
+        return RuntimeError.InvalidBytecode;
+    const access = program.image_accesses[instruction.immediate];
+    if ((access.arrayed and (access.dimension == .three_d or access.dimension == .buffer)) or (fetch and access.dimension == .cube))
         return RuntimeError.InvalidBytecode;
     try self.validateRegisterSpan(instruction);
-    const coordinate_end = std.math.add(usize, @backingInt(instruction.b), 2) catch return RuntimeError.InvalidBytecode;
-    if (coordinate_end > self.registers.len)
+    const count = if (access.dimension == .cube) 3 else Program.imageCoordinateComponents(access.dimension, access.arrayed);
+    try self.validateRegisterRange(instruction.b, count);
+    const needs_lod = fetch and access.dimension != .buffer;
+    if (needs_lod != (instruction.c != .invalid_register))
         return RuntimeError.InvalidBytecode;
+    if (needs_lod)
+        try self.validateRegisterRange(instruction.c, 1);
+    return access;
 }
 
-fn imageOffset(self: *const Self, instruction: bc.Instruction) vk.Offset3D {
-    return .{
-        .x = @bitCast(self.registers[@backingInt(instruction.b)]),
-        .y = @bitCast(self.registers[@as(usize, @backingInt(instruction.b)) + 1]),
-        .z = 0,
-    };
-}
+const ImageLocation = struct {
+    offset: vk.Offset3D,
+    subresource: vk.ImageSubresource,
+};
 
-fn imageSubresource(view: *const SoftImageView) vk.ImageSubresource {
+fn imageLocation(self: *const Self, view: *const SoftImageView, access: Program.ImageAccess, instruction: bc.Instruction) RuntimeError!?ImageLocation {
+    const image: *const SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
     const range = view.interface.subresource_range;
-    return .{
-        .aspect_mask = range.aspect_mask,
-        .mip_level = range.base_mip_level,
-        .array_layer = range.base_array_layer,
+    if (range.base_mip_level >= image.interface.mip_levels or image.interface.samples.toInt() != 1)
+        return RuntimeError.InvalidResource;
+
+    const lod: i32 = if (instruction.c == .invalid_register) 0 else @bitCast(self.registers[@backingInt(instruction.c)]);
+    if (lod < 0 or @as(u32, @intCast(lod)) >= @min(view.interface.levelCount(), image.interface.mip_levels - range.base_mip_level))
+        return null;
+
+    const mip = range.base_mip_level + @as(u32, @intCast(lod));
+    const index: usize = @backingInt(instruction.b);
+    const x: i32 = @bitCast(self.registers[index]);
+    const y: i32 = if (access.dimension != .one_d or access.arrayed) @bitCast(self.registers[index + 1]) else 0;
+    const z: i32 = if (access.dimension == .three_d or access.dimension == .cube or (access.dimension == .two_d and access.arrayed)) @bitCast(self.registers[index + 2]) else 0;
+    const offset: vk.Offset3D = .{
+        .x = x,
+        .y = if (access.dimension == .one_d) 0 else y,
+        .z = if (access.dimension == .three_d) z else 0,
     };
+    const extent = image.getMipLevelExtent(mip);
+    if (offset.x < 0 or offset.y < 0 or offset.z < 0 or
+        @as(u32, @intCast(offset.x)) >= extent.width or
+        @as(u32, @intCast(offset.y)) >= extent.height or
+        @as(u32, @intCast(offset.z)) >= extent.depth)
+        return null;
+
+    const relative_layer = std.math.cast(u32, switch (access.dimension) {
+        .one_d => if (access.arrayed) y else @as(i32, 0),
+        .two_d => if (access.arrayed) z else @as(i32, 0),
+        .cube => z,
+        .three_d => @as(i32, 0),
+        .buffer => return RuntimeError.InvalidBytecode,
+    }) orelse return null;
+
+    if (access.dimension == .cube and !access.arrayed and relative_layer >= 6)
+        return null;
+
+    const layer_limit = if (image.interface.image_type == .@"3d" and image.interface.flags.@"2d_array_compatible") extent.depth else image.interface.array_layers;
+    if (range.base_array_layer >= layer_limit or relative_layer >= layer_limit - range.base_array_layer or relative_layer >= view.interface.layerCount())
+        return null;
+
+    return .{
+        .offset = offset,
+        .subresource = .{ .aspect_mask = range.aspect_mask, .mip_level = mip, .array_layer = range.base_array_layer + relative_layer },
+    };
+}
+
+fn resourceTexelBuffer(program: *const Program, buffers: []const ?*SoftBufferView, resource: ids.ResourceId, fetch: bool) RuntimeError!*SoftBufferView {
+    const binding = program.resourceBinding(resource) orelse return RuntimeError.InvalidResource;
+    const expected: shader_ir.ir.types.ResourceKind = if (fetch) .uniform_texel_buffer else .storage_texel_buffer;
+    if (binding.kind != expected)
+        return RuntimeError.InvalidResource;
+    if (resource.index() >= buffers.len)
+        return RuntimeError.ResourceNotBound;
+    return buffers[resource.index()] orelse RuntimeError.ResourceNotBound;
+}
+
+fn mapBufferTexel(view: *const SoftBufferView, x: i32) RuntimeError!?[]u8 {
+    if (x < 0)
+        return null;
+    const buffer: *SoftBuffer = @alignCast(@fieldParentPtr("interface", view.interface.buffer));
+    const memory = buffer.interface.memory orelse return RuntimeError.ResourceNotBound;
+
+    if (buffer.interface.offset > memory.size)
+        return RuntimeError.InvalidResource;
+
+    const bound_size = @min(buffer.interface.size, memory.size - buffer.interface.offset);
+    if (view.interface.offset > bound_size)
+        return RuntimeError.InvalidResource;
+
+    const available = bound_size - view.interface.offset;
+    const range = if (view.interface.range == vk.WHOLE_SIZE) available else @min(view.interface.range, available);
+    const texel_size = format_info.texelSize(view.interface.format);
+
+    if (texel_size == 0)
+        return RuntimeError.InvalidResource;
+
+    const offset = std.math.mul(vk.DeviceSize, @intCast(x), texel_size) catch return null;
+    if (offset > range or texel_size > range - offset)
+        return null;
+
+    return buffer.mapAsSliceWithAddedOffset(u8, view.interface.offset + offset, texel_size) catch RuntimeError.InvalidResource;
 }
 
 fn loadWorkgroup(self: *Self, program: *const Program, optional_memory: ?[]u8, instruction: bc.Instruction) RuntimeError!void {

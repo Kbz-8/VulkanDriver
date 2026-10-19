@@ -113,11 +113,13 @@ const WorkgroupAddress = struct {
 const ImageAddress = struct {
     resource: ir.id.ResourceId,
     coordinate: ir.id.ValueId,
+    dimension: ir.types.ImageDimension,
+    arrayed: bool,
 };
 
 const SampledImage = struct {
     image: ir.id.ResourceId,
-    sampler: ir.id.ResourceId,
+    sampler: ?ir.id.ResourceId,
     image_type: u32,
 };
 
@@ -207,6 +209,7 @@ const Context = struct {
     interfaces: []?ir.id.InterfaceVariableId,
     resources: []?ir.id.ResourceId,
     image_resources: []?ir.id.ResourceId,
+    image_types: []?u32,
     sampled_images: []?SampledImage,
     sampled_image_arrays: []?[]const SampledImage,
     image_addresses: []?ImageAddress,
@@ -369,16 +372,8 @@ const Context = struct {
 
                 const image_info = try imageTypeInfo(self, spv_id);
                 const kind: ir.types.ResourceKind = switch (operands[6]) {
-                    1 => sampled: {
-                        if (operands[5] != 0)
-                            return TranslationError.UnsupportedType;
-                        break :sampled .sampled_image;
-                    },
-                    2 => storage: {
-                        if (image_info.dimension != .two_d or image_info.arrayed or operands[5] != 0)
-                            return TranslationError.UnsupportedType;
-                        break :storage .storage_image;
-                    },
+                    1 => if (image_info.dimension == .buffer) .uniform_texel_buffer else .sampled_image,
+                    2 => if (image_info.dimension == .buffer) .storage_texel_buffer else .storage_image,
                     else => return TranslationError.UnsupportedType,
                 };
                 break :blk try self.builder.internType(.{
@@ -671,6 +666,13 @@ const Context = struct {
     }
 };
 
+fn isImageResourceKind(kind: ir.types.ResourceKind) bool {
+    return switch (kind) {
+        .sampled_image, .storage_image, .uniform_texel_buffer, .storage_texel_buffer => true,
+        else => false,
+    };
+}
+
 fn imageTypeInfo(context: *const Context, image_type: u32) TranslationError!ImageTypeInfo {
     const definition = context.type_defs[try context.idIndex(image_type)] orelse return TranslationError.MissingDefinition;
     if (definition.opcode != .type_image or definition.operands.len < 8 or definition.operands.len > 9)
@@ -681,6 +683,7 @@ fn imageTypeInfo(context: *const Context, image_type: u32) TranslationError!Imag
         1 => .two_d,
         2 => .three_d,
         3 => .cube,
+        5 => .buffer,
         else => return TranslationError.UnsupportedType,
     };
     const arrayed = switch (definition.operands[4]) {
@@ -688,7 +691,55 @@ fn imageTypeInfo(context: *const Context, image_type: u32) TranslationError!Imag
         1 => true,
         else => return TranslationError.UnsupportedType,
     };
+    if (definition.operands[5] != 0 or (arrayed and (dimension == .three_d or dimension == .buffer)))
+        return TranslationError.UnsupportedType;
     return .{ .dimension = dimension, .arrayed = arrayed };
+}
+
+fn canonicalizeImageCoordinate(context: *Context, block: ir.id.BlockId, spv_coordinate: u32, image: ImageTypeInfo) !ir.id.ValueId {
+    const coordinate = try context.resolveValue(spv_coordinate);
+    const coordinate_type = context.module.typeOf(coordinate) orelse return TranslationError.InvalidId;
+    const shape = integerTypeShape(context, coordinate_type) orelse return TranslationError.InvalidInstruction;
+    const required: u8 = switch (image.dimension) {
+        .one_d => 1 + @as(u8, @intFromBool(image.arrayed)),
+        .two_d => 2 + @as(u8, @intFromBool(image.arrayed)),
+        .three_d, .cube => 3,
+        .buffer => 1,
+    };
+
+    if (shape.bits != 32 or shape.components < required)
+        return TranslationError.InvalidInstruction;
+
+    const source_type = context.module.types.get(coordinate_type).?.*;
+
+    if (source_type == .integer or (shape.components == required and required != 1))
+        return coordinate;
+
+    const elements = try context.scratch.alloc(ir.id.ValueId, required);
+    for (elements, 0..) |*element, index| {
+        element.* = (try context.builder.appendInstruction(block, source_type.vector.element_type, .{
+            .composite_extract = .{
+                .composite = coordinate,
+                .indices = try context.scratch.dupe(u32, &.{@intCast(index)}),
+            },
+        }, null)).?;
+    }
+
+    if (required == 1)
+        return elements[0];
+
+    const result_type = try context.builder.internType(.{
+        .vector = .{
+            .element_type = source_type.vector.element_type,
+            .length = required,
+        },
+    });
+
+    return (try context.builder.appendInstruction(block, result_type, .{
+        .composite_construct = .{
+            .elements = elements,
+        },
+    }, null)).?;
 }
 
 /// Translates one entry point from a retained SPIR-V source into an independent
@@ -729,6 +780,7 @@ pub fn instantiate(allocator: std.mem.Allocator, source: *const SourceModule, op
         .interfaces = try allocOptional(ir.id.InterfaceVariableId, scratch, bound),
         .resources = try allocOptional(ir.id.ResourceId, scratch, bound),
         .image_resources = try allocOptional(ir.id.ResourceId, scratch, bound),
+        .image_types = try allocOptional(u32, scratch, bound),
         .sampled_images = try allocOptional(SampledImage, scratch, bound),
         .sampled_image_arrays = try allocOptional([]const SampledImage, scratch, bound),
         .image_addresses = try allocOptional(ImageAddress, scratch, bound),
@@ -1164,22 +1216,24 @@ fn translateResources(context: *Context) !void {
                 const image_type_id = element.operands[1];
                 const image_type = try context.translateType(image_type_id);
                 const image_type_data = context.module.types.get(image_type) orelse return TranslationError.InvalidId;
-                if (image_type_data.* != .resource_handle or image_type_data.resource_handle.kind != .sampled_image)
+                if (image_type_data.* != .resource_handle or (image_type_data.resource_handle.kind != .sampled_image and image_type_data.resource_handle.kind != .uniform_texel_buffer))
                     return TranslationError.UnsupportedType;
 
                 const set = variable_decoration.descriptor_set orelse return TranslationError.InvalidInstruction;
                 const binding = variable_decoration.binding orelse return TranslationError.InvalidInstruction;
                 const name = context.nameOf(@intCast(spv_index));
-                const sampler_type = try context.builder.internType(.{ .resource_handle = .{ .kind = .sampler } });
-                const sampler_name = if (name) |base| try std.fmt.allocPrint(context.scratch, "{s}_sampler", .{base}) else null;
+                const image_kind = image_type_data.resource_handle.kind;
+                const needs_sampler = image_kind != .uniform_texel_buffer;
+                const sampler_type = if (needs_sampler) try context.builder.internType(.{ .resource_handle = .{ .kind = .sampler } }) else null;
+                const sampler_name = if (needs_sampler) (if (name) |base| try std.fmt.allocPrint(context.scratch, "{s}_sampler", .{base}) else null) else null;
                 const count: usize = if (array) |array_type| try constantIndex(context, array_type.operands[2]) else 1;
                 if (count == 0)
                     return TranslationError.InvalidInstruction;
                 const sampled_images = try context.scratch.alloc(SampledImage, count);
                 for (sampled_images, 0..) |*sampled_image, array_element| {
                     sampled_image.* = .{
-                        .image = try context.builder.addResourceArrayElement(image_type, .sampled_image, set, binding, @intCast(array_element), if (array_element == 0) name else null),
-                        .sampler = try context.builder.addResourceArrayElement(sampler_type, .sampler, set, binding, @intCast(array_element), if (array_element == 0) sampler_name else null),
+                        .image = try context.builder.addResourceArrayElement(image_type, image_kind, set, binding, @intCast(array_element), if (array_element == 0) name else null),
+                        .sampler = if (sampler_type) |ty| try context.builder.addResourceArrayElement(ty, .sampler, set, binding, @intCast(array_element), if (array_element == 0) sampler_name else null) else null,
                         .image_type = image_type_id,
                     };
                 }
@@ -1197,7 +1251,7 @@ fn translateResources(context: *Context) !void {
                 .resource_handle => |handle| handle,
                 else => continue,
             };
-            if (handle.kind != .sampled_image and handle.kind != .storage_image and handle.kind != .sampler)
+            if (!isImageResourceKind(handle.kind) and handle.kind != .sampler)
                 continue;
 
             const resource = try context.builder.addResource(
@@ -1208,8 +1262,10 @@ fn translateResources(context: *Context) !void {
                 context.nameOf(@intCast(spv_index)),
             );
             context.resources[spv_index] = resource;
-            if (handle.kind == .sampled_image or handle.kind == .storage_image)
+            if (isImageResourceKind(handle.kind)) {
                 context.image_resources[spv_index] = resource;
+                context.image_types[spv_index] = pointee_id;
+            }
             continue;
         }
         const is_descriptor_array = pointee.opcode == .type_array;
@@ -1874,12 +1930,14 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
 
             if (try context.resource(operands[2])) |resource| {
                 const resource_data = context.module.resources.get(resource) orelse return TranslationError.InvalidId;
-                if (resource_data.kind == .sampled_image or resource_data.kind == .storage_image or resource_data.kind == .sampler) {
+                if (isImageResourceKind(resource_data.kind) or resource_data.kind == .sampler) {
                     if (resource_data.type != try context.translateType(operands[0]) or context.resources[result_index] != null)
                         return TranslationError.InvalidInstruction;
                     context.resources[result_index] = resource;
-                    if (resource_data.kind == .sampled_image or resource_data.kind == .storage_image)
+                    if (isImageResourceKind(resource_data.kind)) {
                         context.image_resources[result_index] = resource;
+                        context.image_types[result_index] = context.image_types[try context.idIndex(operands[2])];
+                    }
                     return;
                 }
             }
@@ -1912,7 +1970,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             const result_type = try context.translateType(operands[0]);
             if (try context.resource(operands[2])) |resource| {
                 const resource_data = context.module.resources.get(resource) orelse return TranslationError.InvalidId;
-                if (resource_data.kind == .sampled_image or resource_data.kind == .storage_image or resource_data.kind == .sampler) {
+                if (isImageResourceKind(resource_data.kind) or resource_data.kind == .sampler) {
                     if (resource_data.type != result_type)
                         return TranslationError.InvalidInstruction;
 
@@ -1921,8 +1979,10 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                         return TranslationError.DuplicateId;
 
                     context.resources[result_index] = resource;
-                    if (resource_data.kind == .sampled_image or resource_data.kind == .storage_image)
+                    if (isImageResourceKind(resource_data.kind)) {
                         context.image_resources[result_index] = resource;
+                        context.image_types[result_index] = operands[0];
+                    }
                     return;
                 }
             }
@@ -2101,7 +2161,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             const sampler_id = (try context.resource(operands[3])) orelse return TranslationError.UnsupportedOpcode;
             const image = context.module.resources.get(image_id) orelse return TranslationError.InvalidId;
             const sampler = context.module.resources.get(sampler_id) orelse return TranslationError.InvalidId;
-            if (image.kind != .sampled_image or sampler.kind != .sampler or image.type != try context.translateType(result_type.operands[1]))
+            if ((image.kind != .sampled_image and image.kind != .uniform_texel_buffer) or sampler.kind != .sampler or image.type != try context.translateType(result_type.operands[1]))
                 return TranslationError.InvalidInstruction;
 
             const result_index = try context.idIndex(operands[1]);
@@ -2121,10 +2181,12 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
 
             const sampled_image = (try context.sampledImage(operands[2])) orelse return TranslationError.UnsupportedOpcode;
             const image_info = try imageTypeInfo(context, sampled_image.image_type);
+            if (image_info.dimension == .buffer)
+                return TranslationError.UnsupportedOpcode;
             const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
                 .image_sample_implicit_lod = .{
                     .image = sampled_image.image,
-                    .sampler = sampled_image.sampler,
+                    .sampler = sampled_image.sampler orelse return TranslationError.UnsupportedOpcode,
                     .coordinate = try context.resolveValue(operands[3]),
                     .dimension = image_info.dimension,
                     .arrayed = image_info.arrayed,
@@ -2139,13 +2201,15 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
 
             const sampled_image = (try context.sampledImage(operands[2])) orelse return TranslationError.UnsupportedOpcode;
             const image_info = try imageTypeInfo(context, sampled_image.image_type);
+            if (image_info.dimension == .buffer)
+                return TranslationError.UnsupportedOpcode;
             if (image_info.dimension != .two_d or image_info.arrayed)
                 return TranslationError.UnsupportedOpcode;
 
             const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
                 .image_gather = .{
                     .image = sampled_image.image,
-                    .sampler = sampled_image.sampler,
+                    .sampler = sampled_image.sampler orelse return TranslationError.UnsupportedOpcode,
                     .coordinate = try context.resolveValue(operands[3]),
                     .component = try context.resolveValue(operands[4]),
                     .dimension = image_info.dimension,
@@ -2161,12 +2225,64 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
 
             const sampled_image = (try context.sampledImage(operands[2])) orelse return TranslationError.UnsupportedOpcode;
             const image_info = try imageTypeInfo(context, sampled_image.image_type);
+            if (image_info.dimension == .buffer)
+                return TranslationError.UnsupportedOpcode;
             const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
                 .image_sample_explicit_lod = .{
                     .image = sampled_image.image,
-                    .sampler = sampled_image.sampler,
+                    .sampler = sampled_image.sampler orelse return TranslationError.UnsupportedOpcode,
                     .coordinate = try context.resolveValue(operands[3]),
                     .lod = try context.resolveValue(operands[5]),
+                    .dimension = image_info.dimension,
+                    .arrayed = image_info.arrayed,
+                },
+            }, context.nameOf(operands[1]))).?;
+            try context.setValue(operands[1], result);
+        },
+
+        .image => {
+            try expectOperandCount(operands, 3);
+            const sampled_image = (try context.sampledImage(operands[2])) orelse return TranslationError.UnsupportedOpcode;
+            if (operands[0] != sampled_image.image_type)
+                return TranslationError.InvalidInstruction;
+
+            const result_index = try context.idIndex(operands[1]);
+            if (context.resources[result_index] != null or context.image_resources[result_index] != null)
+                return TranslationError.DuplicateId;
+
+            context.resources[result_index] = sampled_image.image;
+            context.image_resources[result_index] = sampled_image.image;
+            context.image_types[result_index] = sampled_image.image_type;
+        },
+
+        .image_fetch => {
+            if (operands.len < 4)
+                return TranslationError.InvalidInstruction;
+
+            const resource = (try context.imageResource(operands[2])) orelse return TranslationError.UnsupportedOpcode;
+            const image_type = context.image_types[try context.idIndex(operands[2])] orelse return TranslationError.MissingDefinition;
+            const image_info = try imageTypeInfo(context, image_type);
+            if (image_info.dimension == .cube)
+                return TranslationError.UnsupportedOpcode;
+
+            const lod: ?ir.id.ValueId = if (image_info.dimension == .buffer) blk: {
+                if (operands.len != 4)
+                    return TranslationError.UnsupportedOpcode;
+                break :blk null;
+            } else blk: {
+                if (operands.len == 4)
+                    break :blk try context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = 0 });
+                if (operands.len != 6 or operands[4] != 0x2)
+                    return TranslationError.UnsupportedOpcode;
+                break :blk try context.resolveValue(operands[5]);
+            };
+
+            const coordinate = try canonicalizeImageCoordinate(context, block, operands[3], image_info);
+            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+                .image_fetch = .{
+                    .resource = resource,
+                    .coordinate = coordinate,
+                    .lod = lod,
                     .dimension = image_info.dimension,
                     .arrayed = image_info.arrayed,
                 },
@@ -2179,8 +2295,16 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                 return TranslationError.InvalidInstruction;
 
             const resource = (try context.imageResource(operands[2])) orelse return TranslationError.UnsupportedOpcode;
+            const image_type = context.image_types[try context.idIndex(operands[2])] orelse return TranslationError.MissingDefinition;
+            const image_info = try imageTypeInfo(context, image_type);
+            const coordinate = try canonicalizeImageCoordinate(context, block, operands[3], image_info);
             const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
-                .image_read = .{ .resource = resource, .coordinate = try context.resolveValue(operands[3]) },
+                .image_read = .{
+                    .resource = resource,
+                    .coordinate = coordinate,
+                    .dimension = image_info.dimension,
+                    .arrayed = image_info.arrayed,
+                },
             }, context.nameOf(operands[1]))).?;
 
             try context.setValue(operands[1], result);
@@ -2191,10 +2315,15 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                 return TranslationError.InvalidInstruction;
 
             const resource = (try context.imageResource(operands[0])) orelse return TranslationError.UnsupportedOpcode;
+            const image_type = context.image_types[try context.idIndex(operands[0])] orelse return TranslationError.MissingDefinition;
+            const image_info = try imageTypeInfo(context, image_type);
+            const coordinate = try canonicalizeImageCoordinate(context, block, operands[1], image_info);
             _ = try context.builder.appendInstruction(block, null, .{ .image_write = .{
                 .resource = resource,
-                .coordinate = try context.resolveValue(operands[1]),
+                .coordinate = coordinate,
                 .value = try context.resolveValue(operands[2]),
+                .dimension = image_info.dimension,
+                .arrayed = image_info.arrayed,
             } }, null);
         },
 
@@ -2210,9 +2339,13 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             if (context.image_addresses[index] != null)
                 return TranslationError.DuplicateId;
 
+            const image_type = context.image_types[try context.idIndex(operands[2])] orelse return TranslationError.MissingDefinition;
+            const image_info = try imageTypeInfo(context, image_type);
             context.image_addresses[index] = .{
                 .resource = resource,
                 .coordinate = try context.resolveValue(operands[3]),
+                .dimension = image_info.dimension,
+                .arrayed = image_info.arrayed,
             };
         },
 
@@ -2837,6 +2970,8 @@ fn translateImageAtomicIAdd(context: *Context, block: ir.id.BlockId, operands: [
     const previous_vector = (try context.builder.appendInstruction(block, vector_type, .{ .image_read = .{
         .resource = address.resource,
         .coordinate = address.coordinate,
+        .dimension = address.dimension,
+        .arrayed = address.arrayed,
     } }, null)).?;
     var components: [4]ir.id.ValueId = undefined;
     for (&components, 0..) |*component, index| {
@@ -2859,6 +2994,8 @@ fn translateImageAtomicIAdd(context: *Context, block: ir.id.BlockId, operands: [
         .resource = address.resource,
         .coordinate = address.coordinate,
         .value = updated_vector,
+        .dimension = address.dimension,
+        .arrayed = address.arrayed,
     } }, null);
 
     try context.setValue(operands[1], previous);

@@ -193,7 +193,14 @@ fn writeType(module: *const module_ir.Module, writer: *std.Io.Writer, type_id: i
             try writeType(module, writer, pointer.pointee_type);
             try writer.writeByte(']');
         },
-        .resource_handle => |handle| try writer.print("resourceHandle[{t}]", .{handle.kind}),
+        .resource_handle => |handle| {
+            try writer.print("resourceHandle[{t}", .{handle.kind});
+            if (handle.data_type) |data_type| {
+                try writer.writeAll(", ");
+                try writeType(module, writer, data_type);
+            }
+            try writer.writeByte(']');
+        },
         .runtime_array => |array| {
             try writer.writeAll("runtime_array[");
             try writeType(module, writer, array.element_type);
@@ -341,6 +348,20 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             try writeNamedRef(writer, if (resource) |r| r.name else null, "resource", op.resource.index());
             try writer.writeAll(", ");
             try writeValueRef(module, writer, op.coordinate);
+            if (op.dimension != .two_d or op.arrayed)
+                try writer.print(", dimension {t}, arrayed {}", .{ op.dimension, op.arrayed });
+        },
+        .image_fetch => |op| {
+            try writer.writeAll("image_fetch ");
+            const resource = module.resources.get(op.resource);
+            try writeNamedRef(writer, if (resource) |r| r.name else null, "resource", op.resource.index());
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.coordinate);
+            if (op.lod) |lod| {
+                try writer.writeAll(", lod ");
+                try writeValueRef(module, writer, lod);
+            }
+            try writer.print(", dimension {t}, arrayed {}", .{ op.dimension, op.arrayed });
         },
         .image_sample_explicit_lod => |op| {
             try writer.writeAll("image_sample_explicit_lod ");
@@ -387,6 +408,8 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             try writeValueRef(module, writer, op.coordinate);
             try writer.writeAll(", ");
             try writeValueRef(module, writer, op.value);
+            if (op.dimension != .two_d or op.arrayed)
+                try writer.print(", dimension {t}, arrayed {}", .{ op.dimension, op.arrayed });
         },
         .control_barrier => try writer.writeAll("control_barrier"),
         .call => |op| {

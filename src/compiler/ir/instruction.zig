@@ -224,6 +224,16 @@ pub const LoadWorkgroup = struct {
 pub const ImageRead = struct {
     resource: ResourceId,
     coordinate: ValueId,
+    dimension: type_ir.ImageDimension = .two_d,
+    arrayed: bool = false,
+};
+
+pub const ImageFetch = struct {
+    resource: ResourceId,
+    coordinate: ValueId,
+    lod: ?ValueId = null,
+    dimension: type_ir.ImageDimension = .two_d,
+    arrayed: bool = false,
 };
 
 pub const ImageSampleExplicitLod = struct {
@@ -256,6 +266,8 @@ pub const ImageWrite = struct {
     resource: ResourceId,
     coordinate: ValueId,
     value: ValueId,
+    dimension: type_ir.ImageDimension = .two_d,
+    arrayed: bool = false,
 };
 
 pub const StoreWorkgroup = struct {
@@ -296,6 +308,7 @@ pub const Operation = union(enum) {
     load_workgroup: LoadWorkgroup,
     store_workgroup: StoreWorkgroup,
     image_read: ImageRead,
+    image_fetch: ImageFetch,
     image_sample_explicit_lod: ImageSampleExplicitLod,
     image_sample_implicit_lod: ImageSampleImplicitLod,
     image_gather: ImageGather,
@@ -364,6 +377,10 @@ pub const Operation = union(enum) {
                 visitor(context, op.value);
             },
             .image_read => |op| visitor(context, op.coordinate),
+            .image_fetch => |op| {
+                visitor(context, op.coordinate);
+                if (op.lod) |lod| visitor(context, lod);
+            },
             .image_sample_explicit_lod => |op| {
                 visitor(context, op.coordinate);
                 visitor(context, op.lod);
@@ -454,6 +471,10 @@ pub const Operation = union(enum) {
                 replaceOne(&op.value, old, replacement, &count);
             },
             .image_read => |*op| replaceOne(&op.coordinate, old, replacement, &count),
+            .image_fetch => |*op| {
+                replaceOne(&op.coordinate, old, replacement, &count);
+                if (op.lod) |*lod| replaceOne(lod, old, replacement, &count);
+            },
             .image_sample_explicit_lod => |*op| {
                 replaceOne(&op.coordinate, old, replacement, &count);
                 replaceOne(&op.lod, old, replacement, &count);

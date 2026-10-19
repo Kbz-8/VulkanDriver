@@ -8,6 +8,7 @@ const Batch = @import("Dispatcher.zig").Batch;
 const Shader = @import("../../interpreter/Shader.zig");
 const Program = @import("../../interpreter/Program.zig");
 const Runtime = @import("../../interpreter/Runtime.zig");
+const SoftBufferView = @import("../../SoftBufferView.zig");
 const SoftImageView = @import("../../SoftImageView.zig");
 const SoftSampler = @import("../../SoftSampler.zig");
 
@@ -28,12 +29,14 @@ pub const Context = struct {
     num_workgroups: ?ir.id.InterfaceVariableId,
     workgroup_size: ?ir.id.InterfaceVariableId,
     resource_buffers: []?[]u8,
+    resource_texel_buffers: []?*SoftBufferView,
     resource_images: []?*SoftImageView,
     resource_samplers: []?*SoftSampler,
     push_constants: []const u8,
 
     pub fn deinit(self: *Context, allocator: std.mem.Allocator) void {
         allocator.free(self.resource_buffers);
+        allocator.free(self.resource_texel_buffers);
         allocator.free(self.resource_images);
         allocator.free(self.resource_samplers);
         self.* = undefined;
@@ -56,6 +59,16 @@ pub fn prepare(allocator: std.mem.Allocator, shader: *Shader, state: *const Pipe
         const resource = optional_resource orelse continue;
         if (resource.kind == .storage_buffer or resource.kind == .uniform_buffer)
             buffer.* = try ExecutionDevice.mapBuffer(state, resource.set, resource.binding, resource.array_element);
+    }
+
+    const resource_texel_buffers = allocator.alloc(?*SoftBufferView, shader.program.resources.len) catch return VkError.OutOfDeviceMemory;
+    errdefer allocator.free(resource_texel_buffers);
+    @memset(resource_texel_buffers, null);
+
+    for (shader.program.resources, resource_texel_buffers) |optional_resource, *buffer_view| {
+        const resource = optional_resource orelse continue;
+        if (resource.kind == .uniform_texel_buffer or resource.kind == .storage_texel_buffer)
+            buffer_view.* = try ExecutionDevice.mapTexelBuffer(state, resource.set, resource.binding, resource.array_element);
     }
 
     const resource_images = allocator.alloc(?*SoftImageView, shader.program.resources.len) catch return VkError.OutOfDeviceMemory;
@@ -95,6 +108,7 @@ pub fn prepare(allocator: std.mem.Allocator, shader: *Shader, state: *const Pipe
         .num_workgroups = findInputBuiltin(&shader.program, .num_workgroups),
         .workgroup_size = findInputBuiltin(&shader.program, .workgroup_size),
         .resource_buffers = resource_buffers,
+        .resource_texel_buffers = resource_texel_buffers,
         .resource_images = resource_images,
         .resource_samplers = resource_samplers,
         .push_constants = state.push_constant_blob[0..],
@@ -202,6 +216,7 @@ fn runBarrierWorkgroup(context: Context, batch: Batch, runtimes: []Runtime, stat
 fn runOptions(context: Context, memory: []u8) Runtime.RunOptions {
     return .{
         .resource_buffers = context.resource_buffers,
+        .resource_texel_buffers = context.resource_texel_buffers,
         .resource_images = context.resource_images,
         .resource_samplers = context.resource_samplers,
         .push_constants = context.push_constants,

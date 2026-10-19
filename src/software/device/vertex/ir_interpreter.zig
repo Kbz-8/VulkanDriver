@@ -8,6 +8,7 @@ const Runtime = @import("../../interpreter/Runtime.zig");
 const SoftPipeline = @import("../../SoftPipeline.zig");
 const Renderer = @import("../Renderer.zig");
 const ExecutionDevice = @import("../Device.zig");
+const SoftBufferView = @import("../../SoftBufferView.zig");
 const SoftImageView = @import("../../SoftImageView.zig");
 const SoftSampler = @import("../../SoftSampler.zig");
 const blitter = @import("../blitter.zig");
@@ -66,6 +67,16 @@ pub fn run(data: RunData) VkError!void {
         const resource = optional_resource orelse continue;
         if (resource.kind == .storage_buffer or resource.kind == .uniform_buffer)
             buffer.* = try ExecutionDevice.mapBuffer(draw_call.renderer.state, resource.set, resource.binding, resource.array_element);
+    }
+
+    const resource_texel_buffers = allocator.alloc(?*SoftBufferView, shader.program.resources.len) catch return VkError.OutOfDeviceMemory;
+    defer allocator.free(resource_texel_buffers);
+    @memset(resource_texel_buffers, null);
+
+    for (shader.program.resources, resource_texel_buffers) |optional_resource, *buffer_view| {
+        const resource = optional_resource orelse continue;
+        if (resource.kind == .uniform_texel_buffer or resource.kind == .storage_texel_buffer)
+            buffer_view.* = try ExecutionDevice.mapTexelBuffer(draw_call.renderer.state, resource.set, resource.binding, resource.array_element);
     }
 
     const resource_images = allocator.alloc(?*SoftImageView, shader.program.resources.len) catch return VkError.OutOfDeviceMemory;
@@ -140,6 +151,7 @@ pub fn run(data: RunData) VkError!void {
         const shader_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
         const outcome = slot.runtime.runWave(&shader.program, .{
             .resource_buffers = resource_buffers,
+            .resource_texel_buffers = resource_texel_buffers,
             .resource_images = resource_images,
             .resource_samplers = resource_samplers,
             .push_constants = draw_call.renderer.state.push_constant_blob[0..],

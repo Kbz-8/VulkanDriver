@@ -125,6 +125,12 @@ Resources are declared at module scope. Every `ResourceKind` uses the same
 @name: TYPE = storage_buffer[set(N), binding(N)]
 ```
 
+Image resources use `sampled_image` / `storage_image`; buffer-dimensional images
+use `uniform_texel_buffer` / `storage_texel_buffer`, respectively. Their type can
+be the numeric texel element type or `resourceHandle[KIND, TYPE]`. Shape belongs
+to the image operation, not the resource handle. Texel-buffer fetches do not use
+a sampler, including combined SPIR-V `samplerBuffer` declarations.
+
 The declaration `TYPE` is the storage buffer's block or payload aggregate type;
 it does not constrain the type of each byte-addressed access. Both operations
 accept storage buffers, and byte offsets must have a scalar unsigned integer
@@ -650,10 +656,44 @@ Reads a value from a storage image at a coordinate.
 %value: vec4[f32] = image_read @img, %coord
 ```
 
-The resource must be a `storage_image`. Semantically, the coordinate is a
-floating-point vector with one component per image dimension, and the result
-is the sampled pixel value. The current validator checks the resource kind and
-result presence only.
+The resource must be a `storage_image`, or `storage_texel_buffer` when
+`dimension buffer` is specified. An optional suffix preserves image shape:
+
+```text
+%value: vec4[f32] = image_read @img, %coord, dimension one_d, arrayed true
+```
+
+The omitted suffix means `dimension two_d, arrayed false`; the printer preserves
+the old unsuffixed form for this default. The SPIR-V frontend requires integer32
+texel coordinates and retains the consumed coordinate prefix without numeric
+conversion, ignoring any extra components allowed by SPIR-V. Storage cube reads and writes, both arrayed and
+non-arrayed, require exactly three `i32` or `u32` coordinates `(x, y, z)`. Here z
+is the view-relative face/layer index: a face in `[0, 6)` for a non-arrayed cube,
+or the combined face/layer for a cube array. There is no fourth coordinate and
+no compiler-side face/layer splitting. Coordinate bounds are a runtime concern;
+the validator checks the cube coordinate type and width. This differs from
+sampled cube arrays, which use four floating-point components.
+
+For compatibility with old IR, other storage shapes still check coordinate
+existence rather than imposing new coordinate/result type restrictions on
+reads/writes. Arrayed 3D images and arrayed buffers are rejected.
+
+### `image_fetch`
+
+Performs an unfiltered, integer-coordinate lookup without a sampler:
+
+```text
+%value: vec4[f32] = image_fetch @img, %coord, lod %lod, dimension two_d, arrayed false
+%texel: vec4[u32] = image_fetch @buffer, %index, dimension buffer, arrayed false
+```
+
+Non-buffer fetches require a `sampled_image` and a scalar `i32`/`u32` LOD.
+Buffer fetches require a `uniform_texel_buffer` and forbid LOD. Coordinates use
+32-bit signed or unsigned integer components: one for 1D/buffer, two for 2D,
+three for 3D, plus one array-layer component for arrayed 1D/2D images. The result
+must be a numeric four-component vector whose element type matches the resource's
+image data type. Cube fetches, arrayed 3D/buffer shapes, and multisampling are
+unsupported. This is a compiler IR contract, not a backend support guarantee.
 
 ### `image_sample_explicit_lod`
 
@@ -668,7 +708,10 @@ resource. The coordinate is a float vector with one component per image
 dimension, plus one more when `arrayed` is true. The level of detail is an
 `f32` value. The result is a four-component float vector; if the image carries
 a data type, its element type must match. The `dimension` is one of
-`one_d`, `two_d`, `three_d`, or `cube`.
+`one_d`, `two_d`, `three_d`, or `cube`. Sampling and gathering reject `buffer`.
+For compatibility, sampling IR validation still accepts arrayed 3D shapes with
+four-component coordinates; storage/fetch validation and the SPIR-V frontend
+reject arrayed 3D images.
 
 ### `image_sample_implicit_lod`
 
@@ -705,7 +748,9 @@ fields, but their presence does not imply support for other gather forms.
 ### `image_write`
 
 Writes a value to a storage image at a coordinate. It produces no SSA result.
-The resource must be a `storage_image`. This operation has side effects.
+The resource must be a `storage_image`, or a `storage_texel_buffer` for
+`dimension buffer`. This operation has side effects. It accepts the same optional
+`dimension ..., arrayed ...` suffix and defaults as `image_read`.
 
 ```text
 image_write @img, %coord, %value
@@ -993,6 +1038,25 @@ omitted from the selected entry point. The translator lowers a defined subset:
   corresponding extension subdirectory. Only the listed extended instructions
   are implemented; an opcode's presence in the GLSL.std.450 enum alone does not
   imply translation support.
+- Non-multisampled storage images with 1D, 1D-array, 2D, 2D-array, 3D, cube,
+  cube-array, or buffer shape. `OpImageRead` / `OpImageWrite` retain dimension
+  and arrayness. Image fetch/read/write coordinates must be integer32 scalars or
+  vectors with at least the required number of components; extra components are
+  discarded through prefix extraction when lowering to IR. Buffer/1D accesses
+  consume one component, arrayed 1D/2D consume two/three, and 3D/cube/cube-array
+  consume three. Cube-array z remains the combined face/layer, not a fourth
+  coordinate. `OpImageTexelPointer` is not subject to this normalization.
+  Buffer images with `Sampled` 1/2 map to uniform/storage texel-buffer resources.
+  Arrayed 3D/buffer types are rejected.
+- Core `OpImage` extracts the image resource from a sampled image. `OpImageFetch`
+  lowers to unfiltered `image_fetch`: only the `Lod` image operand is supported
+  for non-buffer images. Omitting image operands selects view-relative LOD zero,
+  which the frontend materializes as an explicit integer32 constant to preserve
+  the public IR requirement for non-buffer LOD. Buffer fetches have no image
+  operands or LOD. Cube and
+  multisampled fetches are rejected. Combined buffer descriptors do not allocate
+  an unused sampler resource. Sampling/gathering buffer images is rejected.
+  Image size queries, `UClamp`, and additional atomic operations are not added.
 - `OpImageGather` on non-arrayed 2D sampled images without optional image
   operands, mapped to `image_gather` with an explicit component selector.
 - Decorated stage inputs and outputs, with interface load and store. Partial

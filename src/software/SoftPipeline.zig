@@ -477,7 +477,7 @@ fn mapBufferViewTexel(buffer_view: *const SoftBufferView, x: i32) SpvRuntimeErro
         return SpvRuntimeError.Unknown;
 
     const buffer: *SoftBuffer = @alignCast(@fieldParentPtr("interface", buffer_view.interface.buffer));
-    return buffer.mapAsSliceWithOffset(
+    return buffer.mapAsSliceWithAddedOffset(
         u8,
         @as(usize, @intCast(buffer_view.interface.offset)) + texel_offset,
         texel_size,
@@ -540,10 +540,10 @@ fn readImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32,
             }
             break :blk readImageFloat4Sample(image, image_coord, subresource, format, sample_index) catch return SpvRuntimeError.Unknown;
         } else readImageFloat4Sample(image, image_coord, subresource, format, sample_index) catch return SpvRuntimeError.Unknown;
-        const decoded_pixel = if (dim == .SubpassData and
-            (image.interface.samples.toInt() > 1 or isMaxAttachmentsResolveSubpass()) and
-            base.format.isSrgb(format) and
-            !isSingleInputSingleColorSubpass())
+        const decoded_pixel = if (base.format.isSrgb(format) and
+            (dim != .SubpassData or
+                ((image.interface.samples.toInt() > 1 or isMaxAttachmentsResolveSubpass()) and
+                    !isSingleInputSingleColorSubpass())))
             zm.srgbToRgb(raw_pixel)
         else
             raw_pixel;
@@ -616,6 +616,60 @@ fn readImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, l
     };
 }
 
+const ImageWriteLocation = struct {
+    coord: vk.Offset3D,
+    subresource: vk.ImageSubresource,
+};
+
+fn imageWriteLocation(image_view: *const SoftImageView, dim: spv.SpvDim, x: i32, y: i32, z: i32) ?ImageWriteLocation {
+    const view = &image_view.interface;
+    const image: *const SoftImage = @alignCast(@fieldParentPtr("interface", view.image));
+    const range = view.subresource_range;
+    if (range.base_mip_level >= image.interface.mip_levels or range.level_count == 0)
+        return null;
+
+    const coord: vk.Offset3D = switch (view.view_type) {
+        .@"1d", .@"1d_array" => .{ .x = x, .y = 0, .z = 0 },
+        .@"2d", .@"2d_array", .cube, .cube_array => .{ .x = x, .y = y, .z = 0 },
+        else => .{ .x = x, .y = y, .z = z },
+    };
+
+    const extent = image.getMipLevelExtent(range.base_mip_level);
+
+    if (coord.x < 0 or coord.y < 0 or coord.z < 0 or
+        @as(u32, @intCast(coord.x)) >= extent.width or
+        @as(u32, @intCast(coord.y)) >= extent.height or
+        @as(u32, @intCast(coord.z)) >= extent.depth)
+        return null;
+
+    const relative_layer = std.math.cast(u32, switch (view.view_type) {
+        .@"1d_array" => y,
+        .@"2d_array", .cube_array => z,
+        .cube => if (dim == .Cube) z else 0,
+        else => @as(i32, 0),
+    }) orelse return null;
+
+    if (view.view_type == .cube and relative_layer >= 6)
+        return null;
+
+    const layer_limit = if (image.interface.image_type == .@"3d" and image.interface.flags.@"2d_array_compatible")
+        extent.depth
+    else
+        image.interface.array_layers;
+
+    if (range.base_array_layer >= layer_limit or relative_layer >= layer_limit - range.base_array_layer or relative_layer >= view.layerCount())
+        return null;
+
+    return .{
+        .coord = coord,
+        .subresource = .{
+            .aspect_mask = range.aspect_mask,
+            .mip_level = range.base_mip_level,
+            .array_layer = range.base_array_layer + relative_layer,
+        },
+    };
+}
+
 fn writeImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, pixel: spv.Runtime.Vec4(f32)) SpvRuntimeError!void {
     const vec_pixel = zm.f32x4(pixel.x, pixel.y, pixel.z, pixel.w);
     if (dim == .Buffer) {
@@ -626,18 +680,10 @@ fn writeImageFloat4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32
     } else {
         const image_view: *SoftImageView = @ptrCast(@alignCast(context));
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
-        const cube_face: u32 = if (dim == .Cube) @intCast(z) else 0;
+        const location = imageWriteLocation(image_view, dim, x, y, z) orelse return;
         image.writeFloat4(
-            .{
-                .x = x,
-                .y = y,
-                .z = if (dim == .Cube) 0 else z,
-            },
-            .{
-                .aspect_mask = image_view.interface.subresource_range.aspect_mask,
-                .mip_level = image_view.interface.subresource_range.base_mip_level,
-                .array_layer = image_view.interface.subresource_range.base_array_layer + cube_face,
-            },
+            location.coord,
+            location.subresource,
             image_view.interface.format,
             vec_pixel,
         ) catch return SpvRuntimeError.Unknown;
@@ -654,18 +700,10 @@ fn writeImageInt4(context: *anyopaque, dim: spv.SpvDim, x: i32, y: i32, z: i32, 
     } else {
         const image_view: *SoftImageView = @ptrCast(@alignCast(context));
         const image: *SoftImage = @alignCast(@fieldParentPtr("interface", image_view.interface.image));
-        const cube_face: u32 = if (dim == .Cube) @intCast(z) else 0;
+        const location = imageWriteLocation(image_view, dim, x, y, z) orelse return;
         image.writeInt4(
-            .{
-                .x = x,
-                .y = y,
-                .z = if (dim == .Cube) 0 else z,
-            },
-            .{
-                .aspect_mask = image_view.interface.subresource_range.aspect_mask,
-                .mip_level = image_view.interface.subresource_range.base_mip_level,
-                .array_layer = image_view.interface.subresource_range.base_array_layer + cube_face,
-            },
+            location.coord,
+            location.subresource,
             image_view.interface.format,
             vec_pixel,
         ) catch return SpvRuntimeError.Unknown;
@@ -782,4 +820,210 @@ fn queryImageLod(context: *anyopaque, context2: *anyopaque, dim: spv.SpvDim, der
         .z = 0.0,
         .w = 0.0,
     };
+}
+
+test "external floating image fetch decodes sRGB before view swizzle and preserves alpha" {
+    const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
+    var bytes = [_]u8{ 128, 64, 255, 128 };
+    var memory: SoftDeviceMemory = .{ .interface = undefined, .data = &bytes };
+    memory.interface.size = bytes.len;
+    memory.interface.vtable = &.{
+        .destroy = SoftDeviceMemory.destroy,
+        .map = SoftDeviceMemory.map,
+        .unmap = SoftDeviceMemory.unmap,
+        .flushRange = SoftDeviceMemory.flushRange,
+        .invalidateRange = SoftDeviceMemory.invalidateRange,
+    };
+    var device: base.Device = undefined;
+    const image = try SoftImage.create(&device, std.testing.allocator, &.{
+        .s_type = .image_create_info,
+        .p_next = null,
+        .flags = .{},
+        .image_type = .@"2d",
+        .format = .r8g8b8a8_srgb,
+        .extent = .{ .width = 1, .height = 1, .depth = 1 },
+        .mip_levels = 1,
+        .array_layers = 1,
+        .samples = .{ .@"1" = true },
+        .tiling = .optimal,
+        .usage = .{ .sampled = true },
+        .sharing_mode = .exclusive,
+        .queue_family_index_count = 0,
+        .p_queue_family_indices = null,
+        .initial_layout = .preinitialized,
+    });
+    defer image.interface.destroy(std.testing.allocator);
+    image.interface.memory = &memory.interface;
+    var view: SoftImageView = undefined;
+    view.interface.image = &image.interface;
+    view.interface.view_type = .@"2d";
+    view.interface.format = .r8g8b8a8_srgb;
+    view.interface.components = .{ .r = .b, .g = .r, .b = .g, .a = .identity };
+    view.interface.subresource_range = .{
+        .aspect_mask = .{ .color = true },
+        .base_mip_level = 0,
+        .level_count = 1,
+        .base_array_layer = 0,
+        .layer_count = 1,
+    };
+    const pixel = try imageApi().readImageFloat4(&view, .@"2D", 0, 0, 0, 0);
+    try std.testing.expectApproxEqAbs(@as(f32, 1), pixel.x, 0.00001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.2158605), pixel.y, 0.00001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.05126946), pixel.z, 0.00001);
+    try std.testing.expectApproxEqAbs(@as(f32, 128.0 / 255.0), pixel.w, 0.00001);
+
+    // Moving alpha into RGB and RGB into alpha distinguishes decode-before-swizzle.
+    view.interface.components = .{ .r = .a, .g = .r, .b = .g, .a = .b };
+    const reordered = try imageApi().readImageFloat4(&view, .@"2D", 0, 0, 0, 0);
+    try std.testing.expectApproxEqAbs(@as(f32, 128.0 / 255.0), reordered.x, 0.00001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.2158605), reordered.y, 0.00001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1), reordered.w, 0.00001);
+
+    view.interface.format = .r8g8b8a8_unorm;
+    const linear = try imageApi().readImageFloat4(&view, .@"2D", 0, 0, 0, 0);
+    try std.testing.expectApproxEqAbs(@as(f32, 128.0 / 255.0), linear.y, 0.00001);
+}
+
+test "external texel-buffer callbacks include buffer binding and view offsets" {
+    const SoftDeviceMemory = @import("SoftDeviceMemory.zig");
+    var bytes: [128]u8 = @splat(0xa5);
+    var memory: SoftDeviceMemory = .{ .interface = undefined, .data = &bytes };
+    memory.interface.size = bytes.len;
+    memory.interface.vtable = &.{
+        .destroy = SoftDeviceMemory.destroy,
+        .map = SoftDeviceMemory.map,
+        .unmap = SoftDeviceMemory.unmap,
+        .flushRange = SoftDeviceMemory.flushRange,
+        .invalidateRange = SoftDeviceMemory.invalidateRange,
+    };
+    var buffer: SoftBuffer = undefined;
+    buffer.interface.memory = &memory.interface;
+    buffer.interface.offset = 32;
+    buffer.interface.size = 64;
+    var view: SoftBufferView = undefined;
+    view.interface.buffer = &buffer.interface;
+    view.interface.offset = 16;
+    view.interface.range = 8;
+    view.interface.format = .r32_uint;
+
+    const texel = try mapBufferViewTexel(&view, 1);
+    try std.testing.expectEqual(@as(usize, 4), texel.len);
+    try std.testing.expectEqual(@intFromPtr(&bytes[32 + 16 + 4]), @intFromPtr(texel.ptr));
+    const integer: u32 = 0x12345678;
+    try writeImageInt4(&view, .Buffer, 1, 0, 0, .{ .x = integer, .y = 0, .z = 0, .w = 0 });
+    try std.testing.expectEqual(integer, (try readImageInt4(&view, .Buffer, 1, 0, 0, null)).x);
+
+    view.interface.format = .r32_sfloat;
+    const float: f32 = 1.25;
+    try writeImageFloat4(&view, .Buffer, 0, 0, 0, .{ .x = float, .y = 0, .z = 0, .w = 0 });
+    try std.testing.expectEqual(float, (try readImageFloat4(&view, .Buffer, 0, 0, 0, null)).x);
+    var expected: [128]u8 = @splat(0xa5);
+    @memcpy(expected[48..52], std.mem.asBytes(&float));
+    @memcpy(expected[52..56], std.mem.asBytes(&integer));
+    try std.testing.expectEqualSlices(u8, &expected, &bytes);
+
+    try std.testing.expectError(SpvRuntimeError.Unknown, mapBufferViewTexel(&view, -1));
+    try std.testing.expectError(SpvRuntimeError.Unknown, mapBufferViewTexel(&view, 2));
+    view.interface.range = vk.WHOLE_SIZE;
+    const last_texel = try mapBufferViewTexel(&view, 11);
+    try std.testing.expectEqual(@intFromPtr(&bytes[32 + 16 + 11 * 4]), @intFromPtr(last_texel.ptr));
+    try std.testing.expectError(SpvRuntimeError.Unknown, mapBufferViewTexel(&view, 12));
+}
+
+test "external image writes separate spatial coordinates from array layers and cube faces" {
+    var image: SoftImage = undefined;
+    image.interface.image_type = .@"2d";
+    image.interface.extent = .{ .width = 16, .height = 16, .depth = 16 };
+    image.interface.mip_levels = 3;
+    image.interface.array_layers = 24;
+    image.interface.flags = .{};
+    var view: SoftImageView = undefined;
+    view.interface.image = &image.interface;
+    view.interface.subresource_range = .{
+        .aspect_mask = .{ .color = true },
+        .base_mip_level = 1,
+        .level_count = 1,
+        .base_array_layer = 6,
+        .layer_count = 12,
+    };
+    const Case = struct {
+        view_type: vk.ImageViewType,
+        dim: spv.SpvDim,
+        input: vk.Offset3D,
+        coord: vk.Offset3D,
+        layer: u32,
+    };
+    const cases = [_]Case{
+        .{ .view_type = .@"1d_array", .dim = .@"1D", .input = .{ .x = 3, .y = 2, .z = -1 }, .coord = .{ .x = 3, .y = 0, .z = 0 }, .layer = 8 },
+        .{ .view_type = .@"2d_array", .dim = .@"2D", .input = .{ .x = 3, .y = 4, .z = 2 }, .coord = .{ .x = 3, .y = 4, .z = 0 }, .layer = 8 },
+        .{ .view_type = .cube, .dim = .Cube, .input = .{ .x = 3, .y = 4, .z = 5 }, .coord = .{ .x = 3, .y = 4, .z = 0 }, .layer = 11 },
+        .{ .view_type = .cube_array, .dim = .Cube, .input = .{ .x = 3, .y = 4, .z = 8 }, .coord = .{ .x = 3, .y = 4, .z = 0 }, .layer = 14 },
+        .{ .view_type = .@"3d", .dim = .@"3D", .input = .{ .x = 3, .y = 4, .z = 2 }, .coord = .{ .x = 3, .y = 4, .z = 2 }, .layer = 0 },
+    };
+    for (cases) |case| {
+        view.interface.view_type = case.view_type;
+        image.interface.image_type = switch (case.view_type) {
+            .@"1d_array" => .@"1d",
+            .@"3d" => .@"3d",
+            else => .@"2d",
+        };
+        view.interface.subresource_range.base_array_layer = if (case.view_type == .@"3d") 0 else 6;
+        view.interface.subresource_range.layer_count = switch (case.view_type) {
+            .@"3d" => 1,
+            .cube => 6,
+            else => 12,
+        };
+        const location = imageWriteLocation(&view, case.dim, case.input.x, case.input.y, case.input.z).?;
+        try std.testing.expectEqualDeep(case.coord, location.coord);
+        try std.testing.expectEqual(case.layer, location.subresource.array_layer);
+        try std.testing.expectEqual(@as(u32, 1), location.subresource.mip_level);
+        try std.testing.expectEqualDeep(view.interface.subresource_range.aspect_mask, location.subresource.aspect_mask);
+    }
+}
+
+test "external image writes discard coordinates outside the view and selected mip" {
+    var image: SoftImage = undefined;
+    image.interface.image_type = .@"2d";
+    image.interface.extent = .{ .width = 16, .height = 16, .depth = 1 };
+    image.interface.mip_levels = 3;
+    image.interface.array_layers = 8;
+    image.interface.flags = .{};
+    var view: SoftImageView = undefined;
+    view.interface.image = &image.interface;
+    view.interface.view_type = .@"2d_array";
+    view.interface.subresource_range = .{
+        .aspect_mask = .{ .color = true },
+        .base_mip_level = 1,
+        .level_count = 1,
+        .base_array_layer = 4,
+        .layer_count = 2,
+    };
+    const outside = [_]vk.Offset3D{
+        .{ .x = -1, .y = 0, .z = 0 },
+        .{ .x = 0, .y = -1, .z = 0 },
+        .{ .x = 0, .y = 0, .z = -1 },
+        .{ .x = 8, .y = 0, .z = 0 },
+        .{ .x = 0, .y = 8, .z = 0 },
+        .{ .x = 0, .y = 0, .z = 2 },
+    };
+    for (outside) |coord| {
+        try std.testing.expect(imageWriteLocation(&view, .@"2D", coord.x, coord.y, coord.z) == null);
+        // Rejection must happen before either callback attempts to map image memory.
+        try writeImageFloat4(&view, .@"2D", coord.x, coord.y, coord.z, .{ .x = 1, .y = 2, .z = 3, .w = 4 });
+        try writeImageInt4(&view, .@"2D", coord.x, coord.y, coord.z, .{ .x = 1, .y = 2, .z = 3, .w = 4 });
+    }
+    try std.testing.expect(imageWriteLocation(&view, .@"2D", 7, 7, 1) != null);
+    view.interface.subresource_range.layer_count = vk.REMAINING_ARRAY_LAYERS;
+    try std.testing.expect(imageWriteLocation(&view, .@"2D", 0, 0, 3) != null);
+    try std.testing.expect(imageWriteLocation(&view, .@"2D", 0, 0, 4) == null);
+    view.interface.view_type = .@"1d_array";
+    try std.testing.expect(imageWriteLocation(&view, .@"1D", 0, -1, 0) == null);
+    try std.testing.expect(imageWriteLocation(&view, .@"1D", 0, 4, 0) == null);
+    view.interface.view_type = .cube;
+    view.interface.subresource_range.base_array_layer = 0;
+    view.interface.subresource_range.layer_count = 6;
+    try std.testing.expect(imageWriteLocation(&view, .Cube, 0, 0, -1) == null);
+    try std.testing.expect(imageWriteLocation(&view, .Cube, 0, 0, 6) == null);
+    view.interface.subresource_range.base_mip_level = 3;
+    try std.testing.expect(imageWriteLocation(&view, .Cube, 0, 0, 0) == null);
 }

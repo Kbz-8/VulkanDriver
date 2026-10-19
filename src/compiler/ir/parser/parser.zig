@@ -517,9 +517,13 @@ const Parser = struct {
         if (std.mem.eql(u8, name, "image_read")) {
             const resource_name = (try self.expect(.at_name)).text;
             try self.expectDiscard(.comma);
+            const coordinate = try self.parseValueRef();
+            const options = try self.parseImageOptions();
             return .{ .image_read = .{
                 .resource_name = resource_name,
-                .coordinate = try self.parseValueRef(),
+                .coordinate = coordinate,
+                .dimension = options.dimension,
+                .arrayed = options.arrayed,
             } };
         }
 
@@ -528,10 +532,41 @@ const Parser = struct {
             try self.expectDiscard(.comma);
             const coordinate = try self.parseValueRef();
             try self.expectDiscard(.comma);
+            const value = try self.parseValueRef();
+            const options = try self.parseImageOptions();
             return .{ .image_write = .{
                 .resource_name = resource_name,
                 .coordinate = coordinate,
-                .value = try self.parseValueRef(),
+                .value = value,
+                .dimension = options.dimension,
+                .arrayed = options.arrayed,
+            } };
+        }
+
+        if (std.mem.eql(u8, name, "image_fetch")) {
+            const resource_name = (try self.expect(.at_name)).text;
+            try self.expectDiscard(.comma);
+            const coordinate = try self.parseValueRef();
+            var lod: ?ValueRef = null;
+            const saved_lexer = self.lexer;
+
+            if (try self.consume(.comma)) {
+                const option = try self.peek();
+                if (option.tag == .identifier and std.mem.eql(u8, option.text, "lod")) {
+                    _ = try self.take();
+                    lod = try self.parseValueRef();
+                } else {
+                    self.lexer = saved_lexer;
+                }
+            }
+
+            const options = try self.parseImageOptions();
+            return .{ .image_fetch = .{
+                .resource_name = resource_name,
+                .coordinate = coordinate,
+                .lod = lod,
+                .dimension = options.dimension,
+                .arrayed = options.arrayed,
             } };
         }
 
@@ -844,12 +879,14 @@ const Parser = struct {
 
             const kind_name = (try self.expect(.identifier)).text;
             const kind = std.meta.stringToEnum(type_ir.ResourceKind, kind_name) orelse return Error.InvalidType;
+            const data_type = if (try self.consume(.comma)) try self.parseType() else null;
 
             try self.expectDiscard(.right_square);
 
             return module.internType(.{
                 .resource_handle = .{
                     .kind = kind,
+                    .data_type = data_type,
                 },
             });
         }
@@ -1204,6 +1241,73 @@ test "Parser: image and indexed interface operation errors" {
             \\    %coord: constant vec2[f32] = null
             \\    %pixel: constant vec4[f32] = null
             \\    %index: constant u32 = 1
+            \\    fn @main() -> void
+            \\    {{
+            \\        .entry():
+            \\            {s}
+            \\            return
+            \\    }}
+            \\}}
+        , .{case.operation});
+        defer std.testing.allocator.free(source);
+        try std.testing.expectError(case.expected, parseString(std.testing.allocator, source));
+    }
+}
+
+test "Parser: image fetch and storage shapes round trip" {
+    const source =
+        \\shader compute @main
+        \\{
+        \\    @texture: resourceHandle[sampled_image, f32] = sampled_image[set(0), binding(0)]
+        \\    @texels: resourceHandle[uniform_texel_buffer, u32] = uniform_texel_buffer[set(0), binding(1)]
+        \\    @storage: resourceHandle[storage_texel_buffer, u32] = storage_texel_buffer[set(0), binding(2)]
+        \\    @array: f32 = storage_image[set(0), binding(3)]
+        \\    %index: constant i32 = 0
+        \\    %coord: constant vec3[u32] = null
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            %fetch: vec4[f32] = image_fetch @texture, %coord, lod %index, dimension two_d, arrayed true
+        \\            %texel: vec4[u32] = image_fetch @texels, %index, dimension buffer, arrayed false
+        \\            %read: vec4[u32] = image_read @storage, %index, dimension buffer, arrayed false
+        \\            image_write @storage, %index, %texel, dimension buffer, arrayed false
+        \\            image_write @array, %coord, %fetch, dimension two_d, arrayed true
+        \\            return
+        \\    }
+        \\}
+    ;
+    var module = try parseString(std.testing.allocator, source);
+    defer module.deinit();
+    const printer = @import("../printer.zig");
+    const printed = try printer.allocPrint(std.testing.allocator, &module);
+    defer std.testing.allocator.free(printed);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "resourceHandle[uniform_texel_buffer, u32]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "image_fetch @texture, %coord, lod %index, dimension two_d, arrayed true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "image_fetch @texels, %index, dimension buffer, arrayed false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "image_read @storage, %index, dimension buffer, arrayed false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "image_write @array, %coord, %fetch, dimension two_d, arrayed true") != null);
+    var reparsed = try parseString(std.testing.allocator, printed);
+    defer reparsed.deinit();
+    const reprinted = try printer.allocPrint(std.testing.allocator, &reparsed);
+    defer std.testing.allocator.free(reprinted);
+    try std.testing.expectEqualStrings(printed, reprinted);
+}
+
+test "Parser: image fetch operand errors" {
+    const cases = [_]struct { operation: []const u8, expected: anyerror }{
+        .{ .operation = "%x: vec4[f32] = image_fetch @missing, %coord, lod %lod", .expected = Error.UnknownResource },
+        .{ .operation = "%x: vec4[f32] = image_fetch @image, %missing, lod %lod", .expected = Error.UnknownValue },
+        .{ .operation = "%x: vec4[f32] = image_fetch @image, %coord, lod %missing", .expected = Error.UnknownValue },
+        .{ .operation = "%x: vec4[f32] = image_fetch @image, %coord, lod", .expected = Error.UnexpectedToken },
+        .{ .operation = "%x = image_fetch @image, %coord, lod %lod", .expected = Error.MissingResultType },
+    };
+    for (cases) |case| {
+        const source = try std.fmt.allocPrint(std.testing.allocator,
+            \\shader compute @main
+            \\{{
+            \\    @image: f32 = sampled_image[set(0), binding(0)]
+            \\    %coord: constant vec2[i32] = null
+            \\    %lod: constant i32 = 0
             \\    fn @main() -> void
             \\    {{
             \\        .entry():
