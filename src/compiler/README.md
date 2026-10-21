@@ -1070,6 +1070,11 @@ omitted from the selected entry point. The translator lowers a defined subset:
   accepts two matching three-component floating vectors and lowers to component
   extraction, multiplication, subtraction, and vector construction, preserving
   the operand precision without requiring a dedicated IR or interpreter opcode.
+  `Reflect` accepts matching floating scalars or vectors and lowers
+  `I - 2 * dot(N, I) * N` to existing arithmetic and vector operations (scalar
+  multiplication replaces the dot product for scalars). It preserves operand
+  precision and assumes the supplied normal is normalized; it does not normalize
+  it implicitly. No dedicated IR or interpreter opcode is needed.
   `OpExtInstImport` declarations are classified once and dispatched through
   `src/compiler/spirv/extensions/`; set-specific translation lives below the
   corresponding extension subdirectory. Only the listed extended instructions

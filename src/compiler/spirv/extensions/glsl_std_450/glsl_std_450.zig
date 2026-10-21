@@ -120,6 +120,7 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
         .normalize => translateUnary(emitter, invocation, .normalize),
         .pow => translateBinary(emitter, invocation, .pow),
         .radians => translateUnary(emitter, invocation, .radians),
+        .reflect => translateReflect(emitter, invocation),
         .round => translateUnary(emitter, invocation, .round),
         .s_abs => translateUnary(emitter, invocation, .integer_absolute),
         .s_sign => translateUnary(emitter, invocation, .integer_sign),
@@ -238,6 +239,48 @@ fn translateCross(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Valu
     }
     return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
         .composite_construct = .{ .elements = &elements },
+    }, invocation.result_name)).?;
+}
+
+fn translateReflect(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
+    if (invocation.operands.len != 2)
+        return error.InvalidInstruction;
+
+    const scalar_type = try floatScalarType(emitter.module, invocation.result_type);
+    const incident = invocation.operands[0];
+    const normal = invocation.operands[1];
+
+    if (emitter.module.typeOf(incident) != invocation.result_type or emitter.module.typeOf(normal) != invocation.result_type)
+        return error.InvalidInstruction;
+
+    const is_vector = scalar_type != invocation.result_type;
+
+    const dot = (try emitter.builder.appendInstruction(emitter.block, scalar_type, .{
+        .binary = .{
+            .opcode = if (is_vector) .dot else .float_multiply,
+            .lhs = normal,
+            .rhs = incident,
+        },
+    }, null)).?;
+
+    const doubled = (try emitter.builder.appendInstruction(emitter.block, scalar_type, .{
+        .binary = .{ .opcode = .float_add, .lhs = dot, .rhs = dot },
+    }, null)).?;
+
+    const scaled_normal = (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = if (is_vector) .vector_times_scalar else .float_multiply,
+            .lhs = normal,
+            .rhs = doubled,
+        },
+    }, null)).?;
+
+    return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = .float_subtract,
+            .lhs = incident,
+            .rhs = scaled_normal,
+        },
     }, invocation.result_name)).?;
 }
 
