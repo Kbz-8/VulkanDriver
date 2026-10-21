@@ -4,6 +4,7 @@ const shader_ir = @import("shader_ir");
 const bc = @import("../bytecode.zig");
 const Program = @import("../Program.zig");
 const Runtime = @import("../Runtime.zig");
+const expectWords = @import("slot_helpers.zig").expectWords;
 
 inline fn reg(index: u16) bc.Register {
     return @fromBackingInt(@intCast(index));
@@ -94,13 +95,13 @@ test "[interpreter] float vectors convert to signed and unsigned integers" {
     defer runtime.deinit();
 
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
-    try std.testing.expectEqualSlices(u32, &.{
+    try expectWords(&.{
         @bitCast(@as(i32, -2)),
         @bitCast(@as(i32, 0)),
         @bitCast(@as(i32, 17)),
         @bitCast(@as(i32, 2147483520)),
     }, runtime.registers[8..12]);
-    try std.testing.expectEqualSlices(u32, &.{ 0, 1, 42, 4294967040 }, runtime.registers[12..16]);
+    try expectWords(&.{ 0, 1, 42, 4294967040 }, runtime.registers[12..16]);
 }
 
 test "[interpreter] float-to-integer conversions do not trap for unspecified results" {
@@ -125,7 +126,7 @@ test "[interpreter] float-to-integer conversions do not trap for unspecified res
     defer runtime.deinit();
 
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
-    try std.testing.expectEqualSlices(u32, &.{
+    try expectWords(&.{
         @bitCast(@as(i32, 0)),
         @bitCast(@as(i32, std.math.maxInt(i32))),
         @bitCast(@as(i32, std.math.minInt(i32))),
@@ -134,7 +135,7 @@ test "[interpreter] float-to-integer conversions do not trap for unspecified res
         @bitCast(@as(i32, -2)),
     }, runtime.registers[6..12]);
 
-    try std.testing.expectEqualSlices(u32, &.{
+    try expectWords(&.{
         0,
         std.math.maxInt(u32),
         0,
@@ -153,10 +154,10 @@ test "[interpreter] signed and unsigned integer vectors convert to float" {
         .{ .opcode = .return_void },
     };
     const initializers = [_]Program.RegisterInit{
-        .{ .register = reg(0), .value = @bitCast(@as(i32, -2)) },
-        .{ .register = reg(1), .value = @bitCast(@as(i32, 0)) },
-        .{ .register = reg(2), .value = @bitCast(@as(i32, 17)) },
-        .{ .register = reg(3), .value = @bitCast(@as(i32, std.math.minInt(i32))) },
+        .{ .register = reg(0), .value = @as(u32, @bitCast(@as(i32, -2))) },
+        .{ .register = reg(1), .value = @as(u32, @bitCast(@as(i32, 0))) },
+        .{ .register = reg(2), .value = @as(u32, @bitCast(@as(i32, 17))) },
+        .{ .register = reg(3), .value = @as(u32, @bitCast(@as(i32, std.math.minInt(i32)))) },
         .{ .register = reg(4), .value = 0 },
         .{ .register = reg(5), .value = 1 },
         .{ .register = reg(6), .value = 42 },
@@ -186,6 +187,7 @@ test "[interpreter] signed and unsigned integer vectors convert to float" {
         f32Bits(42.0),
         f32Bits(@floatFromInt(std.math.maxInt(u32))),
     };
+    try expectWords(&expected, runtime.registers[8..16]);
     for (expected, 0..) |value, index| {
         const offset = index * @sizeOf(u32);
         try std.testing.expectEqual(value, std.mem.readInt(u32, output[offset..][0..@sizeOf(u32)], .little));
