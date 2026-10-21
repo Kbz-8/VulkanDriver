@@ -544,6 +544,7 @@ fn storeRegisterVectorMasked(self: *Self, register: bc.Register, values: U32x4, 
 
 fn loadSlotVector(self: *const Self, register: bc.Register) SlotVector {
     const index: usize = @backingInt(register);
+    // SAFETY: the following loop initializes every vector lane before result is returned
     var result: SlotVector = undefined;
     inline for (0..lane_count) |lane|
         result[lane] = self.register_backing[lane * self.register_count + index];
@@ -1946,6 +1947,7 @@ fn imageSample(
     if (derivatives) |gradient|
         lod = SoftSampler.lodFromDerivatives(image, view, dimension, coordinate, gradient);
 
+    // SAFETY: initialized in the next condition
     var biased_sampler: SoftSampler = undefined;
     const sampling_sampler = if (pair.bias != .invalid_register) blk: {
         if (lod == null)
