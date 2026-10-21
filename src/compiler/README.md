@@ -250,44 +250,51 @@ Form:
 %result: <type> = <opcode> %operand
 ```
 
-| Opcode        | Description                                                        | Usage                                                                     | Small printed example            |
-| ------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------- | -------------------------------- |
-| `absolute`    | Computes the floating-point absolute value component-wise.         | Floating scalar or vector; the result has the same type.                  | `%2: f32 = absolute %1`          |
-| `acos`        | Computes the arc cosine in radians component-wise.                 | Floating scalar or vector; the result has the same type.                  | `%2: f32 = acos %1`              |
-| `acosh`       | Computes the inverse hyperbolic cosine component-wise.             | Floating scalar or vector; the result has the same type.                  | `%2: f32 = acosh %1`             |
-| `all`         | True when all components of the operand are true.                  | Boolean vector operand; scalar boolean result.                            | `%2: bool = all %1`              |
-| `any`         | True when any component of the operand is true.                    | Boolean vector operand; scalar boolean result.                            | `%2: bool = any %1`              |
-| `asin`        | Computes the arc sine in radians component-wise.                   | Floating scalar or vector; the result has the same type.                  | `%2: f32 = asin %1`              |
-| `asinh`       | Computes the inverse hyperbolic sine component-wise.               | Floating scalar or vector; the result has the same type.                  | `%2: f32 = asinh %1`             |
-| `atan`        | Computes the arc tangent in radians component-wise.                | Floating scalar or vector; the result has the same type.                  | `%2: f32 = atan %1`              |
-| `atanh`       | Computes the inverse hyperbolic tangent component-wise.            | Floating scalar or vector; the result has the same type.                  | `%2: f32 = atanh %1`             |
-| `bit_count`   | Counts the set bits in each component.                             | Integer scalar or vector; result has the same width and shape.            | `%2: u32 = bit_count %1`         |
-| `bit_reverse` | Reverses the bits in each component.                               | Integer scalar or vector; result has the same width and shape.            | `%2: u32 = bit_reverse %1`       |
-| `bitwise_not` | Inverts every bit.                                                 | Integer scalar or vector; result has the same width and shape.            | `%2: u32 = bitwise_not %1`       |
-| `ceil`        | Rounds each component toward positive infinity.                    | Floating scalar or vector; the result has the same type.                  | `%2: f32 = ceil %1`              |
-| `cos`         | Computes the cosine of an angle in radians component-wise.         | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = cos %1`         |
-| `cosh`        | Computes the hyperbolic cosine component-wise.                     | Floating scalar or vector; the result has the same type.                  | `%2: f32 = cosh %1`              |
-| `d_pdx`       | Computes the partial derivative with respect to screen x.          | Fragment-only floating scalar or vector; result has the same type.        | `%2: f32 = d_pdx %1`             |
-| `d_pdy`       | Computes the partial derivative with respect to screen y.          | Fragment-only floating scalar or vector; result has the same type.        | `%2: vec3[f32] = d_pdy %1`       |
-| `exp`         | Computes the natural exponential component-wise.                   | Floating scalar or vector; the result has the same type.                  | `%2: f32 = exp %1`               |
-| `exp2`        | Computes the base-two exponential component-wise.                  | Floating scalar or vector; the result has the same type.                  | `%2: f32 = exp2 %1`              |
-| `floor`       | Rounds each component toward negative infinity.                    | Floating scalar or vector; the result has the same type.                  | `%2: f32 = floor %1`             |
-| `fwidth`      | Computes `abs(dFdx(x)) + abs(dFdy(x))` component-wise.             | Fragment-only floating scalar or vector; result has the same type.        | `%2: vec3[f32] = fwidth %1`      |
-| `is_inf`      | Tests each component for positive or negative infinity.            | Floating scalar or vector; result is a matching boolean scalar or vector. | `%2: bool = is_inf %1`           |
-| `is_nan`      | Tests each component for NaN.                                      | Floating scalar or vector; result is a matching boolean scalar or vector. | `%2: vec4[bool] = is_nan %1`     |
-| `length`      | Computes a vector's Euclidean length or a scalar's absolute value. | Floating scalar or vector; result is the scalar element type.             | `%2: f32 = length %1`            |
-| `log`         | Computes the natural logarithm component-wise.                     | Floating scalar or vector; the result has the same type.                  | `%2: f32 = log %1`               |
-| `log2`        | Computes the base-two logarithm component-wise.                    | Floating scalar or vector; the result has the same type.                  | `%2: f32 = log2 %1`              |
-| `logical_not` | Inverts each boolean component.                                    | Boolean scalar or vector; the result has the same type.                   | `%2: bool = logical_not %1`      |
-| `negate`      | Changes the arithmetic sign.                                       | Signed integer or floating operand; the result has the same type.         | `%2: i32 = negate %1`            |
-| `normalize`   | Produces a floating value with unit length.                        | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = normalize %1`   |
-| `round`       | Rounds each component to the nearest integer.                      | Floating scalar or vector; the result has the same type.                  | `%2: f32 = round %1`             |
-| `sign`        | Produces -1, 0, or 1 according to the operand's sign.              | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = sign %1`        |
-| `sin`         | Computes the sine of an angle in radians component-wise.           | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = sin %1`         |
-| `sinh`        | Computes the hyperbolic sine component-wise.                       | Floating scalar or vector; the result has the same type.                  | `%2: f32 = sinh %1`              |
-| `tan`         | Computes the tangent of an angle in radians component-wise.        | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = tan %1`         |
-| `tanh`        | Computes the hyperbolic tangent component-wise.                    | Floating scalar or vector; the result has the same type.                  | `%2: f32 = tanh %1`              |
-| `transpose`   | Exchanges the rows and columns of a floating-point matrix.         | Floating matrix; result has reversed row and column counts.               | `%2: mat2x3[f32] = transpose %1` |
+| Opcode             | Description                                                        | Usage                                                                     | Small printed example             |
+| ------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------- | --------------------------------- |
+| `acos`             | Computes the arc cosine in radians component-wise.                 | Floating scalar or vector; the result has the same type.                  | `%2: f32 = acos %1`               |
+| `acosh`            | Computes the inverse hyperbolic cosine component-wise.             | Floating scalar or vector; the result has the same type.                  | `%2: f32 = acosh %1`              |
+| `all`              | True when all components of the operand are true.                  | Boolean vector operand; scalar boolean result.                            | `%2: bool = all %1`               |
+| `any`              | True when any component of the operand is true.                    | Boolean vector operand; scalar boolean result.                            | `%2: bool = any %1`               |
+| `asin`             | Computes the arc sine in radians component-wise.                   | Floating scalar or vector; the result has the same type.                  | `%2: f32 = asin %1`               |
+| `asinh`            | Computes the inverse hyperbolic sine component-wise.               | Floating scalar or vector; the result has the same type.                  | `%2: f32 = asinh %1`              |
+| `atan`             | Computes the arc tangent in radians component-wise.                | Floating scalar or vector; the result has the same type.                  | `%2: f32 = atan %1`               |
+| `atanh`            | Computes the inverse hyperbolic tangent component-wise.            | Floating scalar or vector; the result has the same type.                  | `%2: f32 = atanh %1`              |
+| `bit_count`        | Counts the set bits in each component.                             | Integer scalar or vector; result has the same width and shape.            | `%2: u32 = bit_count %1`          |
+| `bit_reverse`      | Reverses the bits in each component.                               | Integer scalar or vector; result has the same width and shape.            | `%2: u32 = bit_reverse %1`        |
+| `bitwise_not`      | Inverts every bit.                                                 | Integer scalar or vector; result has the same width and shape.            | `%2: u32 = bitwise_not %1`        |
+| `ceil`             | Rounds each component toward positive infinity.                    | Floating scalar or vector; the result has the same type.                  | `%2: f32 = ceil %1`               |
+| `cos`              | Computes the cosine of an angle in radians component-wise.         | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = cos %1`          |
+| `cosh`             | Computes the hyperbolic cosine component-wise.                     | Floating scalar or vector; the result has the same type.                  | `%2: f32 = cosh %1`               |
+| `d_pdx`            | Computes the partial derivative with respect to screen x.          | Fragment-only floating scalar or vector; result has the same type.        | `%2: f32 = d_pdx %1`              |
+| `d_pdy`            | Computes the partial derivative with respect to screen y.          | Fragment-only floating scalar or vector; result has the same type.        | `%2: vec3[f32] = d_pdy %1`        |
+| `degrees`          | Converts angles from radians to degrees component-wise.            | Floating scalar or vector; the result has the same type.                  | `%2: f32 = degrees %1`            |
+| `exp2`             | Computes the base-two exponential component-wise.                  | Floating scalar or vector; the result has the same type.                  | `%2: f32 = exp2 %1`               |
+| `exp`              | Computes the natural exponential component-wise.                   | Floating scalar or vector; the result has the same type.                  | `%2: f32 = exp %1`                |
+| `float_absolute`   | Computes the floating-point absolute value component-wise.         | Floating scalar or vector; the result has the same type.                  | `%2: f32 = float_absolute %1`     |
+| `float_sign`       | Produces -1, 0, or 1 according to the operand's sign.              | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = float_sign %1`   |
+| `floor`            | Rounds each component toward negative infinity.                    | Floating scalar or vector; the result has the same type.                  | `%2: f32 = floor %1`              |
+| `fract`            | Computes `x - floor(x)` component-wise.                            | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = fract %1`        |
+| `fwidth`           | Computes `abs(dFdx(x)) + abs(dFdy(x))` component-wise.             | Fragment-only floating scalar or vector; result has the same type.        | `%2: vec3[f32] = fwidth %1`       |
+| `integer_absolute` | Computes the integer absolute value component-wise.                | Integer scalar or vector; the result has the same type.                   | `%2: i32 = integer_absolute %1`   |
+| `integer_sign`     | Produces -1, 0, or 1 according to the operand's sign.              | Integer scalar or vector; the result has the same type.                   | `%2: vec3[i32] = integer_sign %1` |
+| `is_inf`           | Tests each component for positive or negative infinity.            | Floating scalar or vector; result is a matching boolean scalar or vector. | `%2: bool = is_inf %1`            |
+| `is_nan`           | Tests each component for NaN.                                      | Floating scalar or vector; result is a matching boolean scalar or vector. | `%2: vec4[bool] = is_nan %1`      |
+| `length`           | Computes a vector's Euclidean length or a scalar's absolute value. | Floating scalar or vector; result is the scalar element type.             | `%2: f32 = length %1`             |
+| `log2`             | Computes the base-two logarithm component-wise.                    | Floating scalar or vector; the result has the same type.                  | `%2: f32 = log2 %1`               |
+| `log`              | Computes the natural logarithm component-wise.                     | Floating scalar or vector; the result has the same type.                  | `%2: f32 = log %1`                |
+| `logical_not`      | Inverts each boolean component.                                    | Boolean scalar or vector; the result has the same type.                   | `%2: bool = logical_not %1`       |
+| `negate`           | Changes the arithmetic sign.                                       | Signed integer or floating operand; the result has the same type.         | `%2: i32 = negate %1`             |
+| `normalize`        | Produces a floating value with unit length.                        | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = normalize %1`    |
+| `radians`          | Converts angles from degrees to radians component-wise.            | Floating scalar or vector; the result has the same type.                  | `%2: f32 = radians %1`            |
+| `round`            | Rounds each component to the nearest integer.                      | Floating scalar or vector; the result has the same type.                  | `%2: f32 = round %1`              |
+| `sin`              | Computes the sine of an angle in radians component-wise.           | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = sin %1`          |
+| `sinh`             | Computes the hyperbolic sine component-wise.                       | Floating scalar or vector; the result has the same type.                  | `%2: f32 = sinh %1`               |
+| `sqrt`             | Computes the square root component-wise.                           | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = sqrt %1`         |
+| `tan`              | Computes the tangent of an angle in radians component-wise.        | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = tan %1`          |
+| `tanh`             | Computes the hyperbolic tangent component-wise.                    | Floating scalar or vector; the result has the same type.                  | `%2: f32 = tanh %1`               |
+| `transpose`        | Exchanges the rows and columns of a floating-point matrix.         | Floating matrix; result has reversed row and column counts.               | `%2: mat2x3[f32] = transpose %1`  |
+| `trunc`            | Rounds each component toward zero.                                 | Floating scalar or vector; the result has the same type.                  | `%2: f32 = trunc %1`              |
 
 `length` accepts a floating scalar or vector and returns the scalar element type
 (with matching precision); scalar length is the absolute value. `fwidth` accepts a
@@ -1052,9 +1059,11 @@ omitted from the selected entry point. The translator lowers a defined subset:
   mapped to `d_pdx`, `d_pdy`, and `fwidth`. Explicit fine/coarse derivative
   instructions remain unsupported.
 - GLSL.std.450 floating unary operations `Acos`, `Acosh`, `Asin`, `Asinh`,
-  `Atan`, `Atanh`, `Ceil`, `Cos`, `Cosh`, `Exp`, `Exp2`, `FAbs`, `FSign`,
-  `Floor`, `Length`, `Log`, `Log2`, `Normalize`, `Round`, `Sin`, `Sinh`, `Tan`,
-  and `Tanh`; binary operations `Atan2`, `FMax`, `FMin`, `Pow`, and `Step`;
+  `Atan`, `Atanh`, `Ceil`, `Cos`, `Cosh`, `Degrees`, `Exp`, `Exp2`, `FAbs`,
+  `FSign`, `Floor`, `Fract`, `Length`, `Log`, `Log2`, `Normalize`, `Radians`,
+  `Round`, `Sin`, `Sinh`, `Sqrt`, `Tan`, `Tanh`, and `Trunc`; signed integer
+  unary operations `SAbs` and `SSign`, mapped to `integer_absolute` and
+  `integer_sign`; binary operations `Atan2`, `FMax`, `FMin`, `Pow`, and `Step`;
   unsigned integer `UMax` and `UMin`; and ternary operations `FMix`, `Fma`, and
   `SmoothStep`. `FClamp` lowers to floating maximum followed by minimum;
   `NClamp` uses per-component comparisons and selects on `f32` vectors. `Cross`

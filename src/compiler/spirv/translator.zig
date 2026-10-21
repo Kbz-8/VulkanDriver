@@ -5954,7 +5954,7 @@ test "SPIR-V: unsupported GLSL extended instruction reports its own error" {
         \\%one = OpConstant %float 1
         \\%main = OpFunction %void None %fn_void
         \\    %entry = OpLabel
-        \\    %result = OpExtInst %float %glsl Trunc %one
+        \\    %result = OpExtInst %float %glsl RoundEven %one
         \\    OpReturn
         \\OpFunctionEnd
     ;
@@ -6005,10 +6005,10 @@ test "SPIR-V: translates common GLSL extended floating instructions" {
     try std.testing.expectEqual(@as(usize, 8), block.instructions.items.len);
 
     const absolute = module.instructions.get(block.instructions.items[0]).?;
-    try std.testing.expectEqual(ir.instruction.UnaryOpcode.absolute, absolute.operation.unary.opcode);
+    try std.testing.expectEqual(ir.instruction.UnaryOpcode.float_absolute, absolute.operation.unary.opcode);
 
     const sign = module.instructions.get(block.instructions.items[1]).?;
-    try std.testing.expectEqual(ir.instruction.UnaryOpcode.sign, sign.operation.unary.opcode);
+    try std.testing.expectEqual(ir.instruction.UnaryOpcode.float_sign, sign.operation.unary.opcode);
 
     const floored = module.instructions.get(block.instructions.items[2]).?;
     try std.testing.expectEqual(ir.instruction.UnaryOpcode.floor, floored.operation.unary.opcode);

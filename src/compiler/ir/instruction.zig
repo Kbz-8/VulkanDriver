@@ -17,7 +17,6 @@ pub const SourceLocation = struct {
 };
 
 pub const UnaryOpcode = enum {
-    absolute,
     acos,
     acosh,
     all,
@@ -34,10 +33,16 @@ pub const UnaryOpcode = enum {
     cosh,
     d_pdx,
     d_pdy,
+    degrees,
     exp,
     exp2,
+    float_absolute,
+    float_sign,
     floor,
+    fract,
     fwidth,
+    integer_absolute,
+    integer_sign,
     is_inf,
     is_nan,
     length,
@@ -46,13 +51,15 @@ pub const UnaryOpcode = enum {
     logical_not,
     negate,
     normalize,
+    radians,
     round,
-    sign,
     sin,
     sinh,
+    sqrt,
     tan,
     tanh,
     transpose,
+    trunc,
 };
 
 pub const BinaryOpcode = enum {

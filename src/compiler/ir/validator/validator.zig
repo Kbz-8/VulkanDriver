@@ -294,7 +294,10 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                     if (!isBooleanVector(module, operand_type))
                         return ValidationError.WrongOperandType;
                 },
-                .bit_count, .bit_reverse, .bitwise_not => {
+                .bit_count,
+                .bit_reverse,
+                .bitwise_not,
+                => {
                     if (!isIntegerScalarOrVector(module, operand_type))
                         return ValidationError.WrongOperandType;
 
@@ -304,7 +307,9 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                     if (!haveSameIntegerShape(module, operand_type, result))
                         return ValidationError.WrongResultType;
                 },
-                .is_inf, .is_nan => {
+                .is_inf,
+                .is_nan,
+                => {
                     const operand_shape = floatShape(module, operand_type) orelse return ValidationError.WrongOperandType;
                     if (booleanComponentCount(module, result) != operand_shape.components)
                         return ValidationError.WrongResultType;
@@ -316,14 +321,23 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                     if (result != scalar)
                         return ValidationError.WrongResultType;
                 },
-                .d_pdx, .d_pdy, .fwidth => {
+                .d_pdx,
+                .d_pdy,
+                .fwidth,
+                => {
                     if (module.stage != .fragment)
                         return ValidationError.InvalidInstruction;
                     _ = floatShape(module, operand_type) orelse return ValidationError.WrongOperandType;
                     if (result != operand_type)
                         return ValidationError.WrongResultType;
                 },
-                .absolute,
+                .integer_absolute,
+                .integer_sign,
+                => {
+                    _ = integerShape(module, operand_type) orelse return ValidationError.WrongOperandType;
+                    if (result != operand_type)
+                        return ValidationError.WrongResultType;
+                },
                 .acos,
                 .acosh,
                 .asin,
@@ -333,18 +347,24 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                 .ceil,
                 .cos,
                 .cosh,
+                .degrees,
                 .exp,
                 .exp2,
+                .float_absolute,
+                .float_sign,
                 .floor,
+                .fract,
                 .log,
                 .log2,
                 .normalize,
+                .radians,
                 .round,
-                .sign,
                 .sin,
                 .sinh,
+                .sqrt,
                 .tan,
                 .tanh,
+                .trunc,
                 => {
                     _ = floatShape(module, operand_type) orelse return ValidationError.WrongOperandType;
                     if (result != operand_type)

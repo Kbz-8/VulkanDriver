@@ -525,36 +525,32 @@ const Lowerer = struct {
                 }
 
                 const opcode: bc.Opcode = switch (op.opcode) {
-                    .absolute => if (dst.kind == .floating) .absolute else return CompileError.InvalidOperation,
                     .acos => if (dst.kind == .floating) .acos else return CompileError.InvalidOperation,
                     .acosh => if (dst.kind == .floating) .acosh else return CompileError.InvalidOperation,
-                    .all,
-                    .any,
-                    => {
-                        if (dst.kind != .boolean or dst.components != 1 or src.kind != .boolean)
-                            return CompileError.InvalidOperation;
-                        try self.emit(if (op.opcode == .all) .all else .any, src.components, dst.base, src.base, .invalid_register, .invalid_register, 0);
-                        return;
-                    },
+                    .all => return if (dst.kind == .boolean and dst.components == 1 and src.kind == .boolean) self.emit(.all, src.components, dst.base, src.base, .invalid_register, .invalid_register, 0) else CompileError.InvalidOperation,
+                    .any => return if (dst.kind == .boolean and dst.components == 1 and src.kind == .boolean) self.emit(.any, src.components, dst.base, src.base, .invalid_register, .invalid_register, 0) else CompileError.InvalidOperation,
                     .asin => if (dst.kind == .floating) .asin else return CompileError.InvalidOperation,
                     .asinh => if (dst.kind == .floating) .asinh else return CompileError.InvalidOperation,
                     .atan => if (dst.kind == .floating) .atan else return CompileError.InvalidOperation,
                     .atanh => if (dst.kind == .floating) .atanh else return CompileError.InvalidOperation,
                     .bit_count => if (isIntegerKind(dst.kind)) .bit_count else return CompileError.InvalidOperation,
                     .bit_reverse => if (isIntegerKind(dst.kind)) .bit_reverse else return CompileError.InvalidOperation,
-                    .bitwise_not => switch (dst.kind) {
-                        .signed_integer, .unsigned_integer => .bitwise_not,
-                        else => return CompileError.InvalidOperation,
-                    },
+                    .bitwise_not => if (dst.kind == .signed_integer or dst.kind == .unsigned_integer) .bitwise_not else return CompileError.InvalidOperation,
                     .ceil => if (dst.kind == .floating) .ceil else return CompileError.InvalidOperation,
                     .cos => if (dst.kind == .floating) .cos else return CompileError.InvalidOperation,
                     .cosh => if (dst.kind == .floating) .cosh else return CompileError.InvalidOperation,
                     .d_pdx => if (dst.kind == .floating and self.module.stage == .fragment) .d_pdx else return CompileError.InvalidOperation,
                     .d_pdy => if (dst.kind == .floating and self.module.stage == .fragment) .d_pdy else return CompileError.InvalidOperation,
+                    .degrees => if (dst.kind == .floating) .degrees else return CompileError.InvalidOperation,
                     .exp => if (dst.kind == .floating) .exp else return CompileError.InvalidOperation,
                     .exp2 => if (dst.kind == .floating) .exp2 else return CompileError.InvalidOperation,
+                    .float_absolute => if (dst.kind == .floating) .float_absolute else return CompileError.InvalidOperation,
+                    .float_sign => if (dst.kind == .floating) .float_sign else return CompileError.InvalidOperation,
                     .floor => if (dst.kind == .floating) .floor else return CompileError.InvalidOperation,
+                    .fract => if (dst.kind == .floating) .fract else return CompileError.InvalidOperation,
                     .fwidth => if (dst.kind == .floating and self.module.stage == .fragment) .fwidth else return CompileError.InvalidOperation,
+                    .integer_absolute => if (dst.kind == .signed_integer) .integer_absolute else return CompileError.InvalidOperation,
+                    .integer_sign => if (dst.kind == .signed_integer or dst.kind == .unsigned_integer) .integer_sign else return CompileError.InvalidOperation,
                     .log => if (dst.kind == .floating) .log else return CompileError.InvalidOperation,
                     .log2 => if (dst.kind == .floating) .log2 else return CompileError.InvalidOperation,
                     .logical_not => if (dst.kind == .boolean) .logical_not else return CompileError.InvalidOperation,
@@ -564,12 +560,14 @@ const Lowerer = struct {
                         else => return CompileError.InvalidOperation,
                     },
                     .normalize => if (dst.kind == .floating) .normalize else return CompileError.InvalidOperation,
+                    .radians => if (dst.kind == .floating) .radians else return CompileError.InvalidOperation,
                     .round => if (dst.kind == .floating) .round else return CompileError.InvalidOperation,
-                    .sign => if (dst.kind == .floating) .sign else return CompileError.InvalidOperation,
                     .sin => if (dst.kind == .floating) .sin else return CompileError.InvalidOperation,
                     .sinh => if (dst.kind == .floating) .sinh else return CompileError.InvalidOperation,
+                    .sqrt => if (dst.kind == .floating) .sqrt else return CompileError.InvalidOperation,
                     .tan => if (dst.kind == .floating) .tan else return CompileError.InvalidOperation,
                     .tanh => if (dst.kind == .floating) .tanh else return CompileError.InvalidOperation,
+                    .trunc => if (dst.kind == .floating) .trunc else return CompileError.InvalidOperation,
                     else => return CompileError.UnsupportedOperation,
                 };
                 if (!dst.sameShape(src))
@@ -1533,8 +1531,8 @@ fn binaryOpcode(op: inst_ir.BinaryOpcode, kind: bc.ValueKind) !bc.Opcode {
         .signed_multiply_extended => if (kind == .signed_integer) .signed_multiply_extended else CompileError.InvalidOperation,
         .step => if (kind == .floating) .step else CompileError.InvalidOperation,
         .unsigned_divide => if (kind == .unsigned_integer) .unsigned_divide else CompileError.InvalidOperation,
-        .unsigned_max => .int_max,
-        .unsigned_min => .int_min,
+        .unsigned_max => .integer_max,
+        .unsigned_min => .integer_min,
         .unsigned_modulo => if (kind == .unsigned_integer) .unsigned_modulo else CompileError.InvalidOperation,
         .unsigned_multiply_extended => if (kind == .unsigned_integer) .unsigned_multiply_extended else CompileError.InvalidOperation,
         .vector_times_matrix => if (kind == .floating) .vector_times_matrix else CompileError.InvalidOperation,

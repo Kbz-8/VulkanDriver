@@ -99,8 +99,8 @@ test "[interpreter] select broadcasts scalar conditions and applies vector condi
 
 test "[interpreter] GLSL extended floating operations execute component-wise" {
     const code = [_]bc.Instruction{
-        .{ .opcode = .absolute, .a = reg(8), .b = reg(0) },
-        .{ .opcode = .sign, .components = 4, .a = reg(13), .b = reg(0) },
+        .{ .opcode = .float_absolute, .a = reg(8), .b = reg(0) },
+        .{ .opcode = .float_sign, .components = 4, .a = reg(13), .b = reg(0) },
         .{ .opcode = .normalize, .components = 2, .a = reg(9), .b = reg(1) },
         .{ .opcode = .smooth_step, .a = reg(11), .b = reg(3), .c = reg(4), .d = reg(5) },
         .{ .opcode = .atan2, .a = reg(12), .b = reg(6), .c = reg(7) },
@@ -340,9 +340,9 @@ test "[interpreter] shared floating IR lowers to bytecode" {
         \\            %infinite: bool = is_inf %scalar
         \\            %nan: vec2[bool] = is_nan %vector2
         \\            %selected: vec2[u32] = select %nan, %unsigned2, %unsigned2
-        \\            %absolute_result: f32 = absolute %scalar
+        \\            %absolute_result: f32 = float_absolute %scalar
         \\            %floor_result: f32 = floor %scalar
-        \\            %sign_result: vec2[f32] = sign %vector2
+        \\            %sign_result: vec2[f32] = float_sign %vector2
         \\            %normalized: vec2[f32] = normalize %vector2
         \\            %angle: f32 = atan2 %scalar, %scalar
         \\            %powered: vec2[f32] = pow %vector2, %vector2
@@ -368,9 +368,9 @@ test "[interpreter] shared floating IR lowers to bytecode" {
         .is_inf,
         .is_nan,
         .select,
-        .absolute,
+        .float_absolute,
         .floor,
-        .sign,
+        .float_sign,
         .normalize,
         .atan2,
         .pow,

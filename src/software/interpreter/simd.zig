@@ -7,7 +7,7 @@ pub const Lane = if (lane_count == 8) u3 else u2;
 pub const LaneMask = if (lane_count == 8) u8 else u4;
 pub const full_lane_mask: LaneMask = std.math.maxInt(LaneMask);
 
-pub fn laneBit(lane: Lane) LaneMask {
+pub inline fn laneBit(lane: Lane) LaneMask {
     return @as(LaneMask, 1) << lane;
 }
 
@@ -33,8 +33,7 @@ pub fn sinh(x: anytype) @TypeOf(x) {
     const one = splat(V, 1.0);
     const m = expm1Vec(a);
     const normal = splat(V, 0.5) * (m + m / (one + m));
-    const e = @exp(a * splat(V, 0.5));
-    const large = (e * splat(V, 0.5)) * e;
+    const large = @exp(a) * splat(V, 0.5);
     const split = splat(V, @log(std.math.floatMax(F)) - 1.0);
     return withSign(select(a > split, large, normal), x);
 }
