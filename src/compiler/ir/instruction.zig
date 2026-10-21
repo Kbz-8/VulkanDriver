@@ -232,6 +232,7 @@ pub const ImageFetch = struct {
     resource: ResourceId,
     coordinate: ValueId,
     lod: ?ValueId = null,
+    offset: ?ValueId = null,
     dimension: type_ir.ImageDimension = .two_d,
     arrayed: bool = false,
 };
@@ -240,7 +241,11 @@ pub const ImageSampleExplicitLod = struct {
     image: ResourceId,
     sampler: ResourceId,
     coordinate: ValueId,
-    lod: ValueId,
+    lod: ?ValueId = null,
+    grad_x: ?ValueId = null,
+    grad_y: ?ValueId = null,
+    offset: ?ValueId = null,
+    dref: ?ValueId = null,
     dimension: type_ir.ImageDimension = .two_d,
     arrayed: bool = false,
 };
@@ -249,6 +254,9 @@ pub const ImageSampleImplicitLod = struct {
     image: ResourceId,
     sampler: ResourceId,
     coordinate: ValueId,
+    bias: ?ValueId = null,
+    offset: ?ValueId = null,
+    dref: ?ValueId = null,
     dimension: type_ir.ImageDimension,
     arrayed: bool,
 };
@@ -379,13 +387,26 @@ pub const Operation = union(enum) {
             .image_read => |op| visitor(context, op.coordinate),
             .image_fetch => |op| {
                 visitor(context, op.coordinate);
-                if (op.lod) |lod| visitor(context, lod);
+                if (op.lod) |lod|
+                    visitor(context, lod);
+
+                if (op.offset) |offset|
+                    visitor(context, offset);
             },
             .image_sample_explicit_lod => |op| {
                 visitor(context, op.coordinate);
-                visitor(context, op.lod);
+                inline for (.{ "lod", "grad_x", "grad_y", "offset", "dref" }) |field| {
+                    if (@field(op, field)) |value|
+                        visitor(context, value);
+                }
             },
-            .image_sample_implicit_lod => |op| visitor(context, op.coordinate),
+            .image_sample_implicit_lod => |op| {
+                visitor(context, op.coordinate);
+                inline for (.{ "bias", "offset", "dref" }) |field| {
+                    if (@field(op, field)) |value|
+                        visitor(context, value);
+                }
+            },
             .image_gather => |op| {
                 visitor(context, op.coordinate);
                 visitor(context, op.component);
@@ -474,12 +495,22 @@ pub const Operation = union(enum) {
             .image_fetch => |*op| {
                 replaceOne(&op.coordinate, old, replacement, &count);
                 if (op.lod) |*lod| replaceOne(lod, old, replacement, &count);
+                if (op.offset) |*offset| replaceOne(offset, old, replacement, &count);
             },
             .image_sample_explicit_lod => |*op| {
                 replaceOne(&op.coordinate, old, replacement, &count);
-                replaceOne(&op.lod, old, replacement, &count);
+                inline for (.{ "lod", "grad_x", "grad_y", "offset", "dref" }) |field| {
+                    if (@field(op, field)) |*value|
+                        replaceOne(value, old, replacement, &count);
+                }
             },
-            .image_sample_implicit_lod => |*op| replaceOne(&op.coordinate, old, replacement, &count),
+            .image_sample_implicit_lod => |*op| {
+                replaceOne(&op.coordinate, old, replacement, &count);
+                inline for (.{ "bias", "offset", "dref" }) |field| {
+                    if (@field(op, field)) |*value|
+                        replaceOne(value, old, replacement, &count);
+                }
+            },
             .image_gather => |*op| {
                 replaceOne(&op.coordinate, old, replacement, &count);
                 replaceOne(&op.component, old, replacement, &count);

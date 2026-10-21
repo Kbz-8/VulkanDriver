@@ -1,5 +1,7 @@
 const std = @import("std");
 
+pub const Slot = u64;
+
 pub const Register = enum(u16) {
     invalid_register = std.math.maxInt(u16),
     _,
@@ -47,7 +49,9 @@ pub const MatrixDimensions = struct {
 /// Native-endian internal bytecode. It is not a serialized or stable ABI
 pub const Instruction = extern struct {
     opcode: Opcode,
-    components: u16 = 1,
+    components: u8 = 1,
+    /// Scalar width for typed memory transfers and floating-point classification
+    scalar_bits: u8 = 32,
     a: Register = .invalid_register,
     b: Register = .invalid_register,
     c: Register = .invalid_register,

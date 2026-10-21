@@ -467,6 +467,7 @@ fn remapOperation(module: *module_ir.Module, value_map: []const ?ids.ValueId, op
                 .resource = op.resource,
                 .coordinate = try mappedValue(module, value_map, op.coordinate),
                 .lod = if (op.lod) |lod| try mappedValue(module, value_map, lod) else null,
+                .offset = if (op.offset) |value| try mappedValue(module, value_map, value) else null,
                 .dimension = op.dimension,
                 .arrayed = op.arrayed,
             },
@@ -476,7 +477,11 @@ fn remapOperation(module: *module_ir.Module, value_map: []const ?ids.ValueId, op
                 .image = op.image,
                 .sampler = op.sampler,
                 .coordinate = try mappedValue(module, value_map, op.coordinate),
-                .lod = try mappedValue(module, value_map, op.lod),
+                .lod = if (op.lod) |value| try mappedValue(module, value_map, value) else null,
+                .grad_x = if (op.grad_x) |value| try mappedValue(module, value_map, value) else null,
+                .grad_y = if (op.grad_y) |value| try mappedValue(module, value_map, value) else null,
+                .offset = if (op.offset) |value| try mappedValue(module, value_map, value) else null,
+                .dref = if (op.dref) |value| try mappedValue(module, value_map, value) else null,
                 .dimension = op.dimension,
                 .arrayed = op.arrayed,
             },
@@ -486,6 +491,9 @@ fn remapOperation(module: *module_ir.Module, value_map: []const ?ids.ValueId, op
                 .image = op.image,
                 .sampler = op.sampler,
                 .coordinate = try mappedValue(module, value_map, op.coordinate),
+                .bias = if (op.bias) |value| try mappedValue(module, value_map, value) else null,
+                .offset = if (op.offset) |value| try mappedValue(module, value_map, value) else null,
+                .dref = if (op.dref) |value| try mappedValue(module, value_map, value) else null,
                 .dimension = op.dimension,
                 .arrayed = op.arrayed,
             },
@@ -917,6 +925,64 @@ test "Inline All Functions: preserve unreachable loop targets and their successo
         }
     }
     try std.testing.expect(found_loop);
+}
+
+test "Inline All Functions: remap every optional image operand" {
+    const parser = @import("../parser/parser.zig");
+    const validator = @import("../validator/validator.zig");
+    var module = try parser.parseString(std.testing.allocator,
+        \\shader fragment @main
+        \\{
+        \\    @image: f32 = sampled_image[set(0), binding(0)]
+        \\    @sampler: resourceHandle[sampler] = sampler[set(0), binding(1)]
+        \\    %coord: constant vec2[f32] = null
+        \\    %scalar: constant f32 = 0.0
+        \\    %offset: constant vec2[i32] = null
+        \\    %ilod: constant i32 = 0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\            call @sample(%coord, %coord, %scalar, %offset, %ilod)
+        \\            return
+        \\    }
+        \\    fn @sample(%dx: vec2[f32], %dy: vec2[f32], %level: f32, %off: vec2[i32], %ilevel: i32) -> void
+        \\    {
+        \\        .entry():
+        \\            %fetch: vec4[f32] = image_fetch @image, %off, lod %ilevel, offset %off
+        \\            %lod: f32 = image_sample_explicit_lod @image, @sampler, %dx, %level, offset %off, dref %level
+        \\            %grad: f32 = image_sample_explicit_lod @image, @sampler, %dx, grad %dx, %dy, offset %off, dref %level
+        \\            %bias: f32 = image_sample_implicit_lod @image, @sampler, %dx, bias %level, offset %off, dref %level
+        \\            return
+        \\    }
+        \\}
+    );
+    defer module.deinit();
+
+    try std.testing.expect(try runForTest(&module));
+    try validator.validate(&module);
+    var samples: usize = 0;
+
+    for (module.instructions.entries.items) |entry| {
+        const inst = entry orelse continue;
+        switch (inst.operation) {
+            .image_fetch => |op| {
+                try std.testing.expect(op.lod != null and op.offset != null);
+                samples += 1;
+            },
+            .image_sample_explicit_lod => |op| {
+                try std.testing.expect(op.offset != null and op.dref != null);
+                try std.testing.expect((op.lod != null) != (op.grad_x != null and op.grad_y != null));
+                samples += 1;
+            },
+            .image_sample_implicit_lod => |op| {
+                try std.testing.expect(op.bias != null and op.offset != null and op.dref != null);
+                samples += 1;
+            },
+            else => {},
+        }
+    }
+
+    try std.testing.expectEqual(@as(usize, 4), samples);
 }
 
 test "Inline All Functions: remap conversion and image sampling" {

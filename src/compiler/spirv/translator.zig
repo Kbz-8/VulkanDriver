@@ -691,7 +691,7 @@ fn imageTypeInfo(context: *const Context, image_type: u32) TranslationError!Imag
         1 => true,
         else => return TranslationError.UnsupportedType,
     };
-    if (definition.operands[5] != 0 or (arrayed and (dimension == .three_d or dimension == .buffer)))
+    if (definition.operands[3] > 2 or definition.operands[5] != 0 or (arrayed and (dimension == .three_d or dimension == .buffer)))
         return TranslationError.UnsupportedType;
     return .{ .dimension = dimension, .arrayed = arrayed };
 }
@@ -740,6 +740,239 @@ fn canonicalizeImageCoordinate(context: *Context, block: ir.id.BlockId, spv_coor
             .elements = elements,
         },
     }, null)).?;
+}
+
+const ImageOperandMode = enum { implicit, explicit, fetch };
+const ImageOperands = struct {
+    bias: ?ir.id.ValueId = null,
+    lod: ?ir.id.ValueId = null,
+    grad_x: ?ir.id.ValueId = null,
+    grad_y: ?ir.id.ValueId = null,
+    offset: ?ir.id.ValueId = null,
+};
+
+fn parseImageOperands(context: *Context, words: []const u32, mode: ImageOperandMode) !ImageOperands {
+    var result: ImageOperands = .{};
+    const mask = if (words.len == 0) 0 else words[0];
+    const allowed: u32 = switch (mode) {
+        .implicit => 0x9,
+        .explicit => 0xe,
+        .fetch => 0xa,
+    };
+
+    if (mask & ~allowed != 0)
+        return TranslationError.UnsupportedOpcode;
+
+    if (mode == .explicit and ((mask & 0x2 != 0) == (mask & 0x4 != 0)))
+        return TranslationError.InvalidInstruction;
+
+    const expected: usize = @as(usize, @intFromBool(words.len != 0)) +
+        @as(usize, @intFromBool(mask & 0x1 != 0)) + @as(usize, @intFromBool(mask & 0x2 != 0)) +
+        2 * @as(usize, @intFromBool(mask & 0x4 != 0)) + @as(usize, @intFromBool(mask & 0x8 != 0));
+
+    if (words.len != expected)
+        return TranslationError.InvalidInstruction;
+
+    var index: usize = 1;
+    inline for (.{ "bias", "lod", "grad_x", "offset" }, .{ @as(u32, 1), 2, 4, 8 }) |field, bit| {
+        if (mask & bit != 0) {
+            if (comptime bit == 8) {
+                const definition = context.value_defs[try context.idIndex(words[index])] orelse return TranslationError.InvalidInstruction;
+
+                if (!isConstantOpcode(definition.opcode))
+                    return TranslationError.InvalidInstruction;
+            }
+
+            @field(result, field) = try context.resolveValue(words[index]);
+            index += 1;
+
+            if (comptime bit == 4) {
+                result.grad_y = try context.resolveValue(words[index]);
+                index += 1;
+            }
+        }
+    }
+    if (result.offset) |offset| {
+        const value = context.module.values.get(offset) orelse return TranslationError.InvalidId;
+        if (value.definition != .constant)
+            return TranslationError.InvalidInstruction;
+    }
+    return result;
+}
+
+fn imageSpatialComponents(dimension: ir.types.ImageDimension) u8 {
+    return switch (dimension) {
+        .one_d, .buffer => 1,
+        .two_d => 2,
+        .three_d, .cube => 3,
+    };
+}
+
+fn extractImageComponent(context: *Context, block: ir.id.BlockId, value: ir.id.ValueId, index: u32) !ir.id.ValueId {
+    const ty = context.module.types.get(context.module.typeOf(value).?) orelse return TranslationError.InvalidId;
+    if (ty.* != .vector) {
+        if (index != 0)
+            return TranslationError.InvalidInstruction;
+        return value;
+    }
+
+    if (index >= ty.vector.length)
+        return TranslationError.InvalidInstruction;
+
+    return (try context.builder.appendInstruction(block, ty.vector.element_type, .{
+        .composite_extract = .{ .composite = value, .indices = &.{index} },
+    }, null)).?;
+}
+
+fn canonicalizeSampleCoordinate(context: *Context, block: ir.id.BlockId, coordinate: ir.id.ValueId, image: ImageTypeInfo, projected: bool, dref: *?ir.id.ValueId) !ir.id.ValueId {
+    const coordinate_type = context.module.typeOf(coordinate) orelse return TranslationError.InvalidId;
+    const ty = context.module.types.get(coordinate_type).?.*;
+    const scalar_type = if (ty == .vector) ty.vector.element_type else coordinate_type;
+    const scalar = context.module.types.get(scalar_type).?.*;
+
+    if (scalar != .floating or scalar.floating.bits != 32)
+        return TranslationError.InvalidInstruction;
+
+    const components: u8 = if (ty == .vector) ty.vector.length else 1;
+    const spatial = imageSpatialComponents(image.dimension);
+    const required = spatial + @as(u8, @intFromBool(image.arrayed));
+
+    if (components < required + @as(u8, @intFromBool(projected)))
+        return TranslationError.InvalidInstruction;
+
+    if (!projected and components == required and (required != 1 or ty != .vector))
+        return coordinate;
+
+    const q: ?ir.id.ValueId = if (projected) try extractImageComponent(context, block, coordinate, spatial) else null;
+    const elements = try context.scratch.alloc(ir.id.ValueId, required);
+
+    for (elements, 0..) |*element, index| {
+        const component = try extractImageComponent(context, block, coordinate, @intCast(index));
+        element.* = if (q) |divisor|
+            (try context.builder.appendInstruction(block, scalar_type, .{
+                .binary = .{
+                    .opcode = .float_divide,
+                    .lhs = component,
+                    .rhs = divisor,
+                },
+            }, null)).?
+        else
+            component;
+    }
+
+    if (q) |divisor| {
+        if (dref.*) |reference| {
+            if (context.module.typeOf(reference) != scalar_type)
+                return TranslationError.InvalidInstruction;
+
+            dref.* = (try context.builder.appendInstruction(block, scalar_type, .{
+                .binary = .{
+                    .opcode = .float_divide,
+                    .lhs = reference,
+                    .rhs = divisor,
+                },
+            }, null)).?;
+        }
+    }
+
+    if (required == 1)
+        return elements[0];
+
+    const result_type = try context.builder.internType(.{
+        .vector = .{
+            .element_type = scalar_type,
+            .length = required,
+        },
+    });
+
+    return (try context.builder.appendInstruction(block, result_type, .{
+        .composite_construct = .{
+            .elements = elements,
+        },
+    }, null)).?;
+}
+
+fn translateImageSample(context: *Context, block: ir.id.BlockId, opcode: spirv.Opcode, operands: []const u32) !void {
+    const explicit = switch (opcode) {
+        .image_sample_explicit_lod,
+        .image_sample_dref_explicit_lod,
+        .image_sample_proj_explicit_lod,
+        .image_sample_proj_dref_explicit_lod,
+        => true,
+        else => false,
+    };
+
+    const projected = switch (opcode) {
+        .image_sample_proj_implicit_lod,
+        .image_sample_proj_explicit_lod,
+        .image_sample_proj_dref_implicit_lod,
+        .image_sample_proj_dref_explicit_lod,
+        => true,
+        else => false,
+    };
+
+    const depth = switch (opcode) {
+        .image_sample_dref_implicit_lod,
+        .image_sample_dref_explicit_lod,
+        .image_sample_proj_dref_implicit_lod,
+        .image_sample_proj_dref_explicit_lod,
+        => true,
+        else => false,
+    };
+
+    const prefix: usize = if (depth) 5 else 4;
+
+    if (operands.len < prefix)
+        return TranslationError.InvalidInstruction;
+
+    const sampled = (try context.sampledImage(operands[2])) orelse return TranslationError.UnsupportedOpcode;
+    const image = try imageTypeInfo(context, sampled.image_type);
+
+    if (image.dimension == .buffer)
+        return TranslationError.UnsupportedOpcode;
+
+    if (projected and (image.arrayed or image.dimension == .cube))
+        return TranslationError.InvalidInstruction;
+
+    const definition = context.type_defs[try context.idIndex(sampled.image_type)].?;
+
+    if (depth and (definition.operands[3] == 0 or image.dimension == .three_d))
+        return TranslationError.InvalidInstruction;
+
+    const optional = try parseImageOperands(context, operands[prefix..], if (explicit) .explicit else .implicit);
+    var dref: ?ir.id.ValueId = if (depth) try context.resolveValue(operands[4]) else null;
+
+    const coordinate = try canonicalizeSampleCoordinate(context, block, try context.resolveValue(operands[3]), image, projected, &dref);
+    const sampler = sampled.sampler orelse return TranslationError.UnsupportedOpcode;
+
+    const operation: ir.instruction.Operation = if (explicit) .{
+        .image_sample_explicit_lod = .{
+            .image = sampled.image,
+            .sampler = sampler,
+            .coordinate = coordinate,
+            .lod = optional.lod,
+            .grad_x = optional.grad_x,
+            .grad_y = optional.grad_y,
+            .offset = optional.offset,
+            .dref = dref,
+            .dimension = image.dimension,
+            .arrayed = image.arrayed,
+        },
+    } else .{
+        .image_sample_implicit_lod = .{
+            .image = sampled.image,
+            .sampler = sampler,
+            .coordinate = coordinate,
+            .bias = optional.bias,
+            .offset = optional.offset,
+            .dref = dref,
+            .dimension = image.dimension,
+            .arrayed = image.arrayed,
+        },
+    };
+
+    const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), operation, context.nameOf(operands[1]))).?;
+    try context.setValue(operands[1], result);
 }
 
 /// Translates one entry point from a retained SPIR-V source into an independent
@@ -1268,12 +1501,15 @@ fn translateResources(context: *Context) !void {
             }
             continue;
         }
+
         const is_descriptor_array = pointee.opcode == .type_array;
         const resource_type_id = if (is_descriptor_array) blk: {
             try expectOperandCount(pointee.operands, 3);
             break :blk pointee.operands[1];
         } else pointee_id;
+
         const resource_decoration = context.decorations[try context.idIndex(resource_type_id)];
+
         const kind: ir.types.ResourceKind = if (storage_class == .storage_buffer or resource_decoration.buffer_block)
             .storage_buffer
         else if (resource_decoration.block)
@@ -1286,8 +1522,10 @@ fn translateResources(context: *Context) !void {
         const resource_type = try context.translateType(resource_type_id);
         if (is_descriptor_array) {
             const count: usize = try constantIndex(context, pointee.operands[2]);
+
             if (count == 0)
                 return TranslationError.InvalidInstruction;
+
             const resources = try context.scratch.alloc(ir.id.ResourceId, count);
             for (resources, 0..) |*resource, array_element| {
                 resource.* = try context.builder.addResourceArrayElement(
@@ -2175,25 +2413,15 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             };
         },
 
-        .image_sample_implicit_lod => {
-            if (operands.len != 4)
-                return TranslationError.UnsupportedOpcode;
-
-            const sampled_image = (try context.sampledImage(operands[2])) orelse return TranslationError.UnsupportedOpcode;
-            const image_info = try imageTypeInfo(context, sampled_image.image_type);
-            if (image_info.dimension == .buffer)
-                return TranslationError.UnsupportedOpcode;
-            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
-                .image_sample_implicit_lod = .{
-                    .image = sampled_image.image,
-                    .sampler = sampled_image.sampler orelse return TranslationError.UnsupportedOpcode,
-                    .coordinate = try context.resolveValue(operands[3]),
-                    .dimension = image_info.dimension,
-                    .arrayed = image_info.arrayed,
-                },
-            }, context.nameOf(operands[1]))).?;
-            try context.setValue(operands[1], result);
-        },
+        .image_sample_implicit_lod,
+        .image_sample_explicit_lod,
+        .image_sample_dref_implicit_lod,
+        .image_sample_dref_explicit_lod,
+        .image_sample_proj_implicit_lod,
+        .image_sample_proj_explicit_lod,
+        .image_sample_proj_dref_implicit_lod,
+        .image_sample_proj_dref_explicit_lod,
+        => try translateImageSample(context, block, instruction.opcode, operands),
 
         .image_gather => {
             if (operands.len != 5)
@@ -2212,27 +2440,6 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                     .sampler = sampled_image.sampler orelse return TranslationError.UnsupportedOpcode,
                     .coordinate = try context.resolveValue(operands[3]),
                     .component = try context.resolveValue(operands[4]),
-                    .dimension = image_info.dimension,
-                    .arrayed = image_info.arrayed,
-                },
-            }, context.nameOf(operands[1]))).?;
-            try context.setValue(operands[1], result);
-        },
-
-        .image_sample_explicit_lod => {
-            if (operands.len != 6 or operands[4] != 0x2)
-                return TranslationError.UnsupportedOpcode;
-
-            const sampled_image = (try context.sampledImage(operands[2])) orelse return TranslationError.UnsupportedOpcode;
-            const image_info = try imageTypeInfo(context, sampled_image.image_type);
-            if (image_info.dimension == .buffer)
-                return TranslationError.UnsupportedOpcode;
-            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
-                .image_sample_explicit_lod = .{
-                    .image = sampled_image.image,
-                    .sampler = sampled_image.sampler orelse return TranslationError.UnsupportedOpcode,
-                    .coordinate = try context.resolveValue(operands[3]),
-                    .lod = try context.resolveValue(operands[5]),
                     .dimension = image_info.dimension,
                     .arrayed = image_info.arrayed,
                 },
@@ -2265,17 +2472,10 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             if (image_info.dimension == .cube)
                 return TranslationError.UnsupportedOpcode;
 
-            const lod: ?ir.id.ValueId = if (image_info.dimension == .buffer) blk: {
-                if (operands.len != 4)
-                    return TranslationError.UnsupportedOpcode;
-                break :blk null;
-            } else blk: {
-                if (operands.len == 4)
-                    break :blk try context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = 0 });
-                if (operands.len != 6 or operands[4] != 0x2)
-                    return TranslationError.UnsupportedOpcode;
-                break :blk try context.resolveValue(operands[5]);
-            };
+            const image_operands = try parseImageOperands(context, operands[4..], .fetch);
+            if (image_info.dimension == .buffer and operands.len != 4)
+                return TranslationError.UnsupportedOpcode;
+            const lod: ?ir.id.ValueId = if (image_info.dimension == .buffer) null else image_operands.lod orelse try context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = 0 });
 
             const coordinate = try canonicalizeImageCoordinate(context, block, operands[3], image_info);
             const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
@@ -2283,6 +2483,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                     .resource = resource,
                     .coordinate = coordinate,
                     .lod = lod,
+                    .offset = image_operands.offset,
                     .dimension = image_info.dimension,
                     .arrayed = image_info.arrayed,
                 },
@@ -2698,6 +2899,24 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                 },
             }, context.nameOf(operands[1]))).?;
 
+            try context.setValue(operands[1], result);
+        },
+
+        .composite_insert => {
+            if (operands.len < 5)
+                return TranslationError.InvalidInstruction;
+
+            const value = try context.resolveValue(operands[2]);
+            const composite = try context.resolveValue(operands[3]);
+
+            if (context.module.typeOf(composite) != try context.translateType(operands[0]))
+                return TranslationError.InvalidInstruction;
+
+            const indices = try context.scratch.alloc(CompositeIndex, operands.len - 4);
+            for (indices, operands[4..]) |*index, literal|
+                index.* = .{ .constant = literal };
+
+            const result = try insertCompositeAddress(context, block, composite, value, indices);
             try context.setValue(operands[1], result);
         },
 

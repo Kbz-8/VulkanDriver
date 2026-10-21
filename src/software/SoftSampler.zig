@@ -15,6 +15,7 @@ const SoftImageView = @import("SoftImageView.zig");
 const Self = @This();
 pub const Interface = base.Sampler;
 pub const ImageOffset = spv.Runtime.ImageOffset;
+pub const max_lod_bias: f32 = 2.0;
 
 const CubeCoordinate = struct {
     face: u32,
@@ -245,6 +246,88 @@ fn mipmapModeLevel(sampler: *Self, clamped_lod: f32) f32 {
         .linear => clamped_lod,
         else => @floor(clamped_lod),
     };
+}
+
+fn cubeLodDerivative(face: u32, direction: @Vector(4, f64), derivative: @Vector(4, f64)) @Vector(2, f64) {
+    const x = direction[0];
+    const y = direction[1];
+    const z = direction[2];
+    const sc, const tc, const ma = switch (face) {
+        0 => .{ -z, -y, x },
+        1 => .{ z, -y, -x },
+        2 => .{ x, z, y },
+        3 => .{ x, -z, -y },
+        4 => .{ x, -y, z },
+        5 => .{ -x, -y, -z },
+        else => unreachable,
+    };
+
+    // Zero direction has no defined cube projection
+    if (ma == 0.0)
+        return .{ 0.0, 0.0 };
+
+    const dx = derivative[0];
+    const dy = derivative[1];
+    const dz = derivative[2];
+    const dsc, const dtc, const dma = switch (face) {
+        0 => .{ -dz, -dy, dx },
+        1 => .{ dz, -dy, -dx },
+        2 => .{ dx, dz, dy },
+        3 => .{ dx, -dz, -dy },
+        4 => .{ dx, -dy, dz },
+        5 => .{ -dx, -dy, -dz },
+        else => unreachable,
+    };
+
+    const denominator = 2.0 * ma * ma;
+
+    return .{
+        (dsc * ma - sc * dma) / denominator,
+        (dtc * ma - tc * dma) / denominator,
+    };
+}
+
+/// Returns raw log2(rho) relative to image view base mip
+pub fn lodFromDerivatives(image: *SoftImage, image_view: *SoftImageView, dim: spv.SpvDim, coordinate: @Vector(4, f32), derivatives: spv.Runtime.ImageDerivatives) f32 {
+    const extent = image.getMipLevelExtent(image_view.interface.subresource_range.base_mip_level);
+    const scale: [3]f64 = .{
+        @floatFromInt(extent.width),
+        @floatFromInt(extent.height),
+        @floatFromInt(extent.depth),
+    };
+
+    var dx: @Vector(4, f64) = .{ derivatives.dx.x, derivatives.dx.y, derivatives.dx.z, 0.0 };
+    var dy: @Vector(4, f64) = .{ derivatives.dy.x, derivatives.dy.y, derivatives.dy.z, 0.0 };
+    if (dim == .Cube) {
+        const center: @Vector(4, f64) = @floatCast(coordinate);
+        const face = resolveCubeCoordinate(coordinate[0], coordinate[1], coordinate[2]).face;
+        const uv_dx = cubeLodDerivative(face, center, dx);
+        const uv_dy = cubeLodDerivative(face, center, dy);
+        dx = .{ uv_dx[0], uv_dx[1], 0.0, 0.0 };
+        dy = .{ uv_dy[0], uv_dy[1], 0.0, 0.0 };
+    }
+
+    const spatial_dimensions: usize = switch (dim) {
+        .@"2D", .Rect, .Cube => 2,
+        .@"3D" => 3,
+        else => 1,
+    };
+
+    var dx_squared: f64 = 0.0;
+    var dy_squared: f64 = 0.0;
+
+    inline for (0..3) |axis| {
+        if (axis < spatial_dimensions) {
+            const scaled_dx = dx[axis] * scale[axis];
+            const scaled_dy = dy[axis] * scale[axis];
+            dx_squared += scaled_dx * scaled_dx;
+            dy_squared += scaled_dy * scaled_dy;
+        }
+    }
+
+    const rho = @sqrt(@max(dx_squared, dy_squared));
+
+    return if (rho == 0.0) -std.math.inf(f32) else @floatCast(@log2(rho));
 }
 
 pub fn queryImageLod(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, derivatives: spv.Runtime.ImageDerivatives) F32x4 {

@@ -863,7 +863,7 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                 return ValidationError.WrongOperandType;
 
             if (op.dimension == .buffer) {
-                if (op.lod != null)
+                if (op.lod != null or op.offset != null)
                     return ValidationError.InvalidInstruction;
             } else {
                 const lod = op.lod orelse return ValidationError.InvalidInstruction;
@@ -872,6 +872,7 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                     return ValidationError.WrongOperandType;
             }
 
+            try validateImageOffset(module, function_id, op.offset, op.dimension);
             try validateImageFetchResult(module, resource, result_type);
         },
         .image_sample_explicit_lod => |op| {
@@ -884,21 +885,34 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                 op.coordinate,
                 op.dimension,
                 op.arrayed,
+                op.dref,
             );
 
-            if (!isFloat(module, try operandType(module, function_id, op.lod), 32))
-                return ValidationError.WrongOperandType;
+            if ((op.lod != null) == (op.grad_x != null or op.grad_y != null) or (op.grad_x == null) != (op.grad_y == null))
+                return ValidationError.InvalidInstruction;
+
+            if (op.lod) |lod| {
+                if (!isFloat(module, try operandType(module, function_id, lod), 32))
+                    return ValidationError.WrongOperandType;
+            }
+
+            inline for (.{ "grad_x", "grad_y" }) |field| {
+                if (@field(op, field)) |grad| {
+                    if (floatComponentCount(module, try operandType(module, function_id, grad), 32) != imageSpatialComponents(op.dimension))
+                        return ValidationError.WrongOperandType;
+                }
+            }
+
+            try validateImageOffset(module, function_id, op.offset, op.dimension);
         },
-        .image_sample_implicit_lod => |op| try validateImageSample(
-            module,
-            function_id,
-            result_type,
-            op.image,
-            op.sampler,
-            op.coordinate,
-            op.dimension,
-            op.arrayed,
-        ),
+        .image_sample_implicit_lod => |op| {
+            try validateImageSample(module, function_id, result_type, op.image, op.sampler, op.coordinate, op.dimension, op.arrayed, op.dref);
+            if (op.bias) |bias| {
+                if (!isFloat(module, try operandType(module, function_id, bias), 32))
+                    return ValidationError.WrongOperandType;
+            }
+            try validateImageOffset(module, function_id, op.offset, op.dimension);
+        },
         .image_gather => |op| {
             try validateImageSample(
                 module,
@@ -909,6 +923,7 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                 op.coordinate,
                 op.dimension,
                 op.arrayed,
+                null,
             );
 
             const component_shape = integerShape(module, try operandType(module, function_id, op.component)) orelse return ValidationError.WrongOperandType;
@@ -1020,6 +1035,25 @@ fn validateImageFetchResult(module: *const module_ir.Module, resource: *const mo
         return ValidationError.WrongResultType;
 }
 
+fn imageSpatialComponents(dimension: type_ir.ImageDimension) u8 {
+    return switch (dimension) {
+        .one_d, .buffer => 1,
+        .two_d => 2,
+        .three_d, .cube => 3,
+    };
+}
+
+fn validateImageOffset(module: *const module_ir.Module, function_id: ids.FunctionId, offset: ?ids.ValueId, dimension: type_ir.ImageDimension) ValidationError!void {
+    const value = offset orelse return;
+    if (dimension == .cube or dimension == .buffer)
+        return ValidationError.InvalidInstruction;
+
+    const shape = integerShape(module, try operandType(module, function_id, value)) orelse return ValidationError.WrongOperandType;
+
+    if (shape.bits != 32 or shape.components != imageSpatialComponents(dimension))
+        return ValidationError.WrongOperandType;
+}
+
 fn validateImageSample(
     module: *const module_ir.Module,
     function_id: ids.FunctionId,
@@ -1029,6 +1063,7 @@ fn validateImageSample(
     coordinate_id: ids.ValueId,
     dimension: type_ir.ImageDimension,
     arrayed: bool,
+    dref: ?ids.ValueId,
 ) ValidationError!void {
     if (dimension == .buffer)
         return ValidationError.InvalidInstruction;
@@ -1063,12 +1098,31 @@ fn validateImageSample(
 
     const result = result_type orelse return ValidationError.WrongResultPresence;
     const result_ir_type = module.types.get(result) orelse return ValidationError.InvalidType;
+    if (dref) |reference| {
+        if (!isFloat(module, try operandType(module, function_id, reference), 32))
+            return ValidationError.WrongOperandType;
+
+        if (!isFloat(module, result, 32))
+            return ValidationError.WrongResultType;
+
+        if (sampled_type) |sampled| {
+            if (!isFloat(module, sampled, 32))
+                return ValidationError.WrongOperandType;
+        }
+
+        return;
+    }
     const result_vector = switch (result_ir_type.*) {
         .vector => |vector| vector,
         else => return ValidationError.WrongResultType,
     };
     if (result_vector.length != 4)
         return ValidationError.WrongResultType;
+
+    const element = module.types.get(result_vector.element_type) orelse return ValidationError.InvalidType;
+    if (element.* != .integer and element.* != .floating)
+        return ValidationError.WrongResultType;
+
     if (sampled_type) |expected_element| {
         if (result_vector.element_type != expected_element)
             return ValidationError.WrongResultType;

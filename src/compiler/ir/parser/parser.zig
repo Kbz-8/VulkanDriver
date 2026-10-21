@@ -560,11 +560,13 @@ const Parser = struct {
                 }
             }
 
+            const suffixes = try self.parseImageValueOptions(false, false);
             const options = try self.parseImageOptions();
             return .{ .image_fetch = .{
                 .resource_name = resource_name,
                 .coordinate = coordinate,
                 .lod = lod,
+                .offset = suffixes.offset,
                 .dimension = options.dimension,
                 .arrayed = options.arrayed,
             } };
@@ -579,7 +581,22 @@ const Parser = struct {
 
             const coordinate = try self.parseValueRef();
             try self.expectDiscard(.comma);
-            const lod = try self.parseValueRef();
+
+            var lod: ?ValueRef = null;
+            var grad_x: ?ValueRef = null;
+            var grad_y: ?ValueRef = null;
+            const mode = try self.peek();
+
+            if (mode.tag == .identifier and std.mem.eql(u8, mode.text, "grad")) {
+                _ = try self.take();
+                grad_x = try self.parseValueRef();
+                try self.expectDiscard(.comma);
+                grad_y = try self.parseValueRef();
+            } else {
+                lod = try self.parseValueRef();
+            }
+
+            const suffixes = try self.parseImageValueOptions(false, true);
             const options = try self.parseImageOptions();
 
             return .{
@@ -588,6 +605,10 @@ const Parser = struct {
                     .sampler_name = sampler_name,
                     .coordinate = coordinate,
                     .lod = lod,
+                    .grad_x = grad_x,
+                    .grad_y = grad_y,
+                    .offset = suffixes.offset,
+                    .dref = suffixes.dref,
                     .dimension = options.dimension,
                     .arrayed = options.arrayed,
                 },
@@ -602,6 +623,7 @@ const Parser = struct {
             try self.expectDiscard(.comma);
 
             const coordinate = try self.parseValueRef();
+            const suffixes = try self.parseImageValueOptions(true, true);
             const options = try self.parseImageOptions();
 
             return .{
@@ -609,6 +631,9 @@ const Parser = struct {
                     .image_name = image_name,
                     .sampler_name = sampler_name,
                     .coordinate = coordinate,
+                    .bias = suffixes.bias,
+                    .offset = suffixes.offset,
+                    .dref = suffixes.dref,
                     .dimension = options.dimension,
                     .arrayed = options.arrayed,
                 },
@@ -676,6 +701,47 @@ const Parser = struct {
         }
 
         return Error.InvalidOpcode;
+    }
+
+    const ImageValueOptions = struct {
+        bias: ?ValueRef = null,
+        offset: ?ValueRef = null,
+        dref: ?ValueRef = null,
+    };
+
+    fn parseImageValueOptions(self: *Parser, allow_bias: bool, allow_dref: bool) !ImageValueOptions {
+        var result: ImageValueOptions = .{};
+        while (true) {
+            const saved = self.lexer;
+
+            if (!try self.consume(.comma))
+                break;
+
+            const option = try self.peek();
+            var matched = false;
+
+            inline for (.{ "bias", "offset", "dref" }) |field| {
+                if (option.tag == .identifier and std.mem.eql(u8, option.text, field)) {
+                    if ((comptime std.mem.eql(u8, field, "bias")) and !allow_bias)
+                        return Error.UnexpectedToken;
+
+                    if ((comptime std.mem.eql(u8, field, "dref")) and !allow_dref)
+                        return Error.UnexpectedToken;
+
+                    if (@field(result, field) != null)
+                        return Error.UnexpectedToken;
+
+                    _ = try self.take();
+                    @field(result, field) = try self.parseValueRef();
+                    matched = true;
+                }
+            }
+            if (!matched) {
+                self.lexer = saved;
+                break;
+            }
+        }
+        return result;
     }
 
     fn parseImageOptions(self: *Parser) !ParsedImageOptions {
@@ -1388,6 +1454,31 @@ test "Parser: resources and buffer operations" {
     const printed_again = try printer.allocPrint(std.testing.allocator, &reparsed);
     defer std.testing.allocator.free(printed_again);
     try std.testing.expectEqualStrings(printed, printed_again);
+}
+
+test "Parser: reject incompatible duplicate and incomplete image suffixes" {
+    const prefix =
+        \\shader fragment @main
+        \\{
+        \\    @image: f32 = sampled_image[set(0), binding(0)]
+        \\    @sampler: resourceHandle[sampler] = sampler[set(0), binding(1)]
+        \\    %coord: constant vec2[f32] = null
+        \\    %scalar: constant f32 = 0.0
+        \\    fn @main() -> void
+        \\    {
+        \\        .entry():
+        \\
+    ;
+    inline for (.{
+        "%r: vec4[f32] = image_sample_explicit_lod @image, @sampler, %coord, grad %coord",
+        "%r: vec4[f32] = image_sample_explicit_lod @image, @sampler, %coord, %scalar, bias %scalar",
+        "%r: vec4[f32] = image_sample_implicit_lod @image, @sampler, %coord, bias %scalar, bias %scalar",
+        "%r: vec4[f32] = image_sample_implicit_lod @image, @sampler, %coord, grad %coord, %coord",
+        "%r: vec4[f32] = image_sample_implicit_lod @image, @sampler, %coord, offset %coord, offset %coord",
+        "%r: f32 = image_sample_implicit_lod @image, @sampler, %coord, dref %scalar, dref %scalar",
+    }) |operation| {
+        try expectParseError(Error.UnexpectedToken, prefix ++ operation ++ "\nreturn\n}\n}");
+    }
 }
 
 test "Parser: types, operations, calls, terminators" {

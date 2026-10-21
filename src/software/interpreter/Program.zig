@@ -61,7 +61,7 @@ pub const WorkgroupBinding = struct {
 
 pub const RegisterInit = struct {
     register: bc.Register,
-    value: u32,
+    value: bc.Slot,
 };
 
 pub const ImageDimension = ir.types.ImageDimension;
@@ -72,12 +72,18 @@ pub const ImageSamplerPair = struct {
     dimension: ImageDimension,
     arrayed: bool,
     destination_kind: bc.ValueKind,
+    bias: bc.Register = .invalid_register,
+    grad_x: bc.Register = .invalid_register,
+    grad_y: bc.Register = .invalid_register,
+    offset: bc.Register = .invalid_register,
+    dref: bc.Register = .invalid_register,
 };
 
 pub const ImageAccess = struct {
     resource: ids.ResourceId,
     dimension: ImageDimension,
     arrayed: bool,
+    offset: bc.Register = .invalid_register,
 };
 
 pub const DescriptorCandidate = struct {
@@ -138,7 +144,7 @@ pub fn compile(backing_allocator: std.mem.Allocator, module: *const module_ir.Mo
         .image_accesses = lowerer.image_accesses.items,
         .uses_derivatives = blk: {
             for (lowerer.code.items) |instruction| {
-                if (instruction.opcode.isDerivative())
+                if (instruction.opcode.isDerivative() or (module.stage == .fragment and instruction.opcode == .image_sample_implicit_lod))
                     break :blk true;
             }
             break :blk false;
@@ -314,8 +320,6 @@ const Lowerer = struct {
         return words.items;
     }
 
-    // Registers flatten aggregates, but location allocation does not pack the
-    // unused components of one array element/column/member with the next.
     fn appendInterfaceWords(self: *Lowerer, type_id: ids.TypeId, location: u32, component: u8, words: *std.ArrayList(InterfaceWord)) (CompileError || std.mem.Allocator.Error)!u32 {
         const ty = self.module.types.get(type_id) orelse return CompileError.UnsupportedType;
         var next = location;
@@ -349,24 +353,26 @@ const Lowerer = struct {
         var components: u8 = 1;
         const kind: bc.ValueKind = switch (ty.*) {
             .boolean => .boolean,
-            .integer => |integer| if (integer.bits == 32)
+            .integer => |integer| if (integer.bits > 0 and integer.bits <= @bitSizeOf(bc.Slot))
                 if (integer.signedness == .signed) .signed_integer else .unsigned_integer
             else
                 return CompileError.UnsupportedType,
-            .floating => |floating| if (floating.bits == 32)
+
+            .floating => |floating| if (floating.bits > 0 and floating.bits <= @bitSizeOf(bc.Slot))
                 .floating
             else
                 return CompileError.UnsupportedType,
+
             .vector => |vector| blk: {
                 const element = self.module.types.get(vector.element_type) orelse return CompileError.UnsupportedType;
                 components = vector.length;
                 break :blk switch (element.*) {
                     .boolean => .boolean,
-                    .integer => |integer| if (integer.bits == 32)
+                    .integer => |integer| if (integer.bits > 0 and integer.bits <= @bitSizeOf(bc.Slot))
                         if (integer.signedness == .signed) .signed_integer else .unsigned_integer
                     else
                         return CompileError.UnsupportedType,
-                    .floating => |floating| if (floating.bits == 32) .floating else return CompileError.UnsupportedType,
+                    .floating => |floating| if (floating.bits > 0 and floating.bits <= @bitSizeOf(bc.Slot)) .floating else return CompileError.UnsupportedType,
                     else => return CompileError.UnsupportedType,
                 };
             },
@@ -457,7 +463,7 @@ const Lowerer = struct {
                 if (destination.components != 1)
                     return CompileError.InvalidConstant;
 
-                try self.initializers.append(self.allocator, .{ .register = destination.base, .value = @truncate(value) });
+                try self.initializers.append(self.allocator, .{ .register = destination.base, .value = value });
             },
             .null, .undef => for (0..destination.components) |component|
                 try self.initializers.append(self.allocator, .{ .register = try offset(destination.base, component), .value = 0 }),
@@ -487,7 +493,9 @@ const Lowerer = struct {
                 if (op.opcode == .is_inf or op.opcode == .is_nan) {
                     if (dst.kind != .boolean or src.kind != .floating or dst.components != src.components)
                         return CompileError.InvalidOperation;
-                    try self.emit(if (op.opcode == .is_inf) .is_inf else .is_nan, dst.components, dst.base, src.base, .invalid_register, .invalid_register, 0);
+                    const bits = try scalarBits(self.module, self.module.typeOf(op.operand) orelse return CompileError.InvalidValue);
+                    if (bits != 16 and bits != 32 and bits != 64) return CompileError.UnsupportedType;
+                    try self.emitTyped(if (op.opcode == .is_inf) .is_inf else .is_nan, dst.components, dst.base, src.base, .invalid_register, .invalid_register, 0, bits);
                     return;
                 }
 
@@ -843,12 +851,14 @@ const Lowerer = struct {
                 const dst = result orelse return CompileError.InvalidOperation;
                 const byte_offset = try self.bufferOffset(op.byte_offset);
                 const descriptor_index, const resource = try self.bufferAccess(op.resource, op.descriptor_index, false);
-                try self.emit(.load_buffer, dst.components, dst.base, byte_offset, descriptor_index, .invalid_register, resource);
+                const bits = try scalarBits(self.module, self.module.typeOf(instruction.result.?) orelse return CompileError.InvalidValue);
+                try self.emitTyped(.load_buffer, dst.components, dst.base, byte_offset, descriptor_index, .invalid_register, resource, bits);
             },
             .load_push_constant => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;
                 const byte_offset = try self.bufferOffset(op.byte_offset);
-                try self.emit(.load_push_constant, dst.components, dst.base, byte_offset, .invalid_register, .invalid_register, 0);
+                const bits = try scalarBits(self.module, self.module.typeOf(instruction.result.?) orelse return CompileError.InvalidValue);
+                try self.emitTyped(.load_push_constant, dst.components, dst.base, byte_offset, .invalid_register, .invalid_register, 0, bits);
             },
             .store_buffer => |op| {
                 if (result != null)
@@ -857,7 +867,8 @@ const Lowerer = struct {
                 const src = try self.span(op.value);
                 const byte_offset = try self.bufferOffset(op.byte_offset);
                 const descriptor_index, const resource = try self.bufferAccess(op.resource, op.descriptor_index, true);
-                try self.emit(.store_buffer, src.components, src.base, byte_offset, descriptor_index, .invalid_register, resource);
+                const bits = try scalarBits(self.module, self.module.typeOf(op.value) orelse return CompileError.InvalidValue);
+                try self.emitTyped(.store_buffer, src.components, src.base, byte_offset, descriptor_index, .invalid_register, resource, bits);
             },
             .load_workgroup => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;
@@ -879,6 +890,7 @@ const Lowerer = struct {
                 op.resource,
                 op.coordinate,
                 null,
+                null,
                 op.dimension,
                 op.arrayed,
                 false,
@@ -888,6 +900,7 @@ const Lowerer = struct {
                 op.resource,
                 op.coordinate,
                 op.lod,
+                op.offset,
                 op.dimension,
                 op.arrayed,
                 true,
@@ -913,6 +926,7 @@ const Lowerer = struct {
                     op.dimension,
                     op.arrayed,
                     .image_sample_explicit_lod,
+                    .{ .grad_x = op.grad_x, .grad_y = op.grad_y, .offset = op.offset, .dref = op.dref },
                 );
             },
             .image_sample_implicit_lod => |op| {
@@ -925,6 +939,7 @@ const Lowerer = struct {
                     op.dimension,
                     op.arrayed,
                     .image_sample_implicit_lod,
+                    .{ .bias = op.bias, .offset = op.offset, .dref = op.dref },
                 );
             },
             .image_write => |op| {
@@ -972,6 +987,7 @@ const Lowerer = struct {
         resource: ids.ResourceId,
         coordinate_id: ids.ValueId,
         lod_id: ?ids.ValueId,
+        offset_id: ?ids.ValueId,
         dimension: ImageDimension,
         arrayed: bool,
         fetch: bool,
@@ -981,6 +997,10 @@ const Lowerer = struct {
 
         const coordinate = try self.span(coordinate_id);
         const access = try self.imageAccess(resource, coordinate, dimension, arrayed, fetch);
+        if (offset_id != null and (!fetch or dimension == .buffer or dimension == .cube))
+            return CompileError.InvalidOperation;
+
+        self.image_accesses.items[access].offset = try self.imageOperandRegister(offset_id, spatialImageComponents(dimension), false);
 
         if ((fetch and dimension != .buffer) != (lod_id != null))
             return CompileError.InvalidOperation;
@@ -1034,6 +1054,24 @@ const Lowerer = struct {
         try self.emit(.image_gather, 4, dst.base, coordinate.base, component.base, .invalid_register, pair_index);
     }
 
+    const SampleOperands = struct {
+        bias: ?ids.ValueId = null,
+        grad_x: ?ids.ValueId = null,
+        grad_y: ?ids.ValueId = null,
+        offset: ?ids.ValueId = null,
+        dref: ?ids.ValueId = null,
+    };
+
+    fn imageOperandRegister(self: *Lowerer, value: ?ids.ValueId, components: u16, floating: bool) !bc.Register {
+        const id = value orelse return .invalid_register;
+        const operand = try self.span(id);
+
+        if (operand.components != components or (if (floating) operand.kind != .floating else !isIntegerKind(operand.kind)))
+            return CompileError.InvalidOperation;
+
+        return operand.base;
+    }
+
     fn lowerImageSample(
         self: *Lowerer,
         dst: bc.Span,
@@ -1044,6 +1082,7 @@ const Lowerer = struct {
         dimension: ImageDimension,
         arrayed: bool,
         opcode: bc.Opcode,
+        operands: SampleOperands,
     ) !void {
         if (dimension == .buffer or (dimension == .cube and arrayed))
             return CompileError.UnsupportedOperation;
@@ -1053,8 +1092,9 @@ const Lowerer = struct {
         _ = try self.sampler(sampler_id);
 
         if ((dst.kind != .floating and dst.kind != .signed_integer and dst.kind != .unsigned_integer) or
-            dst.components != 4 or coordinate.kind != .floating or
-            coordinate.components != imageCoordinateComponents(dimension, arrayed))
+            dst.components != (if (operands.dref != null) @as(u16, 1) else 4) or coordinate.kind != .floating or
+            coordinate.components != imageCoordinateComponents(dimension, arrayed) or
+            (operands.dref != null and dst.kind != .floating))
             return CompileError.InvalidOperation;
 
         const lod = if (lod_id) |id| try self.span(id) else null;
@@ -1063,15 +1103,33 @@ const Lowerer = struct {
                 return CompileError.InvalidOperation;
         }
 
-        const pair_index = try u32Index(self.image_sampler_pairs.items.len);
-        try self.image_sampler_pairs.append(self.allocator, .{
+        const explicit = opcode == .image_sample_explicit_lod;
+        if ((operands.grad_x != null) != (operands.grad_y != null) or
+            (explicit and ((lod_id != null) == (operands.grad_x != null))) or
+            (explicit and operands.bias != null) or
+            (!explicit and (lod_id != null or operands.grad_x != null)))
+            return CompileError.InvalidOperation;
+
+        if (dimension == .cube and operands.offset != null)
+            return CompileError.InvalidOperation;
+
+        const spatial = spatialImageComponents(dimension);
+        const pair: ImageSamplerPair = .{
             .image = image,
             .sampler = sampler_id,
             .dimension = dimension,
             .arrayed = arrayed,
             .destination_kind = dst.kind,
-        });
-        try self.emit(opcode, 4, dst.base, coordinate.base, if (lod) |lod_span| lod_span.base else .invalid_register, .invalid_register, pair_index);
+            .bias = try self.imageOperandRegister(operands.bias, 1, true),
+            .grad_x = try self.imageOperandRegister(operands.grad_x, spatial, true),
+            .grad_y = try self.imageOperandRegister(operands.grad_y, spatial, true),
+            .offset = try self.imageOperandRegister(operands.offset, spatial, false),
+            .dref = try self.imageOperandRegister(operands.dref, 1, true),
+        };
+
+        const pair_index = try u32Index(self.image_sampler_pairs.items.len);
+        try self.image_sampler_pairs.append(self.allocator, pair);
+        try self.emit(opcode, dst.components, dst.base, coordinate.base, if (lod) |lod_span| lod_span.base else .invalid_register, .invalid_register, pair_index);
     }
 
     fn bufferOffset(self: *const Lowerer, id: ids.ValueId) !bc.Register {
@@ -1266,9 +1324,13 @@ const Lowerer = struct {
     }
 
     fn emit(self: *Lowerer, opcode: bc.Opcode, components: u16, a: bc.Register, b: bc.Register, c: bc.Register, d: bc.Register, immediate: u32) !void {
+        try self.emitTyped(opcode, components, a, b, c, d, immediate, 32);
+    }
+
+    fn emitTyped(self: *Lowerer, opcode: bc.Opcode, components: u16, a: bc.Register, b: bc.Register, c: bc.Register, d: bc.Register, immediate: u32, scalar_bits: u8) !void {
         if (self.code.items.len >= std.math.maxInt(u32))
             return CompileError.TooManyInstructions;
-        try self.code.append(self.allocator, .{ .opcode = opcode, .components = components, .a = a, .b = b, .c = c, .d = d, .immediate = immediate });
+        try self.code.append(self.allocator, .{ .opcode = opcode, .components = std.math.cast(u8, components) orelse return CompileError.UnsupportedType, .scalar_bits = scalar_bits, .a = a, .b = b, .c = c, .d = d, .immediate = immediate });
     }
 
     fn span(self: *const Lowerer, id: ids.ValueId) !bc.Span {
@@ -1362,6 +1424,14 @@ const ValueLiveness = struct {
     }
 };
 
+pub fn spatialImageComponents(dimension: ImageDimension) u16 {
+    return switch (dimension) {
+        .one_d, .buffer => 1,
+        .two_d => 2,
+        .three_d, .cube => 3,
+    };
+}
+
 pub fn imageCoordinateComponents(dimension: ImageDimension, arrayed: bool) u16 {
     const dimension_components: u8 = switch (dimension) {
         .one_d, .buffer => 1,
@@ -1377,6 +1447,36 @@ fn sameDescriptorArray(a: ResourceBinding, b: ResourceBinding) bool {
 
 fn descriptorCandidateLessThan(_: void, a: DescriptorCandidate, b: DescriptorCandidate) bool {
     return a.array_element < b.array_element;
+}
+
+fn scalarBits(module: *const module_ir.Module, type_id: ids.TypeId) CompileError!u8 {
+    const ty = module.types.get(type_id) orelse return CompileError.UnsupportedType;
+    const bits: u16 = switch (ty.*) {
+        .boolean => 32,
+        .integer => |integer| integer.bits,
+        .floating => |floating| floating.bits,
+        .vector => |vector| return scalarBits(module, vector.element_type),
+        .matrix => |matrix| return scalarBits(module, matrix.element_type),
+        .array => |array| return scalarBits(module, array.element_type),
+        .structure => |structure| blk: {
+            if (structure.members.len == 0)
+                return CompileError.UnsupportedType;
+
+            const first = try scalarBits(module, structure.members[0]);
+            for (structure.members[1..]) |member| {
+                if (try scalarBits(module, member) != first)
+                    return CompileError.UnsupportedType;
+            }
+
+            break :blk first;
+        },
+        else => return CompileError.UnsupportedType,
+    };
+
+    return switch (bits) {
+        8, 16, 32, 64 => @intCast(bits),
+        else => CompileError.UnsupportedType,
+    };
 }
 
 fn typeByteSize(module: *const module_ir.Module, type_id: ids.TypeId) !usize {

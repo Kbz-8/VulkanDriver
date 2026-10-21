@@ -440,6 +440,7 @@ fn lowerOperation(
                     .resource = resource,
                     .coordinate = coordinate,
                     .lod = lod,
+                    .offset = if (op.offset) |value| resolveValue(values, value) orelse return error.UnknownValue else null,
                     .dimension = op.dimension,
                     .arrayed = op.arrayed,
                 } },
@@ -450,7 +451,7 @@ fn lowerOperation(
             const image = resources.get(op.image_name) orelse return error.UnknownResource;
             const sampler = resources.get(op.sampler_name) orelse return error.UnknownResource;
             const coordinate = resolveValue(values, op.coordinate) orelse return error.UnknownValue;
-            const lod = resolveValue(values, op.lod) orelse return error.UnknownValue;
+            const lod = if (op.lod) |value| resolveValue(values, value) orelse return error.UnknownValue else null;
 
             break :blk .{
                 .operation = .{
@@ -459,6 +460,10 @@ fn lowerOperation(
                         .sampler = sampler,
                         .coordinate = coordinate,
                         .lod = lod,
+                        .grad_x = if (op.grad_x) |value| resolveValue(values, value) orelse return error.UnknownValue else null,
+                        .grad_y = if (op.grad_y) |value| resolveValue(values, value) orelse return error.UnknownValue else null,
+                        .offset = if (op.offset) |value| resolveValue(values, value) orelse return error.UnknownValue else null,
+                        .dref = if (op.dref) |value| resolveValue(values, value) orelse return error.UnknownValue else null,
                         .dimension = op.dimension,
                         .arrayed = op.arrayed,
                     },
@@ -477,6 +482,9 @@ fn lowerOperation(
                         .image = image,
                         .sampler = sampler,
                         .coordinate = coordinate,
+                        .bias = if (op.bias) |value| resolveValue(values, value) orelse return error.UnknownValue else null,
+                        .offset = if (op.offset) |value| resolveValue(values, value) orelse return error.UnknownValue else null,
+                        .dref = if (op.dref) |value| resolveValue(values, value) orelse return error.UnknownValue else null,
                         .dimension = op.dimension,
                         .arrayed = op.arrayed,
                     },

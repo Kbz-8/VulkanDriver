@@ -122,7 +122,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
         .mipmap_precision_bits = 8,
         .max_draw_indexed_index_value = 4294967295,
         .max_draw_indirect_count = 65535,
-        .max_sampler_lod_bias = 2.0,
+        .max_sampler_lod_bias = @import("SoftSampler.zig").max_lod_bias,
         .max_sampler_anisotropy = 1.0,
         .max_viewports = 1,
         .max_viewport_dimensions = .{ 4096, 4096 },

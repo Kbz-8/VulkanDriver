@@ -5,11 +5,11 @@ const bc = @import("../bytecode.zig");
 const Program = @import("../Program.zig");
 const Runtime = @import("../Runtime.zig");
 
-fn reg(index: u16) bc.Register {
+inline fn reg(index: u16) bc.Register {
     return @fromBackingInt(@intCast(index));
 }
 
-fn f32Bits(value: f32) u32 {
+inline fn f32Bits(value: f32) u32 {
     return @bitCast(value);
 }
 

@@ -136,6 +136,28 @@ const CompareFloat = enum {
     unordered_less,
 };
 
+pub const Slot = bc.Slot;
+
+pub inline fn low32(value: Slot) u32 {
+    return @truncate(value);
+}
+
+pub inline fn readF32(value: Slot) f32 {
+    return @bitCast(low32(value));
+}
+
+pub inline fn writeF32(value: f32) Slot {
+    return @as(Slot, @as(u32, @bitCast(value)));
+}
+
+pub inline fn readI32(value: Slot) i32 {
+    return @bitCast(low32(value));
+}
+
+pub inline fn writeI32(value: i32) Slot {
+    return @as(Slot, @as(u32, @bitCast(value)));
+}
+
 pub const lane_count = simd.lane_count;
 pub const Lane = simd.Lane;
 pub const LaneMask = simd.LaneMask;
@@ -168,12 +190,12 @@ pub const RunOptions = struct {
 const Self = @This();
 
 allocator: std.mem.Allocator,
-register_backing: []u32,
-scratch_backing: []u32,
+register_backing: []Slot,
+scratch_backing: []Slot,
 register_count: usize,
 scratch_count: usize,
-registers: []u32,
-scratch: []u32,
+registers: []Slot,
+scratch: []Slot,
 pcs: [lane_count]usize = @splat(0),
 execution_mask: LaneMask = 0,
 observable_mask: LaneMask = 0,
@@ -190,9 +212,9 @@ state: enum { ready, running, barrier, completed } = .ready,
 pub fn init(allocator: std.mem.Allocator, program: *const Program) !Self {
     const register_words = try std.math.mul(usize, program.register_count, lane_count);
     const scratch_words = try std.math.mul(usize, program.scratch_count, lane_count);
-    const register_backing = try allocator.alloc(u32, register_words);
+    const register_backing = try allocator.alloc(Slot, register_words);
     errdefer allocator.free(register_backing);
-    const scratch_backing = try allocator.alloc(u32, scratch_words);
+    const scratch_backing = try allocator.alloc(Slot, scratch_words);
     errdefer allocator.free(scratch_backing);
 
     @memset(register_backing, 0);
@@ -300,7 +322,8 @@ pub fn writeInputLane(self: *Self, program: *const Program, lane: usize, variabl
         return RuntimeError.WrongInterfaceType;
 
     const lane_registers = self.laneRegisters(@intCast(lane));
-    @memcpy(lane_registers[@backingInt(binding.span.base)..][0..values.len], values);
+    for (lane_registers[@backingInt(binding.span.base)..][0..values.len], values) |*slot, value|
+        slot.* = @as(Slot, value);
 }
 
 pub fn readOutputLane(self: *const Self, program: *const Program, lane: usize, variable: ids.InterfaceVariableId, values: []u32) RuntimeError!void {
@@ -313,7 +336,8 @@ pub fn readOutputLane(self: *const Self, program: *const Program, lane: usize, v
         return RuntimeError.WrongInterfaceType;
 
     const lane_registers = self.laneRegistersConst(@intCast(lane));
-    @memcpy(values, lane_registers[@backingInt(binding.span.base)..][0..values.len]);
+    for (values, lane_registers[@backingInt(binding.span.base)..][0..values.len]) |*value, slot|
+        value.* = low32(slot);
 }
 
 pub fn readOutputVector(self: *const Self, program: *const Program, variable: ids.InterfaceVariableId, component: usize) RuntimeError!@Vector(lane_count, u32) {
@@ -352,6 +376,11 @@ pub fn runWave(self: *Self, program: *const Program, options: RunOptions) Runtim
         // Derivatives must sample operands before any lane advances or writes its result
         if (instruction.opcode.isDerivative()) {
             try self.groupDerivative(instruction, group_mask);
+            self.advanceGroupPcs(group_mask);
+            continue;
+        }
+        if (program.stage == .fragment and instruction.opcode == .image_sample_implicit_lod) {
+            try self.groupImageSample(program, options, instruction, group_mask);
             self.advanceGroupPcs(group_mask);
             continue;
         }
@@ -421,7 +450,9 @@ fn nextExecutionGroup(self: *const Self, program: *const Program) RuntimeError!s
                 mask |= bit;
         }
 
-        if (program.code[pc].opcode.isDerivative()) {
+        if (program.code[pc].opcode.isDerivative() or
+            (program.stage == .fragment and program.code[pc].opcode == .image_sample_implicit_lod))
+        {
             const waiting = mask;
             for (0..lane_count / 4) |quad| {
                 const quad_mask = @as(LaneMask, 0b1111) << @intCast(quad * 4);
@@ -457,12 +488,12 @@ pub fn fastPathExecutedSteps(self: *const Self) usize {
 
 const laneBit = simd.laneBit;
 
-fn laneRegisters(self: *Self, lane: Lane) []u32 {
+fn laneRegisters(self: *Self, lane: Lane) []Slot {
     const start = @as(usize, lane) * self.register_count;
     return self.register_backing[start..][0..self.register_count];
 }
 
-fn laneRegistersConst(self: *const Self, lane: Lane) []const u32 {
+fn laneRegistersConst(self: *const Self, lane: Lane) []const Slot {
     const start = @as(usize, lane) * self.register_count;
     return self.register_backing[start..][0..self.register_count];
 }
@@ -478,6 +509,7 @@ fn isObservable(self: *const Self) bool {
     return (self.observable_mask & laneBit(self.current_lane)) != 0;
 }
 
+const SlotVector = @Vector(lane_count, Slot);
 const U32x4 = @Vector(lane_count, u32);
 const I32x4 = @Vector(lane_count, i32);
 const F32x4 = @Vector(lane_count, f32);
@@ -487,7 +519,7 @@ fn loadRegisterVector(self: *const Self, register: bc.Register) U32x4 {
     // SAFETY: the following loop initializes every vector lane before result is returned
     var result: U32x4 = undefined;
     inline for (0..lane_count) |lane|
-        result[lane] = self.register_backing[lane * self.register_count + index];
+        result[lane] = low32(self.register_backing[lane * self.register_count + index]);
     return result;
 }
 
@@ -510,20 +542,36 @@ fn storeRegisterVectorMasked(self: *Self, register: bc.Register, values: U32x4, 
     }
 }
 
-fn loadScratchVector(self: *const Self, index: usize) U32x4 {
+fn loadSlotVector(self: *const Self, register: bc.Register) SlotVector {
+    const index: usize = @backingInt(register);
+    var result: SlotVector = undefined;
+    inline for (0..lane_count) |lane|
+        result[lane] = self.register_backing[lane * self.register_count + index];
+    return result;
+}
+
+fn storeSlotVectorMasked(self: *Self, register: bc.Register, values: SlotVector, mask: LaneMask) void {
+    const index: usize = @backingInt(register);
+    inline for (0..lane_count) |lane| {
+        if ((mask & laneBit(lane)) != 0)
+            self.register_backing[lane * self.register_count + index] = values[lane];
+    }
+}
+
+fn loadScratchVector(self: *const Self, index: usize) SlotVector {
     // SAFETY: the following loop initializes every vector lane before result is returned
-    var result: U32x4 = undefined;
+    var result: SlotVector = undefined;
     inline for (0..lane_count) |lane|
         result[lane] = self.scratch_backing[lane * self.scratch_count + index];
     return result;
 }
 
-fn storeScratchVector(self: *Self, index: usize, values: U32x4) void {
+fn storeScratchVector(self: *Self, index: usize, values: SlotVector) void {
     inline for (0..lane_count) |lane|
         self.scratch_backing[lane * self.scratch_count + index] = values[lane];
 }
 
-fn storeScratchVectorMasked(self: *Self, index: usize, values: U32x4, mask: LaneMask) void {
+fn storeScratchVectorMasked(self: *Self, index: usize, values: SlotVector, mask: LaneMask) void {
     if (mask == full_lane_mask) {
         self.storeScratchVector(index, values);
         return;
@@ -668,13 +716,13 @@ fn applyGroupEdge(self: *Self, program: *const Program, edge_index: u32, mask: L
         if (scratch_end > self.scratch_count)
             return RuntimeError.InvalidBytecode;
         for (0..item.components) |component|
-            self.storeScratchVectorMasked(scratch_base + component, self.loadRegisterVector(@fromBackingInt(@intCast(@backingInt(item.source) + component))), mask);
+            self.storeScratchVectorMasked(scratch_base + component, self.loadSlotVector(@fromBackingInt(@intCast(@backingInt(item.source) + component))), mask);
     }
     for (copies) |item| {
         const scratch_base: usize = @backingInt(item.scratch_base);
         try self.validateRegisterRange(item.destination, item.components);
         for (0..item.components) |component|
-            self.storeRegisterVectorMasked(@fromBackingInt(@intCast(@backingInt(item.destination) + component)), self.loadScratchVector(scratch_base + component), mask);
+            self.storeSlotVectorMasked(@fromBackingInt(@intCast(@backingInt(item.destination) + component)), self.loadScratchVector(scratch_base + component), mask);
     }
     return edge.target_pc;
 }
@@ -814,7 +862,7 @@ fn groupCopy(self: *Self, instruction: bc.Instruction, mask: LaneMask) RuntimeEr
     try self.validateRegisterRange(instruction.a, instruction.components);
     try self.validateRegisterRange(instruction.b, instruction.components);
     for (0..instruction.components) |component|
-        self.storeRegisterVectorMasked(@fromBackingInt(@intCast(@backingInt(instruction.a) + component)), self.loadRegisterVector(@fromBackingInt(@intCast(@backingInt(instruction.b) + component))), mask);
+        self.storeSlotVectorMasked(@fromBackingInt(@intCast(@backingInt(instruction.a) + component)), self.loadSlotVector(@fromBackingInt(@intCast(@backingInt(instruction.b) + component))), mask);
 }
 
 fn groupSelect(self: *Self, instruction: bc.Instruction, mask: LaneMask) RuntimeError!void {
@@ -828,9 +876,9 @@ fn groupSelect(self: *Self, instruction: bc.Instruction, mask: LaneMask) Runtime
     for (0..instruction.components) |component| {
         const condition_component = if (instruction.immediate == 1) component else 0;
         const condition = self.loadRegisterVector(@fromBackingInt(@intCast(@backingInt(instruction.b) + condition_component))) != @as(U32x4, @splat(0));
-        const true_value = self.loadRegisterVector(@fromBackingInt(@intCast(@backingInt(instruction.c) + component)));
-        const false_value = self.loadRegisterVector(@fromBackingInt(@intCast(@backingInt(instruction.d) + component)));
-        self.storeRegisterVectorMasked(@fromBackingInt(@intCast(@backingInt(instruction.a) + component)), @select(u32, condition, true_value, false_value), mask);
+        const true_value = self.loadSlotVector(@fromBackingInt(@intCast(@backingInt(instruction.c) + component)));
+        const false_value = self.loadSlotVector(@fromBackingInt(@intCast(@backingInt(instruction.d) + component)));
+        self.storeSlotVectorMasked(@fromBackingInt(@intCast(@backingInt(instruction.a) + component)), @select(Slot, condition, true_value, false_value), mask);
     }
 }
 
@@ -862,7 +910,7 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
             if (instruction.immediate >= program.branches.len)
                 return RuntimeError.InvalidBytecode;
             const branch = program.branches[instruction.immediate];
-            self.pcs[self.current_lane] = try self.applyEdge(program, if (self.registers[@backingInt(instruction.a)] != 0) branch.true_edge else branch.false_edge);
+            self.pcs[self.current_lane] = try self.applyEdge(program, if (low32(self.registers[@backingInt(instruction.a)]) != 0) branch.true_edge else branch.false_edge);
         },
         .ceil => try self.unaryFloat(instruction, .ceil),
         .compare_equal => self.compareInt(instruction, .equal),
@@ -903,8 +951,8 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .image_read_float => try self.imageRead(program, options, instruction, true, false),
         .image_fetch => try self.imageRead(program, options, instruction, false, true),
         .image_fetch_float => try self.imageRead(program, options, instruction, true, true),
-        .image_sample_explicit_lod => try self.imageSample(program, options.resource_images, options.resource_samplers, instruction, true),
-        .image_sample_implicit_lod => try self.imageSample(program, options.resource_images, options.resource_samplers, instruction, false),
+        .image_sample_explicit_lod => try self.imageSample(program, options.resource_images, options.resource_samplers, instruction, true, null),
+        .image_sample_implicit_lod => try self.imageSample(program, options.resource_images, options.resource_samplers, instruction, false, null),
         .image_write => if (self.isObservable()) try self.imageWrite(program, options, instruction, false),
         .image_write_float => if (self.isObservable()) try self.imageWrite(program, options, instruction, true),
         .int_max => try self.binaryInt(instruction, .int_max),
@@ -967,7 +1015,7 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
 fn all(self: *Self, instruction: bc.Instruction) RuntimeError!void {
     self.registers[@backingInt(instruction.a)] = blk: {
         for (0..instruction.components) |component| {
-            if (self.registers[@backingInt(instruction.b) + component] == 0)
+            if (low32(self.registers[@backingInt(instruction.b) + component]) == 0)
                 break :blk 0;
         }
         break :blk 1;
@@ -977,7 +1025,7 @@ fn all(self: *Self, instruction: bc.Instruction) RuntimeError!void {
 fn any(self: *Self, instruction: bc.Instruction) RuntimeError!void {
     self.registers[@backingInt(instruction.a)] = blk: {
         for (0..instruction.components) |component| {
-            if (self.registers[@backingInt(instruction.b) + component] != 0)
+            if (low32(self.registers[@backingInt(instruction.b) + component]) != 0)
                 break :blk 1;
         }
         break :blk 0;
@@ -1000,7 +1048,7 @@ fn arrayLength(self: *Self, program: *const Program, resource_buffers: []const ?
         return RuntimeError.InvalidBytecode;
 
     const buffer = try resourceBuffer(program, resource_buffers, metadata.resource);
-    const byte_offset: usize = self.registers[@backingInt(instruction.b)];
+    const byte_offset: usize = low32(self.registers[@backingInt(instruction.b)]);
 
     if (byte_offset > buffer.len)
         return RuntimeError.BufferOutOfBounds;
@@ -1021,14 +1069,15 @@ fn unaryInt(self: *Self, instruction: bc.Instruction, comptime operation: UnaryI
     try self.validateRegisterRange(instruction.b, instruction.components);
 
     for (0..instruction.components) |component| {
-        const value = self.registers[@as(usize, @backingInt(instruction.b)) + component];
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = switch (operation) {
+        const value = low32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const result: u32 = switch (operation) {
             .negate => 0 -% value,
             .logical_not => @intFromBool(value == 0),
             .bitwise_not => ~value,
             .bit_count => @popCount(value),
             .bit_reverse => @bitReverse(value),
         };
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = result;
     }
 }
 
@@ -1038,13 +1087,13 @@ fn bitFieldExtract(self: *Self, instruction: bc.Instruction, comptime signed: bo
     try self.validateRegisterRange(instruction.c, 1);
     try self.validateRegisterRange(instruction.d, 1);
 
-    const bit_offset = self.registers[@backingInt(instruction.c)];
-    const count = self.registers[@backingInt(instruction.d)];
+    const bit_offset = low32(self.registers[@backingInt(instruction.c)]);
+    const count = low32(self.registers[@backingInt(instruction.d)]);
     const valid_range = validBitFieldRange(bit_offset, count);
 
     for (0..instruction.components) |component| {
-        const value = self.registers[@as(usize, @backingInt(instruction.b)) + component];
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = if (!valid_range or count == 0)
+        const value = low32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const result: u32 = if (!valid_range or count == 0)
             0
         else blk: {
             const shifted = value >> @intCast(bit_offset);
@@ -1053,8 +1102,9 @@ fn bitFieldExtract(self: *Self, instruction: bc.Instruction, comptime signed: bo
                 break :blk extracted;
 
             const sign_shift: u5 = @intCast(32 - count);
-            break :blk @bitCast(@as(i32, @bitCast(extracted << sign_shift)) >> sign_shift);
+            break :blk @as(u32, @bitCast(@as(i32, @bitCast(extracted << sign_shift)) >> sign_shift));
         };
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = result;
     }
 }
 
@@ -1069,19 +1119,20 @@ fn bitFieldInsert(self: *Self, instruction: bc.Instruction) RuntimeError!void {
     try self.validateRegisterRange(instruction.d, 1);
     try self.validateRegisterRange(count_register, 1);
 
-    const bit_offset = self.registers[@backingInt(instruction.d)];
-    const count = self.registers[@backingInt(count_register)];
+    const bit_offset = low32(self.registers[@backingInt(instruction.d)]);
+    const count = low32(self.registers[@backingInt(count_register)]);
     const valid_range = validBitFieldRange(bit_offset, count);
 
     for (0..instruction.components) |component| {
-        const base = self.registers[@as(usize, @backingInt(instruction.b)) + component];
-        const insert = self.registers[@as(usize, @backingInt(instruction.c)) + component];
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = if (!valid_range or count == 0)
+        const base = low32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const insert = low32(self.registers[@as(usize, @backingInt(instruction.c)) + component]);
+        const result: u32 = if (!valid_range or count == 0)
             base
         else blk: {
             const field_mask = bitMask(count) << @intCast(bit_offset);
             break :blk (base & ~field_mask) | ((insert << @intCast(bit_offset)) & field_mask);
         };
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = result;
     }
 }
 
@@ -1096,7 +1147,7 @@ fn bitMask(count: u32) u32 {
 fn unaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: UnaryFloat) RuntimeError!void {
     try self.validateUnaryInstruction(instruction);
     for (0..instruction.components) |component| {
-        const value: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const value: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
         const result = switch (operation) {
             .absolute => @abs(value),
             .acos => std.math.acos(value),
@@ -1121,7 +1172,7 @@ fn unaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Unar
             .tan => @tan(value),
             .tanh => std.math.tanh(value),
         };
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = @bitCast(result);
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = writeF32(result);
     }
 }
 
@@ -1163,15 +1214,15 @@ fn vectorLength(self: *Self, instruction: bc.Instruction) RuntimeError!void {
     var magnitude: f32 = 0;
 
     if (instruction.components == 1) {
-        magnitude = @abs(@as(f32, @bitCast(source[0])));
+        magnitude = @abs(readF32(source[0]));
     } else {
         for (source) |bits| {
-            const value: f32 = @bitCast(bits);
+            const value: f32 = readF32(bits);
             magnitude += value * value;
         }
         magnitude = @sqrt(magnitude);
     }
-    self.registers[@backingInt(instruction.a)] = @bitCast(magnitude);
+    self.registers[@backingInt(instruction.a)] = writeF32(magnitude);
 }
 
 fn vectorExtractDynamic(self: *Self, instruction: bc.Instruction) RuntimeError!void {
@@ -1181,9 +1232,7 @@ fn vectorExtractDynamic(self: *Self, instruction: bc.Instruction) RuntimeError!v
     if (instruction.components == 0)
         return RuntimeError.InvalidBytecode;
 
-    const index = self.registers[@backingInt(instruction.c)];
-    // OOB extraction is undefined, including negative signed indices. Keep the
-    // chosen zero result lane-local so extrapolated helpers cannot abort the wave.
+    const index = low32(self.registers[@backingInt(instruction.c)]);
     self.registers[@backingInt(instruction.a)] = if (index < instruction.components)
         self.registers[@as(usize, @backingInt(instruction.b)) + index]
     else
@@ -1195,37 +1244,48 @@ fn normalize(self: *Self, instruction: bc.Instruction) RuntimeError!void {
 
     var squared_length: f32 = 0.0;
     for (0..instruction.components) |component| {
-        const value: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const value: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
         squared_length += value * value;
     }
     const length = @sqrt(squared_length);
     for (0..instruction.components) |component| {
-        const value: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = @bitCast(value / length);
+        const value: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = writeF32(value / length);
     }
 }
 
 fn classifyFloat(self: *Self, instruction: bc.Instruction, comptime classification: FloatClassification) RuntimeError!void {
     try self.validateUnaryInstruction(instruction);
     for (0..instruction.components) |component| {
-        const value: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = @intFromBool(switch (classification) {
-            .infinite => std.math.isInf(value),
-            .nan => std.math.isNan(value),
-        });
+        const bits = self.registers[@as(usize, @backingInt(instruction.b)) + component];
+        const result = switch (instruction.scalar_bits) {
+            16 => classifyFloatBits(f16, @as(u16, @truncate(bits)), classification),
+            32 => classifyFloatBits(f32, low32(bits), classification),
+            64 => classifyFloatBits(f64, bits, classification),
+            else => return RuntimeError.InvalidBytecode,
+        };
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = @intFromBool(result);
     }
+}
+
+fn classifyFloatBits(comptime Float: type, bits: anytype, comptime classification: FloatClassification) bool {
+    const value: Float = @bitCast(bits);
+    return switch (classification) {
+        .infinite => std.math.isInf(value),
+        .nan => std.math.isNan(value),
+    };
 }
 
 fn intToFloat(self: *Self, instruction: bc.Instruction, comptime signed: bool) RuntimeError!void {
     try self.validateUnaryInstruction(instruction);
 
     for (0..instruction.components) |component| {
-        const source = self.registers[@as(usize, @backingInt(instruction.b)) + component];
+        const source = low32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
         const converted: f32 = if (signed)
             @floatFromInt(@as(i32, @bitCast(source)))
         else
             @floatFromInt(source);
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = @bitCast(converted);
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = writeF32(converted);
     }
 }
 
@@ -1233,9 +1293,9 @@ fn floatToInt(self: *Self, instruction: bc.Instruction, comptime signed: bool) R
     try self.validateUnaryInstruction(instruction);
 
     for (0..instruction.components) |component| {
-        const source: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const source: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
         self.registers[@as(usize, @backingInt(instruction.a)) + component] = if (signed)
-            @bitCast(std.math.lossyCast(i32, source))
+            writeI32(std.math.lossyCast(i32, source))
         else
             std.math.lossyCast(u32, source);
     }
@@ -1243,9 +1303,9 @@ fn floatToInt(self: *Self, instruction: bc.Instruction, comptime signed: bool) R
 
 fn binaryInt(self: *Self, instruction: bc.Instruction, comptime operation: BinaryInt) RuntimeError!void {
     for (0..instruction.components) |component| {
-        const lhs = self.registers[@as(usize, @backingInt(instruction.b)) + component];
-        const rhs = self.registers[@as(usize, @backingInt(instruction.c)) + component];
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = switch (operation) {
+        const lhs = low32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const rhs = low32(self.registers[@as(usize, @backingInt(instruction.c)) + component]);
+        const result: u32 = switch (operation) {
             .add => lhs +% rhs,
             .int_max => @max(lhs, rhs),
             .int_min => @min(lhs, rhs),
@@ -1286,6 +1346,7 @@ fn binaryInt(self: *Self, instruction: bc.Instruction, comptime operation: Binar
             .logical_and => @intFromBool(lhs != 0 and rhs != 0),
             .logical_or => @intFromBool(lhs != 0 or rhs != 0),
         };
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = result;
     }
 }
 
@@ -1299,8 +1360,8 @@ fn extendedInt(self: *Self, instruction: bc.Instruction, comptime operation: Ext
     try self.validateRegisterRange(instruction.c, instruction.components);
 
     for (0..instruction.components) |component| {
-        const lhs = self.registers[@as(usize, @backingInt(instruction.b)) + component];
-        const rhs = self.registers[@as(usize, @backingInt(instruction.c)) + component];
+        const lhs = low32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const rhs = low32(self.registers[@as(usize, @backingInt(instruction.c)) + component]);
         const low, const high = switch (operation) {
             .add_carry => blk: {
                 const result, const carry = @addWithOverflow(lhs, rhs);
@@ -1333,9 +1394,9 @@ fn binaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Bin
     try self.validateRegisterRange(instruction.c, if (broadcast_rhs) 1 else instruction.components);
 
     for (0..instruction.components) |component| {
-        const lhs: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const lhs: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
         const rhs_component = if (broadcast_rhs) 0 else component;
-        const rhs: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.c)) + rhs_component]);
+        const rhs: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.c)) + rhs_component]);
 
         const result: f32 = switch (operation) {
             .add => lhs + rhs,
@@ -1351,7 +1412,7 @@ fn binaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Bin
             .subtract => lhs - rhs,
         };
 
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = @bitCast(result);
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = writeF32(result);
     }
 }
 
@@ -1364,15 +1425,15 @@ fn ternaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Te
     try self.validateRegisterRange(instruction.d, instruction.components);
 
     for (0..instruction.components) |component| {
-        const x: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
-        const y: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.c)) + component]);
-        const z: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.d)) + component]);
+        const x: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const y: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.c)) + component]);
+        const z: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.d)) + component]);
 
         const result: f32 = switch (operation) {
             .mul_add => @mulAdd(f32, x, y, z),
         };
 
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = @bitCast(result);
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = writeF32(result);
     }
 }
 
@@ -1385,11 +1446,11 @@ fn smoothStep(self: *Self, instruction: bc.Instruction) RuntimeError!void {
     try self.validateRegisterRange(instruction.d, instruction.components);
 
     for (0..instruction.components) |component| {
-        const edge0: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
-        const edge1: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.c)) + component]);
-        const value: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.d)) + component]);
+        const edge0: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const edge1: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.c)) + component]);
+        const value: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.d)) + component]);
         const t = std.math.clamp((value - edge0) / (edge1 - edge0), 0.0, 1.0);
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = @bitCast(t * t * (3.0 - 2.0 * t));
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = writeF32(t * t * (3.0 - 2.0 * t));
     }
 }
 
@@ -1402,11 +1463,11 @@ fn dot(self: *Self, instruction: bc.Instruction) RuntimeError!void {
 
     var sum: f32 = 0.0;
     for (0..instruction.components) |component| {
-        const lhs: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
-        const rhs: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.c)) + component]);
+        const lhs: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const rhs: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.c)) + component]);
         sum += lhs * rhs;
     }
-    self.registers[@backingInt(instruction.a)] = @bitCast(sum);
+    self.registers[@backingInt(instruction.a)] = writeF32(sum);
 }
 
 fn fMix(self: *Self, instruction: bc.Instruction) RuntimeError!void {
@@ -1418,10 +1479,10 @@ fn fMix(self: *Self, instruction: bc.Instruction) RuntimeError!void {
     try self.validateRegisterRange(instruction.c, instruction.components);
 
     for (0..instruction.components) |component| {
-        const x: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
-        const y: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.c)) + component]);
-        const a: f32 = @bitCast(self.registers[@as(usize, @backingInt(instruction.d)) + component]);
-        self.registers[@backingInt(instruction.a) + component] = @bitCast(x * (1.0 - a) + y * a);
+        const x: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const y: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.c)) + component]);
+        const a: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.d)) + component]);
+        self.registers[@backingInt(instruction.a) + component] = writeF32(x * (1.0 - a) + y * a);
     }
 }
 
@@ -1438,10 +1499,10 @@ fn outerProduct(self: *Self, instruction: bc.Instruction) RuntimeError!void {
     try self.validateRegisterRange(instruction.c, dimensions.columns);
 
     for (0..dimensions.columns) |column| {
-        const rhs: f32 = @bitCast(self.registers[@backingInt(instruction.c) + column]);
+        const rhs: f32 = readF32(self.registers[@backingInt(instruction.c) + column]);
         for (0..dimensions.rows) |row| {
-            const lhs: f32 = @bitCast(self.registers[@backingInt(instruction.b) + row]);
-            self.registers[@backingInt(instruction.a) + column * dimensions.rows + row] = @bitCast(lhs * rhs);
+            const lhs: f32 = readF32(self.registers[@backingInt(instruction.b) + row]);
+            self.registers[@backingInt(instruction.a) + column * dimensions.rows + row] = writeF32(lhs * rhs);
         }
     }
 }
@@ -1480,11 +1541,11 @@ fn matrixTimesVector(self: *Self, instruction: bc.Instruction) RuntimeError!void
     for (0..dimensions.rows) |row| {
         var sum: f32 = 0.0;
         for (0..dimensions.inner) |column| {
-            const matrix: f32 = @bitCast(self.registers[@backingInt(instruction.b) + column * dimensions.rows + row]);
-            const vector: f32 = @bitCast(self.registers[@backingInt(instruction.c) + column]);
+            const matrix: f32 = readF32(self.registers[@backingInt(instruction.b) + column * dimensions.rows + row]);
+            const vector: f32 = readF32(self.registers[@backingInt(instruction.c) + column]);
             sum += matrix * vector;
         }
-        self.registers[@backingInt(instruction.a) + row] = @bitCast(sum);
+        self.registers[@backingInt(instruction.a) + row] = writeF32(sum);
     }
 }
 
@@ -1501,11 +1562,11 @@ fn vectorTimesMatrix(self: *Self, instruction: bc.Instruction) RuntimeError!void
     for (0..dimensions.columns) |column| {
         var sum: f32 = 0.0;
         for (0..dimensions.inner) |row| {
-            const vector: f32 = @bitCast(self.registers[@backingInt(instruction.b) + row]);
-            const matrix: f32 = @bitCast(self.registers[@backingInt(instruction.c) + column * dimensions.inner + row]);
+            const vector: f32 = readF32(self.registers[@backingInt(instruction.b) + row]);
+            const matrix: f32 = readF32(self.registers[@backingInt(instruction.c) + column * dimensions.inner + row]);
             sum += vector * matrix;
         }
-        self.registers[@backingInt(instruction.a) + column] = @bitCast(sum);
+        self.registers[@backingInt(instruction.a) + column] = writeF32(sum);
     }
 }
 
@@ -1528,11 +1589,11 @@ fn matrixTimesMatrix(self: *Self, instruction: bc.Instruction) RuntimeError!void
         for (0..dimensions.rows) |row| {
             var sum: f32 = 0.0;
             for (0..dimensions.inner) |inner| {
-                const lhs: f32 = @bitCast(self.registers[@backingInt(instruction.b) + inner * dimensions.rows + row]);
-                const rhs: f32 = @bitCast(self.registers[@backingInt(instruction.c) + column * dimensions.inner + inner]);
+                const lhs: f32 = readF32(self.registers[@backingInt(instruction.b) + inner * dimensions.rows + row]);
+                const rhs: f32 = readF32(self.registers[@backingInt(instruction.c) + column * dimensions.inner + inner]);
                 sum += lhs * rhs;
             }
-            self.registers[@backingInt(instruction.a) + column * dimensions.rows + row] = @bitCast(sum);
+            self.registers[@backingInt(instruction.a) + column * dimensions.rows + row] = writeF32(sum);
         }
     }
 }
@@ -1543,8 +1604,8 @@ fn componentProduct(lhs: u8, rhs: u8) RuntimeError!usize {
 
 fn compareInt(self: *Self, instruction: bc.Instruction, comptime operation: CompareInt) void {
     for (0..instruction.components) |component| {
-        const lhs = self.registers[@backingInt(instruction.b) + component];
-        const rhs = self.registers[@backingInt(instruction.c) + component];
+        const lhs = low32(self.registers[@backingInt(instruction.b) + component]);
+        const rhs = low32(self.registers[@backingInt(instruction.c) + component]);
 
         self.registers[@backingInt(instruction.a) + component] = @intFromBool(switch (operation) {
             .equal => lhs == rhs,
@@ -1557,8 +1618,8 @@ fn compareInt(self: *Self, instruction: bc.Instruction, comptime operation: Comp
 
 fn compareFloat(self: *Self, instruction: bc.Instruction, comptime operation: CompareFloat) void {
     for (0..instruction.components) |component| {
-        const lhs: f32 = @bitCast(self.registers[@backingInt(instruction.b) + component]);
-        const rhs: f32 = @bitCast(self.registers[@backingInt(instruction.c) + component]);
+        const lhs: f32 = readF32(self.registers[@backingInt(instruction.b) + component]);
+        const rhs: f32 = readF32(self.registers[@backingInt(instruction.c) + component]);
 
         const unordered = std.math.isNan(lhs) or std.math.isNan(rhs);
         self.registers[@backingInt(instruction.a) + component] = @intFromBool(switch (operation) {
@@ -1584,7 +1645,7 @@ fn select(self: *Self, instruction: bc.Instruction) RuntimeError!void {
 
     for (0..instruction.components) |component| {
         const condition_component = if (instruction.immediate == 1) component else 0;
-        const selected = if (self.registers[@as(usize, @backingInt(instruction.b)) + condition_component] != 0)
+        const selected = if (low32(self.registers[@as(usize, @backingInt(instruction.b)) + condition_component]) != 0)
             @backingInt(instruction.c)
         else
             @backingInt(instruction.d);
@@ -1597,20 +1658,54 @@ fn loadBuffer(self: *Self, program: *const Program, resource_buffers: []const ?[
     const resource = try self.selectBufferResource(program, instruction);
     const buffer = try resourceBuffer(program, resource_buffers, resource);
     const bytes = try self.bufferRange(buffer, instruction);
-    self.loadWords(instruction, bytes);
+    try self.loadWords(instruction, bytes);
 }
 
 fn loadPushConstant(self: *Self, push_constants: []const u8, instruction: bc.Instruction) RuntimeError!void {
     try self.validateRegisterSpan(instruction);
     const bytes = try self.pushConstantRange(push_constants, instruction);
-    self.loadWords(instruction, bytes);
+    try self.loadWords(instruction, bytes);
 }
 
-fn loadWords(self: *Self, instruction: bc.Instruction, bytes: []const u8) void {
-    for (0..instruction.components) |component| {
-        const offset = component * @sizeOf(u32);
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = std.mem.readInt(u32, bytes[offset..][0..@sizeOf(u32)], .little);
+fn loadWords(self: *Self, instruction: bc.Instruction, bytes: []const u8) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        8 => self.loadScalars(u8, instruction, bytes),
+        16 => self.loadScalars(u16, instruction, bytes),
+        32 => self.loadScalars(u32, instruction, bytes),
+        64 => self.loadScalars(u64, instruction, bytes),
+        else => return RuntimeError.InvalidBytecode,
     }
+}
+
+fn loadScalars(self: *Self, comptime Int: type, instruction: bc.Instruction, bytes: []const u8) void {
+    for (0..instruction.components) |component| {
+        const offset = component * @sizeOf(Int);
+        self.registers[@as(usize, @backingInt(instruction.a)) + component] = std.mem.readInt(Int, bytes[offset..][0..@sizeOf(Int)], .little);
+    }
+}
+
+fn storeWords(self: *const Self, instruction: bc.Instruction, bytes: []u8) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        8 => self.storeScalars(u8, instruction, bytes),
+        16 => self.storeScalars(u16, instruction, bytes),
+        32 => self.storeScalars(u32, instruction, bytes),
+        64 => self.storeScalars(u64, instruction, bytes),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn storeScalars(self: *const Self, comptime Int: type, instruction: bc.Instruction, bytes: []u8) void {
+    for (0..instruction.components) |component| {
+        const offset = component * @sizeOf(Int);
+        std.mem.writeInt(Int, bytes[offset..][0..@sizeOf(Int)], @truncate(self.registers[@as(usize, @backingInt(instruction.a)) + component]), .little);
+    }
+}
+
+fn scalarByteSize(instruction: bc.Instruction) RuntimeError!usize {
+    return switch (instruction.scalar_bits) {
+        8, 16, 32, 64 => instruction.scalar_bits / 8,
+        else => RuntimeError.InvalidBytecode,
+    };
 }
 
 fn storeBuffer(self: *const Self, program: *const Program, resource_buffers: []const ?[]u8, instruction: bc.Instruction) RuntimeError!void {
@@ -1618,10 +1713,7 @@ fn storeBuffer(self: *const Self, program: *const Program, resource_buffers: []c
     const resource = try self.selectBufferResource(program, instruction);
     const buffer = try resourceBuffer(program, resource_buffers, resource);
     const bytes = try self.bufferRange(buffer, instruction);
-    for (0..instruction.components) |component| {
-        const offset = component * @sizeOf(u32);
-        std.mem.writeInt(u32, bytes[offset..][0..@sizeOf(u32)], self.registers[@as(usize, @backingInt(instruction.a)) + component], .little);
-    }
+    try self.storeWords(instruction, bytes);
 }
 
 fn imageRead(self: *Self, program: *const Program, options: RunOptions, instruction: bc.Instruction, comptime floating: bool, comptime fetch: bool) RuntimeError!void {
@@ -1629,7 +1721,7 @@ fn imageRead(self: *Self, program: *const Program, options: RunOptions, instruct
     var components: [4]u32 = @splat(0);
     if (access.dimension == .buffer) {
         const view = try resourceTexelBuffer(program, options.resource_texel_buffers, access.resource, fetch);
-        if (try mapBufferTexel(view, @bitCast(self.registers[@backingInt(instruction.b)]))) |texel| {
+        if (try mapBufferTexel(view, readI32(self.registers[@backingInt(instruction.b)]))) |texel| {
             components = if (floating)
                 @bitCast(blitter.readFloat4(texel, view.interface.format))
             else
@@ -1660,7 +1752,8 @@ fn imageRead(self: *Self, program: *const Program, options: RunOptions, instruct
             }
         }
     }
-    @memcpy(self.registers[@backingInt(instruction.a)..][0..4], &components);
+    for (self.registers[@backingInt(instruction.a)..][0..4], components) |*slot, value|
+        slot.* = @as(Slot, value);
 }
 
 fn imageGather(
@@ -1684,7 +1777,7 @@ fn imageGather(
     if (coordinate_end > self.registers.len or @backingInt(instruction.c) >= self.registers.len)
         return RuntimeError.InvalidBytecode;
 
-    const component: usize = self.registers[@backingInt(instruction.c)];
+    const component: usize = low32(self.registers[@backingInt(instruction.c)]);
     if (component >= 4)
         return RuntimeError.InvalidResource;
 
@@ -1695,8 +1788,8 @@ fn imageGather(
     if (extent.width == 0 or extent.height == 0)
         return RuntimeError.InvalidResource;
 
-    const x: f32 = @bitCast(self.registers[coordinate_base]);
-    const y: f32 = @bitCast(self.registers[coordinate_base + 1]);
+    const x: f32 = readF32(self.registers[coordinate_base]);
+    const y: f32 = readF32(self.registers[coordinate_base + 1]);
     const width: f32 = @floatFromInt(extent.width);
     const height: f32 = @floatFromInt(extent.height);
     const base_x: i32 = @intFromFloat(@floor(x * width - 0.5));
@@ -1720,7 +1813,102 @@ fn imageGather(
             .boolean, .mixed => return RuntimeError.InvalidBytecode,
         };
     }
-    @memcpy(self.registers[@backingInt(instruction.a)..][0..4], &components);
+    for (self.registers[@backingInt(instruction.a)..][0..4], components) |*slot, value|
+        slot.* = @as(Slot, value);
+}
+
+fn floatRegisterVector(registers: []const Slot, first: bc.Register, components: u16) @Vector(4, f32) {
+    var values: [4]f32 = @splat(0);
+    for (0..components) |component|
+        values[component] = readF32(registers[@as(usize, @backingInt(first)) + component]);
+    return values;
+}
+
+fn vectorDerivative(value: @Vector(4, f32)) spv.Runtime.Vec4(f32) {
+    return .{ .x = value[0], .y = value[1], .z = value[2], .w = value[3] };
+}
+
+fn groupImageSample(self: *Self, program: *const Program, options: RunOptions, instruction: bc.Instruction, mask: LaneMask) RuntimeError!void {
+    const pair = try self.validateSampleInstruction(program, instruction, false);
+    const spatial = Program.spatialImageComponents(pair.dimension);
+    var gradients: [lane_count]spv.Runtime.ImageDerivatives = undefined;
+
+    for (0..lane_count) |lane| {
+        if ((mask & laneBit(@intCast(lane))) == 0)
+            continue;
+
+        const quad_mask = @as(LaneMask, 0b1111) << @intCast(lane & ~@as(usize, 3));
+        if ((mask & quad_mask) != quad_mask)
+            return RuntimeError.DerivativeUnavailable;
+
+        const left = floatRegisterVector(self.laneRegistersConst(@intCast(lane & ~@as(usize, 1))), instruction.b, spatial);
+        const right = floatRegisterVector(self.laneRegistersConst(@intCast(lane | 1)), instruction.b, spatial);
+        const top = floatRegisterVector(self.laneRegistersConst(@intCast(lane & ~@as(usize, 2))), instruction.b, spatial);
+        const bottom = floatRegisterVector(self.laneRegistersConst(@intCast(lane | 2)), instruction.b, spatial);
+
+        gradients[lane] = .{ .dx = vectorDerivative(right - left), .dy = vectorDerivative(bottom - top) };
+    }
+    for (0..lane_count) |lane| {
+        if ((mask & laneBit(@intCast(lane))) == 0)
+            continue;
+
+        self.selectLane(@intCast(lane));
+        try self.imageSample(program, options.resource_images, options.resource_samplers, instruction, false, gradients[lane]);
+    }
+}
+
+fn validateSampleInstruction(self: *const Self, program: *const Program, instruction: bc.Instruction, explicit_lod: bool) RuntimeError!Program.ImageSamplerPair {
+    if (instruction.immediate >= program.image_sampler_pairs.len or instruction.d != .invalid_register)
+        return RuntimeError.InvalidBytecode;
+
+    const pair = program.image_sampler_pairs[instruction.immediate];
+    if (pair.dimension == .buffer or (pair.dimension == .cube and pair.arrayed) or
+        instruction.components != (if (pair.dref != .invalid_register) @as(u16, 1) else 4) or
+        (pair.dref != .invalid_register and pair.destination_kind != .floating) or
+        (pair.destination_kind != .floating and pair.destination_kind != .signed_integer and pair.destination_kind != .unsigned_integer))
+        return RuntimeError.InvalidBytecode;
+
+    try self.validateRegisterSpan(instruction);
+    try self.validateRegisterRange(instruction.b, Program.imageCoordinateComponents(pair.dimension, pair.arrayed));
+
+    const has_grad = pair.grad_x != .invalid_register;
+
+    if (has_grad != (pair.grad_y != .invalid_register) or
+        (explicit_lod and ((instruction.c != .invalid_register) == has_grad)) or
+        (explicit_lod and pair.bias != .invalid_register) or
+        (!explicit_lod and (instruction.c != .invalid_register or has_grad)) or
+        (pair.dimension == .cube and pair.offset != .invalid_register))
+        return RuntimeError.InvalidBytecode;
+
+    if (instruction.c != .invalid_register)
+        try self.validateRegisterRange(instruction.c, 1);
+
+    const spatial = Program.spatialImageComponents(pair.dimension);
+    for ([_]bc.Register{ pair.grad_x, pair.grad_y, pair.offset }) |register| {
+        if (register != .invalid_register)
+            try self.validateRegisterRange(register, spatial);
+    }
+
+    for ([_]bc.Register{ pair.bias, pair.dref }) |register| {
+        if (register != .invalid_register)
+            try self.validateRegisterRange(register, 1);
+    }
+
+    return pair;
+}
+
+fn sampleOffset(self: *const Self, register: bc.Register, dimension: Program.ImageDimension) SoftSampler.ImageOffset {
+    if (register == .invalid_register)
+        return .{};
+
+    const spatial = Program.spatialImageComponents(dimension);
+    const index: usize = @backingInt(register);
+
+    return .{
+        .x = readI32(self.registers[index]),
+        .y = if (spatial >= 2) readI32(self.registers[index + 1]) else 0,
+        .z = if (spatial >= 3) readI32(self.registers[index + 2]) else 0,
+    };
 }
 
 fn imageSample(
@@ -1730,37 +1918,14 @@ fn imageSample(
     resource_samplers: []const ?*SoftSampler,
     instruction: bc.Instruction,
     explicit_lod: bool,
+    implicit_derivatives: ?spv.Runtime.ImageDerivatives,
 ) RuntimeError!void {
-    if (instruction.components != 4 or instruction.immediate >= program.image_sampler_pairs.len)
-        return RuntimeError.InvalidBytecode;
-    try self.validateRegisterSpan(instruction);
-
-    const pair = program.image_sampler_pairs[instruction.immediate];
-    if (pair.dimension == .cube and pair.arrayed)
-        return RuntimeError.InvalidBytecode;
-
+    const pair = try self.validateSampleInstruction(program, instruction, explicit_lod);
     const coordinate_count = Program.imageCoordinateComponents(pair.dimension, pair.arrayed);
-    const coordinate_end = std.math.add(usize, @backingInt(instruction.b), coordinate_count) catch return RuntimeError.InvalidBytecode;
-    if (coordinate_end > self.registers.len)
-        return RuntimeError.InvalidBytecode;
-
-    const lod: ?f32 = if (explicit_lod) blk: {
-        if (instruction.c == .invalid_register or @backingInt(instruction.c) >= self.registers.len)
-            return RuntimeError.InvalidBytecode;
-        break :blk @bitCast(self.registers[@backingInt(instruction.c)]);
-    } else blk: {
-        if (instruction.c != .invalid_register)
-            return RuntimeError.InvalidBytecode;
-        break :blk null;
-    };
-
+    const coordinate = floatRegisterVector(self.registers, instruction.b, coordinate_count);
     const view = try sampledImage(program, resource_images, pair.image);
     const sampler = try resourceSampler(program, resource_samplers, pair.sampler);
     const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
-    const coordinate_base: usize = @backingInt(instruction.b);
-    const x: f32 = @bitCast(self.registers[coordinate_base]);
-    const y: f32 = if (coordinate_count >= 2) @bitCast(self.registers[coordinate_base + 1]) else 0.0;
-    const z: f32 = if (coordinate_count >= 3) @bitCast(self.registers[coordinate_base + 2]) else 0.0;
     const dimension: spv.SpvDim = switch (pair.dimension) {
         .one_d => .@"1D",
         .two_d => .@"2D",
@@ -1768,21 +1933,58 @@ fn imageSample(
         .cube => .Cube,
         .buffer => return RuntimeError.InvalidBytecode,
     };
+    var lod: ?f32 = if (instruction.c == .invalid_register) null else readF32(self.registers[@backingInt(instruction.c)]);
 
-    const components: [4]u32 = switch (pair.destination_kind) {
-        .floating => @bitCast(SoftSampler.sampleImageFloat4(image, view, sampler, dimension, x, y, z, lod, .{}) catch return RuntimeError.InvalidResource),
-        .signed_integer, .unsigned_integer => @bitCast(SoftSampler.sampleImageInt4(image, view, sampler, dimension, x, y, z, lod, .{}) catch return RuntimeError.InvalidResource),
-        .boolean, .mixed => return RuntimeError.InvalidBytecode,
-    };
-    @memcpy(self.registers[@backingInt(instruction.a)..][0..4], &components);
+    const derivatives = if (pair.grad_x != .invalid_register) blk: {
+        const spatial = Program.spatialImageComponents(pair.dimension);
+        break :blk spv.Runtime.ImageDerivatives{
+            .dx = vectorDerivative(floatRegisterVector(self.registers, pair.grad_x, spatial)),
+            .dy = vectorDerivative(floatRegisterVector(self.registers, pair.grad_y, spatial)),
+        };
+    } else implicit_derivatives;
+
+    if (derivatives) |gradient|
+        lod = SoftSampler.lodFromDerivatives(image, view, dimension, coordinate, gradient);
+
+    var biased_sampler: SoftSampler = undefined;
+    const sampling_sampler = if (pair.bias != .invalid_register) blk: {
+        if (lod == null)
+            return RuntimeError.DerivativeUnavailable;
+
+        const bias: f32 = readF32(self.registers[@backingInt(pair.bias)]);
+        biased_sampler = sampler.*;
+        biased_sampler.interface.mip_lod_bias = std.math.clamp(bias + sampler.interface.mip_lod_bias, -SoftSampler.max_lod_bias, SoftSampler.max_lod_bias);
+
+        break :blk &biased_sampler;
+    } else sampler;
+
+    const offset = self.sampleOffset(pair.offset, pair.dimension);
+    var components: [4]u32 = undefined;
+
+    if (pair.dref != .invalid_register) {
+        const reference: f32 = readF32(self.registers[@backingInt(pair.dref)]);
+        const value = SoftSampler.sampleImageDref(image, view, sampling_sampler, dimension, coordinate[0], coordinate[1], coordinate[2], coordinate[3], reference, lod, offset) catch return RuntimeError.InvalidResource;
+        components[0] = @bitCast(value);
+    } else {
+        components = switch (pair.destination_kind) {
+            .floating => @bitCast(SoftSampler.sampleImageFloat4(image, view, sampling_sampler, dimension, coordinate[0], coordinate[1], coordinate[2], lod, offset) catch return RuntimeError.InvalidResource),
+            .signed_integer, .unsigned_integer => @bitCast(SoftSampler.sampleImageInt4(image, view, sampling_sampler, dimension, coordinate[0], coordinate[1], coordinate[2], lod, offset) catch return RuntimeError.InvalidResource),
+            .boolean, .mixed => return RuntimeError.InvalidBytecode,
+        };
+    }
+
+    for (self.registers[@backingInt(instruction.a)..][0..instruction.components], components[0..instruction.components]) |*slot, value|
+        slot.* = @as(Slot, value);
 }
 
 fn imageWrite(self: *const Self, program: *const Program, options: RunOptions, instruction: bc.Instruction, comptime floating: bool) RuntimeError!void {
     const access = try self.validateImageInstruction(program, instruction, false);
-    const components: [4]u32 = self.registers[@backingInt(instruction.a)..][0..4].*;
+    var components: [4]u32 = undefined;
+    for (&components, self.registers[@backingInt(instruction.a)..][0..4]) |*value, slot|
+        value.* = low32(slot);
     if (access.dimension == .buffer) {
         const view = try resourceTexelBuffer(program, options.resource_texel_buffers, access.resource, false);
-        if (try mapBufferTexel(view, @bitCast(self.registers[@backingInt(instruction.b)]))) |texel| {
+        if (try mapBufferTexel(view, readI32(self.registers[@backingInt(instruction.b)]))) |texel| {
             if (floating)
                 blitter.writeFloat4(@bitCast(components), texel, view.interface.format)
             else
@@ -1815,6 +2017,11 @@ fn validateImageInstruction(self: *const Self, program: *const Program, instruct
         return RuntimeError.InvalidBytecode;
     if (needs_lod)
         try self.validateRegisterRange(instruction.c, 1);
+    if (access.offset != .invalid_register) {
+        if (!fetch or access.dimension == .buffer or access.dimension == .cube)
+            return RuntimeError.InvalidBytecode;
+        try self.validateRegisterRange(access.offset, Program.spatialImageComponents(access.dimension));
+    }
     return access;
 }
 
@@ -1829,20 +2036,28 @@ fn imageLocation(self: *const Self, view: *const SoftImageView, access: Program.
     if (range.base_mip_level >= image.interface.mip_levels or image.interface.samples.toInt() != 1)
         return RuntimeError.InvalidResource;
 
-    const lod: i32 = if (instruction.c == .invalid_register) 0 else @bitCast(self.registers[@backingInt(instruction.c)]);
+    const lod: i32 = if (instruction.c == .invalid_register) 0 else readI32(self.registers[@backingInt(instruction.c)]);
     if (lod < 0 or @as(u32, @intCast(lod)) >= @min(view.interface.levelCount(), image.interface.mip_levels - range.base_mip_level))
         return null;
 
     const mip = range.base_mip_level + @as(u32, @intCast(lod));
     const index: usize = @backingInt(instruction.b);
-    const x: i32 = @bitCast(self.registers[index]);
-    const y: i32 = if (access.dimension != .one_d or access.arrayed) @bitCast(self.registers[index + 1]) else 0;
-    const z: i32 = if (access.dimension == .three_d or access.dimension == .cube or (access.dimension == .two_d and access.arrayed)) @bitCast(self.registers[index + 2]) else 0;
-    const offset: vk.Offset3D = .{
+
+    const x: i32 = readI32(self.registers[index]);
+    const y: i32 = if (access.dimension != .one_d or access.arrayed) readI32(self.registers[index + 1]) else 0;
+    const z: i32 = if (access.dimension == .three_d or access.dimension == .cube or (access.dimension == .two_d and access.arrayed)) readI32(self.registers[index + 2]) else 0;
+
+    var offset: vk.Offset3D = .{
         .x = x,
         .y = if (access.dimension == .one_d) 0 else y,
         .z = if (access.dimension == .three_d) z else 0,
     };
+
+    const texel_offset = self.sampleOffset(access.offset, access.dimension);
+    offset.x = std.math.add(i32, offset.x, texel_offset.x) catch return null;
+    offset.y = std.math.add(i32, offset.y, texel_offset.y) catch return null;
+    offset.z = std.math.add(i32, offset.z, texel_offset.z) catch return null;
+
     const extent = image.getMipLevelExtent(mip);
     if (offset.x < 0 or offset.y < 0 or offset.z < 0 or
         @as(u32, @intCast(offset.x)) >= extent.width or
@@ -1922,7 +2137,7 @@ fn storeWorkgroup(self: *const Self, program: *const Program, optional_memory: ?
     const bytes = try self.workgroupRange(program, optional_memory, instruction);
     for (0..instruction.components) |component| {
         const offset = component * @sizeOf(u32);
-        std.mem.writeInt(u32, bytes[offset..][0..@sizeOf(u32)], self.registers[@as(usize, @backingInt(instruction.a)) + component], .little);
+        std.mem.writeInt(u32, bytes[offset..][0..@sizeOf(u32)], low32(self.registers[@as(usize, @backingInt(instruction.a)) + component]), .little);
     }
 }
 
@@ -1934,7 +2149,7 @@ fn workgroupRange(self: *const Self, program: *const Program, optional_memory: ?
 
     const variable = ids.WorkgroupVariableId.fromIndex(instruction.immediate);
     const binding = program.workgroupBinding(variable) orelse return RuntimeError.InvalidBytecode;
-    const relative_offset: usize = self.registers[@backingInt(instruction.b)];
+    const relative_offset: usize = low32(self.registers[@backingInt(instruction.b)]);
     const byte_count = std.math.mul(usize, instruction.components, @sizeOf(u32)) catch return RuntimeError.BufferOutOfBounds;
     const relative_end = std.math.add(usize, relative_offset, byte_count) catch return RuntimeError.BufferOutOfBounds;
 
@@ -1981,8 +2196,8 @@ fn memoryRange(self: *const Self, memory_len: usize, instruction: bc.Instruction
     if (@backingInt(instruction.b) >= self.registers.len)
         return RuntimeError.InvalidBytecode;
 
-    const byte_offset: usize = self.registers[@backingInt(instruction.b)];
-    const byte_count = std.math.mul(usize, instruction.components, @sizeOf(u32)) catch return RuntimeError.BufferOutOfBounds;
+    const byte_offset: usize = low32(self.registers[@backingInt(instruction.b)]);
+    const byte_count = std.math.mul(usize, instruction.components, try scalarByteSize(instruction)) catch return RuntimeError.BufferOutOfBounds;
     const end = std.math.add(usize, byte_offset, byte_count) catch return RuntimeError.BufferOutOfBounds;
     if (end > memory_len)
         return RuntimeError.BufferOutOfBounds;
@@ -1998,7 +2213,7 @@ fn selectBufferResource(self: *const Self, program: *const Program, instruction:
     if (instruction.immediate >= program.descriptor_arrays.len)
         return RuntimeError.InvalidBytecode;
 
-    const array_element = self.registers[@backingInt(instruction.c)];
+    const array_element = low32(self.registers[@backingInt(instruction.c)]);
     for (program.descriptor_arrays[instruction.immediate].candidates) |candidate| {
         if (candidate.array_element == array_element)
             return @backingInt(candidate.resource);

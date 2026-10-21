@@ -361,6 +361,10 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
                 try writer.writeAll(", lod ");
                 try writeValueRef(module, writer, lod);
             }
+            if (op.offset) |value| {
+                try writer.writeAll(", offset ");
+                try writeValueRef(module, writer, value);
+            }
             try writer.print(", dimension {t}, arrayed {}", .{ op.dimension, op.arrayed });
         },
         .image_sample_explicit_lod => |op| {
@@ -372,8 +376,23 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             try writeNamedRef(writer, if (sampler) |r| r.name else null, "resource", op.sampler.index());
             try writer.writeAll(", ");
             try writeValueRef(module, writer, op.coordinate);
-            try writer.writeAll(", ");
-            try writeValueRef(module, writer, op.lod);
+            if (op.lod) |lod| {
+                try writer.writeAll(", ");
+                try writeValueRef(module, writer, lod);
+            } else if (op.grad_x) |dx| {
+                try writer.writeAll(", grad ");
+                try writeValueRef(module, writer, dx);
+                try writer.writeAll(", ");
+                try writeValueRef(module, writer, op.grad_y.?);
+            }
+            if (op.offset) |value| {
+                try writer.writeAll(", offset ");
+                try writeValueRef(module, writer, value);
+            }
+            if (op.dref) |value| {
+                try writer.writeAll(", dref ");
+                try writeValueRef(module, writer, value);
+            }
             try writer.print(", dimension {t}, arrayed {}", .{ op.dimension, op.arrayed });
         },
         .image_sample_implicit_lod => |op| {
@@ -385,6 +404,18 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             try writeNamedRef(writer, if (sampler) |r| r.name else null, "resource", op.sampler.index());
             try writer.writeAll(", ");
             try writeValueRef(module, writer, op.coordinate);
+            if (op.bias) |value| {
+                try writer.writeAll(", bias ");
+                try writeValueRef(module, writer, value);
+            }
+            if (op.offset) |value| {
+                try writer.writeAll(", offset ");
+                try writeValueRef(module, writer, value);
+            }
+            if (op.dref) |value| {
+                try writer.writeAll(", dref ");
+                try writeValueRef(module, writer, value);
+            }
             try writer.print(", dimension {t}, arrayed {}", .{ op.dimension, op.arrayed });
         },
         .image_gather => |op| {

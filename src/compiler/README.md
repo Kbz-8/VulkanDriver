@@ -688,7 +688,10 @@ Performs an unfiltered, integer-coordinate lookup without a sampler:
 ```
 
 Non-buffer fetches require a `sampled_image` and a scalar `i32`/`u32` LOD.
-Buffer fetches require a `uniform_texel_buffer` and forbid LOD. Coordinates use
+Buffer fetches require a `uniform_texel_buffer` and forbid LOD and offset.
+Non-buffer fetches optionally accept `, offset %offset` after `lod %lod`.
+Offsets are scalar/vector `i32` or `u32`, with one component per spatial
+image dimension, never including the array layer. Coordinates use
 32-bit signed or unsigned integer components: one for 1D/buffer, two for 2D,
 three for 3D, plus one array-layer component for arrayed 1D/2D images. The result
 must be a numeric four-component vector whose element type matches the resource's
@@ -697,17 +700,30 @@ unsupported. This is a compiler IR contract, not a backend support guarantee.
 
 ### `image_sample_explicit_lod`
 
-Samples a sampled image through a sampler at an explicit level of detail.
+Samples a sampled image through a sampler with exactly one explicit mode:
+a scalar LOD or a pair of spatial gradients.
 
 ```text
 %value: vec4[f32] = image_sample_explicit_lod @img, @sampler, %coord, %lod, dimension two_d, arrayed false
+%gradient: vec4[f32] = image_sample_explicit_lod @img, @sampler, %coord, grad %dx, %dy, offset %offset, dimension two_d, arrayed false
+%depth: f32 = image_sample_explicit_lod @img, @sampler, %coord, %lod, offset %offset, dref %reference, dimension two_d, arrayed false
 ```
 
 The image must be a `sampled_image` resource and the sampler a `sampler`
-resource. The coordinate is a float vector with one component per image
-dimension, plus one more when `arrayed` is true. The level of detail is an
-`f32` value. The result is a four-component float vector; if the image carries
-a data type, its element type must match. The `dimension` is one of
+resource. The coordinate uses `f32` components, one per spatial image
+dimension plus one more when `arrayed` is true (a scalar for non-arrayed 1D).
+LOD is scalar `f32`. Alternatively, `grad %dx, %dy` supplies two `f32`
+scalars/vectors with one component per spatial dimension, excluding the array
+layer; both gradients are required and cannot coexist with LOD.
+
+Optional named suffixes `, offset %offset` and `, dref %reference` follow the
+explicit mode, before the existing `dimension ..., arrayed ...` pair. Named
+suffixes may appear in either order but cannot be repeated. Offsets use
+`i32`/`u32` components matching the spatial dimensions, excluding array layers;
+cube offsets are invalid. Without `dref`, the result is a numeric four-component
+vector matching the image's sampled element type when provided. With `dref`,
+the reference, result, and sampled element type must be scalar `f32`.
+The `dimension` is one of
 `one_d`, `two_d`, `three_d`, or `cube`. Sampling and gathering reject `buffer`.
 For compatibility, sampling IR validation still accepts arrayed 3D shapes with
 four-component coordinates; storage/fetch validation and the SPIR-V frontend
@@ -719,10 +735,22 @@ Samples a sampled image through a sampler using an implicit level of detail.
 
 ```text
 %value: vec4[f32] = image_sample_implicit_lod @img, @sampler, %coord, dimension two_d, arrayed false
+%depth: f32 = image_sample_implicit_lod @img, @sampler, %coord, bias %bias, offset %offset, dref %reference, dimension two_d, arrayed false
 ```
 
-The same rules as `image_sample_explicit_lod` apply, except no level-of-detail
-operand is supplied.
+The same coordinate, offset, depth-reference, resource, and result rules as
+`image_sample_explicit_lod` apply. Neither LOD nor gradients may be supplied.
+An optional `, bias %bias` supplies scalar `f32` bias; `bias`, `offset`, and
+`dref` suffixes may be combined in any order before the dimension/arrayed pair.
+
+The public structs retain source compatibility with `.lod = value` initializers.
+`ImageFetch` has `offset: ?ValueId = null`. `ImageSampleExplicitLod` has optional
+`lod`, `grad_x`, `grad_y`, `offset`, and `dref`, all defaulting to null; validity
+requires LOD XOR paired gradients. `ImageSampleImplicitLod` has optional `bias`,
+`offset`, and `dref`, all defaulting to null. All of these SSA operands participate
+in use visiting, replacement, dominance checking, and inliner remapping. IR
+allows SSA offsets; the frontend separately enforces SPIR-V `ConstOffset`.
+These compiler contracts do not imply backend sampling support.
 
 ### `image_gather`
 
@@ -1049,14 +1077,33 @@ omitted from the selected entry point. The translator lowers a defined subset:
   Buffer images with `Sampled` 1/2 map to uniform/storage texel-buffer resources.
   Arrayed 3D/buffer types are rejected.
 - Core `OpImage` extracts the image resource from a sampled image. `OpImageFetch`
-  lowers to unfiltered `image_fetch`: only the `Lod` image operand is supported
-  for non-buffer images. Omitting image operands selects view-relative LOD zero,
+  lowers to unfiltered `image_fetch`: `Lod` and `ConstOffset`, individually or
+  combined, are supported for non-buffer images. Omitting LOD selects view-relative LOD zero,
   which the frontend materializes as an explicit integer32 constant to preserve
   the public IR requirement for non-buffer LOD. Buffer fetches have no image
   operands or LOD. Cube and
   multisampled fetches are rejected. Combined buffer descriptors do not allocate
   an unused sampler resource. Sampling/gathering buffer images is rejected.
   Image size queries, `UClamp`, and additional atomic operations are not added.
+- `OpImageSampleImplicitLod` and `OpImageSampleDrefImplicitLod` accept `Bias`,
+  `ConstOffset`, and their combination. Explicit variants accept exactly `Lod`
+  or paired `Grad`, optionally combined with `ConstOffset`. Mask operands are
+  decoded in SPIR-V bit order with exact arity; incompatible, unknown, dynamic
+  `Offset`, and other unsupported bits are rejected. `ConstOffset` must originate
+  from a constant instruction. Depth operations require a depth/unknown-depth
+  image type (Depth 1/2), not 3D, and scalar `f32` reference/result/sample type.
+  Ordinary sampling coordinates may contain extra trailing lanes, which are
+  discarded to produce the canonical spatial-plus-array-layer prefix.
+- All four `OpImageSampleProj{Dref}{Implicit,Explicit}Lod` forms lower to ordinary
+  sampling plus extraction/division. Projection requires a non-arrayed 1D/2D/3D
+  image (depth variants exclude 3D), with at least spatial-dimension-plus-one
+  `f32` components. For spatial dimension n, component n is q: the first n
+  coordinates and any depth reference are divided by q; trailing lanes are
+  ignored. Explicit gradients already describe projected coordinates and are
+  passed through unchanged, not divided again. Cube/arrayed projection is rejected.
+- `OpCompositeInsert` uses literal nested index paths and lowers through the
+  existing aggregate extract/construct helper, preserving untouched members.
+  Result/composite types, inserted leaf types, and index bounds are checked.
 - `OpImageGather` on non-arrayed 2D sampled images without optional image
   operands, mapped to `image_gather` with an explicit component selector.
 - Decorated stage inputs and outputs, with interface load and store. Partial
