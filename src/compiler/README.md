@@ -1121,6 +1121,20 @@ omitted from the selected entry point. The translator lowers a defined subset:
   are promoted to invocation-local SSA state carried through block parameters
   and edge arguments; unwritten components start as `undef`. Returned IR retains
   whole-output stores and does not load output interfaces.
+- `OpCopyMemory` lowers to a typed source load followed by a destination store,
+  snapshotting the source before any destination writes; no new IR or interpreter
+  opcode is needed. Pointee types must match, but storage classes may differ.
+  Supported paths include local/Private memory within existing scope restrictions,
+  function pointer parameters, composite access chains, input/output interfaces
+  (writes only to outputs), and numeric buffer/push-constant/workgroup memory.
+  Buffers support numeric scalars/vectors and layout-aware matrices. Whole arrays
+  and structures in decorated buffer/push-constant/workgroup memory remain
+  unsupported; promoted local/interface aggregates are supported. Optional
+  `None`, `Aligned`, and `Nontemporal` memory-access combinations are accepted;
+  alignment must be a nonzero power of two. Separate target/source memory-access
+  operands require SPIR-V 1.4 or later. Explicit `Volatile` and memory-model bits
+  are rejected; copies in modules containing `Volatile` decorations are also
+  conservatively rejected. `OpCopyMemorySized` remains unsupported.
 - `OpName` debug names for functions, blocks, parameters, constants, and
   instruction results when they are valid textual IR identifiers.
 

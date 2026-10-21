@@ -1026,6 +1026,7 @@ pub const Decoration = enum(u32) {
     array_stride = 6,
     matrix_stride = 7,
     built_in = 11,
+    @"volatile" = 21,
     location = 30,
     component = 31,
     index = 32,

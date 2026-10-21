@@ -39,6 +39,7 @@ pub const TranslationError = error{
     UnsupportedExtendedInstruction,
     UnsupportedExtendedInstructionSet,
     UnsupportedOpcode,
+    UnsupportedMemoryAccess,
     UnsupportedPrivateCrossFunction,
     UnsupportedStoreDestination,
     UnsupportedType,
@@ -233,6 +234,7 @@ const Context = struct {
     block_local_outputs: []?ir.id.ValueId,
     current_locals: []?ir.id.ValueId,
     entry_label: ?u32 = null,
+    has_volatile_decorations: bool = false,
 
     fn idIndex(self: *const Context, id: u32) TranslationError!usize {
         if (id == 0 or id >= self.bound)
@@ -1280,6 +1282,10 @@ fn collectDecoration(context: *Context, operands: []const u32) !void {
             try expectOperandCount(operands, 2);
             context.decorations[index].buffer_block = true;
         },
+        .@"volatile" => {
+            try expectOperandCount(operands, 2);
+            context.has_volatile_decorations = true;
+        },
         else => {},
     }
 }
@@ -1289,6 +1295,11 @@ fn collectMemberDecoration(context: *Context, operands: []const u32) !void {
         return TranslationError.InvalidInstruction;
 
     const decoration: spirv.Decoration = @fromBackingInt(@intCast(operands[2]));
+    if (decoration == .@"volatile") {
+        try expectOperandCount(operands, 3);
+        context.has_volatile_decorations = true;
+        return;
+    }
     if (decoration == .row_major or decoration == .col_major or decoration == .matrix_stride) {
         _ = try context.idIndex(operands[0]);
         var entry: ?*MemberMatrixLayout = null;
@@ -2144,6 +2155,283 @@ fn unsupportedStoreDestination(context: *Context, destination: u32) TranslationE
     return TranslationError.UnsupportedStoreDestination;
 }
 
+fn translateCopyMemory(context: *Context, block: ir.id.BlockId, operands: []const u32) !void {
+    if (operands.len < 2)
+        return TranslationError.InvalidInstruction;
+
+    var cursor: usize = 2;
+    if (cursor < operands.len)
+        try parseCopyMemoryAccess(operands, &cursor);
+    if (cursor < operands.len) {
+        if (context.parser.header.minor() < 4)
+            return TranslationError.InvalidInstruction;
+        try parseCopyMemoryAccess(operands, &cursor);
+    }
+
+    if (cursor != operands.len)
+        return TranslationError.InvalidInstruction;
+
+    if (context.has_volatile_decorations)
+        return TranslationError.UnsupportedMemoryAccess;
+
+    const target_type = try copyMemoryPointeeType(context, operands[0], true);
+    const source_type = try copyMemoryPointeeType(context, operands[1], false);
+
+    if (target_type != source_type)
+        return TranslationError.InvalidInstruction;
+
+    const result_type = try context.translateType(source_type);
+    try validateCopyMemoryValueType(context.module, result_type);
+
+    // Save the complete logical value before touching the destination
+    const value = try loadPointerValue(context, block, operands[1], result_type, null);
+    try storePointerValue(context, block, operands[0], value);
+}
+
+fn parseCopyMemoryAccess(operands: []const u32, cursor: *usize) TranslationError!void {
+    const mask = operands[cursor.*];
+    cursor.* += 1;
+
+    if (mask & ~@as(u32, 0x6) != 0)
+        return TranslationError.UnsupportedMemoryAccess;
+
+    if (mask & 0x2 != 0) {
+        if (cursor.* == operands.len)
+            return TranslationError.InvalidInstruction;
+
+        const alignment = operands[cursor.*];
+        cursor.* += 1;
+
+        if (alignment == 0 or alignment & (alignment - 1) != 0)
+            return TranslationError.InvalidInstruction;
+    }
+}
+
+fn copyMemoryPointeeType(context: *Context, pointer: u32, writable: bool) !u32 {
+    const index = try context.idIndex(pointer);
+    var memory_type: ?u32 = null;
+
+    if (try context.bufferAddress(pointer)) |address| {
+        const resource = context.module.resources.get(address.resource) orelse return TranslationError.InvalidId;
+
+        if (writable and resource.kind != .storage_buffer)
+            return TranslationError.UnsupportedStoreDestination;
+
+        memory_type = address.pointee_type;
+    } else if (try context.pushConstantAddress(pointer)) |address| {
+        if (writable)
+            return TranslationError.UnsupportedStoreDestination;
+
+        memory_type = address.pointee_type;
+    } else if (try context.workgroupAddress(pointer)) |address| {
+        memory_type = address.pointee_type;
+    } else if (try context.compositeAddress(pointer)) |address| {
+        if (writable) switch (address.root) {
+            .value => return TranslationError.UnsupportedStoreDestination,
+            .interface => |variable| {
+                const interface = context.module.interface_variables.get(variable) orelse return TranslationError.InvalidId;
+
+                if (interface.direction != .output)
+                    return TranslationError.UnsupportedStoreDestination;
+            },
+            .local => {},
+        };
+        return address.pointee_type;
+    } else if (try context.localIndex(pointer) != null) {
+        return context.function_parameter_pointees[index] orelse try variablePointeeType(context, pointer);
+    } else if (context.interfaces[index]) |variable| {
+        const interface = context.module.interface_variables.get(variable) orelse return TranslationError.InvalidId;
+        if (writable and interface.direction != .output)
+            return TranslationError.UnsupportedStoreDestination;
+
+        return variablePointeeType(context, pointer);
+    } else {
+        return TranslationError.UnsupportedOpcode;
+    }
+
+    const pointee_type = memory_type.?;
+    const ty = context.module.types.get(try context.translateType(pointee_type)) orelse return TranslationError.InvalidId;
+
+    switch (ty.*) {
+        .integer,
+        .floating,
+        .vector,
+        .matrix,
+        => return pointee_type,
+        else => return TranslationError.UnsupportedType,
+    }
+}
+
+fn validateCopyMemoryValueType(module: *const ir.module.Module, type_id: ir.id.TypeId) TranslationError!void {
+    const ty = module.types.get(type_id) orelse return TranslationError.InvalidId;
+    switch (ty.*) {
+        .boolean, .integer, .floating => {},
+        .vector => |vector| try validateCopyMemoryValueType(module, vector.element_type),
+        .matrix => |matrix| try validateCopyMemoryValueType(module, matrix.element_type),
+        .array => |array| try validateCopyMemoryValueType(module, array.element_type),
+        .structure => |structure| for (structure.members) |member| try validateCopyMemoryValueType(module, member),
+        else => return TranslationError.UnsupportedType,
+    }
+}
+
+fn loadPointerValue(context: *Context, block: ir.id.BlockId, pointer: u32, result_type: ir.id.TypeId, name: ?[]const u8) anyerror!ir.id.ValueId {
+    if (try context.localIndex(pointer)) |local_index| {
+        const value = context.current_locals[local_index] orelse return TranslationError.InvalidInstruction;
+
+        if (context.module.typeOf(value) != result_type)
+            return TranslationError.InvalidInstruction;
+
+        return value;
+    } else if (context.function_parameter_pointees[try context.idIndex(pointer)]) |pointee_type| {
+        const value = context.values[try context.idIndex(pointer)] orelse return TranslationError.MissingDefinition;
+
+        if (result_type != try context.translateType(pointee_type) or context.module.typeOf(value) != result_type)
+            return TranslationError.InvalidInstruction;
+
+        return value;
+    } else if (try context.pushConstantAddress(pointer)) |address| {
+        if (result_type != try context.translateType(address.pointee_type))
+            return TranslationError.InvalidInstruction;
+
+        const result = if (address.matrix_layout) |layout|
+            try translatePushConstantMatrixLoad(context, block, address, layout, name)
+        else if (address.vector_stride) |stride|
+            try translatePushConstantStridedVectorLoad(context, block, address, stride, name)
+        else
+            (try context.builder.appendInstruction(block, result_type, .{
+                .load_push_constant = .{ .byte_offset = try pushConstantByteOffset(context, address) },
+            }, name)).?;
+
+        return result;
+    } else if (try context.bufferAddress(pointer)) |address| {
+        if (result_type != try context.translateType(address.pointee_type))
+            return TranslationError.InvalidInstruction;
+
+        const result = if (address.matrix_layout) |layout|
+            try translateBufferMatrixLoad(context, block, address, layout, name)
+        else if (address.vector_stride) |stride|
+            try translateBufferStridedVectorLoad(context, block, address, stride, name)
+        else
+            (try context.builder.appendInstruction(block, result_type, .{
+                .load_buffer = .{
+                    .resource = address.resource,
+                    .descriptor_index = address.descriptor_index,
+                    .byte_offset = try bufferByteOffset(context, address),
+                },
+            }, name)).?;
+
+        return result;
+    } else if (try context.workgroupAddress(pointer)) |address| {
+        if (result_type != try context.translateType(address.pointee_type))
+            return TranslationError.InvalidInstruction;
+
+        const result = (try context.builder.appendInstruction(block, result_type, .{
+            .load_workgroup = .{
+                .variable = address.variable,
+                .byte_offset = try workgroupByteOffset(context, address),
+            },
+        }, name)).?;
+
+        return result;
+    } else if (try context.compositeAddress(pointer)) |address| {
+        const composite = switch (address.root) {
+            .local => |local_index| context.current_locals[local_index] orelse return TranslationError.InvalidInstruction,
+            .value => |value| value,
+            .interface => |variable| (try context.builder.appendInstruction(
+                block,
+                try context.translateType(address.root_type),
+                .{ .load_interface = .{ .variable = variable } },
+                null,
+            )).?,
+        };
+
+        const result = try extractCompositeAddress(context, block, composite, address.indices, name);
+
+        if (context.module.typeOf(result) != result_type)
+            return TranslationError.InvalidInstruction;
+
+        return result;
+    } else {
+        const result = (try context.builder.appendInstruction(block, result_type, .{
+            .load_interface = .{ .variable = try context.interfaceVariable(pointer) },
+        }, name)).?;
+        return result;
+    }
+}
+
+fn storePointerValue(context: *Context, block: ir.id.BlockId, pointer: u32, value: ir.id.ValueId) anyerror!void {
+    if (try context.localIndex(pointer)) |local_index| {
+        if (context.module.typeOf(value) != context.locals.items[local_index].type)
+            return TranslationError.InvalidInstruction;
+
+        context.current_locals[local_index] = value;
+    } else if (try context.bufferAddress(pointer)) |address| {
+        if (context.module.typeOf(value) != try context.translateType(address.pointee_type))
+            return TranslationError.InvalidInstruction;
+
+        if (address.matrix_layout) |layout| {
+            try translateBufferMatrixStore(context, block, address, layout, value);
+        } else if (address.vector_stride) |stride| {
+            try translateBufferStridedVectorStore(context, block, address, stride, value);
+        } else {
+            _ = try context.builder.appendInstruction(block, null, .{
+                .store_buffer = .{
+                    .resource = address.resource,
+                    .descriptor_index = address.descriptor_index,
+                    .byte_offset = try bufferByteOffset(context, address),
+                    .value = value,
+                },
+            }, null);
+        }
+    } else if (try context.workgroupAddress(pointer)) |address| {
+        if (context.module.typeOf(value) != try context.translateType(address.pointee_type))
+            return TranslationError.InvalidInstruction;
+
+        _ = try context.builder.appendInstruction(block, null, .{
+            .store_workgroup = .{
+                .variable = address.variable,
+                .byte_offset = try workgroupByteOffset(context, address),
+                .value = value,
+            },
+        }, null);
+    } else if (try context.compositeAddress(pointer)) |address| {
+        if (context.module.typeOf(value) != try context.translateType(address.pointee_type))
+            return TranslationError.InvalidInstruction;
+
+        switch (address.root) {
+            .local => try storeFunctionLvalue(context, block, pointer, value),
+            .interface => |variable| {
+                const interface = context.module.interface_variables.get(variable).?;
+                if (interface.direction != .output)
+                    return unsupportedStoreDestination(context, pointer);
+                const updated = if (address.indices.len == 0)
+                    value
+                else blk: {
+                    const composite = (try context.builder.appendInstruction(block, interface.type, .{
+                        .load_interface = .{ .variable = variable },
+                    }, null)).?;
+                    break :blk try insertCompositeAddress(context, block, composite, value, address.indices);
+                };
+                _ = try context.builder.appendInstruction(block, null, .{
+                    .store_interface = .{ .variable = variable, .value = updated },
+                }, null);
+            },
+            .value => return unsupportedStoreDestination(context, pointer),
+        }
+    } else {
+        const variable = context.interfaces[try context.idIndex(pointer)] orelse
+            return unsupportedStoreDestination(context, pointer);
+        const interface = context.module.interface_variables.get(variable) orelse return TranslationError.InvalidId;
+        if (interface.direction != .output) return unsupportedStoreDestination(context, pointer);
+        _ = try context.builder.appendInstruction(block, null, .{
+            .store_interface = .{
+                .variable = variable,
+                .value = value,
+            },
+        }, null);
+    }
+}
+
 fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Parser.Instruction) !void {
     const operands = instruction.operands;
     switch (instruction.opcode) {
@@ -2224,88 +2512,8 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                     return;
                 }
             }
-            if (try context.localIndex(operands[2])) |local_index| {
-                const value = context.current_locals[local_index] orelse return TranslationError.InvalidInstruction;
-
-                if (context.module.typeOf(value) != result_type)
-                    return TranslationError.InvalidInstruction;
-
-                try context.setValue(operands[1], value);
-            } else if (context.function_parameter_pointees[try context.idIndex(operands[2])]) |pointee_type| {
-                const value = context.values[try context.idIndex(operands[2])] orelse return TranslationError.MissingDefinition;
-
-                if (result_type != try context.translateType(pointee_type) or context.module.typeOf(value) != result_type)
-                    return TranslationError.InvalidInstruction;
-
-                try context.setValue(operands[1], value);
-            } else if (try context.pushConstantAddress(operands[2])) |address| {
-                if (result_type != try context.translateType(address.pointee_type))
-                    return TranslationError.InvalidInstruction;
-
-                const result = if (address.matrix_layout) |layout|
-                    try translatePushConstantMatrixLoad(context, block, address, layout, context.nameOf(operands[1]))
-                else if (address.vector_stride) |stride|
-                    try translatePushConstantStridedVectorLoad(context, block, address, stride, context.nameOf(operands[1]))
-                else
-                    (try context.builder.appendInstruction(block, result_type, .{
-                        .load_push_constant = .{ .byte_offset = try pushConstantByteOffset(context, address) },
-                    }, context.nameOf(operands[1]))).?;
-
-                try context.setValue(operands[1], result);
-            } else if (try context.bufferAddress(operands[2])) |address| {
-                if (result_type != try context.translateType(address.pointee_type))
-                    return TranslationError.InvalidInstruction;
-
-                const result = if (address.matrix_layout) |layout|
-                    try translateBufferMatrixLoad(context, block, address, layout, context.nameOf(operands[1]))
-                else if (address.vector_stride) |stride|
-                    try translateBufferStridedVectorLoad(context, block, address, stride, context.nameOf(operands[1]))
-                else
-                    (try context.builder.appendInstruction(block, result_type, .{
-                        .load_buffer = .{
-                            .resource = address.resource,
-                            .descriptor_index = address.descriptor_index,
-                            .byte_offset = try bufferByteOffset(context, address),
-                        },
-                    }, context.nameOf(operands[1]))).?;
-
-                try context.setValue(operands[1], result);
-            } else if (try context.workgroupAddress(operands[2])) |address| {
-                if (result_type != try context.translateType(address.pointee_type))
-                    return TranslationError.InvalidInstruction;
-
-                const result = (try context.builder.appendInstruction(block, result_type, .{
-                    .load_workgroup = .{
-                        .variable = address.variable,
-                        .byte_offset = try workgroupByteOffset(context, address),
-                    },
-                }, context.nameOf(operands[1]))).?;
-
-                try context.setValue(operands[1], result);
-            } else if (try context.compositeAddress(operands[2])) |address| {
-                const composite = switch (address.root) {
-                    .local => |local_index| context.current_locals[local_index] orelse return TranslationError.InvalidInstruction,
-                    .value => |value| value,
-                    .interface => |variable| (try context.builder.appendInstruction(
-                        block,
-                        try context.translateType(address.root_type),
-                        .{ .load_interface = .{ .variable = variable } },
-                        null,
-                    )).?,
-                };
-
-                const result = try extractCompositeAddress(context, block, composite, address.indices, context.nameOf(operands[1]));
-
-                if (context.module.typeOf(result) != result_type)
-                    return TranslationError.InvalidInstruction;
-
-                try context.setValue(operands[1], result);
-            } else {
-                const result = (try context.builder.appendInstruction(block, result_type, .{
-                    .load_interface = .{ .variable = try context.interfaceVariable(operands[2]) },
-                }, context.nameOf(operands[1]))).?;
-                try context.setValue(operands[1], result);
-            }
+            const value = try loadPointerValue(context, block, operands[2], result_type, context.nameOf(operands[1]));
+            try context.setValue(operands[1], value);
         },
 
         .store => {
@@ -2314,75 +2522,10 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
 
             const value = try context.resolveValue(operands[1]);
 
-            if (try context.localIndex(operands[0])) |local_index| {
-                if (context.module.typeOf(value) != context.locals.items[local_index].type)
-                    return TranslationError.InvalidInstruction;
-
-                context.current_locals[local_index] = value;
-            } else if (try context.bufferAddress(operands[0])) |address| {
-                if (context.module.typeOf(value) != try context.translateType(address.pointee_type))
-                    return TranslationError.InvalidInstruction;
-
-                if (address.matrix_layout) |layout| {
-                    try translateBufferMatrixStore(context, block, address, layout, value);
-                } else if (address.vector_stride) |stride| {
-                    try translateBufferStridedVectorStore(context, block, address, stride, value);
-                } else {
-                    _ = try context.builder.appendInstruction(block, null, .{
-                        .store_buffer = .{
-                            .resource = address.resource,
-                            .descriptor_index = address.descriptor_index,
-                            .byte_offset = try bufferByteOffset(context, address),
-                            .value = value,
-                        },
-                    }, null);
-                }
-            } else if (try context.workgroupAddress(operands[0])) |address| {
-                if (context.module.typeOf(value) != try context.translateType(address.pointee_type))
-                    return TranslationError.InvalidInstruction;
-
-                _ = try context.builder.appendInstruction(block, null, .{
-                    .store_workgroup = .{
-                        .variable = address.variable,
-                        .byte_offset = try workgroupByteOffset(context, address),
-                        .value = value,
-                    },
-                }, null);
-            } else if (try context.compositeAddress(operands[0])) |address| {
-                if (context.module.typeOf(value) != try context.translateType(address.pointee_type))
-                    return TranslationError.InvalidInstruction;
-
-                switch (address.root) {
-                    .local => try storeFunctionLvalue(context, block, operands[0], value),
-                    .interface => |variable| {
-                        const interface = context.module.interface_variables.get(variable).?;
-                        if (interface.direction != .output)
-                            return unsupportedStoreDestination(context, operands[0]);
-                        const updated = if (address.indices.len == 0)
-                            value
-                        else blk: {
-                            const composite = (try context.builder.appendInstruction(block, interface.type, .{
-                                .load_interface = .{ .variable = variable },
-                            }, null)).?;
-                            break :blk try insertCompositeAddress(context, block, composite, value, address.indices);
-                        };
-                        _ = try context.builder.appendInstruction(block, null, .{
-                            .store_interface = .{ .variable = variable, .value = updated },
-                        }, null);
-                    },
-                    .value => return unsupportedStoreDestination(context, operands[0]),
-                }
-            } else {
-                const variable = context.interfaces[try context.idIndex(operands[0])] orelse
-                    return unsupportedStoreDestination(context, operands[0]);
-                _ = try context.builder.appendInstruction(block, null, .{
-                    .store_interface = .{
-                        .variable = variable,
-                        .value = value,
-                    },
-                }, null);
-            }
+            try storePointerValue(context, block, operands[0], value);
         },
+
+        .copy_memory => try translateCopyMemory(context, block, operands),
 
         .access_chain => try translateAccessChain(context, block, operands),
         .vector_shuffle => try translateVectorShuffle(context, block, operands),
@@ -6467,13 +6610,337 @@ test "SPIR-V: reject Private memory with helper functions" {
     }
 }
 
+test "SPIR-V: OpCopyMemory snapshots promoted aggregates and copies local subobjects to outputs" {
+    const words = try assembleSpirv(std.testing.allocator,
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint Vertex %main "main" %output
+        \\OpDecorate %output Location 0
+        \\%void = OpTypeVoid
+        \\%uint = OpTypeInt 32 0
+        \\%vector = OpTypeVector %uint 2
+        \\%pair = OpTypeStruct %uint %vector
+        \\%local_pair = OpTypePointer Function %pair
+        \\%local_vector = OpTypePointer Function %vector
+        \\%output_vector = OpTypePointer Output %vector
+        \\%fn = OpTypeFunction %void
+        \\%zero = OpConstant %uint 0
+        \\%one = OpConstant %uint 1
+        \\%eleven = OpConstant %uint 11
+        \\%twentythree = OpConstant %uint 23
+        \\%vector_initial = OpConstantComposite %vector %eleven %twentythree
+        \\%initial = OpConstantComposite %pair %one %vector_initial
+        \\%cleared = OpConstantNull %pair
+        \\%output = OpVariable %output_vector Output
+        \\%main = OpFunction %void None %fn
+        \\%entry = OpLabel
+        \\%source = OpVariable %local_pair Function %initial
+        \\%target = OpVariable %local_pair Function
+        \\OpCopyMemory %target %source
+        \\OpCopyMemory %target %target None
+        \\OpStore %source %cleared
+        \\%member = OpAccessChain %local_vector %target %one
+        \\OpCopyMemory %output %member Aligned 4
+        \\OpReturn
+        \\OpFunctionEnd
+    );
+    defer std.testing.allocator.free(words);
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+    const function = module.functions.get(module.entry_point.?).?;
+    const block = module.blocks.get(function.entry_block.?).?;
+    const store = module.instructions.get(block.instructions.items[block.instructions.items.len - 1]).?.operation.store_interface;
+    const value = module.values.get(store.value).?;
+    const extract = module.instructions.get(value.definition.instruction).?.operation.composite_extract;
+    try std.testing.expectEqualSlices(u32, &.{1}, extract.indices);
+    const initial = module.constants.get(module.values.get(extract.composite).?.definition.constant).?;
+    const vector = module.constants.get(initial.value.composite[1]).?;
+    try std.testing.expectEqual(@as(u64, 11), module.constants.get(vector.value.composite[0]).?.value.integer_bits);
+    try std.testing.expectEqual(@as(u64, 23), module.constants.get(vector.value.composite[1]).?.value.integer_bits);
+    try std.testing.expect(module.properties.no_local_memory);
+}
+
+test "SPIR-V: OpCopyMemory reuses buffer push-constant and workgroup memory paths" {
+    const words = try assembleSpirv(std.testing.allocator,
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint GLCompute %main "main"
+        \\OpExecutionMode %main LocalSize 1 1 1
+        \\OpDecorate %block BufferBlock
+        \\OpMemberDecorate %block 0 Offset 16
+        \\OpDecorate %source DescriptorSet 0
+        \\OpDecorate %source Binding 0
+        \\OpDecorate %target DescriptorSet 0
+        \\OpDecorate %target Binding 1
+        \\OpDecorate %push_block Block
+        \\OpMemberDecorate %push_block 0 Offset 8
+        \\%void = OpTypeVoid
+        \\%uint = OpTypeInt 32 0
+        \\%block = OpTypeStruct %uint
+        \\%push_block = OpTypeStruct %uint
+        \\%buffer_ptr = OpTypePointer Uniform %block
+        \\%buffer_uint = OpTypePointer Uniform %uint
+        \\%push_ptr = OpTypePointer PushConstant %push_block
+        \\%push_uint = OpTypePointer PushConstant %uint
+        \\%shared_uint = OpTypePointer Workgroup %uint
+        \\%local_uint = OpTypePointer Function %uint
+        \\%fn = OpTypeFunction %void
+        \\%zero = OpConstant %uint 0
+        \\%source = OpVariable %buffer_ptr Uniform
+        \\%target = OpVariable %buffer_ptr Uniform
+        \\%push = OpVariable %push_ptr PushConstant
+        \\%shared = OpVariable %shared_uint Workgroup
+        \\%main = OpFunction %void None %fn
+        \\%entry = OpLabel
+        \\%local = OpVariable %local_uint Function
+        \\%src = OpAccessChain %buffer_uint %source %zero
+        \\%dst = OpAccessChain %buffer_uint %target %zero
+        \\%pc = OpAccessChain %push_uint %push %zero
+        \\OpCopyMemory %local %src Aligned|Nontemporal 4
+        \\OpCopyMemory %shared %local
+        \\OpCopyMemory %dst %shared
+        \\OpCopyMemory %dst %pc
+        \\OpReturn
+        \\OpFunctionEnd
+    );
+    defer std.testing.allocator.free(words);
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+    var counts: [5]usize = @splat(0);
+    for (module.instructions.entries.items) |entry| {
+        const instruction = entry orelse continue;
+        switch (instruction.operation) {
+            .load_buffer => counts[0] += 1,
+            .store_workgroup => counts[1] += 1,
+            .load_workgroup => counts[2] += 1,
+            .store_buffer => counts[3] += 1,
+            .load_push_constant => counts[4] += 1,
+            else => {},
+        }
+    }
+    try std.testing.expectEqualSlices(usize, &.{ 1, 1, 1, 2, 1 }, &counts);
+}
+
+test "SPIR-V: OpCopyMemory sees updated function pointer parameters and returns their new values" {
+    const words = try assembleSpirv(std.testing.allocator,
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint GLCompute %main "main"
+        \\OpExecutionMode %main LocalSize 1 1 1
+        \\%void = OpTypeVoid
+        \\%uint = OpTypeInt 32 0
+        \\%ptr = OpTypePointer Function %uint
+        \\%fn = OpTypeFunction %void
+        \\%helper_fn = OpTypeFunction %void %ptr
+        \\%one = OpConstant %uint 1
+        \\%two = OpConstant %uint 2
+        \\%main = OpFunction %void None %fn
+        \\%entry = OpLabel
+        \\%local = OpVariable %ptr Function %one
+        \\%call = OpFunctionCall %void %helper %local
+        \\OpReturn
+        \\OpFunctionEnd
+        \\%helper = OpFunction %void None %helper_fn
+        \\%parameter = OpFunctionParameter %ptr
+        \\%helper_entry = OpLabel
+        \\%source = OpVariable %ptr Function %two
+        \\%snapshot = OpVariable %ptr Function
+        \\OpCopyMemory %parameter %source
+        \\OpCopyMemory %snapshot %parameter
+        \\OpStore %parameter %one
+        \\OpCopyMemory %parameter %snapshot
+        \\OpReturn
+        \\OpFunctionEnd
+    );
+    defer std.testing.allocator.free(words);
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+    var bundles: usize = 0;
+    for (module.instructions.entries.items) |entry| {
+        const instruction = entry orelse continue;
+        if (instruction.operation == .composite_construct) {
+            const bundle = instruction.operation.composite_construct;
+            try std.testing.expectEqual(@as(usize, 1), bundle.elements.len);
+            try expectIntegerValue(&module, bundle.elements[0], 2);
+            bundles += 1;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 1), bundles);
+    try std.testing.expect(module.properties.no_function_calls);
+}
+
+test "SPIR-V: OpCopyMemory honors independent matrix layouts and snapshots before stores" {
+    const words = try assembleSpirv(std.testing.allocator,
+        \\OpCapability Shader
+        \\OpMemoryModel Logical GLSL450
+        \\OpEntryPoint GLCompute %main "main"
+        \\OpExecutionMode %main LocalSize 1 1 1
+        \\OpDecorate %source_block BufferBlock
+        \\OpMemberDecorate %source_block 0 Offset 16
+        \\OpMemberDecorate %source_block 0 MatrixStride 16
+        \\OpMemberDecorate %source_block 0 RowMajor
+        \\OpDecorate %target_block BufferBlock
+        \\OpMemberDecorate %target_block 0 Offset 32
+        \\OpMemberDecorate %target_block 0 MatrixStride 32
+        \\OpMemberDecorate %target_block 0 ColMajor
+        \\OpDecorate %source DescriptorSet 0
+        \\OpDecorate %source Binding 0
+        \\OpDecorate %target DescriptorSet 0
+        \\OpDecorate %target Binding 1
+        \\%void = OpTypeVoid
+        \\%uint = OpTypeInt 32 0
+        \\%float = OpTypeFloat 32
+        \\%vector = OpTypeVector %float 2
+        \\%matrix = OpTypeMatrix %vector 2
+        \\%source_block = OpTypeStruct %matrix
+        \\%target_block = OpTypeStruct %matrix
+        \\%source_ptr = OpTypePointer Uniform %source_block
+        \\%target_ptr = OpTypePointer Uniform %target_block
+        \\%matrix_ptr = OpTypePointer Uniform %matrix
+        \\%fn = OpTypeFunction %void
+        \\%zero = OpConstant %uint 0
+        \\%source = OpVariable %source_ptr Uniform
+        \\%target = OpVariable %target_ptr Uniform
+        \\%main = OpFunction %void None %fn
+        \\%entry = OpLabel
+        \\%src = OpAccessChain %matrix_ptr %source %zero
+        \\%dst = OpAccessChain %matrix_ptr %target %zero
+        \\OpCopyMemory %dst %src
+        \\OpReturn
+        \\OpFunctionEnd
+    );
+    defer std.testing.allocator.free(words);
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+    const function = module.functions.get(module.entry_point.?).?;
+    const block = module.blocks.get(function.entry_block.?).?;
+    var loads: usize = 0;
+    var stores: usize = 0;
+    for (block.instructions.items) |id| {
+        const instruction = module.instructions.get(id).?;
+        switch (instruction.operation) {
+            .load_buffer => |load| {
+                try std.testing.expectEqual(@as(usize, 0), stores);
+                const expected = [_]u64{ 16, 32, 20, 36 };
+                try std.testing.expectEqual(expected[loads], try copyMemoryTestByteOffset(&module, load.byte_offset));
+                loads += 1;
+                const ty = module.types.get(module.typeOf(instruction.result.?).?).?;
+                try std.testing.expect(ty.* == .floating);
+            },
+            .store_buffer => |store| {
+                const expected = [_]u64{ 32, 36, 64, 68 };
+                try std.testing.expectEqual(expected[stores], try copyMemoryTestByteOffset(&module, store.byte_offset));
+                stores += 1;
+                const ty = module.types.get(module.typeOf(store.value).?).?;
+                try std.testing.expect(ty.* == .floating);
+            },
+            else => {},
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 4), loads);
+    try std.testing.expectEqual(@as(usize, 4), stores);
+}
+
+fn copyMemoryTestByteOffset(module: *const ir.module.Module, value: ir.id.ValueId) anyerror!u64 {
+    const definition = module.values.get(value).?.definition;
+    if (definition == .constant)
+        return module.constants.get(definition.constant).?.value.integer_bits;
+
+    const binary = module.instructions.get(definition.instruction).?.operation.binary;
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.integer_add, binary.opcode);
+    return try copyMemoryTestByteOffset(module, binary.lhs) + try copyMemoryTestByteOffset(module, binary.rhs);
+}
+
+const copy_memory_test_template =
+    \\OpCapability Shader
+    \\OpMemoryModel Logical GLSL450
+    \\OpEntryPoint GLCompute %main "main"
+    \\OpExecutionMode %main LocalSize 1 1 1
+    \\%void = OpTypeVoid
+    \\%uint = OpTypeInt 32 0
+    \\%float = OpTypeFloat 32
+    \\%ptr = OpTypePointer Function %uint
+    \\%float_ptr = OpTypePointer Function %float
+    \\%fn = OpTypeFunction %void
+    \\%one = OpConstant %uint 1
+    \\%main = OpFunction %void None %fn
+    \\%entry = OpLabel
+    \\%source = OpVariable %ptr Function %one
+    \\%target = OpVariable %ptr Function
+    \\%wrong_type = OpVariable %float_ptr Function
+    \\{s}
+    \\OpReturn
+    \\OpFunctionEnd
+;
+
+test "SPIR-V: OpCopyMemory validates memory access operands and pointee types" {
+    const cases = [_]struct { operation: []const u8, expected: ?TranslationError = null }{
+        .{ .operation = "OpCopyMemory %target %source" },
+        .{ .operation = "OpCopyMemory %target %source None" },
+        .{ .operation = "OpCopyMemory %target %source Nontemporal" },
+        .{ .operation = "OpCopyMemory %target %source Aligned 4" },
+        .{ .operation = "OpCopyMemory %target %source Aligned|Nontemporal 16" },
+        .{ .operation = "OpCopyMemory %target %source Volatile", .expected = error.UnsupportedMemoryAccess },
+        .{ .operation = "OpCopyMemory %target %source Aligned 0", .expected = error.InvalidInstruction },
+        .{ .operation = "OpCopyMemory %target %source Aligned 3", .expected = error.InvalidInstruction },
+        .{ .operation = "OpCopyMemory %wrong_type %source", .expected = error.InvalidInstruction },
+        .{ .operation = "OpCopyMemorySized %target %source %one", .expected = error.UnsupportedOpcode },
+    };
+    for (cases) |case| {
+        const assembly = try std.testing.allocator.print(copy_memory_test_template, .{case.operation});
+        defer std.testing.allocator.free(assembly);
+        const words = try assembleSpirv(std.testing.allocator, assembly);
+        defer std.testing.allocator.free(words);
+        if (case.expected) |expected| {
+            try std.testing.expectError(expected, translate(std.testing.allocator, words, .{ .entry_point = "main" }));
+        } else {
+            var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+            module.deinit();
+        }
+    }
+    for ([_][]const u32{ &.{2}, &.{ 2, 0 }, &.{ 2, 3 } }) |operands| {
+        var cursor: usize = 0;
+        try std.testing.expectError(error.InvalidInstruction, parseCopyMemoryAccess(operands, &cursor));
+    }
+    var cursor: usize = 0;
+    try std.testing.expectError(error.UnsupportedMemoryAccess, parseCopyMemoryAccess(&.{0x8}, &cursor));
+}
+
+test "SPIR-V: OpCopyMemory rejects volatile-decorated endpoints" {
+    const plain = try std.testing.allocator.print(copy_memory_test_template, .{"OpCopyMemory %target %source"});
+    defer std.testing.allocator.free(plain);
+    const insertion = std.mem.indexOf(u8, plain, "%void =").?;
+    for ([_][]const u8{ "OpDecorate %source Volatile", "OpDecorate %target Volatile" }) |decoration| {
+        const assembly = try std.testing.allocator.print("{s}{s}\n{s}", .{ plain[0..insertion], decoration, plain[insertion..] });
+        defer std.testing.allocator.free(assembly);
+        const words = try assembleSpirv(std.testing.allocator, assembly);
+        defer std.testing.allocator.free(words);
+        try std.testing.expectError(error.UnsupportedMemoryAccess, translate(std.testing.allocator, words, .{ .entry_point = "main" }));
+    }
+}
+
+test "SPIR-V: OpCopyMemory independent source and target access masks require SPIR-V 1.4" {
+    const assembly = try std.testing.allocator.print(copy_memory_test_template, .{"OpCopyMemory %target %source Aligned 16 Aligned 4"});
+    defer std.testing.allocator.free(assembly);
+    const words = try assembleSpirvWithEnvironment(std.testing.allocator, assembly, "spv1.4");
+    defer std.testing.allocator.free(words);
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    module.deinit();
+    words[1] = 0x00010300;
+    try std.testing.expectError(error.InvalidInstruction, translate(std.testing.allocator, words, .{ .entry_point = "main" }));
+}
+
 fn assembleSpirv(allocator: std.mem.Allocator, assembly: []const u8) ![]u32 {
+    return assembleSpirvWithEnvironment(allocator, assembly, "spv1.0");
+}
+
+fn assembleSpirvWithEnvironment(allocator: std.mem.Allocator, assembly: []const u8, environment: []const u8) ![]u32 {
     var io_backend: std.Io.Threaded = .init(allocator, .{});
     defer io_backend.deinit();
     const io = io_backend.io();
 
     var child = try std.process.spawn(io, .{
-        .argv = &.{ "spirv-as", "--target-env", "spv1.0", "-o", "-", "-" },
+        .argv = &.{ "spirv-as", "--target-env", environment, "-o", "-", "-" },
         .stdin = .pipe,
         .stdout = .pipe,
         .stderr = .pipe,
