@@ -91,6 +91,12 @@ pub inline fn shaderWave(worker: *Worker, invocations: *const [interpreter_simd.
     unreachable;
 }
 
+pub inline fn shaderWaveMasked(worker: *Worker, invocations: *const [interpreter_simd.lane_count]WaveInvocation, execution_mask: interpreter_simd.LaneMask, observable_mask: interpreter_simd.LaneMask) SpvRuntimeError!WaveResult {
+    if (comptime base.config.soft_ir_interpreter)
+        return backend.shaderWaveMasked(worker, invocations, execution_mask, observable_mask);
+    unreachable;
+}
+
 pub inline fn shaderInvocation(
     worker: *Worker,
     allocator: std.mem.Allocator,

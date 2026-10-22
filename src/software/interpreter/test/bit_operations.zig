@@ -51,12 +51,12 @@ test "[interpreter] bit count and reverse scalar and vector edge values" {
     defer runtime.deinit();
 
     const input = [_]u32{ 0, 0xffff_ffff, 0x8000_0001, 0x0123_4567 };
-    copyWords(runtime.registers[0..4], &input);
+    copyWords(runtime.registers.slice(0, 4), &input);
 
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
-    try std.testing.expectEqual(@as(bc.Slot, 0), runtime.registers[4]);
-    try expectWords(&.{ 0, 32, 2, 12 }, runtime.registers[5..9]);
-    try expectWords(&.{ 0, 0xffff_ffff, 0x8000_0001, 0xe6a2_c480 }, runtime.registers[9..13]);
+    try std.testing.expectEqual(@as(bc.Slot, 0), runtime.registers.at(4).*);
+    try expectWords(&.{ 0, 32, 2, 12 }, runtime.registers.slice(5, 9));
+    try expectWords(&.{ 0, 0xffff_ffff, 0x8000_0001, 0xe6a2_c480 }, runtime.registers.slice(9, 13));
 }
 
 test "[interpreter] signed and unsigned bit field operations use scalar ranges" {
@@ -74,21 +74,21 @@ test "[interpreter] signed and unsigned bit field operations use scalar ranges" 
     var runtime = try Runtime.init(std.testing.allocator, &program);
     defer runtime.deinit();
 
-    runtime.registers[0] = 0x0000_ff00;
-    runtime.registers[1] = 0x0000_8000;
-    runtime.registers[2] = 0x12;
-    runtime.registers[3] = 0x34;
-    runtime.registers[4] = 8;
-    runtime.registers[5] = 8;
-    runtime.registers[12] = 31;
-    runtime.registers[13] = 2;
+    runtime.registers.at(0).* = 0x0000_ff00;
+    runtime.registers.at(1).* = 0x0000_8000;
+    runtime.registers.at(2).* = 0x12;
+    runtime.registers.at(3).* = 0x34;
+    runtime.registers.at(4).* = 8;
+    runtime.registers.at(5).* = 8;
+    runtime.registers.at(12).* = 31;
+    runtime.registers.at(13).* = 2;
 
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
-    try expectWords(&.{ 0xff, 0x80 }, runtime.registers[6..8]);
-    try expectWords(&.{ 0xffff_ffff, 0xffff_ff80 }, runtime.registers[8..10]);
-    try expectWords(&.{ 0x0000_1200, 0x0000_3400 }, runtime.registers[10..12]);
-    try expectWords(&.{ 0, 0 }, runtime.registers[14..16]);
-    try expectWords(&.{ 0x0000_ff00, 0x0000_8000 }, runtime.registers[16..18]);
+    try expectWords(&.{ 0xff, 0x80 }, runtime.registers.slice(6, 8));
+    try expectWords(&.{ 0xffff_ffff, 0xffff_ff80 }, runtime.registers.slice(8, 10));
+    try expectWords(&.{ 0x0000_1200, 0x0000_3400 }, runtime.registers.slice(10, 12));
+    try expectWords(&.{ 0, 0 }, runtime.registers.slice(14, 16));
+    try expectWords(&.{ 0x0000_ff00, 0x0000_8000 }, runtime.registers.slice(16, 18));
 }
 
 test "[interpreter] carry borrow and extended multiply preserve structure layout" {
@@ -111,13 +111,13 @@ test "[interpreter] carry borrow and extended multiply preserve structure layout
         0xffff_ffff, 0x8000_0000, 2, 2,
         0x8000_0000, 0xffff_ffff, 2, 0xffff_ffff,
     };
-    copyWords(runtime.registers[0..16], &input);
+    copyWords(runtime.registers.slice(0, 16), &input);
 
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
-    try expectWords(&.{ 0, 0, 1, 1 }, runtime.registers[16..20]);
-    try expectWords(&.{ 0xffff_ffff, 2, 1, 0 }, runtime.registers[20..24]);
-    try expectWords(&.{ 0xffff_fffe, 0, 1, 1 }, runtime.registers[24..28]);
-    try expectWords(&.{ 0, 1, 0xffff_ffff, 0 }, runtime.registers[28..32]);
+    try expectWords(&.{ 0, 0, 1, 1 }, runtime.registers.slice(16, 20));
+    try expectWords(&.{ 0xffff_ffff, 2, 1, 0 }, runtime.registers.slice(20, 24));
+    try expectWords(&.{ 0xffff_fffe, 0, 1, 1 }, runtime.registers.slice(24, 28));
+    try expectWords(&.{ 0, 1, 0xffff_ffff, 0 }, runtime.registers.slice(28, 32));
 }
 
 test "[interpreter] shared integer operations lower to bytecode" {

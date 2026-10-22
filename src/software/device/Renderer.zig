@@ -416,6 +416,8 @@ pub fn drawIndexed(self: *Self, index_count: usize, instance_count: usize, first
     const allocator = bounded_allocator.allocator();
 
     const indexed_draw = try self.readIndexBuffer(allocator, index_count, first_index, vertex_offset);
+    defer allocator.free(indexed_draw.indices);
+    defer if (indexed_draw.primitive_restart) |restart| allocator.free(restart);
 
     try self.drawCall(&bounded_allocator, index_count, instance_count, 0, first_instance, indexed_draw.indices, indexed_draw.primitive_restart);
 }
@@ -642,6 +644,7 @@ fn readIndexBuffer(self: *Self, allocator: std.mem.Allocator, index_count: usize
     const index_memory: []const u8 = try buffer_memory.map(byte_offset, byte_size);
 
     const indices = allocator.alloc(u32, index_count) catch return VkError.OutOfDeviceMemory;
+    errdefer allocator.free(indices);
     const restart_enabled = (self.state.pipeline orelse return VkError.InvalidPipelineDrv).interface.mode.graphics.input_assembly.primitive_restart_enable == .true;
     const restart_index = primitiveRestartIndex(index_buffer.index_type);
     const primitive_restart = if (restart_enabled) allocator.alloc(bool, index_count) catch return VkError.OutOfDeviceMemory else null;

@@ -61,7 +61,9 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 
 pub fn drop(self: *Self, allocator: std.mem.Allocator) void {
     const device_allocator = self.interface.owner.device_allocator.allocator();
-    self.module.deinit(device_allocator);
+    if (comptime !base.config.soft_ir_interpreter) {
+        self.module.deinit(device_allocator);
+    }
     self.interface.deinit();
     allocator.destroy(self);
 }

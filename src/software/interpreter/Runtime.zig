@@ -196,13 +196,41 @@ pub const RunOptions = struct {
 
 const Self = @This();
 
+pub const LaneView = struct {
+    storage: []Slot,
+    lane: usize,
+    len: usize,
+
+    pub inline fn at(self: LaneView, index: usize) *Slot {
+        std.debug.assert(index < self.len);
+        return &self.storage[index * lane_count + self.lane];
+    }
+
+    pub inline fn get(self: LaneView, index: usize) Slot {
+        return self.at(index).*;
+    }
+
+    pub inline fn set(self: LaneView, index: usize, value: Slot) void {
+        self.at(index).* = value;
+    }
+
+    pub fn slice(self: LaneView, start: usize, end: usize) LaneView {
+        std.debug.assert(start <= end and end <= self.len);
+        return .{ .storage = self.storage[start * lane_count .. end * lane_count], .lane = self.lane, .len = end - start };
+    }
+
+    pub fn fill(self: LaneView, value: Slot) void {
+        for (0..self.len) |index| self.at(index).* = value;
+    }
+};
+
 allocator: std.mem.Allocator,
 register_backing: []Slot,
 scratch_backing: []Slot,
 register_count: usize,
 scratch_count: usize,
-registers: []Slot,
-scratch: []Slot,
+registers: LaneView,
+scratch: LaneView,
 pcs: [lane_count]usize = @splat(0),
 execution_mask: LaneMask = 0,
 observable_mask: LaneMask = 0,
@@ -227,10 +255,9 @@ pub fn init(allocator: std.mem.Allocator, program: *const Program) !Self {
     @memset(register_backing, 0);
     @memset(scratch_backing, 0);
 
-    for (0..lane_count) |lane| {
-        const lane_registers = register_backing[lane * program.register_count ..][0..program.register_count];
-        for (program.initializers) |initializer|
-            lane_registers[@backingInt(initializer.register)] = initializer.value;
+    for (program.initializers) |initializer| {
+        const start = @as(usize, @backingInt(initializer.register)) * lane_count;
+        @memset(register_backing[start..][0..lane_count], initializer.value);
     }
 
     var self: Self = .{
@@ -239,8 +266,8 @@ pub fn init(allocator: std.mem.Allocator, program: *const Program) !Self {
         .scratch_backing = scratch_backing,
         .register_count = program.register_count,
         .scratch_count = program.scratch_count,
-        .registers = register_backing[0..program.register_count],
-        .scratch = scratch_backing[0..program.scratch_count],
+        .registers = .{ .storage = register_backing, .lane = 0, .len = program.register_count },
+        .scratch = .{ .storage = scratch_backing, .lane = 0, .len = program.scratch_count },
     };
     self.resetWave(program, full_lane_mask, full_lane_mask);
     return self;
@@ -255,15 +282,12 @@ pub fn deinit(self: *Self) void {
 pub fn resetWave(self: *Self, program: *const Program, execution_mask: LaneMask, observable_mask: LaneMask) void {
     std.debug.assert(program.register_count == self.register_count);
     std.debug.assert(program.scratch_count == self.scratch_count);
-    for (0..lane_count) |lane| {
-        const lane_registers = self.laneRegisters(@intCast(lane));
-        for (program.interfaces) |optional_binding| {
-            const binding = optional_binding orelse continue;
-            const start: usize = @backingInt(binding.span.base);
-            @memset(lane_registers[start..][0..binding.span.components], 0);
-        }
-        self.pcs[lane] = program.entry_pc;
+    for (program.interfaces) |optional_binding| {
+        const binding = optional_binding orelse continue;
+        const start = @as(usize, @backingInt(binding.span.base)) * lane_count;
+        @memset(self.register_backing[start..][0 .. @as(usize, binding.span.components) * lane_count], 0);
     }
+    @memset(&self.pcs, program.entry_pc);
     self.execution_mask = execution_mask;
     self.observable_mask = observable_mask & execution_mask;
     self.active_mask = execution_mask;
@@ -329,8 +353,8 @@ pub fn writeInputLane(self: *Self, program: *const Program, lane: usize, variabl
         return RuntimeError.WrongInterfaceType;
 
     const lane_registers = self.laneRegisters(@intCast(lane));
-    for (lane_registers[@backingInt(binding.span.base)..][0..values.len], values) |*slot, value|
-        slot.* = @as(Slot, value);
+    for (values, 0..) |value, component|
+        lane_registers.at(@as(usize, @backingInt(binding.span.base)) + component).* = value;
 }
 
 pub fn readOutputLane(self: *const Self, program: *const Program, lane: usize, variable: ids.InterfaceVariableId, values: []u32) RuntimeError!void {
@@ -342,9 +366,9 @@ pub fn readOutputLane(self: *const Self, program: *const Program, lane: usize, v
     if (binding.span.components != values.len)
         return RuntimeError.WrongInterfaceType;
 
-    const lane_registers = self.laneRegistersConst(@intCast(lane));
-    for (values, lane_registers[@backingInt(binding.span.base)..][0..values.len]) |*value, slot|
-        value.* = low32(slot);
+    const lane_registers = self.laneRegisters(lane);
+    for (values, 0..) |*value, component|
+        value.* = low32(lane_registers.get(@as(usize, @backingInt(binding.span.base)) + component));
 }
 
 pub fn readOutputVector(self: *const Self, program: *const Program, variable: ids.InterfaceVariableId, component: usize) RuntimeError!@Vector(lane_count, u32) {
@@ -495,21 +519,20 @@ pub fn fastPathExecutedSteps(self: *const Self) usize {
 
 const laneBit = simd.laneBit;
 
-fn laneRegisters(self: *Self, lane: Lane) []Slot {
-    const start = @as(usize, lane) * self.register_count;
-    return self.register_backing[start..][0..self.register_count];
+pub fn laneRegisters(self: *const Self, lane: usize) LaneView {
+    std.debug.assert(lane < lane_count);
+    return .{ .storage = self.register_backing, .lane = lane, .len = self.register_count };
 }
 
-fn laneRegistersConst(self: *const Self, lane: Lane) []const Slot {
-    const start = @as(usize, lane) * self.register_count;
-    return self.register_backing[start..][0..self.register_count];
+pub fn laneScratch(self: *const Self, lane: usize) LaneView {
+    std.debug.assert(lane < lane_count);
+    return .{ .storage = self.scratch_backing, .lane = lane, .len = self.scratch_count };
 }
 
 fn selectLane(self: *Self, lane: Lane) void {
     self.current_lane = lane;
     self.registers = self.laneRegisters(lane);
-    const scratch_start = @as(usize, lane) * self.scratch_count;
-    self.scratch = self.scratch_backing[scratch_start..][0..self.scratch_count];
+    self.scratch = self.laneScratch(lane);
 }
 
 fn isObservable(self: *const Self) bool {
@@ -522,61 +545,41 @@ const I32x4 = @Vector(lane_count, i32);
 const F32x4 = @Vector(lane_count, f32);
 
 fn loadRegisterVector(self: *const Self, register: bc.Register) U32x4 {
-    const index: usize = @backingInt(register);
-    // SAFETY: the following loop initializes every vector lane before result is returned
-    var result: U32x4 = undefined;
-    inline for (0..lane_count) |lane|
-        result[lane] = low32(self.register_backing[lane * self.register_count + index]);
-    return result;
+    return @truncate(self.loadSlotVector(register));
 }
 
 fn storeRegisterVector(self: *Self, register: bc.Register, values: U32x4) void {
-    const index: usize = @backingInt(register);
-    inline for (0..lane_count) |lane|
-        self.register_backing[lane * self.register_count + index] = values[lane];
+    self.storeSlotVector(register, @intCast(values));
 }
 
 fn storeRegisterVectorMasked(self: *Self, register: bc.Register, values: U32x4, mask: LaneMask) void {
-    if (mask == full_lane_mask) {
-        self.storeRegisterVector(register, values);
-        return;
-    }
-
-    const index: usize = @backingInt(register);
-    inline for (0..lane_count) |lane| {
-        if ((mask & laneBit(lane)) != 0)
-            self.register_backing[lane * self.register_count + index] = values[lane];
-    }
+    self.storeSlotVectorMasked(register, @intCast(values), mask);
 }
 
 fn loadSlotVector(self: *const Self, register: bc.Register) SlotVector {
-    const index: usize = @backingInt(register);
-    // SAFETY: the following loop initializes every vector lane before result is returned
-    var result: SlotVector = undefined;
-    inline for (0..lane_count) |lane|
-        result[lane] = self.register_backing[lane * self.register_count + index];
-    return result;
+    const start = @as(usize, @backingInt(register)) * lane_count;
+    return self.register_backing[start..][0..lane_count].*;
+}
+
+fn storeSlotVector(self: *Self, register: bc.Register, values: SlotVector) void {
+    const start = @as(usize, @backingInt(register)) * lane_count;
+    self.register_backing[start..][0..lane_count].* = values;
 }
 
 fn storeSlotVectorMasked(self: *Self, register: bc.Register, values: SlotVector, mask: LaneMask) void {
-    const index: usize = @backingInt(register);
-    inline for (0..lane_count) |lane| {
-        if ((mask & laneBit(lane)) != 0)
-            self.register_backing[lane * self.register_count + index] = values[lane];
+    if (mask == full_lane_mask) {
+        self.storeSlotVector(register, values);
+        return;
     }
+    self.storeSlotVector(register, @select(Slot, laneMaskVector(mask), values, self.loadSlotVector(register)));
 }
 
 fn loadScratchVector(self: *const Self, index: usize) SlotVector {
-    // SAFETY: the following loop initializes every vector lane before result is returned
-    var result: SlotVector = undefined;
-    inline for (0..lane_count) |lane|
-        result[lane] = self.scratch_backing[lane * self.scratch_count + index];
-    return result;
+    return self.scratch_backing[index * lane_count ..][0..lane_count].*;
 }
 
 fn storeScratchVector(self: *Self, index: usize, values: SlotVector) void {
-    inline for (0..lane_count) |lane|
-        self.scratch_backing[lane * self.scratch_count + index] = values[lane];
+    self.scratch_backing[index * lane_count ..][0..lane_count].* = values;
 }
 
 fn storeScratchVectorMasked(self: *Self, index: usize, values: SlotVector, mask: LaneMask) void {
@@ -584,11 +587,7 @@ fn storeScratchVectorMasked(self: *Self, index: usize, values: SlotVector, mask:
         self.storeScratchVector(index, values);
         return;
     }
-
-    inline for (0..lane_count) |lane| {
-        if ((mask & laneBit(lane)) != 0)
-            self.scratch_backing[lane * self.scratch_count + index] = values[lane];
-    }
+    self.storeScratchVector(index, @select(Slot, laneMaskVector(mask), values, self.loadScratchVector(index)));
 }
 
 fn laneMaskVector(mask: LaneMask) @Vector(lane_count, bool) {
@@ -956,7 +955,7 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
             if (instruction.immediate >= program.branches.len)
                 return RuntimeError.InvalidBytecode;
             const branch = program.branches[instruction.immediate];
-            self.pcs[self.current_lane] = try self.applyEdge(program, if (low32(self.registers[@backingInt(instruction.a)]) != 0) branch.true_edge else branch.false_edge);
+            self.pcs[self.current_lane] = try self.applyEdge(program, if (low32(self.registers.at(@backingInt(instruction.a)).*) != 0) branch.true_edge else branch.false_edge);
         },
         .ceil => try self.unaryFloat(instruction, .ceil),
         .compare_equal => self.compareInt(instruction, .equal),
@@ -1067,9 +1066,9 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
 }
 
 fn all(self: *Self, instruction: bc.Instruction) RuntimeError!void {
-    self.registers[@backingInt(instruction.a)] = blk: {
+    self.registers.at(@backingInt(instruction.a)).* = blk: {
         for (0..instruction.components) |component| {
-            if (low32(self.registers[@backingInt(instruction.b) + component]) == 0)
+            if (low32(self.registers.at(@backingInt(instruction.b) + component).*) == 0)
                 break :blk 0;
         }
         break :blk 1;
@@ -1077,9 +1076,9 @@ fn all(self: *Self, instruction: bc.Instruction) RuntimeError!void {
 }
 
 fn any(self: *Self, instruction: bc.Instruction) RuntimeError!void {
-    self.registers[@backingInt(instruction.a)] = blk: {
+    self.registers.at(@backingInt(instruction.a)).* = blk: {
         for (0..instruction.components) |component| {
-            if (low32(self.registers[@backingInt(instruction.b) + component]) != 0)
+            if (low32(self.registers.at(@backingInt(instruction.b) + component).*) != 0)
                 break :blk 1;
         }
         break :blk 0;
@@ -1102,7 +1101,7 @@ fn arrayLength(self: *Self, program: *const Program, resource_buffers: []const ?
         return RuntimeError.InvalidBytecode;
 
     const buffer = try resourceBuffer(program, resource_buffers, metadata.resource);
-    const byte_offset: usize = low32(self.registers[@backingInt(instruction.b)]);
+    const byte_offset: usize = low32(self.registers.at(@backingInt(instruction.b)).*);
 
     if (byte_offset > buffer.len)
         return RuntimeError.BufferOutOfBounds;
@@ -1110,12 +1109,12 @@ fn arrayLength(self: *Self, program: *const Program, resource_buffers: []const ?
     const byte_length = buffer.len - byte_offset;
     const element_count = byte_length / metadata.stride;
 
-    self.registers[@backingInt(instruction.a)] = std.math.cast(u32, element_count) orelse return RuntimeError.IntegerOverflow;
+    self.registers.at(@backingInt(instruction.a)).* = std.math.cast(u32, element_count) orelse return RuntimeError.IntegerOverflow;
 }
 
 fn copy(self: *Self, instruction: bc.Instruction) void {
     for (0..instruction.components) |component|
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = self.registers[@as(usize, @backingInt(instruction.b)) + component];
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*;
 }
 
 fn unaryInt(self: *Self, instruction: bc.Instruction, comptime operation: UnaryInt) RuntimeError!void {
@@ -1123,7 +1122,7 @@ fn unaryInt(self: *Self, instruction: bc.Instruction, comptime operation: UnaryI
     try self.validateRegisterRange(instruction.b, instruction.components);
 
     for (0..instruction.components) |component| {
-        const value = low32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const value = low32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
         const result: u32 = switch (operation) {
             .absolute => @abs(@as(i32, @bitCast(value))),
             .bit_count => @popCount(value),
@@ -1133,7 +1132,7 @@ fn unaryInt(self: *Self, instruction: bc.Instruction, comptime operation: UnaryI
             .negate => 0 -% value,
             .sign => @bitCast(@as(i32, if (@as(i32, @bitCast(value)) > 0) 1 else if (@as(i32, @bitCast(value)) < 0) -1 else 0)),
         };
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = result;
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = result;
     }
 }
 
@@ -1143,12 +1142,12 @@ fn bitFieldExtract(self: *Self, instruction: bc.Instruction, comptime signed: bo
     try self.validateRegisterRange(instruction.c, 1);
     try self.validateRegisterRange(instruction.d, 1);
 
-    const bit_offset = low32(self.registers[@backingInt(instruction.c)]);
-    const count = low32(self.registers[@backingInt(instruction.d)]);
+    const bit_offset = low32(self.registers.at(@backingInt(instruction.c)).*);
+    const count = low32(self.registers.at(@backingInt(instruction.d)).*);
     const valid_range = validBitFieldRange(bit_offset, count);
 
     for (0..instruction.components) |component| {
-        const value = low32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const value = low32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
         const result: u32 = if (!valid_range or count == 0)
             0
         else blk: {
@@ -1160,7 +1159,7 @@ fn bitFieldExtract(self: *Self, instruction: bc.Instruction, comptime signed: bo
             const sign_shift: u5 = @intCast(32 - count);
             break :blk @as(u32, @bitCast(@as(i32, @bitCast(extracted << sign_shift)) >> sign_shift));
         };
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = result;
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = result;
     }
 }
 
@@ -1175,20 +1174,20 @@ fn bitFieldInsert(self: *Self, instruction: bc.Instruction) RuntimeError!void {
     try self.validateRegisterRange(instruction.d, 1);
     try self.validateRegisterRange(count_register, 1);
 
-    const bit_offset = low32(self.registers[@backingInt(instruction.d)]);
-    const count = low32(self.registers[@backingInt(count_register)]);
+    const bit_offset = low32(self.registers.at(@backingInt(instruction.d)).*);
+    const count = low32(self.registers.at(@backingInt(count_register)).*);
     const valid_range = validBitFieldRange(bit_offset, count);
 
     for (0..instruction.components) |component| {
-        const base = low32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
-        const insert = low32(self.registers[@as(usize, @backingInt(instruction.c)) + component]);
+        const base = low32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        const insert = low32(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
         const result: u32 = if (!valid_range or count == 0)
             base
         else blk: {
             const field_mask = bitMask(count) << @intCast(bit_offset);
             break :blk (base & ~field_mask) | ((insert << @intCast(bit_offset)) & field_mask);
         };
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = result;
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = result;
     }
 }
 
@@ -1203,7 +1202,7 @@ fn bitMask(count: u32) u32 {
 fn unaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: UnaryFloat) RuntimeError!void {
     try self.validateUnaryInstruction(instruction);
     for (0..instruction.components) |component| {
-        const value: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const value: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
         const result = switch (operation) {
             .absolute => @abs(value),
             .acos => std.math.acos(value),
@@ -1233,7 +1232,7 @@ fn unaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Unar
             .tanh => std.math.tanh(value),
             .trunc => @trunc(value),
         };
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = writeF32(result);
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = writeF32(result);
     }
 }
 
@@ -1271,19 +1270,19 @@ fn vectorLength(self: *Self, instruction: bc.Instruction) RuntimeError!void {
     if (instruction.components == 0)
         return RuntimeError.InvalidBytecode;
 
-    const source = self.registers[@backingInt(instruction.b)..][0..instruction.components];
+    const source = self.registers.slice(@backingInt(instruction.b), @as(usize, @backingInt(instruction.b)) + instruction.components);
     var magnitude: f32 = 0;
 
     if (instruction.components == 1) {
-        magnitude = @abs(readF32(source[0]));
+        magnitude = @abs(readF32(source.get(0)));
     } else {
-        for (source) |bits| {
-            const value: f32 = readF32(bits);
+        for (0..source.len) |component| {
+            const value: f32 = readF32(source.get(component));
             magnitude += value * value;
         }
         magnitude = @sqrt(magnitude);
     }
-    self.registers[@backingInt(instruction.a)] = writeF32(magnitude);
+    self.registers.at(@backingInt(instruction.a)).* = writeF32(magnitude);
 }
 
 fn vectorExtractDynamic(self: *Self, instruction: bc.Instruction) RuntimeError!void {
@@ -1293,9 +1292,9 @@ fn vectorExtractDynamic(self: *Self, instruction: bc.Instruction) RuntimeError!v
     if (instruction.components == 0)
         return RuntimeError.InvalidBytecode;
 
-    const index = low32(self.registers[@backingInt(instruction.c)]);
-    self.registers[@backingInt(instruction.a)] = if (index < instruction.components)
-        self.registers[@as(usize, @backingInt(instruction.b)) + index]
+    const index = low32(self.registers.at(@backingInt(instruction.c)).*);
+    self.registers.at(@backingInt(instruction.a)).* = if (index < instruction.components)
+        self.registers.at(@as(usize, @backingInt(instruction.b)) + index).*
     else
         0;
 }
@@ -1305,27 +1304,27 @@ fn normalize(self: *Self, instruction: bc.Instruction) RuntimeError!void {
 
     var squared_length: f32 = 0.0;
     for (0..instruction.components) |component| {
-        const value: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const value: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
         squared_length += value * value;
     }
     const length = @sqrt(squared_length);
     for (0..instruction.components) |component| {
-        const value: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = writeF32(value / length);
+        const value: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = writeF32(value / length);
     }
 }
 
 fn classifyFloat(self: *Self, instruction: bc.Instruction, comptime classification: FloatClassification) RuntimeError!void {
     try self.validateUnaryInstruction(instruction);
     for (0..instruction.components) |component| {
-        const bits = self.registers[@as(usize, @backingInt(instruction.b)) + component];
+        const bits = self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*;
         const result = switch (instruction.scalar_bits) {
             16 => classifyFloatBits(f16, @as(u16, @truncate(bits)), classification),
             32 => classifyFloatBits(f32, low32(bits), classification),
             64 => classifyFloatBits(f64, bits, classification),
             else => return RuntimeError.InvalidBytecode,
         };
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = @intFromBool(result);
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = @intFromBool(result);
     }
 }
 
@@ -1341,12 +1340,12 @@ fn intToFloat(self: *Self, instruction: bc.Instruction, comptime signed: bool) R
     try self.validateUnaryInstruction(instruction);
 
     for (0..instruction.components) |component| {
-        const source = low32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const source = low32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
         const converted: f32 = if (signed)
             @floatFromInt(@as(i32, @bitCast(source)))
         else
             @floatFromInt(source);
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = writeF32(converted);
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = writeF32(converted);
     }
 }
 
@@ -1354,8 +1353,8 @@ fn floatToInt(self: *Self, instruction: bc.Instruction, comptime signed: bool) R
     try self.validateUnaryInstruction(instruction);
 
     for (0..instruction.components) |component| {
-        const source: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = if (signed)
+        const source: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = if (signed)
             writeI32(std.math.lossyCast(i32, source))
         else
             std.math.lossyCast(u32, source);
@@ -1364,8 +1363,8 @@ fn floatToInt(self: *Self, instruction: bc.Instruction, comptime signed: bool) R
 
 fn binaryInt(self: *Self, instruction: bc.Instruction, comptime operation: BinaryInt) RuntimeError!void {
     for (0..instruction.components) |component| {
-        const lhs = low32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
-        const rhs = low32(self.registers[@as(usize, @backingInt(instruction.c)) + component]);
+        const lhs = low32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        const rhs = low32(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
         const result: u32 = switch (operation) {
             .add => lhs +% rhs,
             .int_max => @max(lhs, rhs),
@@ -1407,7 +1406,7 @@ fn binaryInt(self: *Self, instruction: bc.Instruction, comptime operation: Binar
             .logical_and => @intFromBool(lhs != 0 and rhs != 0),
             .logical_or => @intFromBool(lhs != 0 or rhs != 0),
         };
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = result;
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = result;
     }
 }
 
@@ -1421,8 +1420,8 @@ fn extendedInt(self: *Self, instruction: bc.Instruction, comptime operation: Ext
     try self.validateRegisterRange(instruction.c, instruction.components);
 
     for (0..instruction.components) |component| {
-        const lhs = low32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
-        const rhs = low32(self.registers[@as(usize, @backingInt(instruction.c)) + component]);
+        const lhs = low32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        const rhs = low32(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
         const low, const high = switch (operation) {
             .add_carry => blk: {
                 const result, const carry = @addWithOverflow(lhs, rhs);
@@ -1442,8 +1441,8 @@ fn extendedInt(self: *Self, instruction: bc.Instruction, comptime operation: Ext
                 break :blk .{ @as(u32, @truncate(product)), @as(u32, @truncate(product >> 32)) };
             },
         };
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = low;
-        self.registers[@as(usize, @backingInt(instruction.a)) + instruction.components + component] = high;
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = low;
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + instruction.components + component).* = high;
     }
 }
 
@@ -1455,9 +1454,9 @@ fn binaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Bin
     try self.validateRegisterRange(instruction.c, if (broadcast_rhs) 1 else instruction.components);
 
     for (0..instruction.components) |component| {
-        const lhs: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
+        const lhs: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
         const rhs_component = if (broadcast_rhs) 0 else component;
-        const rhs: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.c)) + rhs_component]);
+        const rhs: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.c)) + rhs_component).*);
 
         const result: f32 = switch (operation) {
             .add => lhs + rhs,
@@ -1473,7 +1472,7 @@ fn binaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Bin
             .subtract => lhs - rhs,
         };
 
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = writeF32(result);
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = writeF32(result);
     }
 }
 
@@ -1486,15 +1485,15 @@ fn ternaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Te
     try self.validateRegisterRange(instruction.d, instruction.components);
 
     for (0..instruction.components) |component| {
-        const x: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
-        const y: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.c)) + component]);
-        const z: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.d)) + component]);
+        const x: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        const y: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
+        const z: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.d)) + component).*);
 
         const result: f32 = switch (operation) {
             .mul_add => @mulAdd(f32, x, y, z),
         };
 
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = writeF32(result);
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = writeF32(result);
     }
 }
 
@@ -1507,11 +1506,11 @@ fn smoothStep(self: *Self, instruction: bc.Instruction) RuntimeError!void {
     try self.validateRegisterRange(instruction.d, instruction.components);
 
     for (0..instruction.components) |component| {
-        const edge0: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
-        const edge1: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.c)) + component]);
-        const value: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.d)) + component]);
+        const edge0: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        const edge1: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
+        const value: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.d)) + component).*);
         const t = std.math.clamp((value - edge0) / (edge1 - edge0), 0.0, 1.0);
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = writeF32(t * t * (3.0 - 2.0 * t));
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = writeF32(t * t * (3.0 - 2.0 * t));
     }
 }
 
@@ -1524,11 +1523,11 @@ fn dot(self: *Self, instruction: bc.Instruction) RuntimeError!void {
 
     var sum: f32 = 0.0;
     for (0..instruction.components) |component| {
-        const lhs: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
-        const rhs: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.c)) + component]);
+        const lhs: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        const rhs: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
         sum += lhs * rhs;
     }
-    self.registers[@backingInt(instruction.a)] = writeF32(sum);
+    self.registers.at(@backingInt(instruction.a)).* = writeF32(sum);
 }
 
 fn fMix(self: *Self, instruction: bc.Instruction) RuntimeError!void {
@@ -1540,10 +1539,10 @@ fn fMix(self: *Self, instruction: bc.Instruction) RuntimeError!void {
     try self.validateRegisterRange(instruction.c, instruction.components);
 
     for (0..instruction.components) |component| {
-        const x: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.b)) + component]);
-        const y: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.c)) + component]);
-        const a: f32 = readF32(self.registers[@as(usize, @backingInt(instruction.d)) + component]);
-        self.registers[@backingInt(instruction.a) + component] = writeF32(x * (1.0 - a) + y * a);
+        const x: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        const y: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
+        const a: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.d)) + component).*);
+        self.registers.at(@backingInt(instruction.a) + component).* = writeF32(x * (1.0 - a) + y * a);
     }
 }
 
@@ -1560,10 +1559,10 @@ fn outerProduct(self: *Self, instruction: bc.Instruction) RuntimeError!void {
     try self.validateRegisterRange(instruction.c, dimensions.columns);
 
     for (0..dimensions.columns) |column| {
-        const rhs: f32 = readF32(self.registers[@backingInt(instruction.c) + column]);
+        const rhs: f32 = readF32(self.registers.at(@backingInt(instruction.c) + column).*);
         for (0..dimensions.rows) |row| {
-            const lhs: f32 = readF32(self.registers[@backingInt(instruction.b) + row]);
-            self.registers[@backingInt(instruction.a) + column * dimensions.rows + row] = writeF32(lhs * rhs);
+            const lhs: f32 = readF32(self.registers.at(@backingInt(instruction.b) + row).*);
+            self.registers.at(@backingInt(instruction.a) + column * dimensions.rows + row).* = writeF32(lhs * rhs);
         }
     }
 }
@@ -1584,7 +1583,7 @@ fn transpose(self: *Self, instruction: bc.Instruction) RuntimeError!void {
         for (0..dimensions.rows) |row| {
             const source_index = column * dimensions.rows + row;
             const destination_index = row * dimensions.columns + column;
-            self.registers[@backingInt(instruction.a) + destination_index] = self.registers[@backingInt(instruction.b) + source_index];
+            self.registers.at(@backingInt(instruction.a) + destination_index).* = self.registers.at(@backingInt(instruction.b) + source_index).*;
         }
     }
 }
@@ -1602,11 +1601,11 @@ fn matrixTimesVector(self: *Self, instruction: bc.Instruction) RuntimeError!void
     for (0..dimensions.rows) |row| {
         var sum: f32 = 0.0;
         for (0..dimensions.inner) |column| {
-            const matrix: f32 = readF32(self.registers[@backingInt(instruction.b) + column * dimensions.rows + row]);
-            const vector: f32 = readF32(self.registers[@backingInt(instruction.c) + column]);
+            const matrix: f32 = readF32(self.registers.at(@backingInt(instruction.b) + column * dimensions.rows + row).*);
+            const vector: f32 = readF32(self.registers.at(@backingInt(instruction.c) + column).*);
             sum += matrix * vector;
         }
-        self.registers[@backingInt(instruction.a) + row] = writeF32(sum);
+        self.registers.at(@backingInt(instruction.a) + row).* = writeF32(sum);
     }
 }
 
@@ -1623,11 +1622,11 @@ fn vectorTimesMatrix(self: *Self, instruction: bc.Instruction) RuntimeError!void
     for (0..dimensions.columns) |column| {
         var sum: f32 = 0.0;
         for (0..dimensions.inner) |row| {
-            const vector: f32 = readF32(self.registers[@backingInt(instruction.b) + row]);
-            const matrix: f32 = readF32(self.registers[@backingInt(instruction.c) + column * dimensions.inner + row]);
+            const vector: f32 = readF32(self.registers.at(@backingInt(instruction.b) + row).*);
+            const matrix: f32 = readF32(self.registers.at(@backingInt(instruction.c) + column * dimensions.inner + row).*);
             sum += vector * matrix;
         }
-        self.registers[@backingInt(instruction.a) + column] = writeF32(sum);
+        self.registers.at(@backingInt(instruction.a) + column).* = writeF32(sum);
     }
 }
 
@@ -1650,11 +1649,11 @@ fn matrixTimesMatrix(self: *Self, instruction: bc.Instruction) RuntimeError!void
         for (0..dimensions.rows) |row| {
             var sum: f32 = 0.0;
             for (0..dimensions.inner) |inner| {
-                const lhs: f32 = readF32(self.registers[@backingInt(instruction.b) + inner * dimensions.rows + row]);
-                const rhs: f32 = readF32(self.registers[@backingInt(instruction.c) + column * dimensions.inner + inner]);
+                const lhs: f32 = readF32(self.registers.at(@backingInt(instruction.b) + inner * dimensions.rows + row).*);
+                const rhs: f32 = readF32(self.registers.at(@backingInt(instruction.c) + column * dimensions.inner + inner).*);
                 sum += lhs * rhs;
             }
-            self.registers[@backingInt(instruction.a) + column * dimensions.rows + row] = writeF32(sum);
+            self.registers.at(@backingInt(instruction.a) + column * dimensions.rows + row).* = writeF32(sum);
         }
     }
 }
@@ -1665,10 +1664,10 @@ fn componentProduct(lhs: u8, rhs: u8) RuntimeError!usize {
 
 fn compareInt(self: *Self, instruction: bc.Instruction, comptime operation: CompareInt) void {
     for (0..instruction.components) |component| {
-        const lhs = low32(self.registers[@backingInt(instruction.b) + component]);
-        const rhs = low32(self.registers[@backingInt(instruction.c) + component]);
+        const lhs = low32(self.registers.at(@backingInt(instruction.b) + component).*);
+        const rhs = low32(self.registers.at(@backingInt(instruction.c) + component).*);
 
-        self.registers[@backingInt(instruction.a) + component] = @intFromBool(switch (operation) {
+        self.registers.at(@backingInt(instruction.a) + component).* = @intFromBool(switch (operation) {
             .equal => lhs == rhs,
             .not_equal => lhs != rhs,
             .unsigned_less => lhs < rhs,
@@ -1679,11 +1678,11 @@ fn compareInt(self: *Self, instruction: bc.Instruction, comptime operation: Comp
 
 fn compareFloat(self: *Self, instruction: bc.Instruction, comptime operation: CompareFloat) void {
     for (0..instruction.components) |component| {
-        const lhs: f32 = readF32(self.registers[@backingInt(instruction.b) + component]);
-        const rhs: f32 = readF32(self.registers[@backingInt(instruction.c) + component]);
+        const lhs: f32 = readF32(self.registers.at(@backingInt(instruction.b) + component).*);
+        const rhs: f32 = readF32(self.registers.at(@backingInt(instruction.c) + component).*);
 
         const unordered = std.math.isNan(lhs) or std.math.isNan(rhs);
-        self.registers[@backingInt(instruction.a) + component] = @intFromBool(switch (operation) {
+        self.registers.at(@backingInt(instruction.a) + component).* = @intFromBool(switch (operation) {
             .ordered_equal => !unordered and lhs == rhs,
             .unordered_equal => unordered or lhs == rhs,
             .ordered_not_equal => !unordered and lhs != rhs,
@@ -1706,11 +1705,11 @@ fn select(self: *Self, instruction: bc.Instruction) RuntimeError!void {
 
     for (0..instruction.components) |component| {
         const condition_component = if (instruction.immediate == 1) component else 0;
-        const selected = if (low32(self.registers[@as(usize, @backingInt(instruction.b)) + condition_component]) != 0)
+        const selected = if (low32(self.registers.at(@as(usize, @backingInt(instruction.b)) + condition_component).*) != 0)
             @backingInt(instruction.c)
         else
             @backingInt(instruction.d);
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = self.registers[@as(usize, selected) + component];
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = self.registers.at(@as(usize, selected) + component).*;
     }
 }
 
@@ -1741,7 +1740,7 @@ fn loadWords(self: *Self, instruction: bc.Instruction, bytes: []const u8) Runtim
 fn loadScalars(self: *Self, comptime Int: type, instruction: bc.Instruction, bytes: []const u8) void {
     for (0..instruction.components) |component| {
         const offset = component * @sizeOf(Int);
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = std.mem.readInt(Int, bytes[offset..][0..@sizeOf(Int)], .little);
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = std.mem.readInt(Int, bytes[offset..][0..@sizeOf(Int)], .little);
     }
 }
 
@@ -1758,7 +1757,7 @@ fn storeWords(self: *const Self, instruction: bc.Instruction, bytes: []u8) Runti
 fn storeScalars(self: *const Self, comptime Int: type, instruction: bc.Instruction, bytes: []u8) void {
     for (0..instruction.components) |component| {
         const offset = component * @sizeOf(Int);
-        std.mem.writeInt(Int, bytes[offset..][0..@sizeOf(Int)], @truncate(self.registers[@as(usize, @backingInt(instruction.a)) + component]), .little);
+        std.mem.writeInt(Int, bytes[offset..][0..@sizeOf(Int)], @truncate(self.registers.at(@as(usize, @backingInt(instruction.a)) + component).*), .little);
     }
 }
 
@@ -1782,7 +1781,7 @@ fn imageRead(self: *Self, program: *const Program, options: RunOptions, instruct
     var components: [4]u32 = @splat(0);
     if (access.dimension == .buffer) {
         const view = try resourceTexelBuffer(program, options.resource_texel_buffers, access.resource, fetch);
-        if (try mapBufferTexel(view, readI32(self.registers[@backingInt(instruction.b)]))) |texel| {
+        if (try mapBufferTexel(view, readI32(self.registers.at(@backingInt(instruction.b)).*))) |texel| {
             components = if (floating)
                 @bitCast(blitter.readFloat4(texel, view.interface.format))
             else
@@ -1813,8 +1812,8 @@ fn imageRead(self: *Self, program: *const Program, options: RunOptions, instruct
             }
         }
     }
-    for (self.registers[@backingInt(instruction.a)..][0..4], components) |*slot, value|
-        slot.* = @as(Slot, value);
+    for (components, 0..) |value, channel|
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + channel).* = value;
 }
 
 fn imageGather(
@@ -1838,7 +1837,7 @@ fn imageGather(
     if (coordinate_end > self.registers.len or @backingInt(instruction.c) >= self.registers.len)
         return RuntimeError.InvalidBytecode;
 
-    const component: usize = low32(self.registers[@backingInt(instruction.c)]);
+    const component: usize = low32(self.registers.at(@backingInt(instruction.c)).*);
     if (component >= 4)
         return RuntimeError.InvalidResource;
 
@@ -1849,8 +1848,8 @@ fn imageGather(
     if (extent.width == 0 or extent.height == 0)
         return RuntimeError.InvalidResource;
 
-    const x: f32 = readF32(self.registers[coordinate_base]);
-    const y: f32 = readF32(self.registers[coordinate_base + 1]);
+    const x: f32 = readF32(self.registers.at(coordinate_base).*);
+    const y: f32 = readF32(self.registers.at(coordinate_base + 1).*);
     const width: f32 = @floatFromInt(extent.width);
     const height: f32 = @floatFromInt(extent.height);
     const base_x: i32 = @intFromFloat(@floor(x * width - 0.5));
@@ -1874,14 +1873,14 @@ fn imageGather(
             .boolean, .mixed => return RuntimeError.InvalidBytecode,
         };
     }
-    for (self.registers[@backingInt(instruction.a)..][0..4], components) |*slot, value|
-        slot.* = @as(Slot, value);
+    for (components, 0..) |value, channel|
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + channel).* = value;
 }
 
-fn floatRegisterVector(registers: []const Slot, first: bc.Register, components: u16) @Vector(4, f32) {
+fn floatRegisterVector(registers: LaneView, first: bc.Register, components: u16) @Vector(4, f32) {
     var values: [4]f32 = @splat(0);
     for (0..components) |component|
-        values[component] = readF32(registers[@as(usize, @backingInt(first)) + component]);
+        values[component] = readF32(registers.get(@as(usize, @backingInt(first)) + component));
     return values;
 }
 
@@ -1902,10 +1901,10 @@ fn groupImageSample(self: *Self, program: *const Program, options: RunOptions, i
         if ((mask & quad_mask) != quad_mask)
             return RuntimeError.DerivativeUnavailable;
 
-        const left = floatRegisterVector(self.laneRegistersConst(@intCast(lane & ~@as(usize, 1))), instruction.b, spatial);
-        const right = floatRegisterVector(self.laneRegistersConst(@intCast(lane | 1)), instruction.b, spatial);
-        const top = floatRegisterVector(self.laneRegistersConst(@intCast(lane & ~@as(usize, 2))), instruction.b, spatial);
-        const bottom = floatRegisterVector(self.laneRegistersConst(@intCast(lane | 2)), instruction.b, spatial);
+        const left = floatRegisterVector(self.laneRegisters(@intCast(lane & ~@as(usize, 1))), instruction.b, spatial);
+        const right = floatRegisterVector(self.laneRegisters(@intCast(lane | 1)), instruction.b, spatial);
+        const top = floatRegisterVector(self.laneRegisters(@intCast(lane & ~@as(usize, 2))), instruction.b, spatial);
+        const bottom = floatRegisterVector(self.laneRegisters(@intCast(lane | 2)), instruction.b, spatial);
 
         gradients[lane] = .{ .dx = vectorDerivative(right - left), .dy = vectorDerivative(bottom - top) };
     }
@@ -1966,9 +1965,9 @@ fn sampleOffset(self: *const Self, register: bc.Register, dimension: Program.Ima
     const index: usize = @backingInt(register);
 
     return .{
-        .x = readI32(self.registers[index]),
-        .y = if (spatial >= 2) readI32(self.registers[index + 1]) else 0,
-        .z = if (spatial >= 3) readI32(self.registers[index + 2]) else 0,
+        .x = readI32(self.registers.at(index).*),
+        .y = if (spatial >= 2) readI32(self.registers.at(index + 1).*) else 0,
+        .z = if (spatial >= 3) readI32(self.registers.at(index + 2).*) else 0,
     };
 }
 
@@ -1994,7 +1993,7 @@ fn imageSample(
         .cube => .Cube,
         .buffer => return RuntimeError.InvalidBytecode,
     };
-    var lod: ?f32 = if (instruction.c == .invalid_register) null else readF32(self.registers[@backingInt(instruction.c)]);
+    var lod: ?f32 = if (instruction.c == .invalid_register) null else readF32(self.registers.at(@backingInt(instruction.c)).*);
 
     const derivatives = if (pair.grad_x != .invalid_register) blk: {
         const spatial = Program.spatialImageComponents(pair.dimension);
@@ -2013,7 +2012,7 @@ fn imageSample(
         if (lod == null)
             return RuntimeError.DerivativeUnavailable;
 
-        const bias: f32 = readF32(self.registers[@backingInt(pair.bias)]);
+        const bias: f32 = readF32(self.registers.at(@backingInt(pair.bias)).*);
         biased_sampler = sampler.*;
         biased_sampler.interface.mip_lod_bias = std.math.clamp(bias + sampler.interface.mip_lod_bias, -SoftSampler.max_lod_bias, SoftSampler.max_lod_bias);
 
@@ -2024,7 +2023,7 @@ fn imageSample(
     var components: [4]u32 = undefined;
 
     if (pair.dref != .invalid_register) {
-        const reference: f32 = readF32(self.registers[@backingInt(pair.dref)]);
+        const reference: f32 = readF32(self.registers.at(@backingInt(pair.dref)).*);
         const value = SoftSampler.sampleImageDref(image, view, sampling_sampler, dimension, coordinate[0], coordinate[1], coordinate[2], coordinate[3], reference, lod, offset) catch return RuntimeError.InvalidResource;
         components[0] = @bitCast(value);
     } else {
@@ -2035,18 +2034,18 @@ fn imageSample(
         };
     }
 
-    for (self.registers[@backingInt(instruction.a)..][0..instruction.components], components[0..instruction.components]) |*slot, value|
-        slot.* = @as(Slot, value);
+    for (components[0..instruction.components], 0..) |value, component|
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = value;
 }
 
 fn imageWrite(self: *const Self, program: *const Program, options: RunOptions, instruction: bc.Instruction, comptime floating: bool) RuntimeError!void {
     const access = try self.validateImageInstruction(program, instruction, false);
     var components: [4]u32 = undefined;
-    for (&components, self.registers[@backingInt(instruction.a)..][0..4]) |*value, slot|
-        value.* = low32(slot);
+    for (&components, 0..) |*value, component|
+        value.* = low32(self.registers.get(@as(usize, @backingInt(instruction.a)) + component));
     if (access.dimension == .buffer) {
         const view = try resourceTexelBuffer(program, options.resource_texel_buffers, access.resource, false);
-        if (try mapBufferTexel(view, readI32(self.registers[@backingInt(instruction.b)]))) |texel| {
+        if (try mapBufferTexel(view, readI32(self.registers.at(@backingInt(instruction.b)).*))) |texel| {
             if (floating)
                 blitter.writeFloat4(@bitCast(components), texel, view.interface.format)
             else
@@ -2098,16 +2097,16 @@ fn imageLocation(self: *const Self, view: *const SoftImageView, access: Program.
     if (range.base_mip_level >= image.interface.mip_levels or image.interface.samples.toInt() != 1)
         return RuntimeError.InvalidResource;
 
-    const lod: i32 = if (instruction.c == .invalid_register) 0 else readI32(self.registers[@backingInt(instruction.c)]);
+    const lod: i32 = if (instruction.c == .invalid_register) 0 else readI32(self.registers.at(@backingInt(instruction.c)).*);
     if (lod < 0 or @as(u32, @intCast(lod)) >= @min(view.interface.levelCount(), image.interface.mip_levels - range.base_mip_level))
         return null;
 
     const mip = range.base_mip_level + @as(u32, @intCast(lod));
     const index: usize = @backingInt(instruction.b);
 
-    const x: i32 = readI32(self.registers[index]);
-    const y: i32 = if (access.dimension != .one_d or access.arrayed) readI32(self.registers[index + 1]) else 0;
-    const z: i32 = if (access.dimension == .three_d or access.dimension == .cube or (access.dimension == .two_d and access.arrayed)) readI32(self.registers[index + 2]) else 0;
+    const x: i32 = readI32(self.registers.at(index).*);
+    const y: i32 = if (access.dimension != .one_d or access.arrayed) readI32(self.registers.at(index + 1).*) else 0;
+    const z: i32 = if (access.dimension == .three_d or access.dimension == .cube or (access.dimension == .two_d and access.arrayed)) readI32(self.registers.at(index + 2).*) else 0;
 
     var offset: vk.Offset3D = .{
         .x = x,
@@ -2190,7 +2189,7 @@ fn loadWorkgroup(self: *Self, program: *const Program, optional_memory: ?[]u8, i
     const bytes = try self.workgroupRange(program, optional_memory, instruction);
     for (0..instruction.components) |component| {
         const offset = component * @sizeOf(u32);
-        self.registers[@as(usize, @backingInt(instruction.a)) + component] = std.mem.readInt(u32, bytes[offset..][0..@sizeOf(u32)], .little);
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = std.mem.readInt(u32, bytes[offset..][0..@sizeOf(u32)], .little);
     }
 }
 
@@ -2199,7 +2198,7 @@ fn storeWorkgroup(self: *const Self, program: *const Program, optional_memory: ?
     const bytes = try self.workgroupRange(program, optional_memory, instruction);
     for (0..instruction.components) |component| {
         const offset = component * @sizeOf(u32);
-        std.mem.writeInt(u32, bytes[offset..][0..@sizeOf(u32)], low32(self.registers[@as(usize, @backingInt(instruction.a)) + component]), .little);
+        std.mem.writeInt(u32, bytes[offset..][0..@sizeOf(u32)], low32(self.registers.at(@as(usize, @backingInt(instruction.a)) + component).*), .little);
     }
 }
 
@@ -2211,7 +2210,7 @@ fn workgroupRange(self: *const Self, program: *const Program, optional_memory: ?
 
     const variable = ids.WorkgroupVariableId.fromIndex(instruction.immediate);
     const binding = program.workgroupBinding(variable) orelse return RuntimeError.InvalidBytecode;
-    const relative_offset: usize = low32(self.registers[@backingInt(instruction.b)]);
+    const relative_offset: usize = low32(self.registers.at(@backingInt(instruction.b)).*);
     const byte_count = std.math.mul(usize, instruction.components, @sizeOf(u32)) catch return RuntimeError.BufferOutOfBounds;
     const relative_end = std.math.add(usize, relative_offset, byte_count) catch return RuntimeError.BufferOutOfBounds;
 
@@ -2258,7 +2257,7 @@ fn memoryRange(self: *const Self, memory_len: usize, instruction: bc.Instruction
     if (@backingInt(instruction.b) >= self.registers.len)
         return RuntimeError.InvalidBytecode;
 
-    const byte_offset: usize = low32(self.registers[@backingInt(instruction.b)]);
+    const byte_offset: usize = low32(self.registers.at(@backingInt(instruction.b)).*);
     const byte_count = std.math.mul(usize, instruction.components, try scalarByteSize(instruction)) catch return RuntimeError.BufferOutOfBounds;
     const end = std.math.add(usize, byte_offset, byte_count) catch return RuntimeError.BufferOutOfBounds;
     if (end > memory_len)
@@ -2275,7 +2274,7 @@ fn selectBufferResource(self: *const Self, program: *const Program, instruction:
     if (instruction.immediate >= program.descriptor_arrays.len)
         return RuntimeError.InvalidBytecode;
 
-    const array_element = low32(self.registers[@backingInt(instruction.c)]);
+    const array_element = low32(self.registers.at(@backingInt(instruction.c)).*);
     for (program.descriptor_arrays[instruction.immediate].candidates) |candidate| {
         if (candidate.array_element == array_element)
             return @backingInt(candidate.resource);
@@ -2333,12 +2332,12 @@ fn applyEdge(self: *Self, program: *const Program, edge_index: u32) RuntimeError
     const copies = program.copies[edge.first_copy..end];
     for (copies) |item| {
         for (0..item.components) |component| {
-            self.scratch[@as(usize, @backingInt(item.scratch_base)) + component] = self.registers[@as(usize, @backingInt(item.source)) + component];
+            self.scratch.at(@as(usize, @backingInt(item.scratch_base)) + component).* = self.registers.at(@as(usize, @backingInt(item.source)) + component).*;
         }
     }
     for (copies) |item| {
         for (0..item.components) |component| {
-            self.registers[@as(usize, @backingInt(item.destination)) + component] = self.scratch[@as(usize, @backingInt(item.scratch_base)) + component];
+            self.registers.at(@as(usize, @backingInt(item.destination)) + component).* = self.scratch.at(@as(usize, @backingInt(item.scratch_base)) + component).*;
         }
     }
 

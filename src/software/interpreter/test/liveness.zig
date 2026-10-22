@@ -75,7 +75,7 @@ test "[interpreter] cyclic dead loop parameters do not keep their inputs alive" 
     defer module.deinit();
     var program = try Program.compile(std.testing.allocator, &module);
     defer program.deinit();
-    try std.testing.expectEqual(@as(usize, 7), program.register_count);
+    try std.testing.expectEqual(@as(usize, 6), program.register_count);
     try std.testing.expectEqual(@as(usize, 3), program.initializers.len);
     try std.testing.expectEqual(@as(usize, 2), program.copies.len);
     try std.testing.expectEqual(@as(usize, 1), program.scratch_count);
@@ -120,8 +120,12 @@ test "[interpreter] genuinely live values still exhaust the 16-bit registers" {
     const function = try builder.addFunction(void_type, "main");
     builder.setEntryPoint(function);
     const block = try builder.addBlock(function, "entry");
-    for (0..17000) |_| {
-        const value = (try builder.appendInstruction(block, vec4, .{ .load_interface = .{ .variable = input } }, null)).?;
+    const values = try std.testing.allocator.alloc(ir.id.ValueId, 17000);
+    defer std.testing.allocator.free(values);
+    for (values) |*value| {
+        value.* = (try builder.appendInstruction(block, vec4, .{ .load_interface = .{ .variable = input } }, null)).?;
+    }
+    for (values) |value| {
         _ = try builder.appendInstruction(block, null, .{ .store_interface = .{ .variable = output, .value = value } }, null);
     }
     try builder.setTerminator(block, .return_void);

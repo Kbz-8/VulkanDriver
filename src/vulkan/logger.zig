@@ -78,7 +78,7 @@ pub fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), compti
     var last_pos: usize = 0;
     while (std.mem.indexOfScalarPos(u8, &fmt_buffer, last_pos, '\n')) |pos| : (last_pos = pos + 1) {
         var buffer = std.mem.zeroes([512]u8);
-        var file_writer = file.writer(io, &buffer);
+        var file_writer = file.writerStreaming(io, &buffer);
         var writer = &file_writer.interface;
 
         const term: std.Io.Terminal = .{

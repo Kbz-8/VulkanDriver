@@ -1,6 +1,7 @@
 const std = @import("std");
 const shader_ir = @import("shader_ir");
 const bc = @import("bytecode.zig");
+const RegisterAllocator = @import("RegisterAllocator.zig");
 
 const ir = shader_ir.ir;
 const ids = ir.id;
@@ -275,7 +276,11 @@ const Lowerer = struct {
         for (self.module.values.entries.items, 0..) |entry, index| {
             const value = entry orelse continue;
             if (!live[index]) continue;
-            self.values[index] = try self.allocate(value.type);
+            self.values[index] = switch (value.definition) {
+                .constant, .undef => try self.allocate(value.type),
+                .instruction, .block_parameter => try self.shape(value.type),
+                .function_parameter => return CompileError.UnsupportedOperation,
+            };
         }
         for (self.module.interface_variables.entries.items, 0..) |entry, index| {
             const variable = entry orelse continue;
@@ -289,6 +294,7 @@ const Lowerer = struct {
                 },
             };
         }
+        self.register_count = try RegisterAllocator.run(liveness_arena.allocator(), self.module, self.function, self.values, self.register_count);
         try self.initializeConstants();
 
         for (self.function.blocks.items) |block_id| {
@@ -433,7 +439,7 @@ const Lowerer = struct {
         const kind = layout.kind;
         const end = std.math.add(usize, self.register_count, components) catch return CompileError.TooManyRegisters;
 
-        if (end > @as(usize, @backingInt(bc.Register.invalid_register)) + 1)
+        if (end > @backingInt(bc.Register.invalid_register))
             return CompileError.TooManyRegisters;
 
         const allocated: bc.Span = .{ .base = @fromBackingInt(@intCast(self.register_count)), .components = components, .kind = kind };
@@ -1582,7 +1588,7 @@ fn componentProduct(lhs: u8, rhs: u8) CompileError!u8 {
 
 fn offset(base: bc.Register, component: usize) !bc.Register {
     const value = @as(usize, @backingInt(base)) + component;
-    if (value > @backingInt(bc.Register.invalid_register))
+    if (value >= @backingInt(bc.Register.invalid_register))
         return CompileError.TooManyRegisters;
     return @fromBackingInt(@intCast(value));
 }

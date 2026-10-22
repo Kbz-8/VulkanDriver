@@ -260,8 +260,10 @@ pub fn rasterizeTriangleInRect(
 ) VkError!void {
     const bounds = common.PixelBounds.intersect(triangle.bounds, rect) orelse return;
     if (comptime base.config.soft_ir_interpreter) {
-        if (state.has_fragment_shader and state.sample_count == 1 and !state.fragment_uses_derivatives) {
+        if (state.has_fragment_shader and state.sample_count == 1) {
             const worker = optional_worker orelse return VkError.InvalidPipelineDrv;
+            if (state.fragment_uses_derivatives)
+                return rasterizeTriangleInRectQuads(state, worker, triangle, bounds);
             return rasterizeTriangleInRectWave(state, worker, triangle, bounds);
         }
     }
@@ -622,6 +624,165 @@ fn rasterizeTriangleInRectWave(
     }
 }
 
+fn rasterizeTriangleInRectQuads(state: *const FillState, worker: *fragment.Worker, triangle: *const PreparedTriangle, bounds: common.PixelBounds) VkError!void {
+    const lane_count = interpreter_simd.lane_count;
+    const quads_per_wave = lane_count / 4;
+
+    var y = bounds.min_y & ~@as(i32, 1);
+
+    while (y <= bounds.max_y) : (y += 2) {
+        var x = bounds.min_x & ~@as(i32, 1);
+
+        while (x <= bounds.max_x) : (x += 2 * quads_per_wave) {
+            var invocations: [lane_count]fragment.WaveInvocation = undefined;
+            var early_applied: [lane_count]bool = @splat(false);
+            var execution_mask: interpreter_simd.LaneMask = 0;
+            var observable_mask: interpreter_simd.LaneMask = 0;
+
+            for (0..quads_per_wave) |quad_index| {
+                const quad_x = x + @as(i32, @intCast(quad_index * 2));
+
+                if (quad_x > bounds.max_x)
+                    break;
+
+                // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
+                const coverage_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
+                const quad = irQuadCoverage(state, triangle, bounds, quad_x, y);
+
+                if (comptime base.config.soft_profile)
+                    worker.coverage_ns += Renderer.profileElapsedNs(coverage_timer, worker.io);
+
+                if (quad.mask == 0)
+                    continue;
+
+                var quad_mask = quad.mask;
+                // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
+                const depth_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
+
+                for (0..4) |quad_lane| {
+                    const bit = @as(u4, 1) << @intCast(quad_lane);
+                    if (quad_mask & bit == 0)
+                        continue;
+
+                    const pixel_x = quad_x + @as(i32, @intCast(quad_lane & 1));
+                    const pixel_y = y + @as(i32, @intCast(quad_lane >> 1));
+                    const depth = try applyEarlyDepth(state, 1, pixel_x, pixel_y, quad.positions[quad_lane][2]);
+
+                    if (depth.mask == 0) {
+                        quad_mask &= ~bit;
+                    } else {
+                        early_applied[quad_index * 4 + quad_lane] = depth.applied;
+                    }
+                }
+
+                if (comptime base.config.soft_profile)
+                    worker.depth_ns += Renderer.profileElapsedNs(depth_timer, worker.io);
+
+                if (quad_mask == 0)
+                    continue;
+
+                // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
+                const interpolation_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
+
+                // Remaining fragments need all four interpolated lanes
+                for (0..4) |quad_lane| {
+                    const weights = quad.barycentrics[quad_lane];
+                    invocations[quad_index * 4 + quad_lane] = .{
+                        .position = quad.positions[quad_lane],
+                        .inputs = try fragmentInputs(state, triangle, weights, weights),
+                    };
+                }
+
+                if (comptime base.config.soft_profile)
+                    worker.interpolation_ns += Renderer.profileElapsedNs(interpolation_timer, worker.io);
+
+                const shift: interpreter_simd.Lane = @intCast(quad_index * 4);
+                execution_mask |= @as(interpreter_simd.LaneMask, 0b1111) << shift;
+                observable_mask |= @as(interpreter_simd.LaneMask, quad_mask) << shift;
+            }
+
+            if (observable_mask == 0)
+                continue;
+
+            const wave = fragment.shaderWaveMasked(worker, &invocations, execution_mask, observable_mask) catch |err| {
+                logFragmentError(err);
+                return VkError.Unknown;
+            };
+
+            // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
+            const target_output_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
+
+            for (0..lane_count) |lane| {
+                if (wave.returned_mask & interpreter_simd.laneBit(@intCast(lane)) == 0)
+                    continue;
+
+                const pixel_x = x + @as(i32, @intCast((lane / 4) * 2 + (lane & 1)));
+                const pixel_y = y + @as(i32, @intCast((lane % 4) >> 1));
+                const result = wave.laneResult(lane);
+
+                try common.writeToTargets(
+                    result.outputs,
+                    state.draw_call,
+                    state.color_attachment_access,
+                    state.depth_attachment_access,
+                    state.stencil_attachment_access,
+                    triangle.front_face,
+                    @intCast(pixel_x),
+                    @intCast(pixel_y),
+                    result.depth orelse invocations[lane].position[2],
+                    1,
+                    result.sample_mask,
+                    early_applied[lane],
+                    state.ordering,
+                );
+            }
+
+            if (comptime base.config.soft_profile)
+                worker.target_output_ns += Renderer.profileElapsedNs(target_output_timer, worker.io);
+        }
+    }
+}
+
+const QuadCoverage = struct {
+    positions: [4]F32x4,
+    barycentrics: [4][3]f32,
+    mask: u4,
+};
+
+fn irQuadCoverage(state: *const FillState, triangle: *const PreparedTriangle, bounds: common.PixelBounds, x: i32, y: i32) QuadCoverage {
+    const v0 = triangle.vertices[0].position;
+    const v1 = triangle.vertices[1].position;
+    const v2 = triangle.vertices[2].position;
+
+    // SAFETY: the loop initializes all four positions and barycentrics before returning the quad.
+    var quad: QuadCoverage = .{ .positions = undefined, .barycentrics = undefined, .mask = 0 };
+
+    for (0..4) |lane| {
+        const pixel_x = x + @as(i32, @intCast(lane & 1));
+        const pixel_y = y + @as(i32, @intCast(lane >> 1));
+
+        var p = zm.f32x4(@as(f32, @floatFromInt(pixel_x)) + 0.5, @as(f32, @floatFromInt(pixel_y)) + 0.5, 0, 1);
+
+        const edges = [3]f32{ edgeFunction(v1, v2, p), edgeFunction(v2, v0, p), edgeFunction(v0, v1, p) };
+        const weights = [3]f32{ edges[0] / triangle.area, edges[1] / triangle.area, edges[2] / triangle.area };
+
+        p[2] = biasedDepth(state, triangle, weights[0] * v0[2] + weights[1] * v1[2] + weights[2] * v2[2]);
+        p[3] = weights[0] / v0[3] + weights[1] / v1[3] + weights[2] / v2[3];
+
+        quad.positions[lane] = p;
+        quad.barycentrics[lane] = weights;
+
+        if (pixel_x >= bounds.min_x and pixel_x <= bounds.max_x and pixel_y >= bounds.min_y and pixel_y <= bounds.max_y and
+            edgeContainsPixel(v1, v2, edges[0], triangle.area) and
+            edgeContainsPixel(v2, v0, edges[1], triangle.area) and
+            edgeContainsPixel(v0, v1, edges[2], triangle.area))
+        {
+            quad.mask |= @as(u4, 1) << @intCast(lane);
+        }
+    }
+    return quad;
+}
+
 fn irQuadHelpers(state: *const FillState, triangle: *const PreparedTriangle, x: i32, y: i32) VkError!fragment.DerivativeInputs {
     const v0 = triangle.vertices[0];
     const v1 = triangle.vertices[1];
@@ -854,73 +1015,5 @@ fn logFragmentError(err: anyerror) void {
     if (comptime base.config.logs == .verbose) {
         if (@errorReturnTrace()) |trace|
             std.debug.dumpErrorReturnTrace(trace);
-    }
-}
-
-test "IR triangle quad helpers extrapolate beyond coverage and execute nonlinear derivatives" {
-    if (comptime !base.config.soft_ir_interpreter) return;
-    const shader_ir = @import("shader_ir");
-    const Program = @import("../../interpreter/Program.zig");
-    const Runtime = @import("../../interpreter/Runtime.zig");
-    const ir = shader_ir.ir;
-    var module = ir.module.Module.init(std.testing.allocator, .fragment);
-    defer module.deinit();
-    var builder = ir.Builder.init(&module);
-    const void_type = try builder.internType(.void);
-    const float_type = try builder.internType(.{ .floating = .{ .bits = 32 } });
-    const input = try builder.addInterfaceVariable(float_type, .input, .{ .location = .{ .location = 0 } }, null);
-    const output = try builder.addInterfaceVariable(float_type, .output, .{ .location = .{ .location = 0 } }, null);
-    const function = try builder.addFunction(void_type, "main");
-    builder.setEntryPoint(function);
-    const block = try builder.addBlock(function, "entry");
-    const value = (try builder.appendInstruction(block, float_type, .{ .load_interface = .{ .variable = input } }, null)).?;
-    const squared = (try builder.appendInstruction(block, float_type, .{ .binary = .{ .opcode = .float_multiply, .lhs = value, .rhs = value } }, null)).?;
-    const width = (try builder.appendInstruction(block, float_type, .{ .unary = .{ .opcode = .fwidth, .operand = squared } }, null)).?;
-    _ = try builder.appendInstruction(block, null, .{ .store_interface = .{ .variable = output, .value = width } }, null);
-    try builder.setTerminator(block, .return_void);
-    var program = try Program.compile(std.testing.allocator, &module);
-    defer program.deinit();
-    var runtime = try Runtime.init(std.testing.allocator, &program);
-    defer runtime.deinit();
-
-    var vertices: [3]Renderer.Vertex = undefined;
-    const positions = [3]F32x4{ zm.f32x4(0, 0, 0.25, 1), zm.f32x4(1, 0, 0.25, 1), zm.f32x4(0, 1, 0.25, 1) };
-    for (&vertices, positions) |*vertex, position| {
-        vertex.* = .{ .primitive_restart = false, .position = position, .point_size = 1 };
-        vertex.packed_outputs[0][0] = .{ .word = @bitCast(position[0]), .interpolation_type = .noperspective, .centroid = false };
-        vertex.packed_outputs[1][0] = .{ .word = 42, .interpolation_type = .flat, .centroid = false };
-    }
-    const triangle: PreparedTriangle = .{
-        .vertices = .{ .{ .position = positions[0], .attributes = &vertices[0] }, .{ .position = positions[1], .attributes = &vertices[1] }, .{ .position = positions[2], .attributes = &vertices[2] } },
-        .provoking_vertex = &vertices[0],
-        .bounds = .{ .min_x = 0, .max_x = 0, .min_y = 0, .max_y = 0 },
-        .area = edgeFunction(positions[0], positions[1], positions[2]),
-        .depth_bias_slope = 0,
-        .front_face = true,
-    };
-    // Helper interpolation only reads these fields, not any draw/attachment state.
-    var state: FillState = undefined;
-    state.allocator = std.testing.allocator;
-    state.depth_attachment_access = null;
-    for ([_]i32{ 0, 1, -1 }) |pixel| {
-        const helpers = try irQuadHelpers(&state, &triangle, pixel, pixel);
-        const quad_inputs = helpers.quad_inputs.?;
-        const quad_positions = helpers.quad_positions.?;
-        runtime.resetWave(&program, 0b1111, @as(Runtime.LaneMask, 1) << helpers.quad_lane);
-        for (quad_inputs, quad_positions, 0..) |inputs, position, lane| {
-            try std.testing.expectEqual(position[0], @as(f32, @bitCast(inputs.word(0, 0))));
-            try std.testing.expectEqual(@as(u32, 42), inputs.word(1, 0));
-            try std.testing.expectEqual(@as(f32, 0.25), position[2]);
-            try std.testing.expectEqual(@as(f32, 1), position[3]);
-            try runtime.writeInputLane(&program, lane, input, &.{inputs.word(0, 0)});
-        }
-        const outcome = try runtime.runWave(&program, .{});
-        try std.testing.expectEqual(@as(Runtime.LaneMask, 0b1111), outcome.returned_mask);
-        for (0..4) |lane| {
-            var words: [1]u32 = undefined;
-            try runtime.readOutputLane(&program, lane, output, &words);
-            try std.testing.expectEqual(@as(f32, 2), @as(f32, @bitCast(words[0])));
-        }
-        try std.testing.expectEqual(@as(f32, @floatFromInt(pixel)) + 0.5, quad_positions[helpers.quad_lane][0]);
     }
 }

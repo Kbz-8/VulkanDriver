@@ -100,8 +100,8 @@ test "[interpreter] float vectors convert to signed and unsigned integers" {
         @bitCast(@as(i32, 0)),
         @bitCast(@as(i32, 17)),
         @bitCast(@as(i32, 2147483520)),
-    }, runtime.registers[8..12]);
-    try expectWords(&.{ 0, 1, 42, 4294967040 }, runtime.registers[12..16]);
+    }, runtime.registers.slice(8, 12));
+    try expectWords(&.{ 0, 1, 42, 4294967040 }, runtime.registers.slice(12, 16));
 }
 
 test "[interpreter] float-to-integer conversions do not trap for unspecified results" {
@@ -133,7 +133,7 @@ test "[interpreter] float-to-integer conversions do not trap for unspecified res
         @bitCast(@as(i32, std.math.maxInt(i32))),
         @bitCast(@as(i32, std.math.maxInt(i32))),
         @bitCast(@as(i32, -2)),
-    }, runtime.registers[6..12]);
+    }, runtime.registers.slice(6, 12));
 
     try expectWords(&.{
         0,
@@ -142,7 +142,7 @@ test "[interpreter] float-to-integer conversions do not trap for unspecified res
         2147483648,
         std.math.maxInt(u32),
         0,
-    }, runtime.registers[12..18]);
+    }, runtime.registers.slice(12, 18));
 }
 
 test "[interpreter] signed and unsigned integer vectors convert to float" {
@@ -187,7 +187,7 @@ test "[interpreter] signed and unsigned integer vectors convert to float" {
         f32Bits(42.0),
         f32Bits(@floatFromInt(std.math.maxInt(u32))),
     };
-    try expectWords(&expected, runtime.registers[8..16]);
+    try expectWords(&expected, runtime.registers.slice(8, 16));
     for (expected, 0..) |value, index| {
         const offset = index * @sizeOf(u32);
         try std.testing.expectEqual(value, std.mem.readInt(u32, output[offset..][0..@sizeOf(u32)], .little));

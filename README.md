@@ -24,7 +24,7 @@ It maketh use of a bespoke [SPIR-V interpreter](https://git.kbz8.me/kbz_8/SPIRV-
 If thou art truly determined:
 
 ```
-zig build soft --release=[fast|safe|small]
+zig build soft --release=[fast|safe|small] -Duse-llvm=true
 ```
 
 And should thou seek additional build options with:
@@ -232,7 +232,7 @@ Whether the Knights Landing cards shall one day receive the same providence rema
 To bring forth the driver:
 
 ```
-zig build phi --release=[fast|safe|small]
+zig build phi --release=[fast|safe|small] -Duse-llvm=true
 ```
 
 In this manner, the daemon is cross-compiled by way of `k1om-mpss-linux-gcc`, delivered unto its destination via SSH, and speaketh through the SCIF.
@@ -439,7 +439,7 @@ Whether Haswell and those that followed-even the Xe kindred-shall one day partak
 The rite of forging the driver:
 
 ```
-zig build flint --release=[fast|safe|small]
+zig build flint --release=[fast|safe|small] -Duse-llvm=true
 ```
 
 Should the foregoing not suffice, further build options await thee:
@@ -647,7 +647,7 @@ From its forging cometh a .suprx file, fit to be taken up and used by homebrew c
 Yet heed this: ere thou wouldst build it, the [Vita SDK](https://vitasdk.org/) must first be installed, and the path unto it made known through the `VITASDK` environment variable.
 
 ```
-zig build psvk --release=[fast|safe|small]
+zig build psvk --release=[fast|safe|small] -Duse-llvm=true
 ```
 
 ## License

@@ -65,12 +65,12 @@ test "[interpreter] float classification produces boolean lanes" {
         f32Bits(std.math.nan(f32)),
         f32Bits(12.5),
     };
-    copyWords(runtime.registers[0..4], &values);
+    copyWords(runtime.registers.slice(0, 4), &values);
 
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
-    try std.testing.expectEqual(@as(bc.Slot, 1), runtime.registers[4]);
-    try expectWords(&.{ 1, 1, 0, 0 }, runtime.registers[5..9]);
-    try expectWords(&.{ 0, 0, 1, 0 }, runtime.registers[9..13]);
+    try std.testing.expectEqual(@as(bc.Slot, 1), runtime.registers.at(4).*);
+    try expectWords(&.{ 1, 1, 0, 0 }, runtime.registers.slice(5, 9));
+    try expectWords(&.{ 0, 0, 1, 0 }, runtime.registers.slice(9, 13));
 }
 
 test "[interpreter] select broadcasts scalar conditions and applies vector conditions per lane" {
@@ -90,11 +90,11 @@ test "[interpreter] select broadcasts scalar conditions and applies vector condi
         10, 11, 12, 13,
         20, 21, 22, 23,
     };
-    copyWords(runtime.registers[0..12], &values);
+    copyWords(runtime.registers.slice(0, 12), &values);
 
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
-    try expectWords(&.{ 10, 11, 12, 13 }, runtime.registers[12..16]);
-    try expectWords(&.{ 10, 21, 12, 23 }, runtime.registers[16..20]);
+    try expectWords(&.{ 10, 11, 12, 13 }, runtime.registers.slice(12, 16));
+    try expectWords(&.{ 10, 21, 12, 23 }, runtime.registers.slice(16, 20));
 }
 
 test "[interpreter] GLSL extended floating operations execute component-wise" {
@@ -125,18 +125,18 @@ test "[interpreter] GLSL extended floating operations execute component-wise" {
         f32Bits(1.0),
         f32Bits(1.0),
     };
-    copyWords(runtime.registers[0..8], &values);
+    copyWords(runtime.registers.slice(0, 8), &values);
 
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
-    try std.testing.expectEqual(@as(f32, 2.25), try bitsF32(runtime.registers[8]));
-    try std.testing.expectApproxEqAbs(@as(f32, 0.6), try bitsF32(runtime.registers[9]), 0.00001);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.8), try bitsF32(runtime.registers[10]), 0.00001);
-    try std.testing.expectEqual(@as(f32, 0.15625), try bitsF32(runtime.registers[11]));
-    try std.testing.expectApproxEqAbs(@as(f32, std.math.pi / 4.0), try bitsF32(runtime.registers[12]), 0.00001);
-    try expectWords(&.{ f32Bits(-1.0), f32Bits(1.0), f32Bits(1.0), f32Bits(0.0) }, runtime.registers[13..17]);
-    try std.testing.expectEqual(@as(f32, 81.0), try bitsF32(runtime.registers[17]));
-    try std.testing.expectEqual(@as(f32, 1.0), try bitsF32(runtime.registers[18]));
-    try std.testing.expectEqual(@as(f32, -3.0), try bitsF32(runtime.registers[19]));
+    try std.testing.expectEqual(@as(f32, 2.25), try bitsF32(runtime.registers.at(8).*));
+    try std.testing.expectApproxEqAbs(@as(f32, 0.6), try bitsF32(runtime.registers.at(9).*), 0.00001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.8), try bitsF32(runtime.registers.at(10).*), 0.00001);
+    try std.testing.expectEqual(@as(f32, 0.15625), try bitsF32(runtime.registers.at(11).*));
+    try std.testing.expectApproxEqAbs(@as(f32, std.math.pi / 4.0), try bitsF32(runtime.registers.at(12).*), 0.00001);
+    try expectWords(&.{ f32Bits(-1.0), f32Bits(1.0), f32Bits(1.0), f32Bits(0.0) }, runtime.registers.slice(13, 17));
+    try std.testing.expectEqual(@as(f32, 81.0), try bitsF32(runtime.registers.at(17).*));
+    try std.testing.expectEqual(@as(f32, 1.0), try bitsF32(runtime.registers.at(18).*));
+    try std.testing.expectEqual(@as(f32, -3.0), try bitsF32(runtime.registers.at(19).*));
 }
 
 test "[interpreter] exp executes scalar and vector f32 including special values" {
@@ -161,11 +161,11 @@ test "[interpreter] exp executes scalar and vector f32 including special values"
     };
     for (cases, expected) |inputs, results| {
         runtime.resetInvocation(&program);
-        for (inputs, 0..) |input, i| runtime.registers[i] = f32Bits(input);
+        for (inputs, 0..) |input, i| runtime.registers.at(i).* = f32Bits(input);
         try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
-        try expectExpResult(results[0], try bitsF32(runtime.registers[4]));
-        for (results, runtime.registers[5..9]) |result, actual|
-            try expectExpResult(result, try bitsF32(actual));
+        try expectExpResult(results[0], try bitsF32(runtime.registers.at(4).*));
+        for (results, 0..) |result, i|
+            try expectExpResult(result, try bitsF32(runtime.registers.at(5 + i).*));
     }
 }
 
@@ -182,24 +182,24 @@ test "[interpreter] exp wave execution preserves inactive lanes" {
     for ([_]Runtime.LaneMask{ Runtime.full_lane_mask, 0b0101 }) |mask| {
         runtime.resetWave(&program, mask, mask);
         for (0..Runtime.lane_count) |lane| {
-            const registers = runtime.register_backing[lane * program.register_count ..][0..program.register_count];
-            @memset(registers[4..9], f32Bits(-99));
+            const registers = runtime.laneRegisters(lane);
+            registers.slice(4, 9).fill(f32Bits(-99));
             const inputs = [_]f32{ -0.5, @as(f32, @floatFromInt(lane)), -std.math.inf(f32), std.math.nan(f32) };
-            for (inputs, 0..) |input, i| registers[i] = f32Bits(input);
+            for (inputs, 0..) |input, i| registers.at(i).* = f32Bits(input);
         }
         const outcome = try runtime.runWave(&program, .{});
         try std.testing.expectEqual(mask, outcome.returned_mask);
         if (mask == Runtime.full_lane_mask)
             try std.testing.expect(runtime.fastPathExecutedSteps() > 0);
         for (0..Runtime.lane_count) |lane| {
-            const registers = runtime.register_backing[lane * program.register_count ..][0..program.register_count];
+            const registers = runtime.laneRegisters(lane);
             if (mask & (@as(Runtime.LaneMask, 1) << @intCast(lane)) == 0) {
-                for (registers[4..9]) |actual| try std.testing.expectEqual(@as(bc.Slot, f32Bits(-99)), actual);
+                try expectWords(&@as([5]u32, @splat(f32Bits(-99))), registers.slice(4, 9));
                 continue;
             }
-            try expectExpResult(0.6065306597126334, try bitsF32(registers[4]));
-            for (registers[0..4], registers[5..9]) |input, actual|
-                try expectExpResult(@exp(try bitsF32(input)), try bitsF32(actual));
+            try expectExpResult(0.6065306597126334, try bitsF32(registers.at(4).*));
+            for (0..4) |i|
+                try expectExpResult(@exp(try bitsF32(registers.at(i).*)), try bitsF32(registers.at(5 + i).*));
         }
     }
 }
@@ -241,9 +241,9 @@ test "[interpreter] exp IR lowers scalar and vector f32 to bytecode" {
     var runtime = try Runtime.init(std.testing.allocator, &program);
     defer runtime.deinit();
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
-    try expectExpResult(0.6065306597126334, try bitsF32(runtime.registers[@backingInt(program.code[0].a)]));
+    try expectExpResult(0.6065306597126334, try bitsF32(runtime.registers.at(@backingInt(program.code[0].a)).*));
     const vector_start = @backingInt(program.code[1].a);
-    try expectWords(&.{ f32Bits(1), f32Bits(1) }, runtime.registers[vector_start..][0..2]);
+    try expectWords(&.{ f32Bits(1), f32Bits(1) }, runtime.registers.slice(vector_start, vector_start + 2));
 }
 
 test "[interpreter] float remainder truncates and dot reduces vectors" {
@@ -262,15 +262,15 @@ test "[interpreter] float remainder truncates and dot reduces vectors" {
         f32Bits(-5.5), f32Bits(2.0),  f32Bits(3.0),
         f32Bits(2.0),  f32Bits(-5.0), f32Bits(6.0),
     };
-    copyWords(runtime.registers[0..6], &values);
+    copyWords(runtime.registers.slice(0, 6), &values);
 
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
     const expected_remainders = [_]f32{ -1.5, 2.0, 3.0 };
 
-    for (runtime.registers[6..9], expected_remainders) |actual, expected|
-        try std.testing.expectEqual(expected, try bitsF32(actual));
+    for (expected_remainders, 0..) |expected, i|
+        try std.testing.expectEqual(expected, try bitsF32(runtime.registers.at(6 + i).*));
 
-    try std.testing.expectEqual(@as(f32, -3.0), try bitsF32(runtime.registers[9]));
+    try std.testing.expectEqual(@as(f32, -3.0), try bitsF32(runtime.registers.at(9).*));
 }
 
 test "[interpreter] outer product and rectangular transpose are column-major" {
@@ -294,17 +294,17 @@ test "[interpreter] outer product and rectangular transpose are column-major" {
         f32Bits(4), f32Bits(5),
         f32Bits(6),
     };
-    copyWords(runtime.registers[0..11], &input);
+    copyWords(runtime.registers.slice(0, 11), &input);
 
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
     const expected_outer = [_]f32{ 8, 12, 10, 15, 12, 18 };
     const expected_transpose = [_]f32{ 1, 3, 5, 2, 4, 6 };
 
-    for (runtime.registers[11..17], expected_outer) |actual, expected|
-        try std.testing.expectEqual(expected, try bitsF32(actual));
+    for (expected_outer, 0..) |expected, i|
+        try std.testing.expectEqual(expected, try bitsF32(runtime.registers.at(11 + i).*));
 
-    for (runtime.registers[17..23], expected_transpose) |actual, expected|
-        try std.testing.expectEqual(expected, try bitsF32(actual));
+    for (expected_transpose, 0..) |expected, i|
+        try std.testing.expectEqual(expected, try bitsF32(runtime.registers.at(17 + i).*));
 }
 
 test "[interpreter] malformed floating bytecode returns an error" {
@@ -414,20 +414,20 @@ test "[interpreter] length scalar absolute value and vector magnitude, dynamic e
     defer program.deinit();
     var runtime = try Runtime.init(std.testing.allocator, &program);
     defer runtime.deinit();
-    copyWords(runtime.registers[0..5], &[_]u32{ f32Bits(-7), f32Bits(3), f32Bits(4), 0, 1 });
+    copyWords(runtime.registers.slice(0, 5), &[_]u32{ f32Bits(-7), f32Bits(3), f32Bits(4), 0, 1 });
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
-    try expectWords(&.{ f32Bits(7), f32Bits(5), f32Bits(3), f32Bits(4) }, runtime.registers[5..9]);
-    runtime.registers[3] = @as(u32, @bitCast(@as(i32, -1)));
+    try expectWords(&.{ f32Bits(7), f32Bits(5), f32Bits(3), f32Bits(4) }, runtime.registers.slice(5, 9));
+    runtime.registers.at(3).* = @as(u32, @bitCast(@as(i32, -1)));
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
-    try std.testing.expectEqual(@as(bc.Slot, 0), runtime.registers[7]);
-    runtime.registers[3] = 2;
+    try std.testing.expectEqual(@as(bc.Slot, 0), runtime.registers.at(7).*);
+    runtime.registers.at(3).* = 2;
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
-    try std.testing.expectEqual(@as(bc.Slot, 0), runtime.registers[7]);
-    runtime.registers[3] = 0;
-    runtime.registers[4] = std.math.maxInt(u32);
+    try std.testing.expectEqual(@as(bc.Slot, 0), runtime.registers.at(7).*);
+    runtime.registers.at(3).* = 0;
+    runtime.registers.at(4).* = std.math.maxInt(u32);
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
-    try std.testing.expectEqual(@as(bc.Slot, f32Bits(3)), runtime.registers[7]);
-    try std.testing.expectEqual(@as(bc.Slot, 0), runtime.registers[8]);
+    try std.testing.expectEqual(@as(bc.Slot, f32Bits(3)), runtime.registers.at(7).*);
+    try std.testing.expectEqual(@as(bc.Slot, 0), runtime.registers.at(8).*);
 }
 
 test "[interpreter] nonlinear scalar and vector fwidth uses same-instruction quad values and helper masks" {
@@ -452,19 +452,19 @@ test "[interpreter] nonlinear scalar and vector fwidth uses same-instruction qua
         runtime.resetWave(&program, Runtime.full_lane_mask, @as(Runtime.LaneMask, 1) << @intCast(observable_lane));
         for (0..Runtime.lane_count) |lane| {
             const value = values[lane % 4];
-            const registers = runtime.register_backing[lane * program.register_count ..][0..program.register_count];
-            registers[0] = f32Bits(value[0]);
-            registers[1] = f32Bits(value[1]);
-            registers[7] = @intCast(lane * 4);
+            const registers = runtime.laneRegisters(lane);
+            registers.at(0).* = f32Bits(value[0]);
+            registers.at(1).* = f32Bits(value[1]);
+            registers.at(7).* = @intCast(lane * 4);
         }
         @memset(&buffer, 0xaa);
         const outcome = try runtime.runWave(&program, .{ .resource_buffers = &.{&buffer} });
         try std.testing.expectEqual(Runtime.full_lane_mask, outcome.returned_mask);
         for (0..Runtime.lane_count) |lane| {
-            const registers = runtime.register_backing[lane * program.register_count ..][0..program.register_count];
-            try expectWords(&.{ f32Bits(3), f32Bits(5), f32Bits(3) }, registers[4..7]);
+            const registers = runtime.laneRegisters(lane);
+            try expectWords(&.{ f32Bits(3), f32Bits(5), f32Bits(3) }, registers.slice(4, 7));
             const expected_scalar = [_]f32{ 17, 32, 32, 47 };
-            try std.testing.expectEqual(@as(bc.Slot, f32Bits(expected_scalar[lane % 4])), registers[9]);
+            try std.testing.expectEqual(@as(bc.Slot, f32Bits(expected_scalar[lane % 4])), registers.at(9).*);
             try std.testing.expectEqual(if (lane == observable_lane) f32Bits(expected_scalar[lane % 4]) else @as(u32, 0xaaaaaaaa), std.mem.readInt(u32, buffer[lane * 4 ..][0..4], .little));
         }
     }
@@ -506,27 +506,27 @@ test "[interpreter] signed nonlinear derivatives preserve quad pairs, aliases, a
             const execution_mask: Runtime.LaneMask = if (case == Runtime.lane_count) 0b1111 else Runtime.full_lane_mask;
             runtime.resetWave(&program, execution_mask, @as(Runtime.LaneMask, 1) << @intCast(observable_lane));
             for (0..Runtime.lane_count) |lane| {
-                const registers = runtime.register_backing[lane * program.register_count ..][0..program.register_count];
-                @memset(registers, 0xaaaaaaaa);
+                const registers = runtime.laneRegisters(lane);
+                registers.fill(0xaaaaaaaa);
                 const scale: f32 = @floatFromInt(lane / 4 + 1);
-                registers[0] = f32Bits(values[lane % 4][0] * scale);
-                registers[1] = f32Bits(values[lane % 4][1] * scale);
-                registers[7] = @intCast(lane * 4);
+                registers.at(0).* = f32Bits(values[lane % 4][0] * scale);
+                registers.at(1).* = f32Bits(values[lane % 4][1] * scale);
+                registers.at(7).* = @intCast(lane * 4);
             }
             @memset(&buffer, 0xaa);
             const outcome = try runtime.runWave(&program, .{ .resource_buffers = &.{&buffer} });
             try std.testing.expectEqual(execution_mask, outcome.returned_mask);
             for (0..Runtime.lane_count) |lane| {
-                const registers = runtime.register_backing[lane * program.register_count ..][0..program.register_count];
+                const registers = runtime.laneRegisters(lane);
                 const scale: f32 = @floatFromInt(lane / 4 + 1);
                 const expected = [2]u32{ f32Bits(differences[lane % 4][0] * scale * scale), f32Bits(differences[lane % 4][1] * scale * scale) };
                 if ((execution_mask & (@as(Runtime.LaneMask, 1) << @intCast(lane))) != 0) {
-                    try expectWords(&expected, registers[2..4]);
-                    try expectWords(&expected, registers[4..6]);
-                    try std.testing.expectEqual(@as(bc.Slot, expected[0]), registers[0]);
-                    try std.testing.expectEqual(@as(bc.Slot, expected[0]), registers[6]);
+                    try expectWords(&expected, registers.slice(2, 4));
+                    try expectWords(&expected, registers.slice(4, 6));
+                    try std.testing.expectEqual(@as(bc.Slot, expected[0]), registers.at(0).*);
+                    try std.testing.expectEqual(@as(bc.Slot, expected[0]), registers.at(6).*);
                 } else {
-                    try expectWords(&@as([5]u32, @splat(0xaaaaaaaa)), registers[2..7]);
+                    try expectWords(&@as([5]u32, @splat(0xaaaaaaaa)), registers.slice(2, 7));
                 }
                 try std.testing.expectEqual(if (lane == observable_lane) expected[0] else @as(u32, 0xaaaaaaaa), std.mem.readInt(u32, buffer[lane * 4 ..][0..4], .little));
             }
@@ -640,18 +640,18 @@ test "[interpreter] derivatives park early arrivals until nonuniform branch arms
             runtime.resetWave(&program, Runtime.full_lane_mask, 1);
             var values: [Runtime.lane_count]f32 = undefined;
             for (0..Runtime.lane_count) |lane| {
-                const registers = runtime.register_backing[lane * program.register_count ..][0..program.register_count];
+                const registers = runtime.laneRegisters(lane);
                 // On wide waves the last case lets the second quad finish while the first waits
-                registers[0] = @intFromBool((lane + flip) % 2 == 0 or (flip == 2 and lane >= 4));
+                registers.at(0).* = @intFromBool((lane + flip) % 2 == 0 or (flip == 2 and lane >= 4));
                 const value: f32 = @floatFromInt(lane % 4 + 1);
-                registers[1] = f32Bits(value);
-                registers[2] = f32Bits(2);
-                values[lane] = if (registers[0] != 0) value * 2 else (value + 2) * 2;
+                registers.at(1).* = f32Bits(value);
+                registers.at(2).* = f32Bits(2);
+                values[lane] = if (registers.at(0).* != 0) value * 2 else (value + 2) * 2;
             }
             const outcome = try runtime.runWave(&program, .{ .max_steps = 100 });
             try std.testing.expectEqual(Runtime.full_lane_mask, outcome.returned_mask);
             for (0..Runtime.lane_count) |lane| {
-                const registers = runtime.register_backing[lane * program.register_count ..][0..program.register_count];
+                const registers = runtime.laneRegisters(lane);
                 const dx = values[lane | 1] - values[lane & ~@as(usize, 1)];
                 const dy = values[lane | 2] - values[lane & ~@as(usize, 2)];
                 const expected = switch (opcode) {
@@ -660,7 +660,7 @@ test "[interpreter] derivatives park early arrivals until nonuniform branch arms
                     .fwidth => @abs(dx) + @abs(dy),
                     else => unreachable,
                 };
-                try std.testing.expectEqual(@as(bc.Slot, f32Bits(expected)), registers[4]);
+                try std.testing.expectEqual(@as(bc.Slot, f32Bits(expected)), registers.at(4).*);
             }
         }
     }
@@ -707,11 +707,11 @@ test "[interpreter] helper OOB extraction produces lane-local zero without abort
     var buffer: [16]u8 = @splat(0xaa);
     runtime.resetWave(&program, 0b1111, 1);
     for (indices, 0..) |index, lane| {
-        const registers = runtime.register_backing[lane * program.register_count ..][0..program.register_count];
-        registers[0] = f32Bits(3);
-        registers[1] = f32Bits(4);
-        registers[2] = index;
-        registers[4] = @intCast(lane * 4);
+        const registers = runtime.laneRegisters(lane);
+        registers.at(0).* = f32Bits(3);
+        registers.at(1).* = f32Bits(4);
+        registers.at(2).* = index;
+        registers.at(4).* = @intCast(lane * 4);
     }
     const outcome = try runtime.runWave(&program, .{ .resource_buffers = &.{&buffer} });
     try std.testing.expectEqual(@as(Runtime.LaneMask, 0b1111), outcome.returned_mask);
@@ -719,9 +719,9 @@ test "[interpreter] helper OOB extraction produces lane-local zero without abort
     try std.testing.expectEqualSlices(u8, &@as([12]u8, @splat(0xaa)), buffer[4..]);
     const widths = [_]f32{ 8, 4, 4, 0 };
     for (widths, 0..) |width, lane| {
-        const registers = runtime.register_backing[lane * program.register_count ..][0..program.register_count];
-        try std.testing.expectEqual(@as(bc.Slot, if (lane == 0) f32Bits(4) else @as(u32, 0)), registers[3]);
-        try std.testing.expectEqual(@as(bc.Slot, f32Bits(width)), registers[5]);
+        const registers = runtime.laneRegisters(lane);
+        try std.testing.expectEqual(@as(bc.Slot, if (lane == 0) f32Bits(4) else @as(u32, 0)), registers.at(3).*);
+        try std.testing.expectEqual(@as(bc.Slot, f32Bits(width)), registers.at(5).*);
     }
 }
 
@@ -734,7 +734,7 @@ test "[interpreter] dynamic extraction still rejects malformed bytecode register
     defer program.deinit();
     var runtime = try Runtime.init(std.testing.allocator, &program);
     defer runtime.deinit();
-    runtime.registers[2] = std.math.maxInt(u32);
+    runtime.registers.at(2).* = std.math.maxInt(u32);
     for (0..4) |operand| {
         code[0].components = if (operand == 3) 0 else 2;
         code[0].a = if (operand == 0) reg(4) else reg(3);
@@ -755,12 +755,12 @@ test "[interpreter] lowered float clamp executes max then min component-wise" {
     var runtime = try Runtime.init(std.testing.allocator, &program);
     defer runtime.deinit();
     for (0..Runtime.lane_count) |lane| {
-        const registers = runtime.register_backing[lane * program.register_count ..][0..program.register_count];
-        copyWords(registers[0..9], &[_]u32{ f32Bits(-1), f32Bits(0.5), f32Bits(2), f32Bits(0), f32Bits(0), f32Bits(0), f32Bits(1), f32Bits(1), f32Bits(1) });
+        const registers = runtime.laneRegisters(lane);
+        copyWords(registers.slice(0, 9), &[_]u32{ f32Bits(-1), f32Bits(0.5), f32Bits(2), f32Bits(0), f32Bits(0), f32Bits(0), f32Bits(1), f32Bits(1), f32Bits(1) });
     }
     _ = try runtime.runWave(&program, .{});
     for (0..Runtime.lane_count) |lane| {
-        const registers = runtime.register_backing[lane * program.register_count ..][0..program.register_count];
-        try expectWords(&.{ f32Bits(0), f32Bits(0.5), f32Bits(1) }, registers[12..15]);
+        const registers = runtime.laneRegisters(lane);
+        try expectWords(&.{ f32Bits(0), f32Bits(0.5), f32Bits(1) }, registers.slice(12, 15));
     }
 }
