@@ -1,6 +1,6 @@
 # Ape Vulkan ICD <a href="https://git.kbz8.me/kbz_8/VulkanDriver/actions?workflows=DocsAndIR.yml"><img src="https://git.kbz8.me/kbz_8/VulkanDriver/badges/workflows/DocsAndIR.yml/badge.svg"></a>
 
-<img align="right" width="250px" src="./logo.png"/>
+<img align="right" width="250px" src="./resources/logo.png"/>
 
 For I feel as an ape, smiting sticks together in the vain hope of forging a driver.
 
@@ -19,12 +19,15 @@ _The gods are merciful, but not that merciful._
 Soft be a software implementation of the Vulkan specification, abiding within this driver's own codebase.\
 It maketh use of a bespoke [SPIR-V interpreter](https://git.kbz8.me/kbz_8/SPIRV-Interpreter) and renderer, by whose workings its labours are carried forth.
 
+<img align="left" width="250px" src="./resources/software/vkcube.gif"/>
+<img align="right" height="250px" src="./resources/software/gears.gif"/>
+
 ### Build
 
 If thou art truly determined:
 
 ```
-zig build soft --release=[fast|safe|small] -Duse-llvm=true
+zig build soft --release=[fast|safe|small]
 ```
 
 And should thou seek additional build options with:
@@ -232,7 +235,7 @@ Whether the Knights Landing cards shall one day receive the same providence rema
 To bring forth the driver:
 
 ```
-zig build phi --release=[fast|safe|small] -Duse-llvm=true
+zig build phi --release=[fast|safe|small]
 ```
 
 In this manner, the daemon is cross-compiled by way of `k1om-mpss-linux-gcc`, delivered unto its destination via SSH, and speaketh through the SCIF.
@@ -439,7 +442,7 @@ Whether Haswell and those that followed-even the Xe kindred-shall one day partak
 The rite of forging the driver:
 
 ```
-zig build flint --release=[fast|safe|small] -Duse-llvm=true
+zig build flint --release=[fast|safe|small]
 ```
 
 Should the foregoing not suffice, further build options await thee:

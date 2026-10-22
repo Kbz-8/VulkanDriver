@@ -145,7 +145,7 @@ pub fn build(b: *std.Build) !void {
         .options = options,
     };
 
-    const use_llvm = b.option(bool, "use-llvm", "LLVM build") orelse false;
+    const use_llvm = b.option(bool, "use-llvm", "LLVM build") orelse (optimize != .debug);
 
     const target_contexts = TargetContexts{
         .native = createTargetContext(b, optimize, shared_dependencies, .{
