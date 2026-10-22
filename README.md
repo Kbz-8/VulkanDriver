@@ -19,8 +19,8 @@ _The gods are merciful, but not that merciful._
 Soft be a software implementation of the Vulkan specification, abiding within this driver's own codebase.\
 It maketh use of a bespoke [SPIR-V interpreter](https://git.kbz8.me/kbz_8/SPIRV-Interpreter) and renderer, by whose workings its labours are carried forth.
 
-<img align="left" width="250px" src="./resources/software/vkcube.gif"/>
-<img align="right" height="250px" src="./resources/software/gears.gif"/>
+<img width="250px" src="./resources/software/vkcube.gif"/>
+<img height="250px" src="./resources/software/gears.gif"/>
 
 ### Build
 
