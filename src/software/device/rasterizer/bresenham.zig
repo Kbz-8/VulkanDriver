@@ -1,6 +1,6 @@
 const std = @import("std");
 const base = @import("base");
-const spv = @import("spv");
+const shader_types = @import("../../shader_types.zig");
 const vk = @import("vulkan");
 const zm = base.zm;
 
@@ -10,11 +10,9 @@ const fragment = @import("../fragment/dispatcher.zig");
 const Renderer = @import("../Renderer.zig");
 
 const VkError = base.VkError;
-const SpvRuntimeError = spv.Runtime.RuntimeError;
 const F32x4 = zm.F32x4;
 
 const RunData = struct {
-    allocator: std.mem.Allocator,
     draw_call: *Renderer.DrawCall,
     batch_id: usize,
     x0: i32,
@@ -35,7 +33,6 @@ const RunData = struct {
 };
 
 pub fn drawLine(
-    allocator: std.mem.Allocator,
     draw_call: *Renderer.DrawCall,
     v0: *Renderer.Vertex,
     v1: *Renderer.Vertex,
@@ -43,11 +40,10 @@ pub fn drawLine(
     depth_attachment_access: ?*common.RenderTargetAccess,
     stencil_attachment_access: ?*common.RenderTargetAccess,
 ) VkError!void {
-    try drawLineWithEndpointMode(allocator, draw_call, v0, v1, color_attachment_access, depth_attachment_access, stencil_attachment_access, false);
+    try drawLineWithEndpointMode(draw_call, v0, v1, color_attachment_access, depth_attachment_access, stencil_attachment_access, false);
 }
 
 pub fn drawLineIncludingEndpoint(
-    allocator: std.mem.Allocator,
     draw_call: *Renderer.DrawCall,
     v0: *Renderer.Vertex,
     v1: *Renderer.Vertex,
@@ -55,11 +51,10 @@ pub fn drawLineIncludingEndpoint(
     depth_attachment_access: ?*common.RenderTargetAccess,
     stencil_attachment_access: ?*common.RenderTargetAccess,
 ) VkError!void {
-    try drawLineWithEndpointMode(allocator, draw_call, v0, v1, color_attachment_access, depth_attachment_access, stencil_attachment_access, true);
+    try drawLineWithEndpointMode(draw_call, v0, v1, color_attachment_access, depth_attachment_access, stencil_attachment_access, true);
 }
 
 fn drawLineWithEndpointMode(
-    allocator: std.mem.Allocator,
     draw_call: *Renderer.DrawCall,
     v0: *Renderer.Vertex,
     v1: *Renderer.Vertex,
@@ -70,7 +65,6 @@ fn drawLineWithEndpointMode(
 ) VkError!void {
     if (depth_attachment_access != null) {
         try drawLineBresenham(
-            allocator,
             draw_call,
             v0,
             v1,
@@ -83,7 +77,6 @@ fn drawLineWithEndpointMode(
     }
 
     try drawLineDiamond(
-        allocator,
         draw_call,
         v0,
         v1,
@@ -95,7 +88,6 @@ fn drawLineWithEndpointMode(
 }
 
 fn drawLineBresenham(
-    allocator: std.mem.Allocator,
     draw_call: *Renderer.DrawCall,
     v0: *Renderer.Vertex,
     v1: *Renderer.Vertex,
@@ -134,20 +126,20 @@ fn drawLineBresenham(
 
     const pipeline = draw_call.renderer.state.pipeline orelse return;
     const fragment_stage = pipeline.stages.getPtr(.fragment);
-    const runtimes_count = if (fragment_stage) |stage|
-        if (comptime base.config.soft_ir_interpreter) stage.workerCount() else stage.runtimes.len
+    const worker_count = if (fragment_stage) |stage|
+        stage.workerCount()
     else
         1;
-    if (runtimes_count == 0)
+    if (worker_count == 0)
         return;
 
     const step_count: usize = @intCast(if (include_last_endpoint) @max(d_x, 0) + 1 else @max(d_x, 1));
-    const runs_count = @min(runtimes_count, step_count);
+    const runs_count = @min(worker_count, step_count);
     const steps_per_run = @divTrunc(step_count + runs_count - 1, runs_count);
 
     var batch_id: usize = 0;
     for (0..runs_count) |run_index| {
-        defer batch_id = @mod(batch_id + 1, runtimes_count);
+        defer batch_id = @mod(batch_id + 1, worker_count);
 
         const start_step = run_index * steps_per_run;
         if (start_step >= step_count)
@@ -156,7 +148,6 @@ fn drawLineBresenham(
         const end_step = @min(start_step + steps_per_run - 1, step_count - 1);
 
         const run_data: RunData = .{
-            .allocator = allocator,
             .draw_call = draw_call,
             .batch_id = batch_id,
             .x0 = x0,
@@ -183,7 +174,6 @@ fn drawLineBresenham(
 }
 
 fn drawLineDiamond(
-    allocator: std.mem.Allocator,
     draw_call: *Renderer.DrawCall,
     v0: *Renderer.Vertex,
     v1: *Renderer.Vertex,
@@ -220,22 +210,21 @@ fn drawLineDiamond(
             const frag_w = ((1.0 - t) / v0.position[3]) + (t / v1.position[3]);
 
             var fragment_result: fragment.InvocationResult = .{
-                .outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8),
+                .outputs = std.mem.zeroes([shader_types.max_output_locations][@sizeOf(F32x4)]u8),
                 .depth = null,
                 .sample_mask = null,
             };
             if (has_fragment_shader) {
                 fragment_result = fragment.shaderInvocation(
                     &fragment_worker,
-                    allocator,
                     zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, z, frag_w),
                     null,
                     null,
                     true,
-                    try common.interpolateLineOutputs(allocator, v0, v1, v0, t),
-                    try lineQuadHelpers(&fragment_worker, allocator, v0, v1, v0, t, zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, z, frag_w)),
+                    common.interpolateLineOutputs(v0, v1, v0, t),
+                    lineQuadHelpers(&fragment_worker, v0, v1, v0, t, zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, z, frag_w)),
                 ) catch |err| {
-                    if (err == SpvRuntimeError.Killed)
+                    if (err == error.Killed)
                         continue;
 
                     std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
@@ -432,25 +421,22 @@ fn runWrapper(data: RunData) void {
     };
 }
 
-fn lineQuadHelpers(worker: *const fragment.Worker, allocator: std.mem.Allocator, v0: *const Renderer.Vertex, v1: *const Renderer.Vertex, provoking_vertex: *const Renderer.Vertex, t: f32, position: F32x4) VkError!?fragment.DerivativeInputs {
-    if (comptime base.config.soft_ir_interpreter) {
-        if (!worker.program.uses_derivatives)
-            return null;
-        var positions = fragment.quadPositions(position);
-        var inputs: [4]fragment.FragmentInputs = undefined;
-        const dx = v1.position[0] - v0.position[0];
-        const dy = v1.position[1] - v0.position[1];
-        const squared_length = dx * dx + dy * dy;
-        for (&positions, &inputs) |*helper, *helper_inputs| {
-            const offset = if (squared_length > 0) ((helper.*[0] - position[0]) * dx + (helper.*[1] - position[1]) * dy) / squared_length else 0;
-            const helper_t = t + offset;
-            helper.*[2] = (1 - helper_t) * v0.position[2] + helper_t * v1.position[2];
-            helper.*[3] = (1 - helper_t) / v0.position[3] + helper_t / v1.position[3];
-            helper_inputs.* = try common.interpolateLineOutputs(allocator, v0, v1, provoking_vertex, helper_t);
-        }
-        return .{ .dx = inputs[1], .dy = inputs[2], .quad_inputs = inputs, .quad_positions = positions, .quad_lane = fragment.quadLane(position) };
+fn lineQuadHelpers(worker: *const fragment.Worker, v0: *const Renderer.Vertex, v1: *const Renderer.Vertex, provoking_vertex: *const Renderer.Vertex, t: f32, position: F32x4) ?fragment.DerivativeInputs {
+    if (!worker.program.uses_derivatives)
+        return null;
+    var positions = fragment.quadPositions(position);
+    var inputs: [4]fragment.FragmentInputs = undefined;
+    const dx = v1.position[0] - v0.position[0];
+    const dy = v1.position[1] - v0.position[1];
+    const squared_length = dx * dx + dy * dy;
+    for (&positions, &inputs) |*helper, *helper_inputs| {
+        const offset = if (squared_length > 0) ((helper.*[0] - position[0]) * dx + (helper.*[1] - position[1]) * dy) / squared_length else 0;
+        const helper_t = t + offset;
+        helper.*[2] = (1 - helper_t) * v0.position[2] + helper_t * v1.position[2];
+        helper.*[3] = (1 - helper_t) / v0.position[3] + helper_t / v1.position[3];
+        helper_inputs.* = common.interpolateLineOutputs(v0, v1, provoking_vertex, helper_t);
     }
-    return null;
+    return .{ .quad_inputs = inputs, .quad_positions = positions, .quad_lane = fragment.quadLane(position) };
 }
 
 inline fn run(data: RunData) !void {
@@ -476,22 +462,21 @@ inline fn run(data: RunData) !void {
         const frag_w = ((1.0 - t) / data.start_vertex.position[3]) + (t / data.end_vertex.position[3]);
 
         var fragment_result: fragment.InvocationResult = .{
-            .outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8),
+            .outputs = std.mem.zeroes([shader_types.max_output_locations][@sizeOf(F32x4)]u8),
             .depth = null,
             .sample_mask = null,
         };
         if (data.has_fragment_shader) {
             fragment_result = fragment.shaderInvocation(
                 &fragment_worker,
-                data.allocator,
                 zm.f32x4(@as(f32, @floatFromInt(pixel_x)) + 0.5, @as(f32, @floatFromInt(pixel_y)) + 0.5, z, frag_w),
                 null,
                 null,
                 true,
-                try common.interpolateLineOutputs(data.allocator, data.start_vertex, data.end_vertex, data.provoking_vertex, t),
-                try lineQuadHelpers(&fragment_worker, data.allocator, data.start_vertex, data.end_vertex, data.provoking_vertex, t, zm.f32x4(@as(f32, @floatFromInt(pixel_x)) + 0.5, @as(f32, @floatFromInt(pixel_y)) + 0.5, z, frag_w)),
+                common.interpolateLineOutputs(data.start_vertex, data.end_vertex, data.provoking_vertex, t),
+                lineQuadHelpers(&fragment_worker, data.start_vertex, data.end_vertex, data.provoking_vertex, t, zm.f32x4(@as(f32, @floatFromInt(pixel_x)) + 0.5, @as(f32, @floatFromInt(pixel_y)) + 0.5, z, frag_w)),
             ) catch |err| {
-                if (err == SpvRuntimeError.Killed)
+                if (err == error.Killed)
                     continue;
 
                 std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});

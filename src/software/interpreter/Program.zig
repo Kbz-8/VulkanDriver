@@ -33,7 +33,7 @@ pub const InterfaceBinding = struct {
     words: []const InterfaceWord = &.{},
 
     pub fn validLocation(self: InterfaceBinding) bool {
-        const spv = @import("spv");
+        const shader_types = @import("../shader_types.zig");
         const location = switch (self.semantic) {
             .location => |location| location,
             else => return false,
@@ -41,7 +41,7 @@ pub const InterfaceBinding = struct {
         if (location.index != 0 or self.span.kind == .mixed or self.words.len != self.span.components or self.words.len == 0)
             return false;
         for (self.words) |word| {
-            if (word.location >= spv.SPIRV_MAX_OUTPUT_LOCATIONS or word.component >= 4)
+            if (word.location >= shader_types.max_output_locations or word.component >= 4)
                 return false;
         }
         return true;

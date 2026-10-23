@@ -2,7 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 const zm = base.zm;
-const spv = @import("spv");
+const shader_types = @import("../shader_types.zig");
 
 const ExecutionDevice = @import("Device.zig");
 const PipelineState = ExecutionDevice.PipelineState;
@@ -47,34 +47,7 @@ pub const PackedVertexOutput = struct {
     centroid: bool,
 };
 
-pub const LegacyVertexOutput = struct {
-    interpolation_type: InterpolationType,
-    centroid: bool,
-    blob: []u8,
-    size: usize,
-};
-
-const EmptyVertexOutputs = struct {};
-pub const PackedVertexOutputs = if (base.config.soft_ir_interpreter)
-    [spv.SPIRV_MAX_OUTPUT_LOCATIONS][4]?PackedVertexOutput
-else
-    EmptyVertexOutputs;
-pub const LegacyVertexOutputs = if (base.config.soft_ir_interpreter)
-    EmptyVertexOutputs
-else
-    [spv.SPIRV_MAX_OUTPUT_LOCATIONS][4]?LegacyVertexOutput;
-
-fn emptyPackedVertexOutputs() PackedVertexOutputs {
-    if (comptime base.config.soft_ir_interpreter)
-        return @splat(@splat(null));
-    return .{};
-}
-
-fn emptyLegacyVertexOutputs() LegacyVertexOutputs {
-    if (comptime base.config.soft_ir_interpreter)
-        return .{};
-    return @splat(@splat(null));
-}
+pub const PackedVertexOutputs = [shader_types.max_output_locations][4]?PackedVertexOutput;
 
 pub const DynamicState = struct {
     viewports: ?[]const vk.Viewport,
@@ -106,8 +79,7 @@ pub const Vertex = struct {
     primitive_restart: bool,
     position: F32x4,
     point_size: f32,
-    packed_outputs: PackedVertexOutputs = emptyPackedVertexOutputs(),
-    outputs: LegacyVertexOutputs = emptyLegacyVertexOutputs(),
+    packed_outputs: PackedVertexOutputs = @splat(@splat(null)),
 };
 
 pub const FragmentResources = struct {
@@ -332,28 +304,13 @@ pub const DrawCall = struct {
         for (self.vertices) |*vertex| {
             vertex.primitive_restart = false;
             vertex.point_size = 1.0;
-            if (comptime base.config.soft_ir_interpreter) {
-                vertex.packed_outputs = @splat(@splat(null));
-            } else {
-                for (&vertex.outputs) |*location|
-                    @memset(location, null);
-            }
+            vertex.packed_outputs = @splat(@splat(null));
         }
 
         return self;
     }
 
     fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-        if (comptime !base.config.soft_ir_interpreter) {
-            for (self.vertices) |*vertex| {
-                for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
-                    for (0..4) |component| {
-                        if (vertex.outputs[location][component]) |output|
-                            allocator.free(output.blob);
-                    }
-                }
-            }
-        }
         allocator.free(self.vertices);
     }
 };
@@ -437,17 +394,6 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
     };
 
     const pipeline = self.state.pipeline orelse return VkError.InvalidPipelineDrv;
-    if (comptime !base.config.soft_ir_interpreter) {
-        const vertex_shader = pipeline.stages.getPtrAssertContains(.vertex);
-        for (vertex_shader.runtimes) |*runtime| {
-            ExecutionDevice.writeDescriptorSets(self.state, &runtime.rt) catch return VkError.Unknown;
-        }
-        if (pipeline.stages.getPtr(.fragment)) |fragment_shader| {
-            for (fragment_shader.runtimes) |*runtime| {
-                ExecutionDevice.writeDescriptorSets(self.state, &runtime.rt) catch return VkError.Unknown;
-            }
-        }
-    }
 
     // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
     const vertex_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
@@ -480,46 +426,41 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
 fn vertexShaderStage(self: *Self, allocator: std.mem.Allocator, draw_call: *DrawCall, vertex_count: usize, instance_count: usize, first_vertex: usize, first_instance: usize, indices: ?[]const u32, primitive_restart: ?[]const bool) !void {
     const pipeline = self.state.pipeline orelse return;
     const vertex_shader = pipeline.stages.getPtr(.vertex) orelse return;
-    const batch_size = if (comptime base.config.soft_ir_interpreter) vertex_shader.workerCount() else vertex_shader.runtimes.len;
+    const batch_size = vertex_shader.workerCount();
 
-    var vertex_reuse: ?VertexReuse = if (comptime base.config.soft_ir_interpreter)
-        if (indices) |draw_indices|
-            if (vertexProgramAllowsReuse(&vertex_shader.program)) try VertexReuse.init(allocator, draw_indices, primitive_restart) else null
-        else
-            null
+    var vertex_reuse: ?VertexReuse = if (indices) |draw_indices|
+        if (vertexProgramAllowsReuse(&vertex_shader.program)) try VertexReuse.init(allocator, draw_indices, primitive_restart) else null
     else
         null;
     defer if (vertex_reuse) |*reuse| reuse.deinit(allocator);
     const invocation_indices: ?[]const usize = if (vertex_reuse) |*reuse| reuse.uniqueInvocations() else null;
     const shader_vertex_count = if (invocation_indices) |items| items.len else vertex_count;
 
-    if (comptime base.config.soft_ir_interpreter) {
-        const invocation_count = std.math.mul(usize, shader_vertex_count, instance_count) catch std.math.maxInt(usize);
-        if (invocation_count == 0)
-            return;
-        const estimated_work = std.math.mul(usize, invocation_count, vertex_shader.program.code.len) catch std.math.maxInt(usize);
-        const inline_vertex_work_limit = 4096;
-        if (estimated_work <= inline_vertex_work_limit) {
-            for (0..instance_count) |instance_index| {
-                try vertex_dispatcher.runInline(.{
-                    .allocator = allocator,
-                    .pipeline = pipeline,
-                    .batch_id = 0,
-                    .batch_size = 1,
-                    .vertex_count = vertex_count,
-                    .invocation_indices = invocation_indices,
-                    .first_vertex = first_vertex,
-                    .first_instance = first_instance,
-                    .indices = indices,
-                    .primitive_restart = primitive_restart,
-                    .instance_index = instance_index,
-                    .draw_call = draw_call,
-                });
-            }
-            if (vertex_reuse) |reuse|
-                reuse.copyReusedVertices(draw_call, vertex_count, instance_count);
-            return;
+    const invocation_count = std.math.mul(usize, shader_vertex_count, instance_count) catch std.math.maxInt(usize);
+    if (invocation_count == 0)
+        return;
+    const estimated_work = std.math.mul(usize, invocation_count, vertex_shader.program.code.len) catch std.math.maxInt(usize);
+    const inline_vertex_work_limit = 4096;
+    if (estimated_work <= inline_vertex_work_limit) {
+        for (0..instance_count) |instance_index| {
+            try vertex_dispatcher.runInline(.{
+                .allocator = allocator,
+                .pipeline = pipeline,
+                .batch_id = 0,
+                .batch_size = 1,
+                .vertex_count = vertex_count,
+                .invocation_indices = invocation_indices,
+                .first_vertex = first_vertex,
+                .first_instance = first_instance,
+                .indices = indices,
+                .primitive_restart = primitive_restart,
+                .instance_index = instance_index,
+                .draw_call = draw_call,
+            });
         }
+        if (vertex_reuse) |reuse|
+            reuse.copyReusedVertices(draw_call, vertex_count, instance_count);
+        return;
     }
 
     const batch_count = std.math.divCeil(usize, shader_vertex_count, vertex_dispatcher.batch_width) catch return VkError.ValidationFailed;

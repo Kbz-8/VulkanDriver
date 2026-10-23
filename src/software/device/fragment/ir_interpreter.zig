@@ -1,6 +1,6 @@
 const std = @import("std");
 const base = @import("base");
-const spv = @import("spv");
+const shader_types = @import("../../shader_types.zig");
 const shader_ir = @import("shader_ir");
 
 const ExecutionDevice = @import("../Device.zig");
@@ -14,7 +14,7 @@ const SoftSampler = @import("../../SoftSampler.zig");
 const common = @import("dispatcher.zig");
 const rasterizer_common = @import("../rasterizer/common.zig");
 const VkError = base.VkError;
-const SpvRuntimeError = common.SpvRuntimeError;
+const RuntimeError = common.RuntimeError;
 const InterfaceVariableId = shader_ir.ir.id.InterfaceVariableId;
 
 pub fn prepareDraw(allocator: std.mem.Allocator, draw_call: *Renderer.DrawCall) VkError!void {
@@ -144,7 +144,7 @@ pub const WaveInvocation = struct {
 
 pub const WaveResult = struct {
     outputs: rasterizer_common.FragmentWaveOutputs,
-    output_components: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]u4,
+    output_components: [shader_types.max_output_locations]u4,
     depths: @Vector(Runtime.lane_count, f32),
     depth_mask: Runtime.LaneMask,
     returned_mask: Runtime.LaneMask,
@@ -152,7 +152,7 @@ pub const WaveResult = struct {
 
     pub fn laneResult(self: *const WaveResult, lane: usize) common.InvocationResult {
         var result = emptyInvocationResult();
-        for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
+        for (0..shader_types.max_output_locations) |location| {
             for (0..4) |component| {
                 const component_bit = @as(u4, 1) << @intCast(component);
                 if ((self.output_components[location] & component_bit) == 0)
@@ -172,11 +172,11 @@ pub const WaveResult = struct {
     }
 };
 
-pub fn shaderWave(worker: *Worker, invocations: *const [Runtime.lane_count]WaveInvocation, mask: Runtime.LaneMask) SpvRuntimeError!WaveResult {
+pub fn shaderWave(worker: *Worker, invocations: *const [Runtime.lane_count]WaveInvocation, mask: Runtime.LaneMask) RuntimeError!WaveResult {
     return shaderWaveMasked(worker, invocations, mask, mask);
 }
 
-pub fn shaderWaveMasked(worker: *Worker, invocations: *const [Runtime.lane_count]WaveInvocation, execution_mask: Runtime.LaneMask, mask: Runtime.LaneMask) SpvRuntimeError!WaveResult {
+pub fn shaderWaveMasked(worker: *Worker, invocations: *const [Runtime.lane_count]WaveInvocation, execution_mask: Runtime.LaneMask, mask: Runtime.LaneMask) RuntimeError!WaveResult {
     const draw_call = worker.draw_call;
     const state = draw_call.renderer.state;
     const program = worker.program;
@@ -188,7 +188,7 @@ pub fn shaderWaveMasked(worker: *Worker, invocations: *const [Runtime.lane_count
         worker.resource_texel_buffers.len != program.resources.len or
         resources.images.len != program.resources.len or
         resources.samplers.len != program.resources.len)
-        return SpvRuntimeError.InvalidSpirV;
+        return RuntimeError.InvalidShader;
 
     // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
     const input_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
@@ -220,7 +220,7 @@ pub fn shaderWaveMasked(worker: *Worker, invocations: *const [Runtime.lane_count
             worker.full_waves += 1;
     }
     if (outcome.barrier_mask != 0)
-        return SpvRuntimeError.InvalidSpirV;
+        return RuntimeError.InvalidShader;
 
     // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
     const output_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
@@ -246,7 +246,7 @@ pub fn shaderInvocation(
     front_face: bool,
     inputs: common.FragmentInputs,
     derivative_inputs: ?common.DerivativeInputs,
-) SpvRuntimeError!common.InvocationResult {
+) RuntimeError!common.InvocationResult {
     // Point/sample/facing builtins are not yet represented by the IR.
     _ = point_coord;
     _ = sample_id;
@@ -255,9 +255,9 @@ pub fn shaderInvocation(
     var lane: u2 = 0;
     var execution_mask: Runtime.LaneMask = 1;
     if (worker.program.uses_derivatives) {
-        const helpers = derivative_inputs orelse return SpvRuntimeError.InvalidSpirV;
-        const quad_inputs = helpers.quad_inputs orelse return SpvRuntimeError.InvalidSpirV;
-        const quad_positions = helpers.quad_positions orelse return SpvRuntimeError.InvalidSpirV;
+        const helpers = derivative_inputs orelse return RuntimeError.InvalidShader;
+        const quad_inputs = helpers.quad_inputs orelse return RuntimeError.InvalidShader;
+        const quad_positions = helpers.quad_positions orelse return RuntimeError.InvalidShader;
         lane = helpers.quad_lane;
         for (invocations[0..4], quad_inputs, quad_positions) |*invocation, helper_inputs, helper_position|
             invocation.* = .{ .position = helper_position, .inputs = helper_inputs };
@@ -267,81 +267,10 @@ pub fn shaderInvocation(
     const observable_mask = @as(Runtime.LaneMask, 1) << lane;
     const result = try shaderWaveMasked(worker, &invocations, execution_mask, observable_mask);
     if ((result.discarded_mask & observable_mask) != 0)
-        return SpvRuntimeError.Killed;
+        return RuntimeError.Killed;
     if ((result.returned_mask & observable_mask) == 0)
-        return SpvRuntimeError.InvalidSpirV;
+        return RuntimeError.InvalidShader;
     return result.laneResult(lane);
-}
-
-fn writeInputs(
-    program: *const Program,
-    runtime: *Runtime,
-    position: base.zm.F32x4,
-    inputs: common.FragmentInputs,
-) SpvRuntimeError!void {
-    for (program.interfaces, 0..) |optional_binding, index| {
-        const binding = optional_binding orelse continue;
-        if (binding.direction != .input)
-            continue;
-        var words: [255]u32 = @splat(0);
-        if (binding.span.components == 0 or binding.span.components > words.len)
-            return SpvRuntimeError.InvalidSpirV;
-        const values = words[0..binding.span.components];
-        switch (binding.semantic) {
-            .location => {
-                try validateLocation(binding);
-                for (values, binding.words) |*value, word|
-                    value.* = inputs.word(word.location, word.component);
-            },
-            .builtin => |builtin| switch (builtin) {
-                .frag_coord => {
-                    if (binding.span.kind != .floating or values.len != 4)
-                        return SpvRuntimeError.InvalidSpirV;
-                    inline for (0..4) |component|
-                        values[component] = @bitCast(position[component]);
-                },
-                else => return SpvRuntimeError.InvalidSpirV,
-            },
-        }
-        runtime.writeInput(program, InterfaceVariableId.fromIndex(index), values) catch |err| return mapError(err);
-    }
-}
-
-fn readOutputs(program: *const Program, runtime: *const Runtime) SpvRuntimeError!common.InvocationResult {
-    var result: common.InvocationResult = .{
-        .outputs = std.mem.zeroes(@FieldType(common.InvocationResult, "outputs")),
-        .depth = null,
-        // SampleMask is not represented by the current IR builtin enum.
-        .sample_mask = null,
-    };
-    for (program.interfaces, 0..) |optional_binding, index| {
-        const binding = optional_binding orelse continue;
-        if (binding.direction != .output)
-            continue;
-        var words: [255]u32 = undefined;
-        if (binding.span.components == 0 or binding.span.components > words.len)
-            return SpvRuntimeError.InvalidSpirV;
-        const values = words[0..binding.span.components];
-        runtime.readOutput(program, InterfaceVariableId.fromIndex(index), values) catch |err| return mapError(err);
-        switch (binding.semantic) {
-            .location => {
-                try validateLocation(binding);
-                for (values, binding.words) |value, word| {
-                    const offset = @as(usize, word.component) * @sizeOf(u32);
-                    @memcpy(result.outputs[word.location][offset..][0..4], std.mem.asBytes(&value));
-                }
-            },
-            .builtin => |builtin| switch (builtin) {
-                .frag_depth => {
-                    if (binding.span.kind != .floating or values.len != 1)
-                        return SpvRuntimeError.InvalidSpirV;
-                    result.depth = @bitCast(values[0]);
-                },
-                else => return SpvRuntimeError.InvalidSpirV,
-            },
-        }
-    }
-    return result;
 }
 
 fn writeInputsLane(
@@ -350,14 +279,14 @@ fn writeInputsLane(
     lane: usize,
     position: base.zm.F32x4,
     inputs: common.FragmentInputs,
-) SpvRuntimeError!void {
+) RuntimeError!void {
     for (program.interfaces, 0..) |optional_binding, index| {
         const binding = optional_binding orelse continue;
         if (binding.direction != .input)
             continue;
         var words: [255]u32 = @splat(0);
         if (binding.span.components == 0 or binding.span.components > words.len)
-            return SpvRuntimeError.InvalidSpirV;
+            return RuntimeError.InvalidShader;
         const values = words[0..binding.span.components];
         switch (binding.semantic) {
             .location => {
@@ -368,11 +297,11 @@ fn writeInputsLane(
             .builtin => |builtin| switch (builtin) {
                 .frag_coord => {
                     if (binding.span.kind != .floating or values.len != 4)
-                        return SpvRuntimeError.InvalidSpirV;
+                        return RuntimeError.InvalidShader;
                     inline for (0..4) |component|
                         values[component] = @bitCast(position[component]);
                 },
-                else => return SpvRuntimeError.InvalidSpirV,
+                else => return RuntimeError.InvalidShader,
             },
         }
         runtime.writeInputLane(program, lane, InterfaceVariableId.fromIndex(index), values) catch |err| return mapError(err);
@@ -381,12 +310,12 @@ fn writeInputsLane(
 
 const WaveOutputs = struct {
     outputs: rasterizer_common.FragmentWaveOutputs,
-    output_components: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]u4 = @splat(0),
+    output_components: [shader_types.max_output_locations]u4 = @splat(0),
     depths: @Vector(Runtime.lane_count, f32) = @splat(0.0),
     depth_mask: Runtime.LaneMask = 0,
 };
 
-fn readOutputsWave(program: *const Program, runtime: *const Runtime) SpvRuntimeError!WaveOutputs {
+fn readOutputsWave(program: *const Program, runtime: *const Runtime) RuntimeError!WaveOutputs {
     // SAFETY: each output vector is initialized before its output_components bit is set; consumers only read marked components
     var result: WaveOutputs = .{ .outputs = undefined };
     for (program.interfaces, 0..) |optional_binding, index| {
@@ -394,7 +323,7 @@ fn readOutputsWave(program: *const Program, runtime: *const Runtime) SpvRuntimeE
         if (binding.direction != .output)
             continue;
         if (binding.span.components == 0)
-            return SpvRuntimeError.InvalidSpirV;
+            return RuntimeError.InvalidShader;
         const variable = InterfaceVariableId.fromIndex(index);
         switch (binding.semantic) {
             .location => {
@@ -408,11 +337,11 @@ fn readOutputsWave(program: *const Program, runtime: *const Runtime) SpvRuntimeE
             .builtin => |builtin| switch (builtin) {
                 .frag_depth => {
                     if (binding.span.kind != .floating or binding.span.components != 1)
-                        return SpvRuntimeError.InvalidSpirV;
+                        return RuntimeError.InvalidShader;
                     result.depths = @bitCast(runtime.readOutputVector(program, variable, 0) catch |err| return mapError(err));
                     result.depth_mask = Runtime.full_lane_mask;
                 },
-                else => return SpvRuntimeError.InvalidSpirV,
+                else => return RuntimeError.InvalidShader,
             },
         }
     }
@@ -427,16 +356,16 @@ fn emptyInvocationResult() common.InvocationResult {
     };
 }
 
-fn validateLocation(binding: Program.InterfaceBinding) SpvRuntimeError!void {
+fn validateLocation(binding: Program.InterfaceBinding) RuntimeError!void {
     if (!binding.validLocation())
-        return SpvRuntimeError.InvalidSpirV;
+        return RuntimeError.InvalidShader;
 }
 
-fn mapError(err: anyerror) SpvRuntimeError {
+fn mapError(err: anyerror) RuntimeError {
     return switch (err) {
-        error.OutOfMemory, error.OutOfDeviceMemory, error.OutOfHostMemory => SpvRuntimeError.OutOfMemory,
-        error.BufferOutOfBounds => SpvRuntimeError.OutOfBounds,
-        error.DeviceLost => SpvRuntimeError.Unknown,
-        else => SpvRuntimeError.InvalidSpirV,
+        error.OutOfMemory, error.OutOfDeviceMemory, error.OutOfHostMemory => RuntimeError.OutOfMemory,
+        error.BufferOutOfBounds => RuntimeError.OutOfBounds,
+        error.DeviceLost => RuntimeError.Unknown,
+        else => RuntimeError.InvalidShader,
     };
 }

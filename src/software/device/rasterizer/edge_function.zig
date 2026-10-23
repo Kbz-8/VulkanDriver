@@ -1,7 +1,7 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
-const spv = @import("spv");
+const shader_types = @import("../../shader_types.zig");
 const zm = base.zm;
 
 const common = @import("common.zig");
@@ -11,7 +11,6 @@ const interpreter_simd = @import("../../interpreter/simd.zig");
 const Renderer = @import("../Renderer.zig");
 
 const VkError = base.VkError;
-const SpvRuntimeError = spv.Runtime.RuntimeError;
 const F32x4 = zm.F32x4;
 
 const SamplePosition = struct {
@@ -28,8 +27,6 @@ pub const FillState = struct {
     has_fragment_shader: bool,
     early_fragment_tests: bool,
     fragment_uses_derivatives: bool,
-    fragment_uses_sample_id: bool,
-    fragment_uses_centroid: bool,
     sample_count: usize,
     depth_stencil_state: ?vk.PipelineDepthStencilStateCreateInfo,
     depth_bias: ?Renderer.DepthBias,
@@ -65,40 +62,18 @@ pub fn initFillState(
     const pipeline = draw_call.renderer.state.pipeline orelse return VkError.InvalidPipelineDrv;
     const pipeline_data = pipeline.interface.mode.graphics;
     const fragment_stage = pipeline.stages.getPtr(.fragment);
-    const fragment_uses_derivatives = if (comptime base.config.soft_ir_interpreter)
-        (if (fragment_stage) |stage| stage.program.uses_derivatives else false)
-    else if (fragment_stage) |stage|
-        stage.module.module.reflection_infos.needs_derivatives
-    else
-        false;
-    const early_fragment_tests = if (fragment_stage) |stage|
-        if (comptime base.config.soft_ir_interpreter) stage.early_fragment_tests else stage.module.module.reflection_infos.early_fragment_tests
-    else
-        false;
-    const fragment_uses_sample_id = if (comptime base.config.soft_ir_interpreter)
-        false
-    else if (fragment_stage) |stage|
-        stage.module.module.builtins.get(.SampleId) != null
-    else
-        false;
-    const fragment_uses_centroid = if (comptime base.config.soft_ir_interpreter)
-        false
-    else if (fragment_stage) |stage|
-        fragmentStageUsesInputDecoration(stage, .Centroid)
-    else
-        false;
+    const fragment_uses_derivatives = if (fragment_stage) |stage| stage.program.uses_derivatives else false;
+    const early_fragment_tests = if (fragment_stage) |stage| stage.early_fragment_tests else false;
 
     var worker_capacity = if (fragment_stage) |stage|
-        if (comptime base.config.soft_ir_interpreter) stage.workerCount() else stage.runtimes.len
+        stage.workerCount()
     else if (pipeline.stages.getPtr(.vertex)) |stage|
-        if (comptime base.config.soft_ir_interpreter) stage.workerCount() else stage.runtimes.len
+        stage.workerCount()
     else
         1;
-    if (comptime base.config.soft_ir_interpreter) {
-        if (fragment_stage) |stage| {
-            if (stage.program.uses_atomics)
-                worker_capacity = @min(worker_capacity, 1);
-        }
+    if (fragment_stage) |stage| {
+        if (stage.program.uses_atomics)
+            worker_capacity = @min(worker_capacity, 1);
     }
     if (worker_capacity == 0)
         return VkError.InvalidPipelineDrv;
@@ -129,8 +104,6 @@ pub fn initFillState(
         .has_fragment_shader = fragment_stage != null,
         .early_fragment_tests = early_fragment_tests,
         .fragment_uses_derivatives = fragment_uses_derivatives,
-        .fragment_uses_sample_id = fragment_uses_sample_id,
-        .fragment_uses_centroid = fragment_uses_centroid,
         .sample_count = pipeline_data.multisample.rasterization_samples.toInt(),
         .depth_stencil_state = depth_stencil_state,
         .depth_bias = depth_bias,
@@ -259,13 +232,11 @@ pub fn rasterizeTriangleInRect(
     rect: common.PixelBounds,
 ) VkError!void {
     const bounds = common.PixelBounds.intersect(triangle.bounds, rect) orelse return;
-    if (comptime base.config.soft_ir_interpreter) {
-        if (state.has_fragment_shader and state.sample_count == 1) {
-            const worker = optional_worker orelse return VkError.InvalidPipelineDrv;
-            if (state.fragment_uses_derivatives)
-                return rasterizeTriangleInRectQuads(state, worker, triangle, bounds);
-            return rasterizeTriangleInRectWave(state, worker, triangle, bounds);
-        }
+    if (state.has_fragment_shader and state.sample_count == 1) {
+        const worker = optional_worker orelse return VkError.InvalidPipelineDrv;
+        if (state.fragment_uses_derivatives)
+            return rasterizeTriangleInRectQuads(state, worker, triangle, bounds);
+        return rasterizeTriangleInRectWave(state, worker, triangle, bounds);
     }
 
     const v0 = triangle.vertices[0];
@@ -300,121 +271,27 @@ pub fn rasterizeTriangleInRect(
             if (early_depth.mask == 0)
                 continue;
 
-            const centroid_barycentrics = if (state.sample_count > 1 and state.fragment_uses_centroid) blk: {
-                const sample_pos = firstCoveredSamplePosition(state.sample_count, early_depth.mask);
-                const centroid_p = zm.f32x4(
-                    @as(f32, @floatFromInt(x)) + sample_pos.x,
-                    @as(f32, @floatFromInt(y)) + sample_pos.y,
-                    0.0,
-                    1.0,
-                );
-                break :blk .{
-                    edgeFunction(v1.position, v2.position, centroid_p) / triangle.area,
-                    edgeFunction(v2.position, v0.position, centroid_p) / triangle.area,
-                    edgeFunction(v0.position, v1.position, centroid_p) / triangle.area,
-                };
-            } else .{ b0, b1, b2 };
+            const centroid_barycentrics = .{ b0, b1, b2 };
 
             var fragment_result: fragment.InvocationResult = .{
-                .outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8),
+                .outputs = std.mem.zeroes([shader_types.max_output_locations][@sizeOf(F32x4)]u8),
                 .depth = null,
                 .sample_mask = null,
             };
-            if (state.has_fragment_shader and state.fragment_uses_sample_id and state.sample_count > 1) {
-                const worker = optional_worker orelse return VkError.InvalidPipelineDrv;
-                for (0..state.sample_count) |sample_index| {
-                    if (sample_index >= @bitSizeOf(vk.SampleMask))
-                        break;
-                    const bit_index: u5 = @intCast(sample_index);
-                    const sample_coverage_mask = @as(vk.SampleMask, 1) << bit_index;
-                    if ((early_depth.mask & sample_coverage_mask) == 0)
-                        continue;
-
-                    const inputs = try fragmentInputs(
-                        state,
-                        triangle,
-                        .{ b0, b1, b2 },
-                        centroid_barycentrics,
-                    );
-                    const sample_result = fragment.shaderInvocation(
-                        worker,
-                        state.allocator,
-                        zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, depth_z, frag_w),
-                        null,
-                        @intCast(sample_index),
-                        triangle.front_face,
-                        inputs,
-                        null,
-                    ) catch |err| {
-                        if (err == SpvRuntimeError.Killed)
-                            continue;
-                        logFragmentError(err);
-                        return VkError.Unknown;
-                    };
-                    try common.writeToTargets(
-                        sample_result.outputs,
-                        state.draw_call,
-                        state.color_attachment_access,
-                        state.depth_attachment_access,
-                        state.stencil_attachment_access,
-                        triangle.front_face,
-                        @intCast(x),
-                        @intCast(y),
-                        sample_result.depth orelse depth_z,
-                        sample_coverage_mask,
-                        sample_result.sample_mask,
-                        early_depth.applied,
-                        state.ordering,
-                    );
-                }
-                continue;
-            }
-
             if (state.has_fragment_shader) {
                 const worker = optional_worker orelse return VkError.InvalidPipelineDrv;
-                const inputs = try fragmentInputs(
-                    state,
+                const inputs = fragmentInputs(
                     triangle,
                     .{ b0, b1, b2 },
                     centroid_barycentrics,
                 );
-                const derivative_inputs: ?fragment.DerivativeInputs = if (state.fragment_uses_derivatives) blk: {
-                    if (comptime base.config.soft_ir_interpreter)
-                        break :blk try irQuadHelpers(state, triangle, x, y);
-                    const p_dx = zm.f32x4(@as(f32, @floatFromInt(x)) + 1.5, @as(f32, @floatFromInt(y)) + 0.5, 0.0, 1.0);
-                    const p_dy = zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 1.5, 0.0, 1.0);
-
-                    break :blk fragment.DerivativeInputs{
-                        .dx = try common.interpolateVertexOutputDerivatives(
-                            state.allocator,
-                            v0.attributes,
-                            v1.attributes,
-                            v2.attributes,
-                            b0,
-                            b1,
-                            b2,
-                            (edgeFunction(v1.position, v2.position, p_dx) / triangle.area) - b0,
-                            (edgeFunction(v2.position, v0.position, p_dx) / triangle.area) - b1,
-                            (edgeFunction(v0.position, v1.position, p_dx) / triangle.area) - b2,
-                        ),
-                        .dy = try common.interpolateVertexOutputDerivatives(
-                            state.allocator,
-                            v0.attributes,
-                            v1.attributes,
-                            v2.attributes,
-                            b0,
-                            b1,
-                            b2,
-                            (edgeFunction(v1.position, v2.position, p_dy) / triangle.area) - b0,
-                            (edgeFunction(v2.position, v0.position, p_dy) / triangle.area) - b1,
-                            (edgeFunction(v0.position, v1.position, p_dy) / triangle.area) - b2,
-                        ),
-                    };
-                } else null;
+                const derivative_inputs: ?fragment.DerivativeInputs = if (state.fragment_uses_derivatives)
+                    irQuadHelpers(state, triangle, x, y)
+                else
+                    null;
 
                 fragment_result = fragment.shaderInvocation(
                     worker,
-                    state.allocator,
                     zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, depth_z, frag_w),
                     null,
                     null,
@@ -422,7 +299,7 @@ pub fn rasterizeTriangleInRect(
                     inputs,
                     derivative_inputs,
                 ) catch |err| {
-                    if (err == SpvRuntimeError.Killed)
+                    if (err == error.Killed)
                         continue;
                     logFragmentError(err);
                     return VkError.Unknown;
@@ -559,7 +436,7 @@ fn rasterizeTriangleInRectWave(
                 const frag_w = (weights[0] / v0.position[3]) + (weights[1] / v1.position[3]) + (weights[2] / v2.position[3]);
                 invocations[lane] = .{
                     .position = zm.f32x4(@as(f32, @floatFromInt(lane_x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, depths[lane], frag_w),
-                    .inputs = try fragmentInputs(state, triangle, weights, weights),
+                    .inputs = fragmentInputs(triangle, weights, weights),
                 };
             }
             if (comptime base.config.soft_profile)
@@ -689,7 +566,7 @@ fn rasterizeTriangleInRectQuads(state: *const FillState, worker: *fragment.Worke
                     const weights = quad.barycentrics[quad_lane];
                     invocations[quad_index * 4 + quad_lane] = .{
                         .position = quad.positions[quad_lane],
-                        .inputs = try fragmentInputs(state, triangle, weights, weights),
+                        .inputs = fragmentInputs(triangle, weights, weights),
                     };
                 }
 
@@ -783,7 +660,7 @@ fn irQuadCoverage(state: *const FillState, triangle: *const PreparedTriangle, bo
     return quad;
 }
 
-fn irQuadHelpers(state: *const FillState, triangle: *const PreparedTriangle, x: i32, y: i32) VkError!fragment.DerivativeInputs {
+fn irQuadHelpers(state: *const FillState, triangle: *const PreparedTriangle, x: i32, y: i32) fragment.DerivativeInputs {
     const v0 = triangle.vertices[0];
     const v1 = triangle.vertices[1];
     const v2 = triangle.vertices[2];
@@ -802,11 +679,9 @@ fn irQuadHelpers(state: *const FillState, triangle: *const PreparedTriangle, x: 
         p[3] = weights[0] / v0.position[3] + weights[1] / v1.position[3] + weights[2] / v2.position[3];
         positions[lane] = p;
         // Extrapolate even outside coverage, scissor, or a worker's tile.
-        inputs[lane] = try fragmentInputs(state, triangle, weights, weights);
+        inputs[lane] = fragmentInputs(triangle, weights, weights);
     }
     return .{
-        .dx = inputs[1],
-        .dy = inputs[2],
         .quad_inputs = inputs,
         .quad_positions = positions,
         .quad_lane = @intCast((x & 1) | ((y & 1) << 1)),
@@ -814,33 +689,17 @@ fn irQuadHelpers(state: *const FillState, triangle: *const PreparedTriangle, x: 
 }
 
 fn fragmentInputs(
-    state: *const FillState,
     triangle: *const PreparedTriangle,
     barycentrics: [3]f32,
     centroid_barycentrics: [3]f32,
-) VkError!fragment.FragmentInputs {
-    if (comptime base.config.soft_ir_interpreter) {
-        return common.packedFragmentInputs(
-            triangle.vertices[0],
-            triangle.vertices[1],
-            triangle.vertices[2],
-            triangle.provoking_vertex,
-            barycentrics,
-            centroid_barycentrics,
-        );
-    }
-    return common.interpolateVertexOutputs(
-        state.allocator,
-        triangle.vertices[0].attributes,
-        triangle.vertices[1].attributes,
-        triangle.vertices[2].attributes,
+) fragment.FragmentInputs {
+    return common.packedFragmentInputs(
+        triangle.vertices[0],
+        triangle.vertices[1],
+        triangle.vertices[2],
         triangle.provoking_vertex,
-        barycentrics[0],
-        barycentrics[1],
-        barycentrics[2],
-        centroid_barycentrics[0],
-        centroid_barycentrics[1],
-        centroid_barycentrics[2],
+        barycentrics,
+        centroid_barycentrics,
     );
 }
 
@@ -984,30 +843,6 @@ fn standardSamplePosition(sample_count: usize, sample_index: usize) SamplePositi
         },
         else => .{ .x = 0.5, .y = 0.5 },
     };
-}
-
-fn firstCoveredSamplePosition(sample_count: usize, coverage_sample_mask: vk.SampleMask) SamplePosition {
-    for (0..sample_count) |sample_index| {
-        if (sample_index >= @bitSizeOf(vk.SampleMask))
-            break;
-        const bit_index: u5 = @intCast(sample_index);
-        if ((coverage_sample_mask & (@as(vk.SampleMask, 1) << bit_index)) != 0)
-            return standardSamplePosition(sample_count, sample_index);
-    }
-    return .{ .x = 0.5, .y = 0.5 };
-}
-
-fn fragmentStageUsesInputDecoration(stage: anytype, decoration: anytype) bool {
-    const rt = &stage.runtimes[0].rt;
-    for (rt.mod.input_locations) |location| {
-        for (location) |result_word| {
-            if (result_word == 0)
-                continue;
-            if (rt.hasResultDecoration(result_word, decoration))
-                return true;
-        }
-    }
-    return false;
 }
 
 fn logFragmentError(err: anyerror) void {

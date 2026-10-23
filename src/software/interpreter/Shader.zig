@@ -189,12 +189,12 @@ test "homogeneous aggregate interface locations and component guards" {
     binding.span.kind = .mixed;
     try std.testing.expect(!binding.validLocation());
     binding = program.interfaceBinding(input).?;
-    binding.words = &.{.{ .location = @import("spv").SPIRV_MAX_OUTPUT_LOCATIONS, .component = 0 }};
+    binding.words = &.{.{ .location = @import("../shader_types.zig").max_output_locations, .component = 0 }};
     binding.span.components = 1;
     try std.testing.expect(!binding.validLocation());
 
     _ = try builder.addInterfaceVariable(rounded_rect, .input, .{ .location = .{
-        .location = @import("spv").SPIRV_MAX_OUTPUT_LOCATIONS - 1,
+        .location = @import("../shader_types.zig").max_output_locations - 1,
     } }, null);
     var overflowing = try Program.compile(std.testing.allocator, &module);
     defer overflowing.deinit();

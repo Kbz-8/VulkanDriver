@@ -1,7 +1,7 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
-const spv = @import("spv");
+const shader_types = @import("../shader_types.zig");
 const zm = base.zm;
 
 const clip = @import("clip.zig");
@@ -19,7 +19,6 @@ const SoftImage = @import("../SoftImage.zig");
 const SoftPipeline = @import("../SoftPipeline.zig");
 
 const VkError = base.VkError;
-const SpvRuntimeError = spv.Runtime.RuntimeError;
 
 fn renderTargetSubresourceSize(image: *const SoftImage, image_view: *const base.ImageView, aspect_mask: vk.ImageAspectFlags, mip_level: u32) usize {
     if (image.interface.image_type == .@"3d" and image.interface.flags.@"2d_array_compatible" and
@@ -217,17 +216,14 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
         };
     };
 
-    var tile_batch: ?tile_scheduler.Batch = if (comptime base.config.soft_ir_interpreter)
-        if (isTriangleTopology(topology) and pipeline_data.rasterization.polygon_mode == .fill)
-            try tile_scheduler.Batch.init(
-                allocator,
-                draw_call,
-                color_attachment_access,
-                if (depth_attachment_access) |*access| access else null,
-                if (stencil_attachment_access) |*access| access else null,
-            )
-        else
-            null
+    var tile_batch: ?tile_scheduler.Batch = if (isTriangleTopology(topology) and pipeline_data.rasterization.polygon_mode == .fill)
+        try tile_scheduler.Batch.init(
+            allocator,
+            draw_call,
+            color_attachment_access,
+            if (depth_attachment_access) |*access| access else null,
+            if (stencil_attachment_access) |*access| access else null,
+        )
     else
         null;
     defer if (tile_batch) |*batch| batch.deinit();
@@ -240,7 +236,6 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                     continue;
 
                 try clipTransformAndRasterizePoint(
-                    allocator,
                     draw_call,
                     vertex,
                     color_attachment_access,
@@ -361,7 +356,6 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                 const v1 = &draw_call.vertices[first_vertex + 1];
 
                 try clipTransformAndRasterizeLine(
-                    allocator,
                     draw_call,
                     v0,
                     v1,
@@ -384,7 +378,6 @@ pub fn processThenFragmentStage(renderer: *Renderer, allocator: std.mem.Allocato
                             const v1 = &draw_call.vertices[vertex_index + 1];
 
                             try clipTransformAndRasterizeLine(
-                                allocator,
                                 draw_call,
                                 v0,
                                 v1,
@@ -441,7 +434,6 @@ fn nextRestart(draw_call: *const DrawCall, start: usize, end: usize) usize {
 }
 
 fn clipTransformAndRasterizePoint(
-    allocator: std.mem.Allocator,
     draw_call: *DrawCall,
     vertex: *Vertex,
     color_attachment_access: []const ?common.RenderTargetAccess,
@@ -456,7 +448,6 @@ fn clipTransformAndRasterizePoint(
     clip.viewportTransformVertex(draw_call.viewport, &transformed);
 
     try rasterizeTransformedPoint(
-        allocator,
         draw_call,
         &transformed,
         color_attachment_access,
@@ -466,7 +457,6 @@ fn clipTransformAndRasterizePoint(
 }
 
 fn rasterizeTransformedPoint(
-    allocator: std.mem.Allocator,
     draw_call: *DrawCall,
     vertex: *Vertex,
     color_attachment_access: []const ?common.RenderTargetAccess,
@@ -497,7 +487,7 @@ fn rasterizeTransformedPoint(
                 continue;
 
             var fragment_result: fragment.InvocationResult = .{
-                .outputs = std.mem.zeroes([spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(zm.F32x4)]u8),
+                .outputs = std.mem.zeroes([shader_types.max_output_locations][@sizeOf(zm.F32x4)]u8),
                 .depth = null,
                 .sample_mask = null,
             };
@@ -510,10 +500,9 @@ fn rasterizeTransformedPoint(
                 };
 
                 const position = zm.f32x4(frag_x, frag_y, vertex.position[2], 1.0 / vertex.position[3]);
-                const inputs = try common.interpolateVertexOutputs(allocator, vertex, vertex, vertex, vertex, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+                const inputs = common.interpolateVertexOutputs(vertex, vertex, vertex, vertex, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
                 fragment_result = fragment.shaderInvocation(
                     &fragment_worker,
-                    allocator,
                     position,
                     point_coord,
                     null,
@@ -521,7 +510,7 @@ fn rasterizeTransformedPoint(
                     inputs,
                     fragment.constantQuadHelpers(&fragment_worker, position, inputs),
                 ) catch |err| {
-                    if (err == SpvRuntimeError.Killed)
+                    if (err == error.Killed)
                         continue;
 
                     std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
@@ -554,7 +543,6 @@ fn rasterizeTransformedPoint(
 }
 
 fn clipTransformAndRasterizeLine(
-    allocator: std.mem.Allocator,
     draw_call: *DrawCall,
     v0: *Vertex,
     v1: *Vertex,
@@ -563,7 +551,7 @@ fn clipTransformAndRasterizeLine(
     stencil_attachment_access: ?*common.RenderTargetAccess,
     include_last_endpoint: bool,
 ) VkError!void {
-    const clipped_line = (try clip.clipLine(allocator, v0, v1)) orelse return;
+    const clipped_line = clip.clipLine(v0, v1) orelse return;
 
     var tv0 = clipped_line.v0;
     var tv1 = clipped_line.v1;
@@ -573,7 +561,6 @@ fn clipTransformAndRasterizeLine(
 
     if (include_last_endpoint) {
         try bresenham.drawLineIncludingEndpoint(
-            allocator,
             draw_call,
             &tv0,
             &tv1,
@@ -583,7 +570,6 @@ fn clipTransformAndRasterizeLine(
         );
     } else {
         try bresenham.drawLine(
-            allocator,
             draw_call,
             &tv0,
             &tv1,
@@ -623,7 +609,7 @@ fn clipTransformAndRasterizeTriangle(
             return;
         }
 
-        const clipped_polygon = try clip.clipTriangle(batch.arenaAllocator(), v0, v1, v2);
+        const clipped_polygon = try clip.clipTriangle(v0, v1, v2);
         if (clipped_polygon.len < 3)
             return;
 
@@ -646,7 +632,7 @@ fn clipTransformAndRasterizeTriangle(
         return;
     }
 
-    const clipped_polygon = try clip.clipTriangle(allocator, v0, v1, v2);
+    const clipped_polygon = try clip.clipTriangle(v0, v1, v2);
     if (clipped_polygon.len < 3)
         return;
 
@@ -718,14 +704,14 @@ fn rasterizeTriangle(
     switch (pipeline_data.rasterization.polygon_mode) {
         .fill => try edge_function.drawTriangle(allocator, draw_call, v0, v1, v2, provoking_vertex, color_attachment_access, depth_attachment_access, stencil_attachment_access, front_face),
         .line => {
-            try bresenham.drawLine(allocator, draw_call, v0, v1, color_attachment_access, depth_attachment_access, stencil_attachment_access);
-            try bresenham.drawLine(allocator, draw_call, v1, v2, color_attachment_access, depth_attachment_access, stencil_attachment_access);
-            try bresenham.drawLine(allocator, draw_call, v2, v0, color_attachment_access, depth_attachment_access, stencil_attachment_access);
+            try bresenham.drawLine(draw_call, v0, v1, color_attachment_access, depth_attachment_access, stencil_attachment_access);
+            try bresenham.drawLine(draw_call, v1, v2, color_attachment_access, depth_attachment_access, stencil_attachment_access);
+            try bresenham.drawLine(draw_call, v2, v0, color_attachment_access, depth_attachment_access, stencil_attachment_access);
         },
         .point => {
-            try rasterizeTransformedPoint(allocator, draw_call, v0, color_attachment_access, depth_attachment_access, stencil_attachment_access);
-            try rasterizeTransformedPoint(allocator, draw_call, v1, color_attachment_access, depth_attachment_access, stencil_attachment_access);
-            try rasterizeTransformedPoint(allocator, draw_call, v2, color_attachment_access, depth_attachment_access, stencil_attachment_access);
+            try rasterizeTransformedPoint(draw_call, v0, color_attachment_access, depth_attachment_access, stencil_attachment_access);
+            try rasterizeTransformedPoint(draw_call, v1, color_attachment_access, depth_attachment_access, stencil_attachment_access);
+            try rasterizeTransformedPoint(draw_call, v2, color_attachment_access, depth_attachment_access, stencil_attachment_access);
         },
         else => base.unsupported("polygon mode {any}", .{pipeline_data.rasterization.polygon_mode}),
     }

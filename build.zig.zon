@@ -31,13 +31,6 @@
             .hash = "drm-0.0.1-uWWar0AwAQBgCM6qXzbj_QkceHZle8pi91UmbrmZI2ns",
         },
 
-        // Soft dependencies
-        .SPIRV_Interpreter = .{
-            .url = "git+https://github.com/Kbz-8/SPIRV-Interpreter#0c5c917d02033372e6cdffc6052c5414240d4995",
-            .hash = "SPIRV_Interpreter-1.1.0-ajmpn86JCQDXmRtiAblP7ktDCCr-QwGaWIoKNyAylSe0",
-            .lazy = true,
-        },
-
         // Phi dependencies
         .miclib = .{
             .url = "git+https://git.kbz8.me/kbz_8/miclib-zig.git#0220a08384adfcb2bdc6b4556a880ac40ae1d5ba",

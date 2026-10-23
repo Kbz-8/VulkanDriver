@@ -2,7 +2,6 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 const lib = @import("../lib.zig");
-const spv = @import("spv");
 
 const VkError = base.VkError;
 
@@ -39,16 +38,6 @@ pub const PipelineState = struct {
             vertex_buffers: [lib.max_vertex_input_bindings]Renderer.VertexBuffer,
         },
     },
-};
-
-const SampledImageDescriptor = struct {
-    image: usize,
-    sampler: usize,
-};
-
-const DescriptorPayload = union(enum) {
-    raw: []const u8,
-    sampled_image: SampledImageDescriptor,
 };
 
 compute: ComputeDispatcher,
@@ -90,174 +79,6 @@ pub fn setup(self: *Self, device: *SoftDevice) void {
 
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     self.active_occlusion_queries.deinit(allocator);
-}
-
-fn writeDescriptorValue(value: anytype, payload: DescriptorPayload, descriptor_index: u32) spv.Runtime.RuntimeError!void {
-    const dst = switch (value.*) {
-        .Array => |arr| blk: {
-            if (descriptor_index >= arr.values.len)
-                return spv.Runtime.RuntimeError.NotFound;
-            break :blk &arr.values[descriptor_index];
-        },
-        else => blk: {
-            if (descriptor_index != 0)
-                return spv.Runtime.RuntimeError.NotFound;
-            break :blk value;
-        },
-    };
-
-    switch (payload) {
-        .raw => |data| {
-            _ = try dst.write(data);
-        },
-        .sampled_image => |data| switch (dst.*) {
-            .Image => _ = try dst.write(std.mem.asBytes(&data.image)),
-            .Sampler => _ = try dst.write(std.mem.asBytes(&data.sampler)),
-            .SampledImage => _ = try dst.write(std.mem.asBytes(&data)),
-            else => return spv.Runtime.RuntimeError.InvalidValueType,
-        },
-    }
-}
-
-fn writeDescriptorSet(rt: *spv.Runtime, payload: DescriptorPayload, set: u32, binding: u32, descriptor_index: u32) spv.Runtime.RuntimeError!void {
-    var found = false;
-    for (rt.mod.bindings.items) |entry| {
-        if (entry.set != set or entry.binding != binding)
-            continue;
-        const variable = if (rt.results[entry.result].variant) |*variant| switch (variant.*) {
-            .Variable => |*variable| variable,
-            else => continue,
-        } else continue;
-
-        writeDescriptorValue(&variable.value, payload, descriptor_index) catch |err| switch (err) {
-            spv.Runtime.RuntimeError.InvalidValueType,
-            spv.Runtime.RuntimeError.OutOfBounds,
-            => continue,
-            else => return err,
-        };
-        found = true;
-    }
-
-    if (!found)
-        return spv.Runtime.RuntimeError.NotFound;
-}
-
-pub fn writeDescriptorSets(state: *PipelineState, rt: *spv.Runtime) !void {
-    sets: for (state.sets[0..], 0..) |set, set_index| {
-        if (set == null)
-            continue :sets;
-
-        bindings: for (set.?.descriptors[0..], 0..) |binding, binding_index| {
-            switch (binding) {
-                .buffer => |buffer_data_array| for (buffer_data_array, 0..) |buffer_data, descriptor_index| {
-                    if (buffer_data.object) |buffer| {
-                        const memory = buffer.interface.memory orelse continue;
-                        if (@intFromPtr(memory.vtable) == 0)
-                            continue;
-
-                        const binding_layout = set.?.interface.layout.bindings[binding_index];
-                        const dynamic_offset: vk.DeviceSize = switch (binding_layout.descriptor_type) {
-                            .uniform_buffer_dynamic,
-                            .storage_buffer_dynamic,
-                            => state.dynamic_offsets[set_index][binding_layout.dynamic_index + descriptor_index],
-
-                            else => 0,
-                        };
-
-                        const map = buffer.mapAsSliceWithAddedOffset(u8, buffer_data.offset + dynamic_offset, buffer_data.size) catch continue :bindings;
-                        writeDescriptorSet(
-                            rt,
-                            .{ .raw = map },
-                            @as(u32, @intCast(set_index)),
-                            @as(u32, @intCast(binding_index)),
-                            @as(u32, @intCast(descriptor_index)),
-                        ) catch |err| switch (err) {
-                            error.NotFound => {},
-                            else => return err,
-                        };
-                    }
-                },
-
-                .image => |image_data_array| for (image_data_array, 0..) |image_data, descriptor_index| {
-                    if (image_data.object) |image_view| {
-                        const addr: usize = @intFromPtr(image_view);
-                        writeDescriptorSet(
-                            rt,
-                            .{ .raw = std.mem.asBytes(&addr) },
-                            @as(u32, @intCast(set_index)),
-                            @as(u32, @intCast(binding_index)),
-                            @as(u32, @intCast(descriptor_index)),
-                        ) catch |err| switch (err) {
-                            error.NotFound => {},
-                            else => return err,
-                        };
-                    }
-                },
-
-                .sampler => |sampler_data_array| for (sampler_data_array, 0..) |sampler_data, descriptor_index| {
-                    if (sampler_data.object) |sampler| {
-                        const addr: usize = @intFromPtr(sampler);
-                        writeDescriptorSet(
-                            rt,
-                            .{ .raw = std.mem.asBytes(&addr) },
-                            @as(u32, @intCast(set_index)),
-                            @as(u32, @intCast(binding_index)),
-                            @as(u32, @intCast(descriptor_index)),
-                        ) catch |err| switch (err) {
-                            error.NotFound => {},
-                            else => return err,
-                        };
-                    }
-                },
-
-                .texel_buffer => |texel_data_array| for (texel_data_array, 0..) |texel_data, descriptor_index| {
-                    if (texel_data.object) |buffer_view| {
-                        const addr: usize = @intFromPtr(buffer_view);
-                        writeDescriptorSet(
-                            rt,
-                            .{ .sampled_image = .{ .image = addr, .sampler = addr } },
-                            @as(u32, @intCast(set_index)),
-                            @as(u32, @intCast(binding_index)),
-                            @as(u32, @intCast(descriptor_index)),
-                        ) catch |err| switch (err) {
-                            error.NotFound => {},
-                            else => return err,
-                        };
-                    }
-                },
-
-                .texture => |texture_data_array| for (texture_data_array, 0..) |texture_data, descriptor_index| {
-                    var data: SampledImageDescriptor = .{
-                        .image = 0,
-                        .sampler = 0,
-                    };
-
-                    if (texture_data.view) |image_view| {
-                        const addr: usize = @intFromPtr(image_view);
-                        data.image = addr;
-                    }
-
-                    if (texture_data.sampler) |sampler| {
-                        const addr: usize = @intFromPtr(sampler);
-                        data.sampler = addr;
-                    }
-
-                    writeDescriptorSet(
-                        rt,
-                        .{ .sampled_image = data },
-                        @as(u32, @intCast(set_index)),
-                        @as(u32, @intCast(binding_index)),
-                        @as(u32, @intCast(descriptor_index)),
-                    ) catch |err| switch (err) {
-                        error.NotFound => {},
-                        else => return err,
-                    };
-                },
-
-                else => {},
-            }
-        }
-    }
 }
 
 pub fn mapBuffer(state: *const PipelineState, set: u32, binding: u32, array_element: u32) VkError!?[]u8 {

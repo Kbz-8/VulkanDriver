@@ -2,7 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const format_info = @import("base").format;
 const zm = @import("base").zm;
-const spv = @import("spv");
+const shader_types = @import("../shader_types.zig");
 const shader_ir = @import("shader_ir");
 const bc = @import("bytecode.zig");
 const Program = @import("Program.zig");
@@ -2035,14 +2035,14 @@ fn floatRegisterVector(registers: LaneView, first: bc.Register, components: u16)
     return values;
 }
 
-fn vectorDerivative(value: @Vector(4, f32)) spv.Runtime.Vec4(f32) {
+fn vectorDerivative(value: @Vector(4, f32)) shader_types.ImageGradient {
     return .{ .x = value[0], .y = value[1], .z = value[2], .w = value[3] };
 }
 
 fn groupImageSample(self: *Self, program: *const Program, options: RunOptions, instruction: bc.Instruction, mask: LaneMask) RuntimeError!void {
     const pair = try self.validateSampleInstruction(program, instruction, false);
     const spatial = Program.spatialImageComponents(pair.dimension);
-    var gradients: [lane_count]spv.Runtime.ImageDerivatives = undefined;
+    var gradients: [lane_count]shader_types.ImageDerivatives = undefined;
 
     for (0..lane_count) |lane| {
         if ((mask & laneBit(@intCast(lane))) == 0)
@@ -2129,7 +2129,7 @@ fn imageSample(
     resource_samplers: []const ?*SoftSampler,
     instruction: bc.Instruction,
     explicit_lod: bool,
-    implicit_derivatives: ?spv.Runtime.ImageDerivatives,
+    implicit_derivatives: ?shader_types.ImageDerivatives,
 ) RuntimeError!void {
     const pair = try self.validateSampleInstruction(program, instruction, explicit_lod);
     const coordinate_count = Program.imageCoordinateComponents(pair.dimension, pair.arrayed);
@@ -2137,7 +2137,7 @@ fn imageSample(
     const view = try sampledImage(program, resource_images, pair.image);
     const sampler = try resourceSampler(program, resource_samplers, pair.sampler);
     const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
-    const dimension: spv.SpvDim = switch (pair.dimension) {
+    const dimension: shader_types.ImageDimension = switch (pair.dimension) {
         .one_d => .@"1D",
         .two_d => .@"2D",
         .three_d => .@"3D",
@@ -2148,7 +2148,7 @@ fn imageSample(
 
     const derivatives = if (pair.grad_x != .invalid_register) blk: {
         const spatial = Program.spatialImageComponents(pair.dimension);
-        break :blk spv.Runtime.ImageDerivatives{
+        break :blk shader_types.ImageDerivatives{
             .dx = vectorDerivative(floatRegisterVector(self.registers, pair.grad_x, spatial)),
             .dy = vectorDerivative(floatRegisterVector(self.registers, pair.grad_y, spatial)),
         };

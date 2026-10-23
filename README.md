@@ -17,7 +17,7 @@ _The gods are merciful, but not that merciful._
 ## Soft [software] <a href="https://git.kbz8.me/kbz_8/VulkanDriver/actions?workflows=Soft.yml"><img src="https://git.kbz8.me/kbz_8/VulkanDriver/badges/workflows/Soft.yml/badge.svg"></a>
 
 Soft be a software implementation of the Vulkan specification, abiding within this driver's own codebase.\
-It maketh use of a bespoke [SPIR-V interpreter](https://git.kbz8.me/kbz_8/SPIRV-Interpreter) and renderer, by whose workings its labours are carried forth.
+It translateth SPIR-V into common IR, then maketh use of its own IR interpreter and renderer, by whose workings its labours are carried forth.
 
 <p align="center">
     <img src="./resources/software/vkcube.gif" width="35%">

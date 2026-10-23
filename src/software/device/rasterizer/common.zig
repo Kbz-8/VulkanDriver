@@ -2,7 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 const zm = base.zm;
-const spv = @import("spv");
+const shader_types = @import("../../shader_types.zig");
 
 const blitter = @import("../blitter.zig");
 const Renderer = @import("../Renderer.zig");
@@ -23,14 +23,6 @@ pub const RenderTargetAccess = struct {
     height: u32,
     format: vk.Format,
 };
-
-pub const VertexInterpolation = struct {
-    blob: []const u8,
-    size: usize,
-    free_responsability: bool,
-};
-
-pub const VertexInterpolationLocation = [4]VertexInterpolation;
 
 const PerspectiveWeights = struct { w0: f32, w1: f32, w2: f32 };
 
@@ -71,7 +63,7 @@ pub const PackedFragmentInputs = struct {
     smooth_weights: PerspectiveWeights,
 
     pub fn word(self: PackedFragmentInputs, location: usize, component: usize) u32 {
-        if (location >= spv.SPIRV_MAX_OUTPUT_LOCATIONS or component >= 4)
+        if (location >= shader_types.max_output_locations or component >= 4)
             return 0;
 
         const out0 = self.v0.attributes.packed_outputs[location][component] orelse return 0;
@@ -95,12 +87,9 @@ pub const PackedFragmentInputs = struct {
     }
 };
 
-pub const FragmentInputs = if (base.config.soft_ir_interpreter)
-    PackedFragmentInputs
-else
-    [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation;
+pub const FragmentInputs = PackedFragmentInputs;
 
-pub const FragmentWaveOutputs = [spv.SPIRV_MAX_OUTPUT_LOCATIONS][4]@Vector(interpreter_simd.lane_count, u32);
+pub const FragmentWaveOutputs = [shader_types.max_output_locations][4]@Vector(interpreter_simd.lane_count, u32);
 
 pub fn depthBiasConstantUnit(format: vk.Format, z: f32) f32 {
     return switch (format) {
@@ -328,7 +317,6 @@ fn resolveStencilState(draw_call: *Renderer.DrawCall, state: vk.StencilOpState, 
 }
 
 pub fn interpolateVertexOutputs(
-    allocator: std.mem.Allocator,
     v0: *const Renderer.Vertex,
     v1: *const Renderer.Vertex,
     v2: *const Renderer.Vertex,
@@ -339,19 +327,15 @@ pub fn interpolateVertexOutputs(
     centroid_b0: f32,
     centroid_b1: f32,
     centroid_b2: f32,
-) VkError!FragmentInputs {
-    if (comptime base.config.soft_ir_interpreter) {
-        return packedFragmentInputs(
-            .{ .position = v0.position, .attributes = v0 },
-            .{ .position = v1.position, .attributes = v1 },
-            .{ .position = v2.position, .attributes = v2 },
-            provoking_vertex,
-            .{ b0, b1, b2 },
-            .{ centroid_b0, centroid_b1, centroid_b2 },
-        );
-    } else {
-        return interpolateVertexOutputsLegacy(allocator, v0, v1, v2, provoking_vertex, b0, b1, b2, centroid_b0, centroid_b1, centroid_b2);
-    }
+) FragmentInputs {
+    return packedFragmentInputs(
+        .{ .position = v0.position, .attributes = v0 },
+        .{ .position = v1.position, .attributes = v1 },
+        .{ .position = v2.position, .attributes = v2 },
+        provoking_vertex,
+        .{ b0, b1, b2 },
+        .{ centroid_b0, centroid_b1, centroid_b2 },
+    );
 }
 
 pub fn packedFragmentInputs(
@@ -373,165 +357,13 @@ pub fn packedFragmentInputs(
     };
 }
 
-fn interpolateVertexOutputsLegacy(
-    allocator: std.mem.Allocator,
-    v0: *const Renderer.Vertex,
-    v1: *const Renderer.Vertex,
-    v2: *const Renderer.Vertex,
-    provoking_vertex: *const Renderer.Vertex,
-    b0: f32,
-    b1: f32,
-    b2: f32,
-    centroid_b0: f32,
-    centroid_b1: f32,
-    centroid_b2: f32,
-) VkError![spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation {
-    var inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation = @splat(@splat(.{
-        .blob = &.{},
-        .size = 0,
-        .free_responsability = false,
-    }));
-
-    for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
-        for (0..4) |component| {
-            const out0 = v0.outputs[location][component] orelse continue;
-            const out1 = v1.outputs[location][component] orelse continue;
-            const out2 = v2.outputs[location][component] orelse continue;
-
-            if (out0.interpolation_type == .flat or out0.size == 0) {
-                const flat_out = provoking_vertex.outputs[location][component] orelse out0;
-                inputs[location][component] = .{ .blob = flat_out.blob, .size = flat_out.size, .free_responsability = false };
-                continue;
-            }
-
-            const len = @min(out0.size, out1.size, out2.size);
-            if (std.mem.eql(u8, out0.blob[0..len], out1.blob[0..len]) and std.mem.eql(u8, out0.blob[0..len], out2.blob[0..len])) {
-                inputs[location][component] = .{ .blob = out0.blob, .size = len, .free_responsability = false };
-                continue;
-            }
-
-            const input = allocator.alloc(u8, len + @sizeOf(F32x4)) catch return VkError.OutOfDeviceMemory;
-            @memset(input, 0);
-
-            const input_b0 = if (out0.centroid) centroid_b0 else b0;
-            const input_b1 = if (out0.centroid) centroid_b1 else b1;
-            const input_b2 = if (out0.centroid) centroid_b2 else b2;
-
-            var byte_index: usize = 0;
-            while (byte_index + @sizeOf(F32x4) <= len) : (byte_index += @sizeOf(F32x4)) {
-                const value0 = std.mem.bytesToValue(F32x4, out0.blob[byte_index..]);
-                const value1 = std.mem.bytesToValue(F32x4, out1.blob[byte_index..]);
-                const value2 = std.mem.bytesToValue(F32x4, out2.blob[byte_index..]);
-                base.utils.writePacked(F32x4, input[byte_index..], interpolateF32x4(out0.interpolation_type, value0, value1, value2, v0, v1, v2, input_b0, input_b1, input_b2));
-            }
-
-            while (byte_index + @sizeOf(f32) <= len) : (byte_index += @sizeOf(f32)) {
-                const value0 = std.mem.bytesToValue(f32, out0.blob[byte_index..]);
-                const value1 = std.mem.bytesToValue(f32, out1.blob[byte_index..]);
-                const value2 = std.mem.bytesToValue(f32, out2.blob[byte_index..]);
-                base.utils.writePacked(f32, input[byte_index..], interpolateF32(out0.interpolation_type, value0, value1, value2, v0, v1, v2, input_b0, input_b1, input_b2));
-            }
-
-            if (byte_index < len)
-                @memcpy(input[byte_index..len], out0.blob[byte_index..len]);
-
-            inputs[location][component] = .{ .blob = input, .size = len, .free_responsability = true };
-        }
-    }
-
-    return inputs;
-}
-
 pub fn interpolateLineOutputs(
-    allocator: std.mem.Allocator,
     v0: *const Renderer.Vertex,
     v1: *const Renderer.Vertex,
     provoking_vertex: *const Renderer.Vertex,
     t: f32,
-) VkError!FragmentInputs {
-    return interpolateVertexOutputs(allocator, v0, v1, v0, provoking_vertex, 1.0 - t, t, 0.0, 1.0 - t, t, 0.0);
-}
-
-pub fn interpolateVertexOutputDerivatives(
-    allocator: std.mem.Allocator,
-    v0: *const Renderer.Vertex,
-    v1: *const Renderer.Vertex,
-    v2: *const Renderer.Vertex,
-    b0: f32,
-    b1: f32,
-    b2: f32,
-    db0: f32,
-    db1: f32,
-    db2: f32,
-) VkError!FragmentInputs {
-    if (comptime base.config.soft_ir_interpreter) {
-        return .{
-            .v0 = .{ .position = v0.position, .attributes = v0 },
-            .v1 = .{ .position = v1.position, .attributes = v1 },
-            .v2 = .{ .position = v2.position, .attributes = v2 },
-            .provoking_vertex = v0,
-            .barycentrics = .{ db0, db1, db2 },
-            .centroid_barycentrics = .{ db0, db1, db2 },
-            .smooth_weights = .{ .w0 = db0, .w1 = db1, .w2 = db2 },
-        };
-    } else {
-        return interpolateVertexOutputDerivativesLegacy(allocator, v0, v1, v2, b0, b1, b2, db0, db1, db2);
-    }
-}
-
-fn interpolateVertexOutputDerivativesLegacy(
-    allocator: std.mem.Allocator,
-    v0: *const Renderer.Vertex,
-    v1: *const Renderer.Vertex,
-    v2: *const Renderer.Vertex,
-    b0: f32,
-    b1: f32,
-    b2: f32,
-    db0: f32,
-    db1: f32,
-    db2: f32,
-) VkError![spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation {
-    var inputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS]VertexInterpolationLocation = @splat(@splat(.{
-        .blob = &.{},
-        .size = 0,
-        .free_responsability = false,
-    }));
-
-    for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
-        for (0..4) |component| {
-            const out0 = v0.outputs[location][component] orelse continue;
-            const out1 = v1.outputs[location][component] orelse continue;
-            const out2 = v2.outputs[location][component] orelse continue;
-
-            const len = @min(out0.size, out1.size, out2.size);
-            if (len == 0)
-                continue;
-
-            const input = allocator.alloc(u8, len + @sizeOf(F32x4)) catch return VkError.OutOfDeviceMemory;
-            @memset(input, 0);
-
-            if (out0.interpolation_type != .flat) {
-                var byte_index: usize = 0;
-                while (byte_index + @sizeOf(F32x4) <= len) : (byte_index += @sizeOf(F32x4)) {
-                    const value0 = std.mem.bytesToValue(F32x4, out0.blob[byte_index..]);
-                    const value1 = std.mem.bytesToValue(F32x4, out1.blob[byte_index..]);
-                    const value2 = std.mem.bytesToValue(F32x4, out2.blob[byte_index..]);
-                    base.utils.writePacked(F32x4, input[byte_index..], interpolateDerivativeF32x4(out0.interpolation_type, value0, value1, value2, v0, v1, v2, b0, b1, b2, db0, db1, db2));
-                }
-
-                while (byte_index + @sizeOf(f32) <= len) : (byte_index += @sizeOf(f32)) {
-                    const value0 = std.mem.bytesToValue(f32, out0.blob[byte_index..]);
-                    const value1 = std.mem.bytesToValue(f32, out1.blob[byte_index..]);
-                    const value2 = std.mem.bytesToValue(f32, out2.blob[byte_index..]);
-                    base.utils.writePacked(f32, input[byte_index..], interpolateDerivativeF32(out0.interpolation_type, value0, value1, value2, v0, v1, v2, b0, b1, b2, db0, db1, db2));
-                }
-            }
-
-            inputs[location][component] = .{ .blob = input, .size = len, .free_responsability = true };
-        }
-    }
-
-    return inputs;
+) FragmentInputs {
+    return interpolateVertexOutputs(v0, v1, v0, provoking_vertex, 1.0 - t, t, 0.0, 1.0 - t, t, 0.0);
 }
 
 fn perspectiveWeights(p0: F32x4, p1: F32x4, p2: F32x4, b0: f32, b1: f32, b2: f32) PerspectiveWeights {
@@ -546,54 +378,6 @@ fn perspectiveWeights(p0: F32x4, p1: F32x4, p2: F32x4, b0: f32, b1: f32, b2: f32
         .w1 = (b1 * iw1) / denominator,
         .w2 = (b2 * iw2) / denominator,
     };
-}
-
-inline fn interpolateF32(interpolation_type: anytype, value0: f32, value1: f32, value2: f32, v0: *const Renderer.Vertex, v1: *const Renderer.Vertex, v2: *const Renderer.Vertex, b0: f32, b1: f32, b2: f32) f32 {
-    if (interpolation_type == .smooth) {
-        const weights = perspectiveWeights(v0.position, v1.position, v2.position, b0, b1, b2);
-        return (value0 * weights.w0) + (value1 * weights.w1) + (value2 * weights.w2);
-    }
-    return (value0 * b0) + (value1 * b1) + (value2 * b2);
-}
-
-inline fn interpolateF32x4(interpolation_type: anytype, value0: F32x4, value1: F32x4, value2: F32x4, v0: *const Renderer.Vertex, v1: *const Renderer.Vertex, v2: *const Renderer.Vertex, b0: f32, b1: f32, b2: f32) F32x4 {
-    if (interpolation_type == .smooth) {
-        const weights = perspectiveWeights(v0.position, v1.position, v2.position, b0, b1, b2);
-        return (value0 * zm.f32x4s(weights.w0)) + (value1 * zm.f32x4s(weights.w1)) + (value2 * zm.f32x4s(weights.w2));
-    }
-    return (value0 * zm.f32x4s(b0)) + (value1 * zm.f32x4s(b1)) + (value2 * zm.f32x4s(b2));
-}
-
-inline fn interpolateDerivativeF32(interpolation_type: anytype, value0: f32, value1: f32, value2: f32, v0: *const Renderer.Vertex, v1: *const Renderer.Vertex, v2: *const Renderer.Vertex, b0: f32, b1: f32, b2: f32, db0: f32, db1: f32, db2: f32) f32 {
-    if (interpolation_type != .smooth)
-        return (value0 * db0) + (value1 * db1) + (value2 * db2);
-
-    const iw0 = 1.0 / v0.position[3];
-    const iw1 = 1.0 / v1.position[3];
-    const iw2 = 1.0 / v2.position[3];
-    const n = (value0 * b0 * iw0) + (value1 * b1 * iw1) + (value2 * b2 * iw2);
-    const d = (b0 * iw0) + (b1 * iw1) + (b2 * iw2);
-    const dn = (value0 * db0 * iw0) + (value1 * db1 * iw1) + (value2 * db2 * iw2);
-    const dd = (db0 * iw0) + (db1 * iw1) + (db2 * iw2);
-    if (d == 0.0)
-        return 0.0;
-    return ((dn * d) - (n * dd)) / (d * d);
-}
-
-inline fn interpolateDerivativeF32x4(interpolation_type: anytype, value0: F32x4, value1: F32x4, value2: F32x4, v0: *const Renderer.Vertex, v1: *const Renderer.Vertex, v2: *const Renderer.Vertex, b0: f32, b1: f32, b2: f32, db0: f32, db1: f32, db2: f32) F32x4 {
-    if (interpolation_type != .smooth)
-        return (value0 * zm.f32x4s(db0)) + (value1 * zm.f32x4s(db1)) + (value2 * zm.f32x4s(db2));
-
-    const iw0 = 1.0 / v0.position[3];
-    const iw1 = 1.0 / v1.position[3];
-    const iw2 = 1.0 / v2.position[3];
-    const n = (value0 * zm.f32x4s(b0 * iw0)) + (value1 * zm.f32x4s(b1 * iw1)) + (value2 * zm.f32x4s(b2 * iw2));
-    const d = (b0 * iw0) + (b1 * iw1) + (b2 * iw2);
-    const dn = (value0 * zm.f32x4s(db0 * iw0)) + (value1 * zm.f32x4s(db1 * iw1)) + (value2 * zm.f32x4s(db2 * iw2));
-    const dd = (db0 * iw0) + (db1 * iw1) + (db2 * iw2);
-    if (d == 0.0)
-        return zm.f32x4s(0.0);
-    return ((dn * zm.f32x4s(d)) - (n * zm.f32x4s(dd))) / zm.f32x4s(d * d);
 }
 
 inline fn fragmentOutputFloat4(output: [@sizeOf(F32x4)]u8, format: vk.Format) F32x4 {
@@ -715,7 +499,7 @@ pub fn canUseOpaqueSingleSampleOutput(
 }
 
 pub fn writeOpaqueSingleSampleToTargets(
-    outputs: *const [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8,
+    outputs: *const [shader_types.max_output_locations][@sizeOf(F32x4)]u8,
     draw_call: *Renderer.DrawCall,
     color_attachment_access: []const ?RenderTargetAccess,
     depth_attachment_access: ?*RenderTargetAccess,
@@ -769,7 +553,7 @@ pub fn writeOpaqueSingleSampleToTargets(
 
 pub fn writeOpaqueSingleSampleWaveToTargets(
     outputs: *const FragmentWaveOutputs,
-    output_components: *const [spv.SPIRV_MAX_OUTPUT_LOCATIONS]u4,
+    output_components: *const [shader_types.max_output_locations]u4,
     draw_call: *Renderer.DrawCall,
     color_attachment_access: []const ?RenderTargetAccess,
     depth_attachment_access: ?*RenderTargetAccess,
@@ -850,7 +634,7 @@ pub fn writeOpaqueSingleSampleWaveToTargets(
 }
 
 pub fn writeToTargets(
-    outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8,
+    outputs: [shader_types.max_output_locations][@sizeOf(F32x4)]u8,
     draw_call: *Renderer.DrawCall,
     color_attachment_access: []const ?RenderTargetAccess,
     depth_attachment_access: ?*RenderTargetAccess,
@@ -965,7 +749,7 @@ pub fn writeToTargets(
 
 fn alphaToCoverageMask(
     multisample: anytype,
-    outputs: [spv.SPIRV_MAX_OUTPUT_LOCATIONS][@sizeOf(F32x4)]u8,
+    outputs: [shader_types.max_output_locations][@sizeOf(F32x4)]u8,
     fragment_sample_mask: ?vk.SampleMask,
 ) ?vk.SampleMask {
     if (multisample.alpha_to_coverage_enable == .false)

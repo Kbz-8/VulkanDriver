@@ -1,7 +1,7 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
-const spv = @import("spv");
+const shader_types = @import("shader_types.zig");
 const zm = base.zm;
 const blitter = @import("device/blitter.zig");
 
@@ -14,7 +14,7 @@ const SoftImageView = @import("SoftImageView.zig");
 
 const Self = @This();
 pub const Interface = base.Sampler;
-pub const ImageOffset = spv.Runtime.ImageOffset;
+pub const ImageOffset = shader_types.ImageOffset;
 pub const max_lod_bias: f32 = 2.0;
 
 const CubeCoordinate = struct {
@@ -28,7 +28,7 @@ const ImageSamplingContext = struct {
     image: *SoftImage,
     image_view: *SoftImageView,
     sampler: *Self,
-    dim: spv.SpvDim,
+    dim: shader_types.ImageDimension,
     coord: CubeCoordinate,
     mip_level: u32,
 };
@@ -288,7 +288,7 @@ fn cubeLodDerivative(face: u32, direction: @Vector(4, f64), derivative: @Vector(
 }
 
 /// Returns raw log2(rho) relative to image view base mip
-pub fn lodFromDerivatives(image: *SoftImage, image_view: *SoftImageView, dim: spv.SpvDim, coordinate: @Vector(4, f32), derivatives: spv.Runtime.ImageDerivatives) f32 {
+pub fn lodFromDerivatives(image: *SoftImage, image_view: *SoftImageView, dim: shader_types.ImageDimension, coordinate: @Vector(4, f32), derivatives: shader_types.ImageDerivatives) f32 {
     const extent = image.getMipLevelExtent(image_view.interface.subresource_range.base_mip_level);
     const scale: [3]f64 = .{
         @floatFromInt(extent.width),
@@ -328,37 +328,6 @@ pub fn lodFromDerivatives(image: *SoftImage, image_view: *SoftImageView, dim: sp
     const rho = @sqrt(@max(dx_squared, dy_squared));
 
     return if (rho == 0.0) -std.math.inf(f32) else @floatCast(@log2(rho));
-}
-
-pub fn queryImageLod(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, derivatives: spv.Runtime.ImageDerivatives) F32x4 {
-    const range = image_view.interface.subresource_range;
-    const extent = image.getMipLevelExtent(range.base_mip_level);
-    const width: f32 = @floatFromInt(extent.width);
-    const height: f32 = @floatFromInt(extent.height);
-    const depth: f32 = @floatFromInt(extent.depth);
-
-    const dx = switch (dim) {
-        .@"1D" => @abs(derivatives.dx.x) * width,
-        .@"2D", .Rect => @sqrt(std.math.pow(f32, derivatives.dx.x * width, 2.0) + std.math.pow(f32, derivatives.dx.y * height, 2.0)),
-        .Cube => @sqrt(std.math.pow(f32, derivatives.dx.x * width, 2.0) + std.math.pow(f32, derivatives.dx.y * height, 2.0) + std.math.pow(f32, derivatives.dx.z * width, 2.0)),
-        .@"3D" => @sqrt(std.math.pow(f32, derivatives.dx.x * width, 2.0) + std.math.pow(f32, derivatives.dx.y * height, 2.0) + std.math.pow(f32, derivatives.dx.z * depth, 2.0)),
-        else => @abs(derivatives.dx.x) * width,
-    };
-    const dy = switch (dim) {
-        .@"1D" => @abs(derivatives.dy.x) * width,
-        .@"2D", .Rect => @sqrt(std.math.pow(f32, derivatives.dy.x * width, 2.0) + std.math.pow(f32, derivatives.dy.y * height, 2.0)),
-        .Cube => @sqrt(std.math.pow(f32, derivatives.dy.x * width, 2.0) + std.math.pow(f32, derivatives.dy.y * height, 2.0) + std.math.pow(f32, derivatives.dy.z * width, 2.0)),
-        .@"3D" => @sqrt(std.math.pow(f32, derivatives.dy.x * width, 2.0) + std.math.pow(f32, derivatives.dy.y * height, 2.0) + std.math.pow(f32, derivatives.dy.z * depth, 2.0)),
-        else => @abs(derivatives.dy.x) * width,
-    };
-
-    const rho = @max(dx, dy);
-    const lod = if (rho > 0.0) @log2(rho) else -std.math.inf(f32);
-    const biased_lod = lod + sampler.interface.mip_lod_bias;
-    const clamped_lod = std.math.clamp(biased_lod, sampler.interface.min_lod, sampler.interface.max_lod);
-    const max_level: f32 = @floatFromInt(viewMipCount(image_view) - 1);
-    const level = std.math.clamp(mipmapModeLevel(sampler, clamped_lod), 0.0, max_level);
-    return .{ level, lod, 0.0, 0.0 };
 }
 
 fn sampleArrayLayer(coord: f32, layer_count: u32) u32 {
@@ -433,7 +402,7 @@ fn readSampledFloat4(
     image: *SoftImage,
     image_view: *SoftImageView,
     sampler: *Self,
-    dim: spv.SpvDim,
+    dim: shader_types.ImageDimension,
     coord: CubeCoordinate,
     mip_level: u32,
     ix: i32,
@@ -522,7 +491,7 @@ fn readSampledInt4(
     image: *SoftImage,
     image_view: *SoftImageView,
     sampler: *Self,
-    dim: spv.SpvDim,
+    dim: shader_types.ImageDimension,
     coord: CubeCoordinate,
     mip_level: u32,
     ix: i32,
@@ -584,7 +553,7 @@ fn sampleImageFloat4Level(
     image: *SoftImage,
     image_view: *SoftImageView,
     sampler: *Self,
-    dim: spv.SpvDim,
+    dim: shader_types.ImageDimension,
     x: f32,
     y: f32,
     z: f32,
@@ -649,7 +618,7 @@ pub fn sampleImageFloat4(
     image: *SoftImage,
     image_view: *SoftImageView,
     sampler: *Self,
-    dim: spv.SpvDim,
+    dim: shader_types.ImageDimension,
     x: f32,
     y: f32,
     z: f32,
@@ -679,7 +648,7 @@ pub fn sampleImageFloat4(
     return sampleImageFloat4Level(image, image_view, sampler, dim, x, y, z, sampleMipLevel(image_view, sampler, lod), filter, offset);
 }
 
-fn sampleImageDrefLevel(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, w: f32, dref: f32, mip_level: u32, filter: vk.Filter, offset: ImageOffset) VkError!f32 {
+fn sampleImageDrefLevel(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: shader_types.ImageDimension, x: f32, y: f32, z: f32, w: f32, dref: f32, mip_level: u32, filter: vk.Filter, offset: ImageOffset) VkError!f32 {
     const extent = image.getMipLevelExtent(mip_level);
     const coord: CubeCoordinate = switch (image_view.interface.view_type) {
         .@"1d_array" => .{
@@ -743,7 +712,7 @@ fn sampleImageDrefLevel(image: *SoftImage, image_view: *SoftImageView, sampler: 
     return result[0];
 }
 
-pub fn sampleImageInt4(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, lod: ?f32, offset: ImageOffset) VkError!U32x4 {
+pub fn sampleImageInt4(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: shader_types.ImageDimension, x: f32, y: f32, z: f32, lod: ?f32, offset: ImageOffset) VkError!U32x4 {
     const mip_level = sampleMipLevel(image_view, sampler, lod);
     const extent = image.getMipLevelExtent(mip_level);
     const coord: CubeCoordinate = switch (image_view.interface.view_type) {
@@ -792,7 +761,7 @@ pub fn sampleImageInt4(image: *SoftImage, image_view: *SoftImageView, sampler: *
     return swizzleInt4(color, image_view.interface.components);
 }
 
-pub fn sampleImageDref(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: spv.SpvDim, x: f32, y: f32, z: f32, w: f32, dref: f32, lod: ?f32, offset: ImageOffset) VkError!f32 {
+pub fn sampleImageDref(image: *SoftImage, image_view: *SoftImageView, sampler: *Self, dim: shader_types.ImageDimension, x: f32, y: f32, z: f32, w: f32, dref: f32, lod: ?f32, offset: ImageOffset) VkError!f32 {
     if (sampler.interface.compare_enable == .false) {
         const color = try sampleImageFloat4(image, image_view, sampler, dim, x, y, z, lod, offset);
         return color[0];

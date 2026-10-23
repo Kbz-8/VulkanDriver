@@ -2,7 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
 const zm = base.zm;
-const spv = @import("spv");
+const shader_types = @import("../shader_types.zig");
 
 pub const F32x4 = zm.F32x4;
 
@@ -10,7 +10,6 @@ const Renderer = @import("Renderer.zig");
 const Vertex = Renderer.Vertex;
 
 const VkError = base.VkError;
-const interface_blob_padding = @sizeOf(F32x4);
 
 const ClipPlane = enum {
     left,
@@ -41,7 +40,7 @@ const ClippedPolygon = struct {
     }
 };
 
-pub fn clipTriangle(allocator: std.mem.Allocator, v0: *const Vertex, v1: *const Vertex, v2: *const Vertex) VkError!ClippedPolygon {
+pub fn clipTriangle(v0: *const Vertex, v1: *const Vertex, v2: *const Vertex) VkError!ClippedPolygon {
     var polygon: ClippedPolygon = .{};
     try polygon.append(v0.*);
     try polygon.append(v1.*);
@@ -57,7 +56,7 @@ pub fn clipTriangle(allocator: std.mem.Allocator, v0: *const Vertex, v1: *const 
     };
 
     for (planes) |plane| {
-        polygon = try clipPolygonAgainstPlane(allocator, &polygon, plane);
+        polygon = try clipPolygonAgainstPlane(&polygon, plane);
         if (polygon.len < 3)
             return polygon;
     }
@@ -65,7 +64,7 @@ pub fn clipTriangle(allocator: std.mem.Allocator, v0: *const Vertex, v1: *const 
     return polygon;
 }
 
-pub fn clipLine(allocator: std.mem.Allocator, v0: *const Vertex, v1: *const Vertex) VkError!?ClippedLine {
+pub fn clipLine(v0: *const Vertex, v1: *const Vertex) ?ClippedLine {
     var line: ClippedLine = .{
         .v0 = v0.*,
         .v1 = v1.*,
@@ -93,7 +92,7 @@ pub fn clipLine(allocator: std.mem.Allocator, v0: *const Vertex, v1: *const Vert
             continue;
 
         const t = v0_distance / (v0_distance - v1_distance);
-        const clipped_vertex = try interpolateVertexForClipping(allocator, &line.v0, &line.v1, t);
+        const clipped_vertex = interpolateVertexForClipping(&line.v0, &line.v1, t);
 
         if (v0_inside) {
             line.v1 = clipped_vertex;
@@ -152,79 +151,36 @@ pub fn vertexInsideClipVolume(vertex: *const Vertex) bool {
     return true;
 }
 
-fn interpolateBlob(allocator: std.mem.Allocator, a: []const u8, b: []const u8, size: usize, t: f32) VkError![]u8 {
-    const len = @min(size, a.len, b.len);
-    const result = allocator.alloc(u8, len + interface_blob_padding) catch return VkError.OutOfDeviceMemory;
-    @memset(result, 0);
-
-    var byte_index: usize = 0;
-    while (byte_index + @sizeOf(F32x4) <= len) : (byte_index += @sizeOf(F32x4)) {
-        const value_a = std.mem.bytesToValue(F32x4, a[byte_index..]);
-        const value_b = std.mem.bytesToValue(F32x4, b[byte_index..]);
-        base.utils.writePacked(F32x4, result[byte_index..], value_a + ((value_b - value_a) * zm.f32x4s(t)));
-    }
-
-    while (byte_index + @sizeOf(f32) <= len) : (byte_index += @sizeOf(f32)) {
-        const value_a = std.mem.bytesToValue(f32, a[byte_index..]);
-        const value_b = std.mem.bytesToValue(f32, b[byte_index..]);
-        base.utils.writePacked(f32, result[byte_index..], value_a + ((value_b - value_a) * t));
-    }
-
-    if (byte_index < len)
-        @memcpy(result[byte_index..len], a[byte_index..len]);
-
-    return result;
-}
-
-fn interpolateVertexForClipping(allocator: std.mem.Allocator, a: *const Vertex, b: *const Vertex, t: f32) VkError!Vertex {
+fn interpolateVertexForClipping(a: *const Vertex, b: *const Vertex, t: f32) Vertex {
     var result: Vertex = .{
         .primitive_restart = false,
         .position = a.position + ((b.position - a.position) * zm.f32x4s(t)),
         .point_size = a.point_size + ((b.point_size - a.point_size) * t),
     };
 
-    if (comptime base.config.soft_ir_interpreter) {
-        for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
-            for (0..4) |component| {
-                const out_a = a.packed_outputs[location][component] orelse continue;
-                const out_b = b.packed_outputs[location][component] orelse continue;
-                const word = if (out_a.interpolation_type == .flat)
-                    out_a.word
-                else blk: {
-                    const value_a: f32 = @bitCast(out_a.word);
-                    const value_b: f32 = @bitCast(out_b.word);
-                    break :blk @as(u32, @bitCast(value_a + ((value_b - value_a) * t)));
-                };
-                result.packed_outputs[location][component] = .{
-                    .word = word,
-                    .interpolation_type = out_a.interpolation_type,
-                    .centroid = out_a.centroid,
-                };
-            }
-        }
-    } else {
-        for (0..spv.SPIRV_MAX_OUTPUT_LOCATIONS) |location| {
-            for (0..4) |component| {
-                const out_a = a.outputs[location][component] orelse continue;
-                const out_b = b.outputs[location][component] orelse continue;
-
-                result.outputs[location][component] = .{
-                    .interpolation_type = out_a.interpolation_type,
-                    .centroid = out_a.centroid,
-                    .blob = if (out_a.interpolation_type == .flat)
-                        allocator.dupe(u8, out_a.blob) catch return VkError.OutOfDeviceMemory
-                    else
-                        try interpolateBlob(allocator, out_a.blob, out_b.blob, @min(out_a.size, out_b.size), t),
-                    .size = @min(out_a.size, out_b.size),
-                };
-            }
+    for (0..shader_types.max_output_locations) |location| {
+        for (0..4) |component| {
+            const out_a = a.packed_outputs[location][component] orelse continue;
+            const out_b = b.packed_outputs[location][component] orelse continue;
+            const word = if (out_a.interpolation_type == .flat)
+                out_a.word
+            else blk: {
+                const value_a: f32 = @bitCast(out_a.word);
+                const value_b: f32 = @bitCast(out_b.word);
+                break :blk @as(u32, @bitCast(value_a + ((value_b - value_a) * t)));
+            };
+            result.packed_outputs[location][component] = .{
+                .word = word,
+                .interpolation_type = out_a.interpolation_type,
+                .centroid = out_a.centroid,
+            };
         }
     }
 
     return result;
 }
 
-fn clipPolygonAgainstPlane(allocator: std.mem.Allocator, input: *const ClippedPolygon, plane: ClipPlane) VkError!ClippedPolygon {
+fn clipPolygonAgainstPlane(input: *const ClippedPolygon, plane: ClipPlane) VkError!ClippedPolygon {
     var output: ClippedPolygon = .{};
 
     if (input.len == 0)
@@ -240,7 +196,7 @@ fn clipPolygonAgainstPlane(allocator: std.mem.Allocator, input: *const ClippedPo
 
         if (current_inside != previous_inside) {
             const t = previous_distance / (previous_distance - current_distance);
-            try output.append(try interpolateVertexForClipping(allocator, &previous, &current, t));
+            try output.append(interpolateVertexForClipping(&previous, &current, t));
         }
 
         if (current_inside)

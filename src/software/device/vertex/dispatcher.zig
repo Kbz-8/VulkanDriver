@@ -4,15 +4,9 @@ const base = @import("base");
 const Renderer = @import("../Renderer.zig");
 const SoftPipeline = @import("../../SoftPipeline.zig");
 
-const backend = if (base.config.soft_ir_interpreter)
-    @import("ir_interpreter.zig")
-else
-    @import("spirv_interpreter.zig");
+const backend = @import("ir_interpreter.zig");
 
-pub const batch_width = if (base.config.soft_ir_interpreter)
-    @import("../../interpreter/Runtime.zig").lane_count
-else
-    1;
+pub const batch_width = @import("../../interpreter/Runtime.zig").lane_count;
 
 pub const RunData = struct {
     allocator: std.mem.Allocator,
@@ -35,10 +29,7 @@ pub fn runInline(data: RunData) base.VkError!void {
 
 pub fn runWrapper(data: RunData) void {
     @call(.always_inline, backend.run, .{data}) catch |err| {
-        std.log.scoped(.VertexDispatcher).err("{s} interpreter runtime caught a '{s}'", .{
-            if (comptime base.config.soft_ir_interpreter) "IR" else "SPIR-V",
-            @errorName(err),
-        });
+        std.log.scoped(.VertexDispatcher).err("IR interpreter runtime caught a '{s}'", .{@errorName(err)});
         if (comptime base.config.logs == .verbose) {
             if (@errorReturnTrace()) |trace| {
                 std.debug.dumpErrorReturnTrace(trace);

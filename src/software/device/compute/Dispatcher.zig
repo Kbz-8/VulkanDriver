@@ -1,13 +1,11 @@
 const std = @import("std");
 const base = @import("base");
-const spv = @import("spv");
 
 const ExecutionDevice = @import("../Device.zig");
 const PipelineState = ExecutionDevice.PipelineState;
 
 const SoftDevice = @import("../../SoftDevice.zig");
 const ir_interpreter = @import("ir_interpreter.zig");
-const spirv_interpreter = @import("spirv_interpreter.zig");
 
 const VkError = base.VkError;
 
@@ -34,23 +32,13 @@ pub const Batch = struct {
     }
 };
 
-const BackendContext = if (base.config.soft_ir_interpreter) ir_interpreter.Context else spirv_interpreter.SpvContext;
-
 device: *SoftDevice,
 state: *PipelineState,
-
-invocation_index: std.atomic.Value(usize),
-
-early_dump: ?u32,
-final_dump: ?u32,
 
 pub fn init(device: *SoftDevice, state: *PipelineState) Self {
     return .{
         .device = device,
         .state = state,
-        .invocation_index = .init(0),
-        .early_dump = base.config.soft_compute_dump_early_results_table,
-        .final_dump = base.config.soft_compute_dump_final_results_table,
     };
 }
 
@@ -86,18 +74,6 @@ fn dispatchBatches(
     try group.await(io);
 }
 
-fn getLocalSize(rt: *spv.Runtime, allocator: std.mem.Allocator, spv_module: *const spv.Module) VkError!@Vector(3, u32) {
-    if (rt.getWorkgroupSize(allocator) catch return VkError.ValidationFailed) |workgroup_size| {
-        return workgroup_size;
-    }
-
-    return .{
-        spv_module.reflection_infos.local_size_x,
-        spv_module.reflection_infos.local_size_y,
-        spv_module.reflection_infos.local_size_z,
-    };
-}
-
 pub fn dispatchBase(self: *Self, base_group_x: u32, base_group_y: u32, base_group_z: u32, group_count_x: u32, group_count_y: u32, group_count_z: u32) VkError!void {
     const group_count_xy = std.math.mul(usize, group_count_x, group_count_y) catch return VkError.ValidationFailed;
     const group_count = std.math.mul(usize, group_count_xy, group_count_z) catch return VkError.ValidationFailed;
@@ -111,35 +87,13 @@ pub fn dispatchBase(self: *Self, base_group_x: u32, base_group_y: u32, base_grou
     defer if (comptime base.config.logs != .none) {
         const duration = timer.untilNow(io, .real);
         const ms: f32 = @floatFromInt(duration.toMicroseconds());
-        std.log.scoped(.ComputeDispatcher).debug("Compute dispatch took {}ms using {s} interpreter", .{ ms / 1000, if (comptime base.config.soft_ir_interpreter) "IR" else "SPIR-V" });
+        std.log.scoped(.ComputeDispatcher).debug("Compute dispatch took {}ms using IR interpreter", .{ms / 1000});
     };
 
-    var context: BackendContext = if (comptime base.config.soft_ir_interpreter)
-        try ir_interpreter.prepare(allocator, shader, self.state, io)
-    else blk: {
-        if (shader.runtimes.len == 0)
-            return VkError.InvalidPipelineDrv;
-        const spv_module = &shader.module.module;
-        const local_size = try getLocalSize(&shader.runtimes[0].rt, allocator, spv_module);
-        const local_size_xy = std.math.mul(usize, local_size[0], local_size[1]) catch return VkError.ValidationFailed;
-        const invocations_per_workgroup = std.math.mul(usize, local_size_xy, local_size[2]) catch return VkError.ValidationFailed;
-        self.invocation_index.store(0, .monotonic);
-        break :blk .{
-            .dispatcher = self,
-            .pipeline = pipeline,
-            .invocations_per_workgroup = invocations_per_workgroup,
-            .local_size = local_size,
-        };
-    };
-    defer if (comptime base.config.soft_ir_interpreter)
-        context.deinit(allocator);
+    var context = try ir_interpreter.prepare(allocator, shader, self.state, io);
+    defer context.deinit(allocator);
 
-    const worker_count = if (comptime base.config.soft_ir_interpreter)
-        if (shader.program.uses_atomics) 1 else shader.runtimes.len
-    else if (shader.module.module.reflection_infos.has_atomics)
-        1
-    else
-        shader.runtimes.len;
+    const worker_count = if (shader.program.uses_atomics) 1 else shader.runtimes.len;
 
     dispatchBatches(
         io,
@@ -155,23 +109,12 @@ pub fn dispatchBase(self: *Self, base_group_x: u32, base_group_y: u32, base_grou
     };
 }
 
-fn runWrapper(context: BackendContext, batch: Batch) void {
-    @call(.always_inline, run, .{ context, batch }) catch |err| {
-        std.log.scoped(.ComputeDispatcher).err("{s} interpreter runtime caught a '{s}'", .{
-            if (comptime base.config.soft_ir_interpreter) "IR" else "SPIR-V",
-            @errorName(err),
-        });
+fn runWrapper(context: ir_interpreter.Context, batch: Batch) void {
+    @call(.always_inline, ir_interpreter.runBatch, .{ context, batch }) catch |err| {
+        std.log.scoped(.ComputeDispatcher).err("IR interpreter runtime caught a '{s}'", .{@errorName(err)});
         if (comptime base.config.logs == .verbose) {
             if (@errorReturnTrace()) |trace|
                 std.debug.dumpErrorReturnTrace(trace);
         }
     };
-}
-
-inline fn run(context: BackendContext, batch: Batch) !void {
-    if (comptime base.config.soft_ir_interpreter) {
-        return ir_interpreter.runBatch(context, batch);
-    } else {
-        return spirv_interpreter.runBatch(context, batch);
-    }
 }
