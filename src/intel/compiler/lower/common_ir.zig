@@ -664,6 +664,8 @@ const LoweringState = struct {
             .outer_product,
             .pow,
             .signed_divide,
+            .signed_max,
+            .signed_min,
             .step,
             .unsigned_divide,
             .unsigned_max,

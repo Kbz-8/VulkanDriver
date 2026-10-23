@@ -21,7 +21,7 @@ It maketh use of a bespoke [SPIR-V interpreter](https://git.kbz8.me/kbz_8/SPIRV-
 
 <p align="center">
     <img src="./resources/software/vkcube.gif" width="35%">
-    <img src="./resources/software/gears.gif" width="64%">
+    <img src="./resources/software/gears.gif" width="63%">
 </p>
 ### Build
 
