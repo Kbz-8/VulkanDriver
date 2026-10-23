@@ -351,6 +351,15 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             if (op.dimension != .two_d or op.arrayed)
                 try writer.print(", dimension {t}, arrayed {}", .{ op.dimension, op.arrayed });
         },
+        .image_size_query_lod => |op| {
+            try writer.writeAll("image_size_query_lod ");
+            const resource = module.resources.get(op.resource);
+            try writeNamedRef(writer, if (resource) |r| r.name else null, "resource", op.resource.index());
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.lod);
+            if (op.dimension != .two_d or op.arrayed)
+                try writer.print(", dimension {t}, arrayed {}", .{ op.dimension, op.arrayed });
+        },
         .image_fetch => |op| {
             try writer.writeAll("image_fetch ");
             const resource = module.resources.get(op.resource);

@@ -685,6 +685,27 @@ For compatibility with old IR, other storage shapes still check coordinate
 existence rather than imposing new coordinate/result type restrictions on
 reads/writes. Arrayed 3D images and arrayed buffers are rejected.
 
+### `image_size_query_lod`
+
+Queries the dimensions of a sampled image at an integer LOD without using a
+sampler or reading texel memory:
+
+```text
+%size: vec2[i32] = image_size_query_lod @img, %lod
+%size: vec3[u32] = image_size_query_lod @cubes, %lod, dimension cube, arrayed true
+```
+
+The resource must be a `sampled_image`, and LOD must be a scalar `i32` or `u32`.
+The result has `i32` or `u32` components: width for 1D, width/height for 2D and
+cube, and width/height/depth for 3D. Arrayed 1D, 2D, and cube images append the
+array size; cube arrays report the number of cubes, not faces. Arrayed 3D,
+buffer-dimensional, and multisampled images are unsupported. The shape suffix
+is omitted for the default `dimension two_d, arrayed false`.
+
+The software IR interpreter applies LOD relative to the image view's base mip
+level and reports the view's array-layer count independently of LOD. LODs outside
+the view have undefined results; the interpreter returns zero dimensions.
+
 ### `image_fetch`
 
 Performs an unfiltered, integer-coordinate lookup without a sampler:
@@ -1098,7 +1119,9 @@ omitted from the selected entry point. The translator lowers a defined subset:
   operands or LOD. Cube and
   multisampled fetches are rejected. Combined buffer descriptors do not allocate
   an unused sampler resource. Sampling/gathering buffer images is rejected.
-  Image size queries, `UClamp`, and additional atomic operations are not added.
+  `OpImageQuerySizeLod` lowers to `image_size_query_lod` for non-multisampled
+  1D, 2D, 3D, and cube sampled images, including valid arrayed shapes. Other
+  image queries, `UClamp`, and additional atomic operations remain unsupported.
 - `OpImageSampleImplicitLod` and `OpImageSampleDrefImplicitLod` accept `Bias`,
   `ConstOffset`, and their combination. Explicit variants accept exactly `Lod`
   or paired `Grad`, optionally combined with `ConstOffset`. Mask operands are

@@ -105,7 +105,7 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
         .exp => translateUnary(emitter, invocation, .exp),
         .exp2 => translateUnary(emitter, invocation, .exp2),
         .f_abs => translateUnary(emitter, invocation, .float_absolute),
-        .f_clamp => translateFClamp(emitter, invocation),
+        .f_clamp => translateTernary(emitter, invocation, .float_clamp),
         .f_max => translateBinary(emitter, invocation, .float_max),
         .f_min => translateBinary(emitter, invocation, .float_min),
         .f_mix => translateTernary(emitter, invocation, .float_mix),
@@ -123,6 +123,9 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
         .reflect => translateReflect(emitter, invocation),
         .round => translateUnary(emitter, invocation, .round),
         .s_abs => translateUnary(emitter, invocation, .integer_absolute),
+        .s_clamp => translateTernary(emitter, invocation, .signed_clamp),
+        .s_max => translateBinary(emitter, invocation, .signed_max),
+        .s_min => translateBinary(emitter, invocation, .signed_min),
         .s_sign => translateUnary(emitter, invocation, .integer_sign),
         .sin => translateUnary(emitter, invocation, .sin),
         .sinh => translateUnary(emitter, invocation, .sinh),
@@ -132,6 +135,7 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
         .tan => translateUnary(emitter, invocation, .tan),
         .tanh => translateUnary(emitter, invocation, .tanh),
         .trunc => translateUnary(emitter, invocation, .trunc),
+        .u_clamp => translateTernary(emitter, invocation, .unsigned_clamp),
         .u_max => translateBinary(emitter, invocation, .unsigned_max),
         .u_min => translateBinary(emitter, invocation, .unsigned_min),
 
@@ -327,22 +331,6 @@ fn translateLength(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Val
         return error.InvalidInstruction;
     return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
         .unary = .{ .opcode = .length, .operand = operand },
-    }, invocation.result_name)).?;
-}
-
-fn translateFClamp(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
-    if (invocation.operands.len != 3)
-        return error.InvalidInstruction;
-    _ = try floatScalarType(emitter.module, invocation.result_type);
-    for (invocation.operands) |operand| {
-        if (emitter.module.typeOf(operand) != invocation.result_type)
-            return error.InvalidInstruction;
-    }
-    const lower = (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
-        .binary = .{ .opcode = .float_max, .lhs = invocation.operands[0], .rhs = invocation.operands[1] },
-    }, null)).?;
-    return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
-        .binary = .{ .opcode = .float_min, .lhs = lower, .rhs = invocation.operands[2] },
     }, invocation.result_name)).?;
 }
 

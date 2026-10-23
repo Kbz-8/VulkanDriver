@@ -440,6 +440,7 @@ const LoweringState = struct {
             .load_workgroup,
             .store_workgroup,
             .image_read,
+            .image_size_query_lod,
             .image_fetch,
             .image_sample_explicit_lod,
             .image_sample_implicit_lod,

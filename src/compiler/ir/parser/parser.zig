@@ -543,6 +543,19 @@ const Parser = struct {
             } };
         }
 
+        if (std.mem.eql(u8, name, "image_size_query_lod")) {
+            const resource_name = (try self.expect(.at_name)).text;
+            try self.expectDiscard(.comma);
+            const lod = try self.parseValueRef();
+            const options = try self.parseImageOptions();
+            return .{ .image_size_query_lod = .{
+                .resource_name = resource_name,
+                .lod = lod,
+                .dimension = options.dimension,
+                .arrayed = options.arrayed,
+            } };
+        }
+
         if (std.mem.eql(u8, name, "image_fetch")) {
             const resource_name = (try self.expect(.at_name)).text;
             try self.expectDiscard(.comma);

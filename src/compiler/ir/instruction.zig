@@ -92,6 +92,8 @@ pub const BinaryOpcode = enum {
     pow,
     shift_left,
     signed_divide,
+    signed_max,
+    signed_min,
     signed_modulo,
     signed_multiply_extended,
     step,
@@ -106,9 +108,12 @@ pub const BinaryOpcode = enum {
 };
 
 pub const TernaryOpcode = enum {
+    float_clamp,
     float_mix,
     float_mul_add,
+    signed_clamp,
     smooth_step,
+    unsigned_clamp,
 };
 
 pub const BitFieldExtractOpcode = enum {
@@ -235,6 +240,13 @@ pub const ImageRead = struct {
     arrayed: bool = false,
 };
 
+pub const ImageSizeQueryLod = struct {
+    resource: ResourceId,
+    lod: ValueId,
+    dimension: type_ir.ImageDimension = .two_d,
+    arrayed: bool = false,
+};
+
 pub const ImageFetch = struct {
     resource: ResourceId,
     coordinate: ValueId,
@@ -323,6 +335,7 @@ pub const Operation = union(enum) {
     load_workgroup: LoadWorkgroup,
     store_workgroup: StoreWorkgroup,
     image_read: ImageRead,
+    image_size_query_lod: ImageSizeQueryLod,
     image_fetch: ImageFetch,
     image_sample_explicit_lod: ImageSampleExplicitLod,
     image_sample_implicit_lod: ImageSampleImplicitLod,
@@ -392,6 +405,7 @@ pub const Operation = union(enum) {
                 visitor(context, op.value);
             },
             .image_read => |op| visitor(context, op.coordinate),
+            .image_size_query_lod => |op| visitor(context, op.lod),
             .image_fetch => |op| {
                 visitor(context, op.coordinate);
                 if (op.lod) |lod|
@@ -499,6 +513,7 @@ pub const Operation = union(enum) {
                 replaceOne(&op.value, old, replacement, &count);
             },
             .image_read => |*op| replaceOne(&op.coordinate, old, replacement, &count),
+            .image_size_query_lod => |*op| replaceOne(&op.lod, old, replacement, &count),
             .image_fetch => |*op| {
                 replaceOne(&op.coordinate, old, replacement, &count);
                 if (op.lod) |*lod| replaceOne(lod, old, replacement, &count);

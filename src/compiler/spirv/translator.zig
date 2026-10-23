@@ -2605,6 +2605,26 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             context.image_types[result_index] = sampled_image.image_type;
         },
 
+        .image_query_size_lod => {
+            try expectOperandCount(operands, 4);
+            const resource = (try context.imageResource(operands[2])) orelse return TranslationError.UnsupportedOpcode;
+            const image_type = context.image_types[try context.idIndex(operands[2])] orelse return TranslationError.MissingDefinition;
+            const image_info = try imageTypeInfo(context, image_type);
+            const image = context.module.resources.get(resource) orelse return TranslationError.InvalidId;
+            if (image.kind != .sampled_image or image_info.dimension == .buffer)
+                return TranslationError.UnsupportedOpcode;
+
+            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+                .image_size_query_lod = .{
+                    .resource = resource,
+                    .lod = try context.resolveValue(operands[3]),
+                    .dimension = image_info.dimension,
+                    .arrayed = image_info.arrayed,
+                },
+            }, context.nameOf(operands[1]))).?;
+            try context.setValue(operands[1], result);
+        },
+
         .image_fetch => {
             if (operands.len < 4)
                 return TranslationError.InvalidInstruction;

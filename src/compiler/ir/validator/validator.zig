@@ -621,12 +621,31 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
         },
         .ternary => |op| {
             const first_type = try operandType(module, function_id, op.first);
+
             if (try operandType(module, function_id, op.second) != first_type or
-                try operandType(module, function_id, op.third) != first_type or
-                floatShape(module, first_type) == null)
+                try operandType(module, function_id, op.third) != first_type)
                 return ValidationError.WrongOperandType;
+
             if (result_type == null or result_type.? != first_type)
                 return ValidationError.WrongResultType;
+
+            switch (op.opcode) {
+                .signed_clamp,
+                .unsigned_clamp,
+                => {
+                    if (integerShape(module, first_type) == null)
+                        return ValidationError.WrongOperandType;
+                },
+
+                .float_clamp,
+                .float_mix,
+                .float_mul_add,
+                .smooth_step,
+                => {
+                    if (floatShape(module, first_type) == null)
+                        return ValidationError.WrongOperandType;
+                },
+            }
         },
         .bit_field_extract => |op| {
             const base_type = try operandType(module, function_id, op.base);
@@ -859,6 +878,28 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             try validateStorageImageAccess(module, function_id, resource.kind, op.coordinate, op.dimension, op.arrayed);
             if (result_type == null)
                 return ValidationError.WrongResultPresence;
+        },
+        .image_size_query_lod => |op| {
+            const resource = module.resources.get(op.resource) orelse return ValidationError.InvalidValue;
+            if (resource.kind != .sampled_image)
+                return ValidationError.WrongResourceKind;
+
+            try validateImageShape(op.dimension, op.arrayed);
+            const components: u8 = (switch (op.dimension) {
+                .one_d => @as(u8, 1),
+                .two_d, .cube => @as(u8, 2),
+                .three_d => @as(u8, 3),
+                .buffer => return ValidationError.InvalidInstruction,
+            }) + @intFromBool(op.arrayed);
+
+            const lod_type = module.types.get(try operandType(module, function_id, op.lod)) orelse return ValidationError.InvalidType;
+            if (lod_type.* != .integer or lod_type.integer.bits != 32)
+                return ValidationError.WrongOperandType;
+
+            const result = result_type orelse return ValidationError.WrongResultPresence;
+            const result_shape = integerShape(module, result) orelse return ValidationError.WrongResultType;
+            if (result_shape.bits != 32 or result_shape.components != components)
+                return ValidationError.WrongResultType;
         },
         .image_fetch => |op| {
             const resource = module.resources.get(op.resource) orelse return ValidationError.InvalidValue;

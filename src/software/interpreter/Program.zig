@@ -689,14 +689,11 @@ const Lowerer = struct {
                 const first = try self.span(op.first);
                 const second = try self.span(op.second);
                 const third = try self.span(op.third);
-                if (dst.kind != .floating or !dst.sameShape(first) or !dst.sameShape(second) or !dst.sameShape(third))
+
+                if (!dst.sameShape(first) or !dst.sameShape(second) or !dst.sameShape(third))
                     return CompileError.InvalidOperation;
 
-                const opcode: bc.Opcode = switch (op.opcode) {
-                    .float_mix => .float_mix,
-                    .float_mul_add => .float_mul_add,
-                    .smooth_step => .smooth_step,
-                };
+                const opcode = try ternaryOpcode(op.opcode, dst.kind);
                 try self.emit(opcode, dst.components, dst.base, first.base, second.base, third.base, 0);
             },
             .bit_field_extract => |op| {
@@ -889,16 +886,38 @@ const Lowerer = struct {
                 _ = try self.workgroupVariable(op.variable);
                 try self.emit(.store_workgroup, src.components, src.base, byte_offset, .invalid_register, .invalid_register, @backingInt(op.variable));
             },
-            .image_read => |op| try self.lowerImageRead(
-                result orelse return CompileError.InvalidOperation,
-                op.resource,
-                op.coordinate,
-                null,
-                null,
-                op.dimension,
-                op.arrayed,
-                false,
-            ),
+            .image_read => |op| try self.lowerImageRead(result orelse return CompileError.InvalidOperation, op.resource, op.coordinate, null, null, op.dimension, op.arrayed, false),
+            .image_size_query_lod => |op| {
+                const dst = result orelse return CompileError.InvalidOperation;
+                const lod = try self.span(op.lod);
+
+                const components: u8 = (switch (op.dimension) {
+                    .one_d => @as(u8, 1),
+                    .two_d, .cube => @as(u8, 2),
+                    .three_d => @as(u8, 3),
+                    .buffer => return CompileError.InvalidOperation,
+                }) + @intFromBool(op.arrayed);
+
+                if ((op.arrayed and op.dimension == .three_d) or !isIntegerKind(dst.kind) or
+                    dst.components != components or !isScalarInteger(lod))
+                    return CompileError.InvalidOperation;
+
+                if (try scalarBits(self.module, self.module.typeOf(instruction.result.?).?) != 32 or
+                    try scalarBits(self.module, self.module.typeOf(op.lod).?) != 32)
+                    return CompileError.InvalidOperation;
+
+                _ = try self.sampledImage(op.resource);
+
+                const access = try u32Index(self.image_accesses.items.len);
+
+                try self.image_accesses.append(self.allocator, .{
+                    .resource = op.resource,
+                    .dimension = op.dimension,
+                    .arrayed = op.arrayed,
+                });
+
+                try self.emit(.image_size_query_lod, components, dst.base, lod.base, .invalid_register, .invalid_register, access);
+            },
             .image_fetch => |op| try self.lowerImageRead(
                 result orelse return CompileError.InvalidOperation,
                 op.resource,
@@ -1350,8 +1369,6 @@ const Lowerer = struct {
     }
 };
 
-// Each value is queued once. Incoming edges are indexed by target block so
-// loop-carried parameters do not require repeated scans of the entire CFG.
 const ValueLiveness = struct {
     live: []bool,
     queue: []ids.ValueId,
@@ -1505,10 +1522,10 @@ fn typeByteSize(module: *const module_ir.Module, type_id: ids.TypeId) !usize {
 fn binaryOpcode(op: inst_ir.BinaryOpcode, kind: bc.ValueKind) !bc.Opcode {
     return switch (op) {
         .arithmetic_shift_right => if (kind == .signed_integer) .arithmetic_shift_right else CompileError.InvalidOperation,
+        .atan2 => if (kind == .floating) .atan2 else CompileError.InvalidOperation,
         .bitwise_and => if (kind == .signed_integer or kind == .unsigned_integer) .bitwise_and else CompileError.InvalidOperation,
         .bitwise_or => if (kind == .signed_integer or kind == .unsigned_integer) .bitwise_or else CompileError.InvalidOperation,
         .bitwise_xor => if (kind == .signed_integer or kind == .unsigned_integer) .bitwise_xor else CompileError.InvalidOperation,
-        .atan2 => if (kind == .floating) .atan2 else CompileError.InvalidOperation,
         .dot => if (kind == .floating) .dot else CompileError.InvalidOperation,
         .float_add => if (kind == .floating) .float_add else CompileError.InvalidOperation,
         .float_divide => if (kind == .floating) .float_divide else CompileError.InvalidOperation,
@@ -1533,17 +1550,30 @@ fn binaryOpcode(op: inst_ir.BinaryOpcode, kind: bc.ValueKind) !bc.Opcode {
         .pow => if (kind == .floating) .pow else CompileError.InvalidOperation,
         .shift_left => if (kind == .signed_integer or kind == .unsigned_integer) .shift_left else CompileError.InvalidOperation,
         .signed_divide => if (kind == .signed_integer) .signed_divide else CompileError.InvalidOperation,
+        .signed_max => .signed_max,
+        .signed_min => .signed_min,
         .signed_modulo => if (kind == .signed_integer) .signed_modulo else CompileError.InvalidOperation,
         .signed_multiply_extended => if (kind == .signed_integer) .signed_multiply_extended else CompileError.InvalidOperation,
         .step => if (kind == .floating) .step else CompileError.InvalidOperation,
         .unsigned_divide => if (kind == .unsigned_integer) .unsigned_divide else CompileError.InvalidOperation,
-        .unsigned_max => .integer_max,
-        .unsigned_min => .integer_min,
+        .unsigned_max => .unsigned_max,
+        .unsigned_min => .unsigned_min,
         .unsigned_modulo => if (kind == .unsigned_integer) .unsigned_modulo else CompileError.InvalidOperation,
         .unsigned_multiply_extended => if (kind == .unsigned_integer) .unsigned_multiply_extended else CompileError.InvalidOperation,
+        .vector_extract_dynamic => .vector_extract_dynamic,
         .vector_times_matrix => if (kind == .floating) .vector_times_matrix else CompileError.InvalidOperation,
         .vector_times_scalar => if (kind == .floating) .vector_times_scalar else CompileError.InvalidOperation,
-        .vector_extract_dynamic => .vector_extract_dynamic,
+    };
+}
+
+fn ternaryOpcode(op: inst_ir.TernaryOpcode, kind: bc.ValueKind) !bc.Opcode {
+    return switch (op) {
+        .float_clamp => if (kind == .floating) .float_clamp else CompileError.InvalidOperation,
+        .float_mix => if (kind == .floating) .float_mix else CompileError.InvalidOperation,
+        .float_mul_add => if (kind == .floating) .float_mul_add else CompileError.InvalidOperation,
+        .signed_clamp => if (kind == .signed_integer) .signed_clamp else CompileError.InvalidOperation,
+        .smooth_step => if (kind == .floating) .smooth_step else CompileError.InvalidOperation,
+        .unsigned_clamp => if (kind == .unsigned_integer) .unsigned_clamp else CompileError.InvalidOperation,
     };
 }
 

@@ -50,15 +50,14 @@ pub fn compile(allocator: std.mem.Allocator, module: *const ir.module.Module, ru
         if (runtimes.len != 0)
             allocator.free(runtimes);
     }
+
     for (runtimes) |*slot| {
         slot.* = .{ .runtime = Runtime.init(allocator, &program) catch return VkError.OutOfDeviceMemory };
         initialized += 1;
     }
 
-    std.log.scoped(.IrInterpreter).debug("compiled {s} stage to {d} bytecode instructions", .{
-        @tagName(expected_stage),
-        program.code.len,
-    });
+    std.log.scoped(.IrInterpreter).debug("Compiled {s} stage to {d} bytecode instructions", .{ @tagName(expected_stage), program.code.len });
+
     return .{
         .program = program,
         .runtimes = runtimes,

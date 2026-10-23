@@ -462,6 +462,14 @@ fn remapOperation(module: *module_ir.Module, value_map: []const ?ids.ValueId, op
                 .arrayed = op.arrayed,
             },
         },
+        .image_size_query_lod => |op| .{
+            .image_size_query_lod = .{
+                .resource = op.resource,
+                .lod = try mappedValue(module, value_map, op.lod),
+                .dimension = op.dimension,
+                .arrayed = op.arrayed,
+            },
+        },
         .image_fetch => |op| .{
             .image_fetch = .{
                 .resource = op.resource,

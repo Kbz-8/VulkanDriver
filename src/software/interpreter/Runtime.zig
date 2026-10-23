@@ -52,18 +52,25 @@ const BinaryInt = enum {
     bitwise_and,
     bitwise_or,
     bitwise_xor,
-    int_max,
-    int_min,
     logical_and,
     logical_or,
     logical_shift_right,
     multiply,
     shift_left,
     signed_divide,
+    signed_max,
+    signed_min,
     signed_modulo,
     subtract,
     unsigned_divide,
+    unsigned_max,
+    unsigned_min,
     unsigned_modulo,
+};
+
+const TernaryInt = enum {
+    signed_clamp,
+    unsigned_clamp,
 };
 
 const ExtendedInt = enum {
@@ -123,6 +130,7 @@ const BinaryFloat = enum {
 };
 
 const TernaryFloat = enum {
+    clamp,
     mul_add,
 };
 
@@ -645,6 +653,7 @@ fn executeVectorGroup(self: *Self, program: *const Program, options: RunOptions,
         .exp2 => try self.groupUnaryFloat(instruction, .exp2, mask),
         .float_absolute => try self.groupUnaryFloat(instruction, .absolute, mask),
         .float_add => try self.groupBinaryFloat(instruction, .add, false, mask),
+        .float_clamp => try self.groupTernaryFloat(instruction, .clamp, mask),
         .float_divide => try self.groupBinaryFloat(instruction, .divide, false, mask),
         .float_max => try self.groupBinaryFloat(instruction, .max, false, mask),
         .float_min => try self.groupBinaryFloat(instruction, .min, false, mask),
@@ -666,12 +675,14 @@ fn executeVectorGroup(self: *Self, program: *const Program, options: RunOptions,
         .pow => try self.groupBinaryFloat(instruction, .pow, false, mask),
         .radians => try self.groupUnaryFloat(instruction, .radians, mask),
         .select => try self.groupSelect(instruction, mask),
+        .signed_clamp => try self.groupTernaryInt(instruction, .signed_clamp, mask),
         .sin => try self.groupUnaryFloat(instruction, .sin, mask),
         .sinh => try self.groupUnaryFloat(instruction, .sinh, mask),
         .sqrt => try self.groupUnaryFloat(instruction, .sqrt, mask),
         .tan => try self.groupUnaryFloat(instruction, .tan, mask),
         .tanh => try self.groupUnaryFloat(instruction, .tanh, mask),
         .trunc => try self.groupUnaryFloat(instruction, .trunc, mask),
+        .unsigned_clamp => try self.groupTernaryInt(instruction, .unsigned_clamp, mask),
         .vector_times_scalar, .matrix_times_scalar => try self.groupBinaryFloat(instruction, .multiply, true, mask),
         .branch => {
             if (instruction.immediate >= program.branches.len or @backingInt(instruction.a) >= self.register_count)
@@ -830,6 +841,28 @@ fn groupBinaryInt(self: *Self, instruction: bc.Instruction, comptime operation: 
     }
 }
 
+fn groupTernaryInt(self: *Self, instruction: bc.Instruction, comptime operation: TernaryInt, mask: LaneMask) RuntimeError!void {
+    if (instruction.components == 0)
+        return RuntimeError.InvalidBytecode;
+    try self.validateRegisterRange(instruction.a, instruction.components);
+    try self.validateRegisterRange(instruction.b, instruction.components);
+    try self.validateRegisterRange(instruction.c, instruction.components);
+    try self.validateRegisterRange(instruction.d, instruction.components);
+
+    for (0..instruction.components) |component| {
+        const x = self.loadRegisterVector(@fromBackingInt(@intCast(@backingInt(instruction.b) + component)));
+        const y = self.loadRegisterVector(@fromBackingInt(@intCast(@backingInt(instruction.c) + component)));
+        const z = self.loadRegisterVector(@fromBackingInt(@intCast(@backingInt(instruction.d) + component)));
+
+        const result: U32x4 = switch (operation) {
+            .signed_clamp => @bitCast(std.math.clamp(@as(I32x4, @bitCast(x)), @as(I32x4, @bitCast(y)), @as(I32x4, @bitCast(z)))),
+            .unsigned_clamp => std.math.clamp(x, y, z),
+        };
+
+        self.storeRegisterVectorMasked(@fromBackingInt(@intCast(@backingInt(instruction.a) + component)), result, mask);
+    }
+}
+
 fn groupBinaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: BinaryFloat, comptime broadcast_rhs: bool, mask: LaneMask) RuntimeError!void {
     if (instruction.components == 0 or instruction.d != .invalid_register)
         return RuntimeError.InvalidBytecode;
@@ -861,6 +894,28 @@ fn groupBinaryFloat(self: *Self, instruction: bc.Instruction, comptime operation
             .max => @select(f32, lhs < rhs, rhs, lhs),
             .min => @select(f32, lhs > rhs, rhs, lhs),
             else => unreachable,
+        };
+        self.storeRegisterVectorMasked(@fromBackingInt(@intCast(@backingInt(instruction.a) + component)), @bitCast(result), mask);
+    }
+}
+
+fn groupTernaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: TernaryFloat, mask: LaneMask) RuntimeError!void {
+    if (instruction.components == 0)
+        return RuntimeError.InvalidBytecode;
+
+    try self.validateRegisterRange(instruction.a, instruction.components);
+    try self.validateRegisterRange(instruction.b, instruction.components);
+    try self.validateRegisterRange(instruction.c, instruction.components);
+    try self.validateRegisterRange(instruction.d, instruction.components);
+
+    for (0..instruction.components) |component| {
+        const x: F32x4 = @bitCast(self.loadRegisterVector(@fromBackingInt(@intCast(@backingInt(instruction.b) + component))));
+        const y: F32x4 = @bitCast(self.loadRegisterVector(@fromBackingInt(@intCast(@backingInt(instruction.c) + component))));
+        const z: F32x4 = @bitCast(self.loadRegisterVector(@fromBackingInt(@intCast(@backingInt(instruction.d) + component))));
+
+        const result = switch (operation) {
+            .clamp => std.math.clamp(x, y, z),
+            .mul_add => @mulAdd(F32x4, x, y, z),
         };
         self.storeRegisterVectorMasked(@fromBackingInt(@intCast(@backingInt(instruction.a) + component)), @bitCast(result), mask);
     }
@@ -981,6 +1036,7 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .exp2 => try self.unaryFloat(instruction, .exp2),
         .float_absolute => try self.unaryFloat(instruction, .absolute),
         .float_add => try self.binaryFloat(instruction, .add, false),
+        .float_clamp => try self.ternaryFloat(instruction, .clamp),
         .float_divide => try self.binaryFloat(instruction, .divide, false),
         .float_max => try self.binaryFloat(instruction, .max, false),
         .float_min => try self.binaryFloat(instruction, .min, false),
@@ -1002,13 +1058,12 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .image_read_float => try self.imageRead(program, options, instruction, true, false),
         .image_sample_explicit_lod => try self.imageSample(program, options.resource_images, options.resource_samplers, instruction, true, null),
         .image_sample_implicit_lod => try self.imageSample(program, options.resource_images, options.resource_samplers, instruction, false, null),
+        .image_size_query_lod => try self.imageSizeQueryLod(program, options.resource_images, instruction),
         .image_write => if (self.isObservable()) try self.imageWrite(program, options, instruction, false),
         .image_write_float => if (self.isObservable()) try self.imageWrite(program, options, instruction, true),
         .integer_absolute => try self.unaryInt(instruction, .absolute),
         .integer_add => try self.binaryInt(instruction, .add),
         .integer_add_carry => try self.extendedInt(instruction, .add_carry),
-        .integer_max => try self.binaryInt(instruction, .int_max),
-        .integer_min => try self.binaryInt(instruction, .int_min),
         .integer_multiply => try self.binaryInt(instruction, .multiply),
         .integer_sign => try self.unaryInt(instruction, .sign),
         .integer_subtract => try self.binaryInt(instruction, .subtract),
@@ -1039,7 +1094,10 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .round => try self.unaryFloat(instruction, .round),
         .select => try self.select(instruction),
         .shift_left => try self.binaryInt(instruction, .shift_left),
+        .signed_clamp => try self.ternaryInt(instruction, .signed_clamp),
         .signed_divide => try self.binaryInt(instruction, .signed_divide),
+        .signed_max => try self.binaryInt(instruction, .signed_max),
+        .signed_min => try self.binaryInt(instruction, .signed_min),
         .signed_modulo => try self.binaryInt(instruction, .signed_modulo),
         .signed_multiply_extended => try self.extendedInt(instruction, .signed_multiply),
         .signed_to_float => try self.intToFloat(instruction, true),
@@ -1052,9 +1110,12 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .store_workgroup => if (self.isObservable()) try self.storeWorkgroup(program, options.workgroup_memory, instruction),
         .tan => try self.unaryFloat(instruction, .tan),
         .tanh => try self.unaryFloat(instruction, .tanh),
-        .trunc => try self.unaryFloat(instruction, .trunc),
         .transpose => try self.transpose(instruction),
+        .trunc => try self.unaryFloat(instruction, .trunc),
+        .unsigned_clamp => try self.ternaryInt(instruction, .unsigned_clamp),
         .unsigned_divide => try self.binaryInt(instruction, .unsigned_divide),
+        .unsigned_max => try self.binaryInt(instruction, .unsigned_max),
+        .unsigned_min => try self.binaryInt(instruction, .unsigned_min),
         .unsigned_modulo => try self.binaryInt(instruction, .unsigned_modulo),
         .unsigned_multiply_extended => try self.extendedInt(instruction, .unsigned_multiply),
         .unsigned_to_float => try self.intToFloat(instruction, false),
@@ -1365,14 +1426,18 @@ fn binaryInt(self: *Self, instruction: bc.Instruction, comptime operation: Binar
     for (0..instruction.components) |component| {
         const lhs = low32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
         const rhs = low32(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
+
         const result: u32 = switch (operation) {
             .add => lhs +% rhs,
-            .int_max => @max(lhs, rhs),
-            .int_min => @min(lhs, rhs),
+            .arithmetic_shift_right => if (rhs >= 32) return RuntimeError.ShiftOutOfRange else @bitCast(@as(i32, @bitCast(lhs)) >> @intCast(rhs)),
+            .bitwise_and => lhs & rhs,
+            .bitwise_or => lhs | rhs,
+            .bitwise_xor => lhs ^ rhs,
+            .logical_and => @intFromBool(lhs != 0 and rhs != 0),
+            .logical_or => @intFromBool(lhs != 0 or rhs != 0),
+            .logical_shift_right => if (rhs >= 32) return RuntimeError.ShiftOutOfRange else lhs >> @intCast(rhs),
             .multiply => lhs *% rhs,
-            .subtract => lhs -% rhs,
-            .unsigned_divide => if (rhs == 0) return RuntimeError.DivisionByZero else lhs / rhs,
-            .unsigned_modulo => if (rhs == 0) return RuntimeError.DivisionByZero else lhs % rhs,
+            .shift_left => if (rhs >= 32) return RuntimeError.ShiftOutOfRange else lhs << @intCast(rhs),
             .signed_divide => blk: {
                 const signed_lhs: i32 = @bitCast(lhs);
                 const signed_rhs: i32 = @bitCast(rhs);
@@ -1385,6 +1450,8 @@ fn binaryInt(self: *Self, instruction: bc.Instruction, comptime operation: Binar
 
                 break :blk @bitCast(@divTrunc(signed_lhs, signed_rhs));
             },
+            .signed_max => @bitCast(@max(@as(i32, @bitCast(lhs)), @as(i32, @bitCast(rhs)))),
+            .signed_min => @bitCast(@min(@as(i32, @bitCast(lhs)), @as(i32, @bitCast(rhs)))),
             .signed_modulo => blk: {
                 const signed_lhs: i32 = @bitCast(lhs);
                 const signed_rhs: i32 = @bitCast(rhs);
@@ -1397,15 +1464,35 @@ fn binaryInt(self: *Self, instruction: bc.Instruction, comptime operation: Binar
 
                 break :blk @bitCast(@mod(signed_lhs, signed_rhs));
             },
-            .shift_left => if (rhs >= 32) return RuntimeError.ShiftOutOfRange else lhs << @intCast(rhs),
-            .logical_shift_right => if (rhs >= 32) return RuntimeError.ShiftOutOfRange else lhs >> @intCast(rhs),
-            .arithmetic_shift_right => if (rhs >= 32) return RuntimeError.ShiftOutOfRange else @bitCast(@as(i32, @bitCast(lhs)) >> @intCast(rhs)),
-            .bitwise_and => lhs & rhs,
-            .bitwise_or => lhs | rhs,
-            .bitwise_xor => lhs ^ rhs,
-            .logical_and => @intFromBool(lhs != 0 and rhs != 0),
-            .logical_or => @intFromBool(lhs != 0 or rhs != 0),
+            .subtract => lhs -% rhs,
+            .unsigned_divide => if (rhs == 0) return RuntimeError.DivisionByZero else lhs / rhs,
+            .unsigned_max => @max(lhs, rhs),
+            .unsigned_min => @min(lhs, rhs),
+            .unsigned_modulo => if (rhs == 0) return RuntimeError.DivisionByZero else lhs % rhs,
         };
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = result;
+    }
+}
+
+fn ternaryInt(self: *Self, instruction: bc.Instruction, comptime operation: TernaryInt) RuntimeError!void {
+    if (instruction.components == 0)
+        return RuntimeError.InvalidBytecode;
+
+    try self.validateRegisterRange(instruction.a, instruction.components);
+    try self.validateRegisterRange(instruction.b, instruction.components);
+    try self.validateRegisterRange(instruction.c, instruction.components);
+    try self.validateRegisterRange(instruction.d, instruction.components);
+
+    for (0..instruction.components) |component| {
+        const x = low32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        const y = low32(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
+        const z = low32(self.registers.at(@as(usize, @backingInt(instruction.d)) + component).*);
+
+        const result: u32 = switch (operation) {
+            .signed_clamp => @bitCast(std.math.clamp(@as(i32, @bitCast(x)), @as(i32, @bitCast(y)), @as(i32, @bitCast(z)))),
+            .unsigned_clamp => std.math.clamp(x, y, z),
+        };
+
         self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = result;
     }
 }
@@ -1490,6 +1577,7 @@ fn ternaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Te
         const z: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.d)) + component).*);
 
         const result: f32 = switch (operation) {
+            .clamp => std.math.clamp(x, y, z),
             .mul_add => @mulAdd(f32, x, y, z),
         };
 
@@ -1774,6 +1862,69 @@ fn storeBuffer(self: *const Self, program: *const Program, resource_buffers: []c
     const buffer = try resourceBuffer(program, resource_buffers, resource);
     const bytes = try self.bufferRange(buffer, instruction);
     try self.storeWords(instruction, bytes);
+}
+
+fn imageSizeQueryLod(self: *Self, program: *const Program, resource_images: []const ?*SoftImageView, instruction: bc.Instruction) RuntimeError!void {
+    if (instruction.immediate >= program.image_accesses.len or instruction.c != .invalid_register or
+        instruction.d != .invalid_register or instruction.scalar_bits != 32)
+        return RuntimeError.InvalidBytecode;
+
+    const access = program.image_accesses[instruction.immediate];
+    const spatial: u8 = switch (access.dimension) {
+        .one_d => 1,
+        .two_d, .cube => 2,
+        .three_d => 3,
+        .buffer => return RuntimeError.InvalidBytecode,
+    };
+
+    if ((access.arrayed and access.dimension == .three_d) or access.offset != .invalid_register or
+        instruction.components != spatial + @as(u8, @intFromBool(access.arrayed)))
+        return RuntimeError.InvalidBytecode;
+
+    try self.validateRegisterRange(instruction.a, instruction.components);
+    try self.validateRegisterRange(instruction.b, 1);
+
+    const view = try sampledImage(program, resource_images, access.resource);
+    const image: *const SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
+    const range = view.interface.subresource_range;
+
+    if (range.base_mip_level >= image.interface.mip_levels or image.interface.samples.toInt() != 1)
+        return RuntimeError.InvalidResource;
+
+    const levels = @min(view.interface.levelCount(), image.interface.mip_levels - range.base_mip_level);
+    if (levels == 0)
+        return RuntimeError.InvalidResource;
+
+    const lod = low32(self.registers.at(@backingInt(instruction.b)).*);
+    const destination: usize = @backingInt(instruction.a);
+
+    self.registers.slice(destination, destination + instruction.components).fill(0);
+
+    if (lod >= levels)
+        return;
+
+    const mip = range.base_mip_level + lod;
+    if (mip >= 32)
+        return RuntimeError.InvalidResource;
+
+    const extent = image.getMipLevelExtent(mip);
+    const dimensions = [3]u32{ extent.width, extent.height, extent.depth };
+
+    for (dimensions[0..spatial], 0..) |value, component|
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = value;
+
+    if (access.arrayed) {
+        const layer_limit = if (image.interface.image_type == .@"3d" and image.interface.flags.@"2d_array_compatible")
+            image.getMipLevelExtent(range.base_mip_level).depth
+        else
+            image.interface.array_layers;
+
+        if (range.base_array_layer >= layer_limit)
+            return RuntimeError.InvalidResource;
+
+        const layers = @min(view.interface.layerCount(), layer_limit - range.base_array_layer);
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + spatial).* = if (access.dimension == .cube) layers / 6 else layers;
+    }
 }
 
 fn imageRead(self: *Self, program: *const Program, options: RunOptions, instruction: bc.Instruction, comptime floating: bool, comptime fetch: bool) RuntimeError!void {
