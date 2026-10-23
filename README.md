@@ -20,9 +20,8 @@ Soft be a software implementation of the Vulkan specification, abiding within th
 It maketh use of a bespoke [SPIR-V interpreter](https://git.kbz8.me/kbz_8/SPIRV-Interpreter) and renderer, by whose workings its labours are carried forth.
 
 <p align="center">
-    <img src="./resources/software/vkcube.gif" width="33%">
-    &emsp;&emsp;
-    <img src="./resources/software/gears.gif" width="60%">
+    <img src="./resources/software/vkcube.gif" width="35%">
+    <img src="./resources/software/gears.gif" width="64%">
 </p>
 ### Build
 
