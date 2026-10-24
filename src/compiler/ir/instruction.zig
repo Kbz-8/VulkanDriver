@@ -43,6 +43,7 @@ pub const UnaryOpcode = enum {
     fwidth,
     integer_absolute,
     integer_sign,
+    inverse_sqrt,
     is_inf,
     is_nan,
     length,

@@ -354,6 +354,7 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                 .float_sign,
                 .floor,
                 .fract,
+                .inverse_sqrt,
                 .log,
                 .log2,
                 .normalize,
@@ -719,20 +720,35 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                 .signed_to_float, .unsigned_to_float => {
                     const operand_shape = conversionIntegerShape(module, operand_type) orelse return ValidationError.WrongOperandType;
                     const expected_signedness: type_ir.Signedness = if (op.opcode == .signed_to_float) .signed else .unsigned;
-                    if (operand_shape.bits != 32 or operand_shape.signedness != expected_signedness)
+                    if (operand_shape.signedness != expected_signedness)
                         return ValidationError.WrongOperandType;
+                    switch (operand_shape.bits) {
+                        8, 16, 32, 64 => {},
+                        else => return ValidationError.WrongOperandType,
+                    }
 
-                    const result_components = floatComponentCount(module, result, 32) orelse return ValidationError.WrongResultType;
-                    if (result_components != operand_shape.components)
+                    const result_shape = floatShape(module, result) orelse return ValidationError.WrongResultType;
+                    switch (result_shape.bits) {
+                        16, 32, 64 => {},
+                        else => return ValidationError.WrongResultType,
+                    }
+                    if (result_shape.components != operand_shape.components)
                         return ValidationError.WrongResultType;
                 },
                 .float_to_signed, .float_to_unsigned => {
-                    const operand_components = floatComponentCount(module, operand_type, 32) orelse return ValidationError.WrongOperandType;
+                    const operand_shape = floatShape(module, operand_type) orelse return ValidationError.WrongOperandType;
+                    switch (operand_shape.bits) {
+                        16, 32, 64 => {},
+                        else => return ValidationError.WrongOperandType,
+                    }
                     const result_shape = conversionIntegerShape(module, result) orelse return ValidationError.WrongResultType;
                     const expected_signedness: type_ir.Signedness = if (op.opcode == .float_to_signed) .signed else .unsigned;
-                    if (result_shape.bits != 32 or
-                        result_shape.signedness != expected_signedness or
-                        result_shape.components != operand_components)
+                    switch (result_shape.bits) {
+                        8, 16, 32, 64 => {},
+                        else => return ValidationError.WrongResultType,
+                    }
+                    if (result_shape.signedness != expected_signedness or
+                        result_shape.components != operand_shape.components)
                         return ValidationError.WrongResultType;
                 },
             }
@@ -2237,7 +2253,7 @@ test "Validator: float classification, matrix, product, and conversion operation
     try expectValidationError(Error.WrongOperandType,
         \\shader compute @main
         \\{
-        \\    fn @main(%value: f64) -> void
+        \\    fn @main(%value: bool) -> void
         \\    {
         \\        .entry():
         \\            %result: i32 = convert float_to_signed %value
@@ -2763,7 +2779,7 @@ test "Validator: integer-to-float conversions" {
     try expectValidationError(Error.WrongOperandType,
         \\shader compute @main
         \\{
-        \\    %value: constant u16 = 1
+        \\    %value: constant i16 = 1
         \\    fn @main() -> void
         \\    {
         \\        .entry():

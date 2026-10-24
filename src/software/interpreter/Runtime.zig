@@ -101,6 +101,7 @@ const UnaryFloat = enum {
     exp2,
     floor,
     fract,
+    inverse_sqrt,
     log,
     log2,
     negate,
@@ -163,6 +164,21 @@ pub inline fn readF32(value: Slot) f32 {
 
 pub inline fn writeF32(value: f32) Slot {
     return @as(Slot, @as(u32, @bitCast(value)));
+}
+
+// Uses f32 intermediates then round to the declared width
+fn ArithmeticFloat(comptime Float: type) type {
+    return if (Float == f16) f32 else Float;
+}
+
+pub inline fn readFloat(comptime Float: type, value: Slot) ArithmeticFloat(Float) {
+    const Bits = @Int(.unsigned, @bitSizeOf(Float));
+    return @floatCast(@as(Float, @bitCast(@as(Bits, @truncate(value)))));
+}
+
+pub inline fn writeFloat(comptime Float: type, value: ArithmeticFloat(Float)) Slot {
+    const Bits = @Int(.unsigned, @bitSizeOf(Float));
+    return @as(Bits, @bitCast(@as(Float, @floatCast(value))));
 }
 
 pub inline fn readI32(value: Slot) i32 {
@@ -623,6 +639,9 @@ fn setGroupPcs(self: *Self, mask: LaneMask, pc: usize) void {
 const FullGroupResult = enum { advance, pc_set };
 
 fn executeVectorGroup(self: *Self, program: *const Program, options: RunOptions, instruction: bc.Instruction, mask: LaneMask) RuntimeError!?FullGroupResult {
+    // SIMD kernels operate on f32/u32 vectors. Other widths use scalar kernels
+    if (instruction.scalar_bits != 32)
+        return null;
     switch (instruction.opcode) {
         .acos => try self.groupUnaryFloat(instruction, .acos, mask),
         .acosh => try self.groupUnaryFloat(instruction, .acosh, mask),
@@ -667,6 +686,7 @@ fn executeVectorGroup(self: *Self, program: *const Program, options: RunOptions,
         .integer_multiply => try self.groupBinaryInt(instruction, .multiply, mask),
         .integer_sign => try self.groupUnaryInt(instruction, .sign, mask),
         .integer_subtract => try self.groupBinaryInt(instruction, .subtract, mask),
+        .inverse_sqrt => try self.groupUnaryFloat(instruction, .inverse_sqrt, mask),
         .log => try self.groupUnaryFloat(instruction, .log, mask),
         .log2 => try self.groupUnaryFloat(instruction, .log2, mask),
         .logical_and => try self.groupBinaryInt(instruction, .logical_and, mask),
@@ -772,6 +792,7 @@ fn groupUnaryFloat(self: *Self, instruction: bc.Instruction, comptime operation:
             .exp2 => @exp2(source),
             .floor => @floor(source),
             .fract => source - @floor(source),
+            .inverse_sqrt => @as(F32x4, @splat(1.0)) / @sqrt(source),
             .log => @log(source),
             .log2 => @log2(source),
             .negate => -source,
@@ -1015,14 +1036,14 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .ceil => try self.unaryFloat(instruction, .ceil),
         .compare_equal => self.compareInt(instruction, .equal),
         .compare_not_equal => self.compareInt(instruction, .not_equal),
-        .compare_ordered_float_equal => self.compareFloat(instruction, .ordered_equal),
-        .compare_ordered_float_less => self.compareFloat(instruction, .ordered_less),
-        .compare_ordered_float_less_equal => self.compareFloat(instruction, .ordered_less_equal),
-        .compare_ordered_float_not_equal => self.compareFloat(instruction, .ordered_not_equal),
+        .compare_ordered_float_equal => try self.compareFloat(instruction, .ordered_equal),
+        .compare_ordered_float_less => try self.compareFloat(instruction, .ordered_less),
+        .compare_ordered_float_less_equal => try self.compareFloat(instruction, .ordered_less_equal),
+        .compare_ordered_float_not_equal => try self.compareFloat(instruction, .ordered_not_equal),
         .compare_signed_less => self.compareInt(instruction, .signed_less),
-        .compare_unordered_float_equal => self.compareFloat(instruction, .unordered_equal),
-        .compare_unordered_float_less => self.compareFloat(instruction, .unordered_less),
-        .compare_unordered_float_not_equal => self.compareFloat(instruction, .unordered_not_equal),
+        .compare_unordered_float_equal => try self.compareFloat(instruction, .unordered_equal),
+        .compare_unordered_float_less => try self.compareFloat(instruction, .unordered_less),
+        .compare_unordered_float_not_equal => try self.compareFloat(instruction, .unordered_not_equal),
         .compare_unsigned_less => self.compareInt(instruction, .unsigned_less),
         .control_barrier => return .barrier,
         .copy => self.copy(instruction),
@@ -1068,6 +1089,7 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .integer_sign => try self.unaryInt(instruction, .sign),
         .integer_subtract => try self.binaryInt(instruction, .subtract),
         .integer_subtract_borrow => try self.extendedInt(instruction, .subtract_borrow),
+        .inverse_sqrt => try self.unaryFloat(instruction, .inverse_sqrt),
         .is_inf => try self.classifyFloat(instruction, .infinite),
         .is_nan => try self.classifyFloat(instruction, .nan),
         .jump_edge => self.pcs[self.current_lane] = try self.applyEdge(program, instruction.immediate),
@@ -1261,9 +1283,28 @@ fn bitMask(count: u32) u32 {
 }
 
 fn unaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: UnaryFloat) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        16 => try self.unaryFloatTyped(f16, instruction, operation),
+        32 => try self.unaryFloatTyped(f32, instruction, operation),
+        64 => try self.unaryFloatTyped(f64, instruction, operation),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn unaryFloatTyped(self: *Self, comptime Float: type, instruction: bc.Instruction, comptime operation: UnaryFloat) RuntimeError!void {
+    const F = ArithmeticFloat(Float);
     try self.validateUnaryInstruction(instruction);
     for (0..instruction.components) |component| {
-        const value: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        const source = self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*;
+        if (operation == .absolute or operation == .negate) {
+            const Bits = @Int(.unsigned, @bitSizeOf(Float));
+            const bits: Bits = @truncate(source);
+            const sign_bit = @as(Bits, 1) << (@bitSizeOf(Float) - 1);
+            self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* =
+                if (operation == .absolute) bits & ~sign_bit else bits ^ sign_bit;
+            continue;
+        }
+        const value: F = readFloat(Float, source);
         const result = switch (operation) {
             .absolute => @abs(value),
             .acos => std.math.acos(value),
@@ -1280,12 +1321,13 @@ fn unaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Unar
             .exp2 => @exp2(value),
             .floor => @floor(value),
             .fract => value - @floor(value),
+            .inverse_sqrt => 1.0 / @sqrt(value),
             .log => @log(value),
             .log2 => @log2(value),
             .negate => -value,
             .radians => std.math.degreesToRadians(value),
             .round => @round(value),
-            .sign => if (value > 0.0) @as(f32, 1.0) else if (value < 0.0) @as(f32, -1.0) else @as(f32, 0.0),
+            .sign => if (value > 0.0) @as(F, 1.0) else if (value < 0.0) @as(F, -1.0) else @as(F, 0.0),
             .sin => @sin(value),
             .sinh => (@exp(value) - @exp(-value)) / 2, // std.math.sinh is not precise enough for Vulkan CTS
             .sqrt => @sqrt(value),
@@ -1293,11 +1335,21 @@ fn unaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Unar
             .tanh => std.math.tanh(value),
             .trunc => @trunc(value),
         };
-        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = writeF32(result);
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = writeFloat(Float, result);
     }
 }
 
 fn groupDerivative(self: *Self, instruction: bc.Instruction, mask: LaneMask) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        16 => try self.groupDerivativeTyped(f16, instruction, mask),
+        32 => try self.groupDerivativeTyped(f32, instruction, mask),
+        64 => try self.groupDerivativeTyped(f64, instruction, mask),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn groupDerivativeTyped(self: *Self, comptime Float: type, instruction: bc.Instruction, mask: LaneMask) RuntimeError!void {
+    const F = ArithmeticFloat(Float);
     try self.validateUnaryInstruction(instruction);
     // Lane order is top-left, top-right, bottom-left, bottom-right
     // Divergent derivatives are undefined; reject them rather than use stale registers
@@ -1307,11 +1359,17 @@ fn groupDerivative(self: *Self, instruction: bc.Instruction, mask: LaneMask) Run
         if (participating != 0 and participating != quad_mask)
             return RuntimeError.DerivativeUnavailable;
     }
+
     for (0..instruction.components) |component| {
         const source: bc.Register = @fromBackingInt(@intCast(@as(usize, @backingInt(instruction.b)) + component));
         const destination: bc.Register = @fromBackingInt(@intCast(@as(usize, @backingInt(instruction.a)) + component));
-        const values: [lane_count]f32 = @bitCast(self.loadRegisterVector(source));
-        var result: [lane_count]f32 = undefined;
+        const slots = self.loadSlotVector(source);
+
+        var values: [lane_count]F = undefined;
+        inline for (0..lane_count) |lane|
+            values[lane] = readFloat(Float, slots[lane]);
+
+        var result: [lane_count]F = undefined;
         for (0..lane_count) |lane| {
             result[lane] = switch (instruction.opcode) {
                 .d_pdx => values[lane | 1] - values[lane & ~@as(usize, 1)],
@@ -1320,11 +1378,28 @@ fn groupDerivative(self: *Self, instruction: bc.Instruction, mask: LaneMask) Run
                 else => return RuntimeError.InvalidBytecode,
             };
         }
-        self.storeRegisterVectorMasked(destination, @bitCast(result), mask);
+
+        // SAFETY: will be filled by the loop bellow
+        var result_slots: SlotVector = undefined;
+
+        inline for (0..lane_count) |lane|
+            result_slots[lane] = writeFloat(Float, result[lane]);
+
+        self.storeSlotVectorMasked(destination, result_slots, mask);
     }
 }
 
 fn vectorLength(self: *Self, instruction: bc.Instruction) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        16 => try self.vectorLengthTyped(f16, instruction),
+        32 => try self.vectorLengthTyped(f32, instruction),
+        64 => try self.vectorLengthTyped(f64, instruction),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn vectorLengthTyped(self: *Self, comptime Float: type, instruction: bc.Instruction) RuntimeError!void {
+    const F = ArithmeticFloat(Float);
     try self.validateRegisterRange(instruction.a, 1);
     try self.validateRegisterRange(instruction.b, instruction.components);
 
@@ -1332,18 +1407,18 @@ fn vectorLength(self: *Self, instruction: bc.Instruction) RuntimeError!void {
         return RuntimeError.InvalidBytecode;
 
     const source = self.registers.slice(@backingInt(instruction.b), @as(usize, @backingInt(instruction.b)) + instruction.components);
-    var magnitude: f32 = 0;
+    var magnitude: F = 0;
 
     if (instruction.components == 1) {
-        magnitude = @abs(readF32(source.get(0)));
+        magnitude = @abs(readFloat(Float, source.get(0)));
     } else {
         for (0..source.len) |component| {
-            const value: f32 = readF32(source.get(component));
+            const value: F = readFloat(Float, source.get(component));
             magnitude += value * value;
         }
         magnitude = @sqrt(magnitude);
     }
-    self.registers.at(@backingInt(instruction.a)).* = writeF32(magnitude);
+    self.registers.at(@backingInt(instruction.a)).* = writeFloat(Float, magnitude);
 }
 
 fn vectorExtractDynamic(self: *Self, instruction: bc.Instruction) RuntimeError!void {
@@ -1361,17 +1436,27 @@ fn vectorExtractDynamic(self: *Self, instruction: bc.Instruction) RuntimeError!v
 }
 
 fn normalize(self: *Self, instruction: bc.Instruction) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        16 => try self.normalizeTyped(f16, instruction),
+        32 => try self.normalizeTyped(f32, instruction),
+        64 => try self.normalizeTyped(f64, instruction),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn normalizeTyped(self: *Self, comptime Float: type, instruction: bc.Instruction) RuntimeError!void {
+    const F = ArithmeticFloat(Float);
     try self.validateUnaryInstruction(instruction);
 
-    var squared_length: f32 = 0.0;
+    var squared_length: F = 0.0;
     for (0..instruction.components) |component| {
-        const value: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        const value: F = readFloat(Float, self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
         squared_length += value * value;
     }
     const length = @sqrt(squared_length);
     for (0..instruction.components) |component| {
-        const value: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
-        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = writeF32(value / length);
+        const value: F = readFloat(Float, self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = writeFloat(Float, value / length);
     }
 }
 
@@ -1397,28 +1482,64 @@ fn classifyFloatBits(comptime Float: type, bits: anytype, comptime classificatio
     };
 }
 
+fn floatFromInteger(comptime Float: type, comptime Unsigned: type, value: Slot, comptime signed: bool) Float {
+    const bits: Unsigned = @truncate(value);
+    const Signed = @Int(.signed, @bitSizeOf(Unsigned));
+    return if (signed) @floatFromInt(@as(Signed, @bitCast(bits))) else @floatFromInt(bits);
+}
+
+fn integerFromFloat(comptime Unsigned: type, value: anytype, comptime signed: bool) Slot {
+    const Signed = @Int(.signed, @bitSizeOf(Unsigned));
+    return if (signed) @as(Unsigned, @bitCast(std.math.lossyCast(Signed, value))) else std.math.lossyCast(Unsigned, value);
+}
+
 fn intToFloat(self: *Self, instruction: bc.Instruction, comptime signed: bool) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        16 => try self.intToFloatTyped(f16, instruction, signed),
+        32 => try self.intToFloatTyped(f32, instruction, signed),
+        64 => try self.intToFloatTyped(f64, instruction, signed),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn intToFloatTyped(self: *Self, comptime Float: type, instruction: bc.Instruction, comptime signed: bool) RuntimeError!void {
     try self.validateUnaryInstruction(instruction);
 
     for (0..instruction.components) |component| {
-        const source = low32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
-        const converted: f32 = if (signed)
-            @floatFromInt(@as(i32, @bitCast(source)))
-        else
-            @floatFromInt(source);
-        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = writeF32(converted);
+        const source = self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*;
+        const converted: Float = switch (instruction.immediate) {
+            8 => floatFromInteger(Float, u8, source, signed),
+            16 => floatFromInteger(Float, u16, source, signed),
+            0, 32 => floatFromInteger(Float, u32, source, signed),
+            64 => floatFromInteger(Float, u64, source, signed),
+            else => return RuntimeError.InvalidBytecode,
+        };
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = writeFloat(Float, converted);
     }
 }
 
 fn floatToInt(self: *Self, instruction: bc.Instruction, comptime signed: bool) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        16 => try self.floatToIntTyped(f16, instruction, signed),
+        32 => try self.floatToIntTyped(f32, instruction, signed),
+        64 => try self.floatToIntTyped(f64, instruction, signed),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn floatToIntTyped(self: *Self, comptime Float: type, instruction: bc.Instruction, comptime signed: bool) RuntimeError!void {
+    const F = ArithmeticFloat(Float);
     try self.validateUnaryInstruction(instruction);
 
     for (0..instruction.components) |component| {
-        const source: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
-        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = if (signed)
-            writeI32(std.math.lossyCast(i32, source))
-        else
-            std.math.lossyCast(u32, source);
+        const source: F = readFloat(Float, self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = switch (instruction.immediate) {
+            8 => integerFromFloat(u8, source, signed),
+            16 => integerFromFloat(u16, source, signed),
+            0, 32 => integerFromFloat(u32, source, signed),
+            64 => integerFromFloat(u64, source, signed),
+            else => return RuntimeError.InvalidBytecode,
+        };
     }
 }
 
@@ -1534,6 +1655,16 @@ fn extendedInt(self: *Self, instruction: bc.Instruction, comptime operation: Ext
 }
 
 fn binaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: BinaryFloat, comptime broadcast_rhs: bool) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        16 => try self.binaryFloatTyped(f16, instruction, operation, broadcast_rhs),
+        32 => try self.binaryFloatTyped(f32, instruction, operation, broadcast_rhs),
+        64 => try self.binaryFloatTyped(f64, instruction, operation, broadcast_rhs),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn binaryFloatTyped(self: *Self, comptime Float: type, instruction: bc.Instruction, comptime operation: BinaryFloat, comptime broadcast_rhs: bool) RuntimeError!void {
+    const F = ArithmeticFloat(Float);
     if (instruction.components == 0 or instruction.d != .invalid_register)
         return RuntimeError.InvalidBytecode;
     try self.validateRegisterRange(instruction.a, instruction.components);
@@ -1541,11 +1672,11 @@ fn binaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Bin
     try self.validateRegisterRange(instruction.c, if (broadcast_rhs) 1 else instruction.components);
 
     for (0..instruction.components) |component| {
-        const lhs: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        const lhs: F = readFloat(Float, self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
         const rhs_component = if (broadcast_rhs) 0 else component;
-        const rhs: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.c)) + rhs_component).*);
+        const rhs: F = readFloat(Float, self.registers.at(@as(usize, @backingInt(instruction.c)) + rhs_component).*);
 
-        const result: f32 = switch (operation) {
+        const result: F = switch (operation) {
             .add => lhs + rhs,
             .atan2 => std.math.atan2(lhs, rhs),
             .divide => lhs / rhs,
@@ -1553,17 +1684,27 @@ fn binaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Bin
             .min => if (lhs > rhs) rhs else lhs,
             .modulo => lhs - rhs * @floor(lhs / rhs),
             .multiply => lhs * rhs,
-            .pow => std.math.pow(f32, lhs, rhs),
+            .pow => std.math.pow(F, lhs, rhs),
             .remainder => @rem(lhs, rhs),
             .step => if (rhs < lhs) 0.0 else 1.0,
             .subtract => lhs - rhs,
         };
 
-        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = writeF32(result);
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = writeFloat(Float, result);
     }
 }
 
 fn ternaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: TernaryFloat) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        16 => try self.ternaryFloatTyped(f16, instruction, operation),
+        32 => try self.ternaryFloatTyped(f32, instruction, operation),
+        64 => try self.ternaryFloatTyped(f64, instruction, operation),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn ternaryFloatTyped(self: *Self, comptime Float: type, instruction: bc.Instruction, comptime operation: TernaryFloat) RuntimeError!void {
+    const F = ArithmeticFloat(Float);
     if (instruction.components == 0)
         return RuntimeError.InvalidBytecode;
     try self.validateRegisterRange(instruction.a, instruction.components);
@@ -1572,20 +1713,30 @@ fn ternaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Te
     try self.validateRegisterRange(instruction.d, instruction.components);
 
     for (0..instruction.components) |component| {
-        const x: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
-        const y: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
-        const z: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.d)) + component).*);
+        const x: F = readFloat(Float, self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        const y: F = readFloat(Float, self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
+        const z: F = readFloat(Float, self.registers.at(@as(usize, @backingInt(instruction.d)) + component).*);
 
-        const result: f32 = switch (operation) {
+        const result: F = switch (operation) {
             .clamp => std.math.clamp(x, y, z),
-            .mul_add => @mulAdd(f32, x, y, z),
+            .mul_add => @mulAdd(F, x, y, z),
         };
 
-        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = writeF32(result);
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = writeFloat(Float, result);
     }
 }
 
 fn smoothStep(self: *Self, instruction: bc.Instruction) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        16 => try self.smoothStepTyped(f16, instruction),
+        32 => try self.smoothStepTyped(f32, instruction),
+        64 => try self.smoothStepTyped(f64, instruction),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn smoothStepTyped(self: *Self, comptime Float: type, instruction: bc.Instruction) RuntimeError!void {
+    const F = ArithmeticFloat(Float);
     if (instruction.components == 0)
         return RuntimeError.InvalidBytecode;
     try self.validateRegisterRange(instruction.a, instruction.components);
@@ -1594,31 +1745,51 @@ fn smoothStep(self: *Self, instruction: bc.Instruction) RuntimeError!void {
     try self.validateRegisterRange(instruction.d, instruction.components);
 
     for (0..instruction.components) |component| {
-        const edge0: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
-        const edge1: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
-        const value: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.d)) + component).*);
+        const edge0: F = readFloat(Float, self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        const edge1: F = readFloat(Float, self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
+        const value: F = readFloat(Float, self.registers.at(@as(usize, @backingInt(instruction.d)) + component).*);
         const t = std.math.clamp((value - edge0) / (edge1 - edge0), 0.0, 1.0);
-        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = writeF32(t * t * (3.0 - 2.0 * t));
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = writeFloat(Float, t * t * (3.0 - 2.0 * t));
     }
 }
 
 fn dot(self: *Self, instruction: bc.Instruction) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        16 => try self.dotTyped(f16, instruction),
+        32 => try self.dotTyped(f32, instruction),
+        64 => try self.dotTyped(f64, instruction),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn dotTyped(self: *Self, comptime Float: type, instruction: bc.Instruction) RuntimeError!void {
+    const F = ArithmeticFloat(Float);
     if (instruction.components < 2 or instruction.d != .invalid_register)
         return RuntimeError.InvalidBytecode;
     try self.validateRegisterRange(instruction.a, 1);
     try self.validateRegisterRange(instruction.b, instruction.components);
     try self.validateRegisterRange(instruction.c, instruction.components);
 
-    var sum: f32 = 0.0;
+    var sum: F = 0.0;
     for (0..instruction.components) |component| {
-        const lhs: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
-        const rhs: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
+        const lhs: F = readFloat(Float, self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        const rhs: F = readFloat(Float, self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
         sum += lhs * rhs;
     }
-    self.registers.at(@backingInt(instruction.a)).* = writeF32(sum);
+    self.registers.at(@backingInt(instruction.a)).* = writeFloat(Float, sum);
 }
 
 fn fMix(self: *Self, instruction: bc.Instruction) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        16 => try self.fMixTyped(f16, instruction),
+        32 => try self.fMixTyped(f32, instruction),
+        64 => try self.fMixTyped(f64, instruction),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn fMixTyped(self: *Self, comptime Float: type, instruction: bc.Instruction) RuntimeError!void {
+    const F = ArithmeticFloat(Float);
     if (instruction.components == 0)
         return RuntimeError.InvalidBytecode;
 
@@ -1627,14 +1798,24 @@ fn fMix(self: *Self, instruction: bc.Instruction) RuntimeError!void {
     try self.validateRegisterRange(instruction.c, instruction.components);
 
     for (0..instruction.components) |component| {
-        const x: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
-        const y: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
-        const a: f32 = readF32(self.registers.at(@as(usize, @backingInt(instruction.d)) + component).*);
-        self.registers.at(@backingInt(instruction.a) + component).* = writeF32(x * (1.0 - a) + y * a);
+        const x: F = readFloat(Float, self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        const y: F = readFloat(Float, self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
+        const a: F = readFloat(Float, self.registers.at(@as(usize, @backingInt(instruction.d)) + component).*);
+        self.registers.at(@backingInt(instruction.a) + component).* = writeFloat(Float, x * (1.0 - a) + y * a);
     }
 }
 
 fn outerProduct(self: *Self, instruction: bc.Instruction) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        16 => try self.outerProductTyped(f16, instruction),
+        32 => try self.outerProductTyped(f32, instruction),
+        64 => try self.outerProductTyped(f64, instruction),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn outerProductTyped(self: *Self, comptime Float: type, instruction: bc.Instruction) RuntimeError!void {
+    const F = ArithmeticFloat(Float);
     const dimensions = bc.MatrixDimensions.decode(instruction.immediate);
     if (dimensions.rows == 0 or dimensions.inner != 0 or dimensions.columns == 0 or instruction.d != .invalid_register)
         return RuntimeError.InvalidBytecode;
@@ -1647,10 +1828,10 @@ fn outerProduct(self: *Self, instruction: bc.Instruction) RuntimeError!void {
     try self.validateRegisterRange(instruction.c, dimensions.columns);
 
     for (0..dimensions.columns) |column| {
-        const rhs: f32 = readF32(self.registers.at(@backingInt(instruction.c) + column).*);
+        const rhs: F = readFloat(Float, self.registers.at(@backingInt(instruction.c) + column).*);
         for (0..dimensions.rows) |row| {
-            const lhs: f32 = readF32(self.registers.at(@backingInt(instruction.b) + row).*);
-            self.registers.at(@backingInt(instruction.a) + column * dimensions.rows + row).* = writeF32(lhs * rhs);
+            const lhs: F = readFloat(Float, self.registers.at(@backingInt(instruction.b) + row).*);
+            self.registers.at(@backingInt(instruction.a) + column * dimensions.rows + row).* = writeFloat(Float, lhs * rhs);
         }
     }
 }
@@ -1677,6 +1858,16 @@ fn transpose(self: *Self, instruction: bc.Instruction) RuntimeError!void {
 }
 
 fn matrixTimesVector(self: *Self, instruction: bc.Instruction) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        16 => try self.matrixTimesVectorTyped(f16, instruction),
+        32 => try self.matrixTimesVectorTyped(f32, instruction),
+        64 => try self.matrixTimesVectorTyped(f64, instruction),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn matrixTimesVectorTyped(self: *Self, comptime Float: type, instruction: bc.Instruction) RuntimeError!void {
+    const F = ArithmeticFloat(Float);
     const dimensions = bc.MatrixDimensions.decode(instruction.immediate);
     if (dimensions.rows == 0 or dimensions.inner == 0 or dimensions.columns != 1 or instruction.components != dimensions.rows or instruction.d != .invalid_register)
         return RuntimeError.InvalidBytecode;
@@ -1687,17 +1878,27 @@ fn matrixTimesVector(self: *Self, instruction: bc.Instruction) RuntimeError!void
     try self.validateRegisterRange(instruction.c, dimensions.inner);
 
     for (0..dimensions.rows) |row| {
-        var sum: f32 = 0.0;
+        var sum: F = 0.0;
         for (0..dimensions.inner) |column| {
-            const matrix: f32 = readF32(self.registers.at(@backingInt(instruction.b) + column * dimensions.rows + row).*);
-            const vector: f32 = readF32(self.registers.at(@backingInt(instruction.c) + column).*);
+            const matrix: F = readFloat(Float, self.registers.at(@backingInt(instruction.b) + column * dimensions.rows + row).*);
+            const vector: F = readFloat(Float, self.registers.at(@backingInt(instruction.c) + column).*);
             sum += matrix * vector;
         }
-        self.registers.at(@backingInt(instruction.a) + row).* = writeF32(sum);
+        self.registers.at(@backingInt(instruction.a) + row).* = writeFloat(Float, sum);
     }
 }
 
 fn vectorTimesMatrix(self: *Self, instruction: bc.Instruction) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        16 => try self.vectorTimesMatrixTyped(f16, instruction),
+        32 => try self.vectorTimesMatrixTyped(f32, instruction),
+        64 => try self.vectorTimesMatrixTyped(f64, instruction),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn vectorTimesMatrixTyped(self: *Self, comptime Float: type, instruction: bc.Instruction) RuntimeError!void {
+    const F = ArithmeticFloat(Float);
     const dimensions = bc.MatrixDimensions.decode(instruction.immediate);
     if (dimensions.rows != 1 or dimensions.inner == 0 or dimensions.columns == 0 or instruction.components != dimensions.columns or instruction.d != .invalid_register)
         return RuntimeError.InvalidBytecode;
@@ -1708,17 +1909,27 @@ fn vectorTimesMatrix(self: *Self, instruction: bc.Instruction) RuntimeError!void
     try self.validateRegisterRange(instruction.c, matrix_components);
 
     for (0..dimensions.columns) |column| {
-        var sum: f32 = 0.0;
+        var sum: F = 0.0;
         for (0..dimensions.inner) |row| {
-            const vector: f32 = readF32(self.registers.at(@backingInt(instruction.b) + row).*);
-            const matrix: f32 = readF32(self.registers.at(@backingInt(instruction.c) + column * dimensions.inner + row).*);
+            const vector: F = readFloat(Float, self.registers.at(@backingInt(instruction.b) + row).*);
+            const matrix: F = readFloat(Float, self.registers.at(@backingInt(instruction.c) + column * dimensions.inner + row).*);
             sum += vector * matrix;
         }
-        self.registers.at(@backingInt(instruction.a) + column).* = writeF32(sum);
+        self.registers.at(@backingInt(instruction.a) + column).* = writeFloat(Float, sum);
     }
 }
 
 fn matrixTimesMatrix(self: *Self, instruction: bc.Instruction) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        16 => try self.matrixTimesMatrixTyped(f16, instruction),
+        32 => try self.matrixTimesMatrixTyped(f32, instruction),
+        64 => try self.matrixTimesMatrixTyped(f64, instruction),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn matrixTimesMatrixTyped(self: *Self, comptime Float: type, instruction: bc.Instruction) RuntimeError!void {
+    const F = ArithmeticFloat(Float);
     const dimensions = bc.MatrixDimensions.decode(instruction.immediate);
     if (dimensions.rows == 0 or dimensions.inner == 0 or dimensions.columns == 0 or instruction.d != .invalid_register)
         return RuntimeError.InvalidBytecode;
@@ -1735,13 +1946,13 @@ fn matrixTimesMatrix(self: *Self, instruction: bc.Instruction) RuntimeError!void
 
     for (0..dimensions.columns) |column| {
         for (0..dimensions.rows) |row| {
-            var sum: f32 = 0.0;
+            var sum: F = 0.0;
             for (0..dimensions.inner) |inner| {
-                const lhs: f32 = readF32(self.registers.at(@backingInt(instruction.b) + inner * dimensions.rows + row).*);
-                const rhs: f32 = readF32(self.registers.at(@backingInt(instruction.c) + column * dimensions.inner + inner).*);
+                const lhs: F = readFloat(Float, self.registers.at(@backingInt(instruction.b) + inner * dimensions.rows + row).*);
+                const rhs: F = readFloat(Float, self.registers.at(@backingInt(instruction.c) + column * dimensions.inner + inner).*);
                 sum += lhs * rhs;
             }
-            self.registers.at(@backingInt(instruction.a) + column * dimensions.rows + row).* = writeF32(sum);
+            self.registers.at(@backingInt(instruction.a) + column * dimensions.rows + row).* = writeFloat(Float, sum);
         }
     }
 }
@@ -1764,10 +1975,20 @@ fn compareInt(self: *Self, instruction: bc.Instruction, comptime operation: Comp
     }
 }
 
-fn compareFloat(self: *Self, instruction: bc.Instruction, comptime operation: CompareFloat) void {
+fn compareFloat(self: *Self, instruction: bc.Instruction, comptime operation: CompareFloat) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        16 => try self.compareFloatTyped(f16, instruction, operation),
+        32 => try self.compareFloatTyped(f32, instruction, operation),
+        64 => try self.compareFloatTyped(f64, instruction, operation),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn compareFloatTyped(self: *Self, comptime Float: type, instruction: bc.Instruction, comptime operation: CompareFloat) RuntimeError!void {
+    const F = ArithmeticFloat(Float);
     for (0..instruction.components) |component| {
-        const lhs: f32 = readF32(self.registers.at(@backingInt(instruction.b) + component).*);
-        const rhs: f32 = readF32(self.registers.at(@backingInt(instruction.c) + component).*);
+        const lhs: F = readFloat(Float, self.registers.at(@backingInt(instruction.b) + component).*);
+        const rhs: F = readFloat(Float, self.registers.at(@backingInt(instruction.c) + component).*);
 
         const unordered = std.math.isNan(lhs) or std.math.isNan(rhs);
         self.registers.at(@backingInt(instruction.a) + component).* = @intFromBool(switch (operation) {

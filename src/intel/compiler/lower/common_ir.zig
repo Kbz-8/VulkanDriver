@@ -562,6 +562,7 @@ const LoweringState = struct {
                 .fwidth,
                 .is_inf,
                 .is_nan,
+                .inverse_sqrt,
                 .length,
                 .log,
                 .log2,

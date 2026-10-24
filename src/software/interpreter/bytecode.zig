@@ -50,7 +50,6 @@ pub const MatrixDimensions = struct {
 pub const Instruction = extern struct {
     opcode: Opcode,
     components: u8 = 1,
-    /// Scalar width for typed memory transfers and floating-point classification
     scalar_bits: u8 = 32,
     a: Register = .invalid_register,
     b: Register = .invalid_register,
@@ -144,6 +143,7 @@ pub const Opcode = enum(u16) {
     integer_sign,
     integer_subtract,
     integer_subtract_borrow,
+    inverse_sqrt,
     is_inf,
     is_nan,
     jump_edge,

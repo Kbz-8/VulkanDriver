@@ -113,6 +113,7 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
         .floor => translateUnary(emitter, invocation, .floor),
         .fma => translateTernary(emitter, invocation, .float_mul_add),
         .fract => translateUnary(emitter, invocation, .fract),
+        .inverse_sqrt => translateUnary(emitter, invocation, .inverse_sqrt),
         .length => translateLength(emitter, invocation),
         .log => translateUnary(emitter, invocation, .log),
         .log2 => translateUnary(emitter, invocation, .log2),
