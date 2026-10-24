@@ -321,6 +321,22 @@ pub fn readOutput(self: *const Self, program: *const Program, variable: ids.Inte
     return self.readOutputLane(program, 0, variable, values);
 }
 
+pub fn run(self: *Self, program: *const Program, options: RunOptions) RuntimeError!Outcome {
+    self.pcs[0] = program.entry_pc;
+    self.execution_mask = 0b0001;
+    self.observable_mask = 0b0001;
+    self.active_mask = 0b0001;
+    self.returned_mask = 0;
+    self.discarded_mask = 0;
+    self.barrier_mask = 0;
+    self.steps = 0;
+    self.lane_steps = 0;
+    self.fast_path_lane_steps = 0;
+    self.state = .ready;
+    self.selectLane(0);
+    return scalarOutcome(try self.runWave(program, options));
+}
+
 pub fn continueExecution(self: *Self, program: *const Program, options: RunOptions) RuntimeError!Outcome {
     return scalarOutcome(try self.runWave(program, options));
 }
