@@ -1049,7 +1049,13 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .copy => self.copy(instruction),
         .cos => try self.unaryFloat(instruction, .cos),
         .cosh => try self.unaryFloat(instruction, .cosh),
-        .d_pdx, .d_pdy, .fwidth => return RuntimeError.DerivativeUnavailable,
+        .d_pdx,
+        .d_pdx_coarse,
+        .d_pdy,
+        .fwidth,
+        .fwidth_coarse,
+        .fwidth_fine,
+        => return RuntimeError.DerivativeUnavailable,
         .degrees => try self.unaryFloat(instruction, .degrees),
         .discard => return .discarded,
         .dot => try self.dot(instruction),
@@ -1373,8 +1379,13 @@ fn groupDerivativeTyped(self: *Self, comptime Float: type, instruction: bc.Instr
         for (0..lane_count) |lane| {
             result[lane] = switch (instruction.opcode) {
                 .d_pdx => values[lane | 1] - values[lane & ~@as(usize, 1)],
+                .d_pdx_coarse => values[(lane & ~@as(usize, 3)) | 1] - values[lane & ~@as(usize, 3)],
                 .d_pdy => values[lane | 2] - values[lane & ~@as(usize, 2)],
-                .fwidth => @abs(values[lane ^ 1] - values[lane]) + @abs(values[lane ^ 2] - values[lane]),
+                .fwidth, .fwidth_fine => @abs(values[lane ^ 1] - values[lane]) + @abs(values[lane ^ 2] - values[lane]),
+                .fwidth_coarse => blk: {
+                    const base = lane & ~@as(usize, 3);
+                    break :blk @abs(values[base | 1] - values[base]) + @abs(values[base | 2] - values[base]);
+                },
                 else => return RuntimeError.InvalidBytecode,
             };
         }

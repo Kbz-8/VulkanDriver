@@ -476,7 +476,7 @@ test "[interpreter] nonlinear scalar and vector fwidth uses same-instruction qua
 }
 
 test "[interpreter] signed nonlinear derivatives preserve quad pairs, aliases, and helper masks" {
-    for ([_]bc.Opcode{ .d_pdx, .d_pdy }) |opcode| {
+    for ([_]bc.Opcode{ .d_pdx, .d_pdx_coarse, .d_pdy, .fwidth_coarse, .fwidth_fine }) |opcode| {
         const code = [_]bc.Instruction{
             .{ .opcode = .float_multiply, .components = 2, .a = reg(2), .b = reg(0), .c = reg(0) },
             .{ .opcode = .copy, .a = reg(0), .b = reg(2) },
@@ -495,10 +495,14 @@ test "[interpreter] signed nonlinear derivatives preserve quad pairs, aliases, a
         var runtime = try Runtime.init(std.testing.allocator, &program);
         defer runtime.deinit();
         const values = [4][2]f32{ .{ -3, 2 }, .{ 1, -1 }, .{ -2, -4 }, .{ 4, 3 } };
-        const differences: [4][2]f32 = if (opcode == .d_pdx)
-            .{ .{ -8, -3 }, .{ -8, -3 }, .{ 12, -7 }, .{ 12, -7 } }
-        else
-            .{ .{ -5, 12 }, .{ 15, 8 }, .{ -5, 12 }, .{ 15, 8 } };
+        const differences: [4][2]f32 = switch (opcode) {
+            .d_pdx => .{ .{ -8, -3 }, .{ -8, -3 }, .{ 12, -7 }, .{ 12, -7 } },
+            .d_pdx_coarse => @splat(.{ -8, -3 }),
+            .d_pdy => .{ .{ -5, 12 }, .{ 15, 8 }, .{ -5, 12 }, .{ 15, 8 } },
+            .fwidth_coarse => @splat(.{ 13, 15 }),
+            .fwidth_fine => .{ .{ 13, 15 }, .{ 23, 11 }, .{ 17, 19 }, .{ 27, 15 } },
+            else => unreachable,
+        };
         var buffer: [Runtime.lane_count * 4]u8 = undefined;
         // The extra case leaves the second quad wholly inactive on eight-lane waves.
         for (0..Runtime.lane_count + 1) |case| {
@@ -541,7 +545,7 @@ test "[interpreter] signed nonlinear derivatives preserve quad pairs, aliases, a
 }
 
 test "[interpreter] each derivative alone lowers scalar and vector results and excludes dead derivatives" {
-    for ([_]bc.Opcode{ .d_pdx, .d_pdy }) |opcode| {
+    for ([_]bc.Opcode{ .d_pdx, .d_pdx_coarse, .d_pdy, .fwidth_coarse, .fwidth_fine }) |opcode| {
         const source = try std.fmt.allocPrint(std.testing.allocator,
             \\shader fragment @main
             \\{{
@@ -634,7 +638,7 @@ test "[interpreter] derivatives park early arrivals until nonuniform branch arms
     };
     var runtime = try Runtime.init(std.testing.allocator, &program);
     defer runtime.deinit();
-    for ([_]bc.Opcode{ .fwidth, .d_pdx, .d_pdy }) |opcode| {
+    for ([_]bc.Opcode{ .fwidth, .fwidth_coarse, .fwidth_fine, .d_pdx, .d_pdx_coarse, .d_pdy }) |opcode| {
         code[6].opcode = opcode;
         for (0..3) |flip| {
             runtime.resetWave(&program, Runtime.full_lane_mask, 1);
@@ -656,8 +660,13 @@ test "[interpreter] derivatives park early arrivals until nonuniform branch arms
                 const dy = values[lane | 2] - values[lane & ~@as(usize, 2)];
                 const expected = switch (opcode) {
                     .d_pdx => dx,
+                    .d_pdx_coarse => values[(lane & ~@as(usize, 3)) | 1] - values[lane & ~@as(usize, 3)],
                     .d_pdy => dy,
-                    .fwidth => @abs(dx) + @abs(dy),
+                    .fwidth, .fwidth_fine => @abs(dx) + @abs(dy),
+                    .fwidth_coarse => blk: {
+                        const base = lane & ~@as(usize, 3);
+                        break :blk @abs(values[base | 1] - values[base]) + @abs(values[base | 2] - values[base]);
+                    },
                     else => unreachable,
                 };
                 try std.testing.expectEqual(@as(bc.Slot, f32Bits(expected)), registers.at(4).*);
@@ -678,9 +687,9 @@ test "[interpreter] parked derivatives reject terminated or incompatible peers a
     program.edges = &.{.{ .target_block = 1, .target_pc = 1, .first_copy = 0, .copy_count = 0 }};
     var runtime = try Runtime.init(std.testing.allocator, &program);
     defer runtime.deinit();
-    for ([_]bc.Opcode{ .fwidth, .d_pdx, .d_pdy }) |opcode| {
+    for ([_]bc.Opcode{ .fwidth, .fwidth_coarse, .fwidth_fine, .d_pdx, .d_pdx_coarse, .d_pdy }) |opcode| {
         code[0].opcode = opcode;
-        for ([_]bc.Opcode{ .return_void, .discard, .control_barrier, .fwidth, .d_pdx, .d_pdy, .jump_edge }) |peer_opcode| {
+        for ([_]bc.Opcode{ .return_void, .discard, .control_barrier, .fwidth, .fwidth_coarse, .fwidth_fine, .d_pdx, .d_pdx_coarse, .d_pdy, .jump_edge }) |peer_opcode| {
             code[1].opcode = peer_opcode;
             runtime.resetWave(&program, 0b1111, 1);
             for (1..4) |lane| runtime.pcs[lane] = 1;

@@ -102,6 +102,7 @@ pub const Opcode = enum(u16) {
     cos,
     cosh,
     d_pdx,
+    d_pdx_coarse,
     d_pdy,
     degrees,
     discard,
@@ -126,6 +127,8 @@ pub const Opcode = enum(u16) {
     floor,
     fract,
     fwidth,
+    fwidth_coarse,
+    fwidth_fine,
     image_fetch,
     image_fetch_float,
     image_gather,
@@ -201,7 +204,13 @@ pub const Opcode = enum(u16) {
 
     pub fn isDerivative(self: Opcode) bool {
         return switch (self) {
-            .d_pdx, .d_pdy, .fwidth => true,
+            .d_pdx,
+            .d_pdx_coarse,
+            .d_pdy,
+            .fwidth,
+            .fwidth_coarse,
+            .fwidth_fine,
+            => true,
             else => false,
         };
     }

@@ -267,6 +267,7 @@ Form:
 | `cos`              | Computes the cosine of an angle in radians component-wise.         | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = cos %1`          |
 | `cosh`             | Computes the hyperbolic cosine component-wise.                     | Floating scalar or vector; the result has the same type.                  | `%2: f32 = cosh %1`               |
 | `d_pdx`            | Computes the partial derivative with respect to screen x.          | Fragment-only floating scalar or vector; result has the same type.        | `%2: f32 = d_pdx %1`              |
+| `d_pdx_coarse`     | Computes the coarse partial derivative with respect to screen x.   | Fragment-only floating scalar or vector; result has the same type.        | `%2: f32 = d_pdx_coarse %1`       |
 | `d_pdy`            | Computes the partial derivative with respect to screen y.          | Fragment-only floating scalar or vector; result has the same type.        | `%2: vec3[f32] = d_pdy %1`        |
 | `degrees`          | Converts angles from radians to degrees component-wise.            | Floating scalar or vector; the result has the same type.                  | `%2: f32 = degrees %1`            |
 | `exp2`             | Computes the base-two exponential component-wise.                  | Floating scalar or vector; the result has the same type.                  | `%2: f32 = exp2 %1`               |
@@ -276,6 +277,8 @@ Form:
 | `floor`            | Rounds each component toward negative infinity.                    | Floating scalar or vector; the result has the same type.                  | `%2: f32 = floor %1`              |
 | `fract`            | Computes `x - floor(x)` component-wise.                            | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = fract %1`        |
 | `fwidth`           | Computes `abs(dFdx(x)) + abs(dFdy(x))` component-wise.             | Fragment-only floating scalar or vector; result has the same type.        | `%2: vec3[f32] = fwidth %1`       |
+| `fwidth_coarse`    | Computes `abs(coarse dx) + abs(coarse dy)` component-wise.         | Fragment-only floating scalar or vector; result has the same type.        | `%2: vec3[f32] = fwidth_coarse %1` |
+| `fwidth_fine`      | Computes `abs(fine dx) + abs(fine dy)` component-wise.             | Fragment-only floating scalar or vector; result has the same type.        | `%2: vec3[f32] = fwidth_fine %1`   |
 | `integer_absolute` | Computes the integer absolute value component-wise.                | Integer scalar or vector; the result has the same type.                   | `%2: i32 = integer_absolute %1`   |
 | `integer_sign`     | Produces -1, 0, or 1 according to the operand's sign.              | Integer scalar or vector; the result has the same type.                   | `%2: vec3[i32] = integer_sign %1` |
 | `is_inf`           | Tests each component for positive or negative infinity.            | Floating scalar or vector; result is a matching boolean scalar or vector. | `%2: bool = is_inf %1`            |
@@ -300,12 +303,21 @@ Form:
 (with matching precision); scalar length is the absolute value. `fwidth` accepts a
 floating scalar or vector, preserves its type, and is fragment-only. It represents
 `abs(dFdx(x)) + abs(dFdy(x))` with the default derivative granularity.
+`fwidth_coarse` represents `OpFwidthCoarse` as the distinct operation
+`abs(coarse dx) + abs(coarse dy)`, preserving the same fragment-only,
+floating scalar/vector, and identical-result-type rules.
+`fwidth_fine` represents `OpFwidthFine` as the distinct operation
+`abs(fine dx) + abs(fine dy)`, with the same fragment-only floating scalar/vector
+and identical-result-type rules, without changing default or coarse granularity.
 `d_pdx` and `d_pdy` preserve the floating scalar/vector operand type and use the
 same fragment-only restriction. They represent `OpDPdx` and `OpDPdy` with default
 (implementation-selected fine or coarse) derivative granularity, not explicit
-fine/coarse derivatives. Their result type may be omitted in textual IR and is
-inferred from the operand. Frontend/IR support does not imply backend execution
-support; Intel common-IR lowering explicitly rejects these derivative operations.
+fine/coarse derivatives. `d_pdx_coarse` instead represents `OpDPdxCoarse` with
+explicit coarse screen-x granularity, retaining the same fragment-only,
+floating scalar/vector, and identical-result-type rules. These derivatives'
+result types may be omitted in textual IR and are inferred from their operands.
+Frontend/IR support does not imply backend execution support; Intel common-IR
+lowering explicitly rejects these derivative operations.
 
 `negate` is one normalized opcode: the operand type distinguishes integer
 negation from floating negation. Unary integer and floating operations apply
@@ -1077,8 +1089,11 @@ omitted from the selected entry point. The translator lowers a defined subset:
   are canonicalized by reversing less-than operands; integer and unordered
   floating-point `<=`/`>=` forms use a comparison followed by `logical_not`.
 - Fragment-only `OpDPdx`, `OpDPdy`, and `OpFwidth` on floating scalars/vectors,
-  mapped to `d_pdx`, `d_pdy`, and `fwidth`. Explicit fine/coarse derivative
-  instructions remain unsupported.
+  mapped to `d_pdx`, `d_pdy`, and `fwidth`. Explicit coarse screen-x
+  `OpDPdxCoarse` maps to the distinct `d_pdx_coarse` opcode, and `OpFwidthCoarse`
+  maps to the distinct `fwidth_coarse` opcode. `OpFwidthFine` maps to the distinct
+  `fwidth_fine` opcode. Other explicit derivatives (`OpDPdxFine`, `OpDPdyFine`,
+  and `OpDPdyCoarse`) remain unsupported.
 - GLSL.std.450 floating unary operations `Acos`, `Acosh`, `Asin`, `Asinh`,
   `Atan`, `Atanh`, `Ceil`, `Cos`, `Cosh`, `Degrees`, `Exp`, `Exp2`, `FAbs`,
   `FSign`, `Floor`, `Fract`, `Length`, `Log`, `Log2`, `Normalize`, `Radians`,

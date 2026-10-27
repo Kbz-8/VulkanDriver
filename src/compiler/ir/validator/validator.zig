@@ -322,8 +322,11 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                         return ValidationError.WrongResultType;
                 },
                 .d_pdx,
+                .d_pdx_coarse,
                 .d_pdy,
                 .fwidth,
+                .fwidth_coarse,
+                .fwidth_fine,
                 => {
                     if (module.stage != .fragment)
                         return ValidationError.InvalidInstruction;
@@ -1613,7 +1616,7 @@ test "Validator: derivatives require fragment floating operands and identical re
         .{ .operand_type = "vec3[f32]", .result_type = "vec3[f64]", .expected = ValidationError.WrongResultType },
         .{ .operand_type = "vec3[f32]", .result_type = "vec3[i32]", .expected = ValidationError.WrongResultType },
     };
-    for ([_][]const u8{ "d_pdx", "d_pdy" }) |opcode| {
+    for ([_][]const u8{ "d_pdx", "d_pdx_coarse", "d_pdy", "fwidth_coarse", "fwidth_fine" }) |opcode| {
         for (cases) |case| {
             const source = try std.fmt.allocPrint(std.testing.allocator,
                 \\shader {s} @main

@@ -1633,6 +1633,10 @@ test "Parser: infer and round trip scalar and vector derivatives" {
         \\            %wide_scalar_dy = d_pdy %wide_scalar
         \\            %wide_vector_dx = d_pdx %wide_vector
         \\            %wide_vector_dy = d_pdy %wide_vector
+        \\            %scalar_fine_width = fwidth_fine %scalar
+        \\            %vector_fine_width = fwidth_fine %vector
+        \\            %wide_scalar_fine_width = fwidth_fine %wide_scalar
+        \\            %wide_vector_fine_width = fwidth_fine %wide_vector
         \\            return
         \\    }
         \\}
@@ -1650,6 +1654,10 @@ test "Parser: infer and round trip scalar and vector derivatives" {
         "%wide_scalar_dy: f64 = d_pdy %wide_scalar",
         "%wide_vector_dx: vec4[f64] = d_pdx %wide_vector",
         "%wide_vector_dy: vec4[f64] = d_pdy %wide_vector",
+        "%scalar_fine_width: f32 = fwidth_fine %scalar",
+        "%vector_fine_width: vec2[f32] = fwidth_fine %vector",
+        "%wide_scalar_fine_width: f64 = fwidth_fine %wide_scalar",
+        "%wide_vector_fine_width: vec4[f64] = fwidth_fine %wide_vector",
     }) |expected| {
         try std.testing.expect(std.mem.indexOf(u8, printed, expected) != null);
     }
