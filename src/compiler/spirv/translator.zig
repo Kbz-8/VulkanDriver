@@ -658,6 +658,14 @@ const Context = struct {
 
     fn localIndex(self: *const Context, spv_id: u32) TranslationError!?usize {
         const index = try self.idIndex(spv_id);
+        if (self.local_indices[index] == null) {
+            if (self.variable_defs[index]) |variable| {
+                if (variable.operands[2] == @backingInt(spirv.StorageClass.private)) {
+                    std.log.scoped(.spirv_translator).warn("Private variable %{d} referenced outside the entry point requires invocation-scoped memory", .{spv_id});
+                    return TranslationError.UnsupportedPrivateCrossFunction;
+                }
+            }
+        }
         return self.local_indices[index];
     }
 
@@ -1045,13 +1053,12 @@ pub fn instantiate(allocator: std.mem.Allocator, source: *const SourceModule, op
     try applyExecutionModes(&context, entry_point.function_id);
     try collectReachableFunctions(&context, entry_point.function_id);
     try declareFunctions(&context, entry_point, options.entry_point);
-    try validatePrivateScope(&context);
     try translateFunctions(&context);
-    // Output reads are translator-internal until invocation state is promoted
-    // after inlining. Public IR and backends still only load input interfaces.
     const output_reads = hasOutputReads(&module);
+
     if (!output_reads)
         try ir.validator.validate(&module);
+
     module.properties.structured_control_flow = true;
 
     if (hasFunctionCalls(&module)) {
@@ -1763,22 +1770,30 @@ fn declareFunctions(context: *Context, entry_point: EntryPoint, entry_name: []co
     while (try iterator.next()) |instruction| {
         if (instruction.opcode != .function)
             continue;
+
         try expectOperandCount(instruction.operands, 4);
         const spv_function = instruction.operands[1];
         const index = try context.idIndex(spv_function);
+
         if (!context.reachable_functions[index])
             continue;
+
         if (context.functions[index] != null)
             return TranslationError.DuplicateId;
+
         const function_type = try functionTypeDefinition(context, instruction.operands[3]);
         if (function_type.operands.len < 2 or function_type.operands[1] != instruction.operands[0])
             return TranslationError.InvalidFunctionType;
+
         const source_return_type = try context.translateType(instruction.operands[0]);
         const source_return = context.module.types.get(source_return_type) orelse return TranslationError.InvalidId;
+
         var pointer_parameters: std.ArrayList(PointerParameter) = .empty;
         defer pointer_parameters.deinit(context.scratch);
+
         var return_members: std.ArrayList(ir.id.TypeId) = .empty;
         defer return_members.deinit(context.scratch);
+
         if (source_return.* != .void)
             try return_members.append(context.scratch, source_return_type);
 
@@ -1786,12 +1801,14 @@ fn declareFunctions(context: *Context, entry_point: EntryPoint, entry_name: []co
             const parameter_type = context.type_defs[try context.idIndex(parameter_type_id)] orelse return TranslationError.MissingDefinition;
             if (parameter_type.opcode != .type_pointer)
                 continue;
+
             try expectOperandCount(parameter_type.operands, 3);
             if (parameter_type.operands[1] != @backingInt(spirv.StorageClass.function))
                 continue;
 
             const pointee_type = try context.translateType(parameter_type.operands[2]);
             const return_member: u32 = @intCast(return_members.items.len);
+
             try return_members.append(context.scratch, pointee_type);
             try pointer_parameters.append(context.scratch, .{
                 .parameter_index = parameter_index,
@@ -1809,40 +1826,25 @@ fn declareFunctions(context: *Context, entry_point: EntryPoint, entry_name: []co
             try context.builder.internType(.{ .structure = .{
                 .members = return_members.items,
             } });
+
         const function = try context.builder.addFunction(
             lowered_return_type,
             context.nameOf(spv_function) orelse if (spv_function == entry_point.function_id) entry_name else null,
         );
+
         context.functions[index] = function;
         context.function_lowerings[index] = .{
             .source_return_type = source_return_type,
             .lowered_return_type = lowered_return_type,
             .pointer_parameters = try context.scratch.dupe(PointerParameter, pointer_parameters.items),
         };
+
         if (spv_function == entry_point.function_id)
             context.builder.setEntryPoint(function);
     }
+
     if (context.module.entry_point == null)
         return TranslationError.MissingFunction;
-}
-
-// Private memory lives for an invocation, not a function call. Until the IR
-// models that memory (or promotion happens after inlining), only promote it in
-// single-function modules. Even a global used by only one helper could retain
-// state between calls, so counting its users is not sufficient.
-fn validatePrivateScope(context: *Context) !void {
-    var function_count: usize = 0;
-    for (context.functions) |function| {
-        if (function != null) function_count += 1;
-    }
-    if (function_count <= 1) return;
-    for (context.variable_defs) |definition| {
-        const variable = definition orelse continue;
-        if (variable.operands[2] == @backingInt(spirv.StorageClass.private)) {
-            std.log.scoped(.spirv_translator).warn("Private variable %{d} requires invocation-scoped memory in a multi-function module", .{variable.operands[1]});
-            return TranslationError.UnsupportedPrivateCrossFunction;
-        }
-    }
 }
 
 fn translateFunctions(context: *Context) !void {
@@ -1939,7 +1941,7 @@ fn collectFunctionLocals(context: *Context, spv_function: u32) !void {
         if (instruction.opcode != .variable)
             continue;
         const is_private = instruction.operands.len >= 3 and instruction.operands[2] == @backingInt(spirv.StorageClass.private);
-        if (!active and !is_private)
+        if (!active and !(is_private and function == context.module.entry_point.?))
             continue;
 
         if (instruction.operands.len < 3 or instruction.operands.len > 4)
