@@ -506,6 +506,27 @@ const Lowerer = struct {
                     return;
                 }
 
+                if (op.opcode == .find_lsb or op.opcode == .find_s_msb or op.opcode == .find_u_msb) {
+                    if (!isIntegerKind(dst.kind) or !isIntegerKind(src.kind) or dst.components != src.components or
+                        try self.valueScalarBits(instruction.result.?) != 32)
+                        return CompileError.InvalidOperation;
+
+                    const source_bits = try self.valueScalarBits(op.operand);
+
+                    if (source_bits != 8 and source_bits != 16 and source_bits != 32 and source_bits != 64)
+                        return CompileError.InvalidOperation;
+
+                    const opcode: bc.Opcode = switch (op.opcode) {
+                        .find_lsb => .find_lsb,
+                        .find_s_msb => .find_s_msb,
+                        .find_u_msb => .find_u_msb,
+                        else => unreachable,
+                    };
+
+                    try self.emitTyped(opcode, dst.components, dst.base, src.base, .invalid_register, .invalid_register, 0, source_bits);
+                    return;
+                }
+
                 if (op.opcode == .length) {
                     if (dst.kind != .floating or dst.components != 1 or src.kind != .floating)
                         return CompileError.InvalidOperation;
@@ -683,6 +704,7 @@ const Lowerer = struct {
                             return CompileError.InvalidOperation;
                         try self.emitTyped(opcode, dst.components, dst.base, lhs.base, rhs.base, .invalid_register, 0, bits);
                     },
+                    .ldexp => try self.emitTyped(opcode, dst.components, dst.base, lhs.base, rhs.base, .invalid_register, 0, bits),
                     else => {
                         if (!dst.sameShape(lhs) or !dst.sameShape(rhs))
                             return CompileError.InvalidOperation;
@@ -1563,6 +1585,7 @@ fn binaryOpcode(op: inst_ir.BinaryOpcode, kind: bc.ValueKind) !bc.Opcode {
         .integer_multiply => if (kind == .signed_integer or kind == .unsigned_integer) .integer_multiply else CompileError.InvalidOperation,
         .integer_subtract => if (kind == .signed_integer or kind == .unsigned_integer) .integer_subtract else CompileError.InvalidOperation,
         .integer_subtract_borrow => if (kind == .unsigned_integer) .integer_subtract_borrow else CompileError.InvalidOperation,
+        .ldexp => if (kind == .floating) .ldexp else CompileError.InvalidOperation,
         .logical_and => if (kind == .boolean) .logical_and else CompileError.InvalidOperation,
         .logical_or => if (kind == .boolean) .logical_or else CompileError.InvalidOperation,
         .logical_shift_right => if (kind == .signed_integer or kind == .unsigned_integer) .logical_shift_right else CompileError.InvalidOperation,

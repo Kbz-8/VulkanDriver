@@ -120,6 +120,7 @@ const BinaryFloat = enum {
     add,
     atan2,
     divide,
+    ldexp,
     max,
     min,
     modulo,
@@ -1061,6 +1062,9 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .dot => try self.dot(instruction),
         .exp => try self.unaryFloat(instruction, .exp),
         .exp2 => try self.unaryFloat(instruction, .exp2),
+        .find_lsb => try self.findBit(instruction, .find_lsb),
+        .find_s_msb => try self.findBit(instruction, .find_s_msb),
+        .find_u_msb => try self.findBit(instruction, .find_u_msb),
         .float_absolute => try self.unaryFloat(instruction, .absolute),
         .float_add => try self.binaryFloat(instruction, .add, false),
         .float_clamp => try self.ternaryFloat(instruction, .clamp),
@@ -1099,6 +1103,7 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .is_inf => try self.classifyFloat(instruction, .infinite),
         .is_nan => try self.classifyFloat(instruction, .nan),
         .jump_edge => self.pcs[self.current_lane] = try self.applyEdge(program, instruction.immediate),
+        .ldexp => try self.binaryFloat(instruction, .ldexp, false),
         .length => try self.vectorLength(instruction),
         .load_buffer => try self.loadBuffer(program, options.resource_buffers, instruction),
         .load_push_constant => try self.loadPushConstant(options.push_constants, instruction),
@@ -1432,6 +1437,31 @@ fn vectorLengthTyped(self: *Self, comptime Float: type, instruction: bc.Instruct
     self.registers.at(@backingInt(instruction.a)).* = writeFloat(Float, magnitude);
 }
 
+fn findBit(self: *Self, instruction: bc.Instruction, comptime opcode: bc.Opcode) RuntimeError!void {
+    try self.validateUnaryInstruction(instruction);
+    switch (instruction.scalar_bits) {
+        inline 8, 16, 32, 64 => |bits| {
+            const Int = @Int(.unsigned, bits);
+            for (0..instruction.components) |component| {
+                var value: Int = @truncate(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+
+                if (opcode == .find_s_msb and value & (@as(Int, 1) << (bits - 1)) != 0)
+                    value = ~value;
+
+                const result: u32 = if (value == 0)
+                    std.math.maxInt(u32)
+                else if (opcode == .find_lsb)
+                    @ctz(value)
+                else
+                    @as(u32, bits - 1) - @as(u32, @clz(value));
+
+                self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = result;
+            }
+        },
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
 fn vectorExtractDynamic(self: *Self, instruction: bc.Instruction) RuntimeError!void {
     try self.validateRegisterRange(instruction.a, 1);
     try self.validateRegisterRange(instruction.b, instruction.components);
@@ -1691,6 +1721,12 @@ fn binaryFloatTyped(self: *Self, comptime Float: type, instruction: bc.Instructi
             .add => lhs + rhs,
             .atan2 => std.math.atan2(lhs, rhs),
             .divide => lhs / rhs,
+            .ldexp => blk: {
+                if (lhs == 0)
+                    break :blk lhs;
+                const exponent = readI32(self.registers.at(@as(usize, @backingInt(instruction.c)) + rhs_component).*);
+                break :blk std.math.ldexp(lhs, exponent);
+            },
             .max => if (lhs < rhs) rhs else lhs,
             .min => if (lhs > rhs) rhs else lhs,
             .modulo => lhs - rhs * @floor(lhs / rhs),

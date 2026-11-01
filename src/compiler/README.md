@@ -272,6 +272,9 @@ Form:
 | `degrees`          | Converts angles from radians to degrees component-wise.            | Floating scalar or vector; the result has the same type.                  | `%2: f32 = degrees %1`             |
 | `exp2`             | Computes the base-two exponential component-wise.                  | Floating scalar or vector; the result has the same type.                  | `%2: f32 = exp2 %1`                |
 | `exp`              | Computes the natural exponential component-wise.                   | Floating scalar or vector; the result has the same type.                  | `%2: f32 = exp %1`                 |
+| `find_lsb`         | Finds the least-significant set bit; zero returns -1.              | Integer scalar/vector; matching component count and integer32 result.     | `%2: i32 = find_lsb %1`            |
+| `find_s_msb`       | Finds the highest bit different from the sign bit.                 | Integer scalar/vector interpreted as signed; integer32 result.            | `%2: i32 = find_s_msb %1`          |
+| `find_u_msb`       | Finds the most-significant set bit; zero returns -1.               | Integer scalar/vector interpreted as unsigned; integer32 result.          | `%2: i32 = find_u_msb %1`          |
 | `float_absolute`   | Computes the floating-point absolute value component-wise.         | Floating scalar or vector; the result has the same type.                  | `%2: f32 = float_absolute %1`      |
 | `float_sign`       | Produces -1, 0, or 1 according to the operand's sign.              | Floating scalar or vector; the result has the same type.                  | `%2: vec3[f32] = float_sign %1`    |
 | `floor`            | Rounds each component toward negative infinity.                    | Floating scalar or vector; the result has the same type.                  | `%2: f32 = floor %1`               |
@@ -1115,6 +1118,14 @@ omitted from the selected entry point. The translator lowers a defined subset:
   maps to the distinct `fwidth_coarse` opcode. `OpFwidthFine` maps to the distinct
   `fwidth_fine` opcode. Other explicit derivatives (`OpDPdxFine`, `OpDPdyFine`,
   and `OpDPdyCoarse`) remain unsupported.
+- GLSL.std.450 `FindILsb`, `FindSMsb`, and `FindUMsb` map to `find_lsb`,
+  `find_s_msb`, and `find_u_msb`. They operate component-wise and return a 32-bit
+  integer scalar/vector with the same component count. Signed MSB searches for
+  the highest zero bit in negative inputs, returning -1 for both zero and -1;
+  unsigned MSB searches for the highest set bit and returns -1 for zero. LSB
+  also returns -1 for zero. Interpretation follows the instruction, not the
+  declared operand signedness. The software interpreter handles 8-, 16-, 32-,
+  and 64-bit operands; omitted IR result types infer matching signed integer32.
 - GLSL.std.450 floating unary operations `Acos`, `Acosh`, `Asin`, `Asinh`,
   `Atan`, `Atanh`, `Ceil`, `Cos`, `Cosh`, `Degrees`, `Exp`, `Exp2`, `FAbs`,
   `FSign`, `Floor`, `Fract`, `Length`, `Log`, `Log2`, `Normalize`, `Radians`,
@@ -1188,6 +1199,12 @@ omitted from the selected entry point. The translator lowers a defined subset:
 - `OpCompositeInsert` uses literal nested index paths and lowers through the
   existing aggregate extract/construct helper, preserving untouched members.
   Result/composite types, inserted leaf types, and index bounds are checked.
+- `OpVectorInsertDynamic` lowers through the same helper using comparisons and
+  selects for its runtime index. The vector and result types must match, the
+  inserted scalar must match the vector element type, and the index must be a
+  scalar signed or unsigned integer. Untouched components are preserved for
+  floating, integer, and boolean vectors. Out-of-range indices are undefined,
+  matching SPIR-V; no new IR or interpreter opcode is needed.
 - `OpImageGather` on non-arrayed 2D sampled images without optional image
   operands, mapped to `image_gather` with an explicit component selector.
 - Decorated stage inputs and outputs, with interface load and store. Partial

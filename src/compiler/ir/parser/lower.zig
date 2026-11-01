@@ -615,6 +615,18 @@ fn inferUnaryType(module: *module_ir.Module, opcode: inst_ir.UnaryOpcode, operan
     const operand_type = module.typeOf(operand) orelse return null;
     return switch (opcode) {
         .is_inf, .is_nan => inferBooleanShape(module, operand_type),
+        .find_lsb, .find_s_msb, .find_u_msb => blk: {
+            const source_type = (module.types.get(operand_type) orelse return null).*;
+            const integer = try module.internType(.{ .integer = .{ .bits = 32, .signedness = .signed } });
+            break :blk switch (source_type) {
+                .integer => integer,
+                .vector => |vector| try module.internType(.{ .vector = .{
+                    .element_type = integer,
+                    .length = vector.length,
+                } }),
+                else => null,
+            };
+        },
         .transpose => inferTransposeType(module, operand_type),
         .length => switch ((module.types.get(operand_type) orelse return null).*) {
             .floating => operand_type,

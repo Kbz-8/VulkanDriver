@@ -2621,7 +2621,10 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
 
         .copy_memory => try translateCopyMemory(context, block, operands),
 
-        .access_chain => try translateAccessChain(context, block, operands),
+        .access_chain,
+        .in_bounds_access_chain,
+        => try translateAccessChain(context, block, operands),
+
         .vector_shuffle => try translateVectorShuffle(context, block, operands),
 
         .sampled_image => {
@@ -2912,6 +2915,37 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                     .rhs = try context.resolveValue(operands[3]),
                 },
             }, context.nameOf(operands[1]))).?;
+            try context.setValue(operands[1], result);
+        },
+
+        .vector_insert_dynamic => {
+            try expectOperandCount(operands, 5);
+
+            const result_type = try context.translateType(operands[0]);
+            const vector_type = (context.module.types.get(result_type) orelse return TranslationError.InvalidId).*;
+
+            if (vector_type != .vector)
+                return TranslationError.InvalidInstruction;
+
+            const vector = try context.resolveValue(operands[2]);
+            const component = try context.resolveValue(operands[3]);
+            const index = try context.resolveValue(operands[4]);
+
+            if (context.module.typeOf(vector) != result_type or context.module.typeOf(component) != vector_type.vector.element_type)
+                return TranslationError.InvalidInstruction;
+
+            const index_type = context.module.types.get(context.module.typeOf(index) orelse return TranslationError.InvalidId) orelse return TranslationError.InvalidId;
+
+            if (index_type.* != .integer)
+                return TranslationError.InvalidInstruction;
+
+            const result = try insertCompositeAddress(context, block, vector, component, &.{.{
+                .dynamic = .{
+                    .value = index,
+                    .length = vector_type.vector.length,
+                },
+            }});
+
             try context.setValue(operands[1], result);
         },
 
@@ -3958,30 +3992,36 @@ fn insertCompositeAddress(context: *Context, block: ir.id.BlockId, composite: ir
     }
 
     const composite_type = context.module.typeOf(composite) orelse return TranslationError.InvalidId;
-    const ty = context.module.types.get(composite_type) orelse return TranslationError.InvalidId;
-    const count: usize = switch (ty.*) {
+
+    // Dynamic-index comparisons can intern types and reallocate the type store
+    const ty = (context.module.types.get(composite_type) orelse return TranslationError.InvalidId).*;
+
+    const count: usize = switch (ty) {
         .vector => |vector| vector.length,
         .matrix => |matrix| matrix.column_count,
         .array => |array| array.length,
         .structure => |structure| structure.members.len,
         else => return TranslationError.UnsupportedType,
     };
+
     const candidate_count: usize = switch (indices[0]) {
         .constant => 1,
         .dynamic => count,
     };
+
     var selected = composite;
     for (0..candidate_count) |candidate| {
         const replaced_index: usize = switch (indices[0]) {
             .constant => |index| index,
             .dynamic => candidate,
         };
+
         if (replaced_index >= count)
             return TranslationError.InvalidInstruction;
 
         const elements = try context.scratch.alloc(ir.id.ValueId, count);
         for (elements, 0..) |*element, index| {
-            const element_type = switch (ty.*) {
+            const element_type = switch (ty) {
                 .vector => |vector| vector.element_type,
                 .matrix => |matrix| matrix.element_type,
                 .array => |array| array.element_type,
@@ -3996,9 +4036,11 @@ fn insertCompositeAddress(context: *Context, block: ir.id.BlockId, composite: ir
             else
                 extracted;
         }
+
         const updated = (try context.builder.appendInstruction(block, composite_type, .{
             .composite_construct = .{ .elements = elements },
         }, null)).?;
+
         selected = switch (indices[0]) {
             .constant => updated,
             .dynamic => |dynamic| blk: {

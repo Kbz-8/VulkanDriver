@@ -307,6 +307,15 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                     if (!haveSameIntegerShape(module, operand_type, result))
                         return ValidationError.WrongResultType;
                 },
+                .find_lsb,
+                .find_s_msb,
+                .find_u_msb,
+                => {
+                    const operand_shape = integerShape(module, operand_type) orelse return ValidationError.WrongOperandType;
+                    const result_shape = integerShape(module, result) orelse return ValidationError.WrongResultType;
+                    if (result_shape.bits != 32 or result_shape.components != operand_shape.components)
+                        return ValidationError.WrongResultType;
+                },
                 .is_inf,
                 .is_nan,
                 => {
@@ -407,6 +416,14 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                 .pow,
                 => {
                     if (lhs_type != rhs_type or floatShape(module, lhs_type) == null)
+                        return ValidationError.WrongOperandType;
+                    if (result_type == null or result_type.? != lhs_type)
+                        return ValidationError.WrongResultType;
+                },
+                .ldexp => {
+                    if (floatShape(module, lhs_type) == null)
+                        return ValidationError.WrongOperandType;
+                    if (integerShape(module, rhs_type) == null)
                         return ValidationError.WrongOperandType;
                     if (result_type == null or result_type.? != lhs_type)
                         return ValidationError.WrongResultType;

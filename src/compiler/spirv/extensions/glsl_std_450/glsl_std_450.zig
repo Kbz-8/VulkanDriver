@@ -110,6 +110,9 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
         .f_min => translateBinary(emitter, invocation, .float_min),
         .f_mix => translateTernary(emitter, invocation, .float_mix),
         .f_sign => translateUnary(emitter, invocation, .float_sign),
+        .find_i_lsb => translateUnary(emitter, invocation, .find_lsb),
+        .find_s_msb => translateUnary(emitter, invocation, .find_s_msb),
+        .find_u_msb => translateUnary(emitter, invocation, .find_u_msb),
         .floor => translateUnary(emitter, invocation, .floor),
         .fma => translateTernary(emitter, invocation, .float_mul_add),
         .fract => translateUnary(emitter, invocation, .fract),
@@ -139,6 +142,7 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
         .u_clamp => translateTernary(emitter, invocation, .unsigned_clamp),
         .u_max => translateBinary(emitter, invocation, .unsigned_max),
         .u_min => translateBinary(emitter, invocation, .unsigned_min),
+        .ldexp => translateBinary(emitter, invocation, .ldexp),
 
         else => {
             std.log.scoped(.spirv_translator).err("unsupported GLSL.std.450 instruction {t}", .{opcode});
@@ -152,8 +156,12 @@ fn translateUnary(emitter: *ext.Emitter, invocation: ext.Invocation, opcode: ir.
         return error.InvalidInstruction;
 
     const operand = invocation.operands[0];
-    if (emitter.module.typeOf(operand) != invocation.result_type)
-        return error.InvalidInstruction;
+    switch (opcode) {
+        // Find bit results are i32
+        .find_lsb, .find_s_msb, .find_u_msb => {},
+        else => if (emitter.module.typeOf(operand) != invocation.result_type)
+            return error.InvalidInstruction,
+    }
 
     return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
         .unary = .{
@@ -168,8 +176,6 @@ fn translateBinary(emitter: *ext.Emitter, invocation: ext.Invocation, opcode: ir
         return error.InvalidInstruction;
     const lhs = invocation.operands[0];
     const rhs = invocation.operands[1];
-    if (emitter.module.typeOf(lhs) != invocation.result_type or emitter.module.typeOf(rhs) != invocation.result_type)
-        return error.InvalidInstruction;
 
     return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
         .binary = .{
