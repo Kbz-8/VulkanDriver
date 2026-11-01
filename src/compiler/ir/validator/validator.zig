@@ -895,6 +895,13 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
         .image_read => |op| {
             const resource = module.resources.get(op.resource) orelse return ValidationError.InvalidValue;
             try validateStorageImageAccess(module, function_id, resource.kind, op.coordinate, op.dimension, op.arrayed);
+            if (op.sample) |sample| {
+                if (op.dimension != .two_d)
+                    return ValidationError.InvalidInstruction;
+                const sample_type = module.types.get(try operandType(module, function_id, sample)) orelse return ValidationError.InvalidType;
+                if (sample_type.* != .integer or sample_type.integer.bits != 32)
+                    return ValidationError.WrongOperandType;
+            }
             if (result_type == null)
                 return ValidationError.WrongResultPresence;
         },

@@ -518,10 +518,22 @@ const Parser = struct {
             const resource_name = (try self.expect(.at_name)).text;
             try self.expectDiscard(.comma);
             const coordinate = try self.parseValueRef();
+            var sample: ?ValueRef = null;
+            const saved_lexer = self.lexer;
+            if (try self.consume(.comma)) {
+                const option = try self.peek();
+                if (option.tag == .identifier and std.mem.eql(u8, option.text, "sample")) {
+                    _ = try self.take();
+                    sample = try self.parseValueRef();
+                } else {
+                    self.lexer = saved_lexer;
+                }
+            }
             const options = try self.parseImageOptions();
             return .{ .image_read = .{
                 .resource_name = resource_name,
                 .coordinate = coordinate,
+                .sample = sample,
                 .dimension = options.dimension,
                 .arrayed = options.arrayed,
             } };
@@ -1295,6 +1307,9 @@ test "Parser: image and indexed interface operation errors" {
         .{ .operation = "%read: vec4[f32] = image_read @buffer, %coord", .expected = validator.ValidationError.WrongResourceKind },
         .{ .operation = "%read: vec4[f32] = image_read @image %coord", .expected = Error.UnexpectedToken },
         .{ .operation = "%read: vec4[f32] = image_read @image,", .expected = Error.UnexpectedToken },
+        .{ .operation = "%read: vec4[f32] = image_read @image, %coord, sample %missing", .expected = Error.UnknownValue },
+        .{ .operation = "%read: vec4[f32] = image_read @image, %coord, sample", .expected = Error.UnexpectedToken },
+        .{ .operation = "%read: vec4[f32] = image_read @image, %coord, sample %index, sample %index", .expected = Error.UnexpectedToken },
         .{ .operation = "image_write @missing, %coord, %pixel", .expected = Error.UnknownResource },
         .{ .operation = "image_write @image, %missing, %pixel", .expected = Error.UnknownValue },
         .{ .operation = "image_write @image, %coord, %missing", .expected = Error.UnknownValue },

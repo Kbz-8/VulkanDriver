@@ -127,6 +127,8 @@ const SampledImage = struct {
 const ImageTypeInfo = struct {
     dimension: ir.types.ImageDimension,
     arrayed: bool,
+    input_attachment: bool = false,
+    multisampled: bool = false,
 };
 
 const AtomicAddress = union(enum) {
@@ -694,6 +696,7 @@ fn imageTypeInfo(context: *const Context, image_type: u32) TranslationError!Imag
         2 => .three_d,
         3 => .cube,
         5 => .buffer,
+        6 => .two_d,
         else => return TranslationError.UnsupportedType,
     };
     const arrayed = switch (definition.operands[4]) {
@@ -701,9 +704,76 @@ fn imageTypeInfo(context: *const Context, image_type: u32) TranslationError!Imag
         1 => true,
         else => return TranslationError.UnsupportedType,
     };
-    if (definition.operands[3] > 2 or definition.operands[5] != 0 or (arrayed and (dimension == .three_d or dimension == .buffer)))
+    if (definition.operands[3] > 2 or definition.operands[5] > 1 or
+        (definition.operands[5] == 1 and definition.operands[2] != 6) or
+        (arrayed and (dimension == .three_d or dimension == .buffer)))
         return TranslationError.UnsupportedType;
-    return .{ .dimension = dimension, .arrayed = arrayed };
+
+    const input_attachment = definition.operands[2] == 6;
+    if (input_attachment and (arrayed or definition.operands[3] != 0 or definition.operands[6] != 2))
+        return TranslationError.UnsupportedType;
+
+    return .{
+        .dimension = dimension,
+        .arrayed = arrayed,
+        .input_attachment = input_attachment,
+        .multisampled = definition.operands[5] == 1,
+    };
+}
+
+fn inputAttachmentCoordinate(context: *Context, block: ir.id.BlockId, offset: ir.id.ValueId) !ir.id.ValueId {
+    if (context.module.stage != .fragment)
+        return TranslationError.UnsupportedOpcode;
+
+    const float_type = try context.builder.internType(.{ .floating = .{ .bits = 32 } });
+    const frag_coord_type = try context.builder.internType(.{ .vector = .{ .element_type = float_type, .length = 4 } });
+    const frag_coord_variable = variable: {
+        for (context.module.interface_variables.entries.items, 0..) |entry, index| {
+            const variable = entry orelse continue;
+            if (variable.direction == .input and variable.semantic == .builtin and variable.semantic.builtin == .frag_coord)
+                break :variable ir.id.InterfaceVariableId.fromIndex(index);
+        }
+        break :variable try context.builder.addInterfaceVariable(frag_coord_type, .input, .{ .builtin = .frag_coord }, null);
+    };
+
+    const frag_coord = (try context.builder.appendInstruction(block, frag_coord_type, .{
+        .load_interface = .{ .variable = frag_coord_variable },
+    }, null)).?;
+
+    var components: [2]ir.id.ValueId = undefined;
+    for (&components, 0..) |*component, index| {
+        component.* = (try context.builder.appendInstruction(block, float_type, .{
+            .composite_extract = .{
+                .composite = frag_coord,
+                .indices = try context.scratch.dupe(u32, &.{@intCast(index)}),
+            },
+        }, null)).?;
+    }
+
+    const xy_type = try context.builder.internType(.{ .vector = .{ .element_type = float_type, .length = 2 } });
+
+    const xy = (try context.builder.appendInstruction(block, xy_type, .{
+        .composite_construct = .{ .elements = &components },
+    }, null)).?;
+
+    const coordinate_type = context.module.typeOf(offset) orelse return TranslationError.InvalidId;
+    const element_type = context.module.types.get(coordinate_type).?.vector.element_type;
+    const signedness = context.module.types.get(element_type).?.integer.signedness;
+
+    const pixel = (try context.builder.appendInstruction(block, coordinate_type, .{
+        .convert = .{
+            .opcode = if (signedness == .signed) .float_to_signed else .float_to_unsigned,
+            .operand = xy,
+        },
+    }, null)).?;
+
+    return (try context.builder.appendInstruction(block, coordinate_type, .{
+        .binary = .{
+            .opcode = .integer_add,
+            .lhs = pixel,
+            .rhs = offset,
+        },
+    }, null)).?;
 }
 
 fn canonicalizeImageCoordinate(context: *Context, block: ir.id.BlockId, spv_coordinate: u32, image: ImageTypeInfo) !ir.id.ValueId {
@@ -752,13 +822,14 @@ fn canonicalizeImageCoordinate(context: *Context, block: ir.id.BlockId, spv_coor
     }, null)).?;
 }
 
-const ImageOperandMode = enum { implicit, explicit, fetch };
+const ImageOperandMode = enum { implicit, explicit, fetch, read };
 const ImageOperands = struct {
     bias: ?ir.id.ValueId = null,
     lod: ?ir.id.ValueId = null,
     grad_x: ?ir.id.ValueId = null,
     grad_y: ?ir.id.ValueId = null,
     offset: ?ir.id.ValueId = null,
+    sample: ?ir.id.ValueId = null,
 };
 
 fn parseImageOperands(context: *Context, words: []const u32, mode: ImageOperandMode) !ImageOperands {
@@ -768,6 +839,7 @@ fn parseImageOperands(context: *Context, words: []const u32, mode: ImageOperandM
         .implicit => 0x9,
         .explicit => 0xe,
         .fetch => 0xa,
+        .read => 0x40,
     };
 
     if (mask & ~allowed != 0)
@@ -778,13 +850,14 @@ fn parseImageOperands(context: *Context, words: []const u32, mode: ImageOperandM
 
     const expected: usize = @as(usize, @intFromBool(words.len != 0)) +
         @as(usize, @intFromBool(mask & 0x1 != 0)) + @as(usize, @intFromBool(mask & 0x2 != 0)) +
-        2 * @as(usize, @intFromBool(mask & 0x4 != 0)) + @as(usize, @intFromBool(mask & 0x8 != 0));
+        2 * @as(usize, @intFromBool(mask & 0x4 != 0)) + @as(usize, @intFromBool(mask & 0x8 != 0)) +
+        @as(usize, @intFromBool(mask & 0x40 != 0));
 
     if (words.len != expected)
         return TranslationError.InvalidInstruction;
 
     var index: usize = 1;
-    inline for (.{ "bias", "lod", "grad_x", "offset" }, .{ @as(u32, 1), 2, 4, 8 }) |field, bit| {
+    inline for (.{ "bias", "lod", "grad_x", "offset", "sample" }, .{ @as(u32, 1), 2, 4, 8, 64 }) |field, bit| {
         if (mask & bit != 0) {
             if (comptime bit == 8) {
                 const definition = context.value_defs[try context.idIndex(words[index])] orelse return TranslationError.InvalidInstruction;
@@ -1873,8 +1946,29 @@ fn translateFunction(context: *Context, spv_function: u32) !void {
     context.entry_label = null;
     try collectFunctionLocals(context, spv_function);
     try predeclareFunction(context, spv_function, function, function_type.operands[2..]);
+
+    if (function == context.module.entry_point.?)
+        try initializeOutputVariables(context, context.module.functions.get(function).?.entry_block.?);
+
     try translateFunctionInstructions(context, spv_function);
     try translateFunctionControlFlow(context, spv_function);
+}
+
+fn initializeOutputVariables(context: *Context, block: ir.id.BlockId) !void {
+    for (context.interfaces, 0..) |optional_interface, index| {
+        const interface = optional_interface orelse continue;
+        const variable = context.variable_defs[index] orelse return TranslationError.MissingDefinition;
+        if (variable.operands[2] != @backingInt(spirv.StorageClass.output) or variable.operands.len != 4)
+            continue;
+
+        const value = try context.resolveValue(variable.operands[3]);
+        if (context.module.typeOf(value) != context.module.interface_variables.get(interface).?.type)
+            return TranslationError.InvalidInstruction;
+
+        _ = try context.builder.appendInstruction(block, null, .{
+            .store_interface = .{ .variable = interface, .value = value },
+        }, null);
+    }
 }
 
 fn collectFunctionLocals(context: *Context, spv_function: u32) !void {
@@ -2127,8 +2221,6 @@ fn saveBlockLocals(context: *Context, label: u32) !void {
 }
 
 fn unsupportedStoreDestination(context: *Context, destination: u32) TranslationError {
-    // Locate the result type even for pointer-producing operations that are not
-    // represented in the translator's address tables.
     var storage: ?u32 = null;
     var iterator = context.parser.iterator();
     while (iterator.next() catch null) |instruction| {
@@ -2663,11 +2755,25 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             const resource = (try context.imageResource(operands[2])) orelse return TranslationError.UnsupportedOpcode;
             const image_type = context.image_types[try context.idIndex(operands[2])] orelse return TranslationError.MissingDefinition;
             const image_info = try imageTypeInfo(context, image_type);
-            const coordinate = try canonicalizeImageCoordinate(context, block, operands[3], image_info);
+            const image_operands = try parseImageOperands(context, operands[4..], .read);
+            if (image_info.multisampled != (image_operands.sample != null))
+                return TranslationError.InvalidInstruction;
+            if (image_operands.sample) |sample| {
+                const sample_type = context.module.types.get(context.module.typeOf(sample).?) orelse return TranslationError.InvalidId;
+                if (sample_type.* != .integer or sample_type.integer.bits != 32)
+                    return TranslationError.InvalidInstruction;
+            }
+            const texel_coordinate = try canonicalizeImageCoordinate(context, block, operands[3], image_info);
+            const coordinate = if (image_info.input_attachment)
+                try inputAttachmentCoordinate(context, block, texel_coordinate)
+            else
+                texel_coordinate;
+
             const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
                 .image_read = .{
                     .resource = resource,
                     .coordinate = coordinate,
+                    .sample = image_operands.sample,
                     .dimension = image_info.dimension,
                     .arrayed = image_info.arrayed,
                 },
@@ -2683,6 +2789,10 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             const resource = (try context.imageResource(operands[0])) orelse return TranslationError.UnsupportedOpcode;
             const image_type = context.image_types[try context.idIndex(operands[0])] orelse return TranslationError.MissingDefinition;
             const image_info = try imageTypeInfo(context, image_type);
+
+            if (image_info.input_attachment)
+                return TranslationError.UnsupportedOpcode;
+
             const coordinate = try canonicalizeImageCoordinate(context, block, operands[1], image_info);
             _ = try context.builder.appendInstruction(block, null, .{ .image_write = .{
                 .resource = resource,
@@ -4689,7 +4799,10 @@ fn translateStage(model: spirv.ExecutionModel) TranslationError!ir.module.Stage 
         .fragment => .fragment,
         .gl_compute => .compute,
 
-        else => TranslationError.UnsupportedExecutionModel,
+        else => blk: {
+            std.log.scoped(.spirv_translator).warn("unsupported execution model \"{t}\"", .{model});
+            break :blk TranslationError.UnsupportedExecutionModel;
+        },
     };
 }
 
@@ -4705,7 +4818,10 @@ fn translateStorageClass(storage_class: spirv.StorageClass) TranslationError!ir.
         .push_constant => .push_constant,
         .physical_storage_buffer => .physical,
 
-        else => TranslationError.UnsupportedType,
+        else => blk: {
+            std.log.scoped(.spirv_translator).warn("unsupported storage class \"{t}\"", .{storage_class});
+            break :blk TranslationError.UnsupportedType;
+        },
     };
 }
 
@@ -4719,13 +4835,17 @@ fn translateBuiltin(builtin: spirv.Builtin) TranslationError!ir.module.Builtin {
         .local_invocation_id => .local_invocation_id,
         .local_invocation_index => .local_invocation_index,
         .num_workgroups => .num_workgroups,
-        .position => .position,
         .point_size => .point_size,
+        .position => .position,
+        .sample_id => .sample_id,
         .vertex_index => .vertex_index,
         .workgroup_id => .workgroup_id,
         .workgroup_size => .workgroup_size,
 
-        else => TranslationError.UnsupportedBuiltin,
+        else => blk: {
+            std.log.scoped(.spirv_translator).warn("unsupported builtin \"{t}\"", .{builtin});
+            break :blk TranslationError.UnsupportedBuiltin;
+        },
     };
 }
 

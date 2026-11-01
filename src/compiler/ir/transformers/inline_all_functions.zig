@@ -458,6 +458,7 @@ fn remapOperation(module: *module_ir.Module, value_map: []const ?ids.ValueId, op
             .image_read = .{
                 .resource = op.resource,
                 .coordinate = try mappedValue(module, value_map, op.coordinate),
+                .sample = if (op.sample) |sample| try mappedValue(module, value_map, sample) else null,
                 .dimension = op.dimension,
                 .arrayed = op.arrayed,
             },

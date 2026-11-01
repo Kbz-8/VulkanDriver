@@ -8,6 +8,7 @@ const rasterizer = @import("../rasterizer/common.zig");
 const Renderer = @import("../Renderer.zig");
 const interpreter_simd = @import("../../interpreter/simd.zig");
 const backend = @import("ir_interpreter.zig");
+const Program = @import("../../interpreter/Program.zig");
 
 pub const RuntimeError = error{
     InvalidShader,
@@ -36,8 +37,8 @@ pub fn quadPositions(position: zm.F32x4) [4]zm.F32x4 {
     var positions: [4]zm.F32x4 = undefined;
     for (&positions, 0..) |*helper, lane| {
         helper.* = position;
-        helper.*[0] = @as(f32, @floatFromInt((x & ~@as(i32, 1)) + @as(i32, @intCast(lane & 1)))) + 0.5;
-        helper.*[1] = @as(f32, @floatFromInt((y & ~@as(i32, 1)) + @as(i32, @intCast(lane >> 1)))) + 0.5;
+        helper.*[0] = @as(f32, @floatFromInt((x & ~@as(i32, 1)) + @as(i32, @intCast(lane & 1)))) + (position[0] - @floor(position[0]));
+        helper.*[1] = @as(f32, @floatFromInt((y & ~@as(i32, 1)) + @as(i32, @intCast(lane >> 1)))) + (position[1] - @floor(position[1]));
     }
     return positions;
 }
@@ -52,6 +53,19 @@ pub fn constantQuadHelpers(worker: *const Worker, position: zm.F32x4, inputs: Fr
     if (worker.program.uses_derivatives)
         return .{ .quad_inputs = @splat(inputs), .quad_positions = quadPositions(position), .quad_lane = quadLane(position) };
     return null;
+}
+
+pub fn usesSampleId(program: *const Program) bool {
+    for (program.interfaces) |optional_binding| {
+        const binding = optional_binding orelse continue;
+        if (binding.direction != .input)
+            continue;
+        switch (binding.semantic) {
+            .builtin => |builtin| if (builtin == .sample_id) return true,
+            else => {},
+        }
+    }
+    return false;
 }
 
 pub const WaveInvocation = backend.WaveInvocation;

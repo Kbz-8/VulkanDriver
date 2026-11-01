@@ -140,6 +140,7 @@ pub fn acquireWorker(draw_call: *Renderer.DrawCall, batch_id: usize) VkError!Wor
 pub const WaveInvocation = struct {
     position: base.zm.F32x4,
     inputs: common.FragmentInputs,
+    sample_id: u32 = 0,
 };
 
 pub const WaveResult = struct {
@@ -195,7 +196,7 @@ pub fn shaderWaveMasked(worker: *Worker, invocations: *const [Runtime.lane_count
     for (0..Runtime.lane_count) |lane| {
         const bit = @as(Runtime.LaneMask, 1) << @intCast(lane);
         if ((execution_mask & bit) != 0)
-            try writeInputsLane(program, runtime, lane, invocations[lane].position, invocations[lane].inputs);
+            try writeInputsLane(program, runtime, lane, invocations[lane].position, invocations[lane].inputs, invocations[lane].sample_id);
     }
     if (comptime base.config.soft_profile)
         worker.input_ns += Renderer.profileElapsedNs(input_timer, worker.io);
@@ -247,29 +248,41 @@ pub fn shaderInvocation(
     inputs: common.FragmentInputs,
     derivative_inputs: ?common.DerivativeInputs,
 ) RuntimeError!common.InvocationResult {
-    // Point/sample/facing builtins are not yet represented by the IR.
     _ = point_coord;
-    _ = sample_id;
     _ = front_face;
+
     var invocations: [Runtime.lane_count]WaveInvocation = undefined;
     var lane: u2 = 0;
     var execution_mask: Runtime.LaneMask = 1;
+
     if (worker.program.uses_derivatives) {
         const helpers = derivative_inputs orelse return RuntimeError.InvalidShader;
         const quad_inputs = helpers.quad_inputs orelse return RuntimeError.InvalidShader;
         const quad_positions = helpers.quad_positions orelse return RuntimeError.InvalidShader;
+
         lane = helpers.quad_lane;
+
         for (invocations[0..4], quad_inputs, quad_positions) |*invocation, helper_inputs, helper_position|
-            invocation.* = .{ .position = helper_position, .inputs = helper_inputs };
+            invocation.* = .{ .position = helper_position, .inputs = helper_inputs, .sample_id = sample_id orelse 0 };
+
         execution_mask = 0b1111;
     }
-    invocations[lane] = .{ .position = position, .inputs = inputs };
+
+    invocations[lane] = .{
+        .position = position,
+        .inputs = inputs,
+        .sample_id = sample_id orelse 0,
+    };
+
     const observable_mask = @as(Runtime.LaneMask, 1) << lane;
     const result = try shaderWaveMasked(worker, &invocations, execution_mask, observable_mask);
+
     if ((result.discarded_mask & observable_mask) != 0)
         return RuntimeError.Killed;
+
     if ((result.returned_mask & observable_mask) == 0)
         return RuntimeError.InvalidShader;
+
     return result.laneResult(lane);
 }
 
@@ -279,6 +292,7 @@ fn writeInputsLane(
     lane: usize,
     position: base.zm.F32x4,
     inputs: common.FragmentInputs,
+    sample_id: u32,
 ) RuntimeError!void {
     for (program.interfaces, 0..) |optional_binding, index| {
         const binding = optional_binding orelse continue;
@@ -298,8 +312,14 @@ fn writeInputsLane(
                 .frag_coord => {
                     if (binding.span.kind != .floating or values.len != 4)
                         return RuntimeError.InvalidShader;
+
                     inline for (0..4) |component|
                         values[component] = @bitCast(position[component]);
+                },
+                .sample_id => {
+                    if ((binding.span.kind != .signed_integer and binding.span.kind != .unsigned_integer) or values.len != 1)
+                        return RuntimeError.InvalidShader;
+                    values[0] = sample_id;
                 },
                 else => return RuntimeError.InvalidShader,
             },

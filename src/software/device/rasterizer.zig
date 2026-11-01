@@ -479,6 +479,8 @@ fn rasterizeTransformedPoint(
     defer if (has_fragment_shader)
         fragment_worker.release();
 
+    const sample_count = pipeline.interface.mode.graphics.multisample.rasterization_samples.toInt();
+    const per_sample = has_fragment_shader and fragment.usesSampleId(fragment_worker.program);
     var py = min_y;
     while (py <= max_y) : (py += 1) {
         var px = min_x;
@@ -486,58 +488,63 @@ fn rasterizeTransformedPoint(
             if (!common.scissorContainsPixel(draw_call.scissor, px, py))
                 continue;
 
-            var fragment_result: fragment.InvocationResult = .{
-                .outputs = std.mem.zeroes([shader_types.max_output_locations][@sizeOf(zm.F32x4)]u8),
-                .depth = null,
-                .sample_mask = null,
-            };
-            if (has_fragment_shader) {
-                const frag_x = @as(f32, @floatFromInt(px)) + 0.5;
-                const frag_y = @as(f32, @floatFromInt(py)) + 0.5;
-                const point_coord = @Vector(2, f32){
-                    (frag_x - point_min_x) / point_size,
-                    (frag_y - point_min_y) / point_size,
+            var samples = common.FragmentSampleIterator.init(sample_count, std.math.maxInt(vk.SampleMask), per_sample);
+            while (samples.next()) |sample| {
+                var fragment_result: fragment.InvocationResult = .{
+                    .outputs = std.mem.zeroes([shader_types.max_output_locations][@sizeOf(zm.F32x4)]u8),
+                    .depth = null,
+                    .sample_mask = null,
                 };
 
-                const position = zm.f32x4(frag_x, frag_y, vertex.position[2], 1.0 / vertex.position[3]);
-                const inputs = common.interpolateVertexOutputs(vertex, vertex, vertex, vertex, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
-                fragment_result = fragment.shaderInvocation(
-                    &fragment_worker,
-                    position,
-                    point_coord,
-                    null,
-                    true,
-                    inputs,
-                    fragment.constantQuadHelpers(&fragment_worker, position, inputs),
-                ) catch |err| {
-                    if (err == error.Killed)
-                        continue;
+                if (has_fragment_shader) {
+                    const frag_x = @as(f32, @floatFromInt(px)) + sample.position.x;
+                    const frag_y = @as(f32, @floatFromInt(py)) + sample.position.y;
+                    const point_coord = @Vector(2, f32){
+                        (frag_x - point_min_x) / point_size,
+                        (frag_y - point_min_y) / point_size,
+                    };
 
-                    std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
-                    if (comptime base.config.logs == .verbose) {
-                        if (@errorReturnTrace()) |trace| {
-                            std.debug.dumpErrorReturnTrace(trace);
+                    const position = zm.f32x4(frag_x, frag_y, vertex.position[2], 1.0 / vertex.position[3]);
+                    const inputs = common.interpolateVertexOutputs(vertex, vertex, vertex, vertex, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+
+                    fragment_result = fragment.shaderInvocation(
+                        &fragment_worker,
+                        position,
+                        point_coord,
+                        sample.id,
+                        true,
+                        inputs,
+                        fragment.constantQuadHelpers(&fragment_worker, position, inputs),
+                    ) catch |err| {
+                        if (err == error.Killed)
+                            continue;
+
+                        std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
+                        if (comptime base.config.logs == .verbose) {
+                            if (@errorReturnTrace()) |trace| {
+                                std.debug.dumpErrorReturnTrace(trace);
+                            }
                         }
-                    }
-                    return;
-                };
-            }
+                        return;
+                    };
+                }
 
-            try common.writeToTargets(
-                fragment_result.outputs,
-                draw_call,
-                color_attachment_access,
-                depth_attachment_access,
-                stencil_attachment_access,
-                true,
-                @intCast(px),
-                @intCast(py),
-                fragment_result.depth orelse vertex.position[2],
-                null,
-                fragment_result.sample_mask,
-                false,
-                .locked,
-            );
+                try common.writeToTargets(
+                    fragment_result.outputs,
+                    draw_call,
+                    color_attachment_access,
+                    depth_attachment_access,
+                    stencil_attachment_access,
+                    true,
+                    @intCast(px),
+                    @intCast(py),
+                    fragment_result.depth orelse vertex.position[2],
+                    sample.coverage,
+                    fragment_result.sample_mask,
+                    false,
+                    .locked,
+                );
+            }
         }
     }
 }

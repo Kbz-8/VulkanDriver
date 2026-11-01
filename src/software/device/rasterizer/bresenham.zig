@@ -6,6 +6,7 @@ const zm = base.zm;
 
 const common = @import("common.zig");
 const fragment = @import("../fragment/dispatcher.zig");
+const standardSamplePosition = common.standardSamplePosition;
 
 const Renderer = @import("../Renderer.zig");
 
@@ -192,6 +193,8 @@ fn drawLineDiamond(
     defer if (has_fragment_shader)
         fragment_worker.release();
 
+    const sample_count = pipeline.interface.mode.graphics.multisample.rasterization_samples.toInt();
+    const per_sample = has_fragment_shader and fragment.usesSampleId(fragment_worker.program);
     const min_x: i32 = @intFromFloat(@floor(@min(v0.position[0], v1.position[0]) - 1.0));
     const max_x: i32 = @intFromFloat(@ceil(@max(v0.position[0], v1.position[0]) + 1.0));
     const min_y: i32 = @intFromFloat(@floor(@min(v0.position[1], v1.position[1]) - 1.0));
@@ -205,59 +208,57 @@ fn drawLineDiamond(
                 continue;
 
             const coverage = diamondCoverage(v0.position, v1.position, x, y, include_last_endpoint);
-            const t = coverage orelse continue;
-            const z = ((1.0 - t) * v0.position[2]) + (t * v1.position[2]);
-            const frag_w = ((1.0 - t) / v0.position[3]) + (t / v1.position[3]);
+            const pixel_t = coverage orelse continue;
+            var samples = common.FragmentSampleIterator.init(sample_count, lineCoverageMaskFloat(v0.position, v1.position, x, y, sample_count), per_sample);
+            while (samples.next()) |sample| {
+                const t = sampleLineParameter(v0.position, v1.position, x, y, sample, pixel_t);
+                const z = ((1.0 - t) * v0.position[2]) + (t * v1.position[2]);
+                const frag_w = ((1.0 - t) / v0.position[3]) + (t / v1.position[3]);
 
-            var fragment_result: fragment.InvocationResult = .{
-                .outputs = std.mem.zeroes([shader_types.max_output_locations][@sizeOf(F32x4)]u8),
-                .depth = null,
-                .sample_mask = null,
-            };
-            if (has_fragment_shader) {
-                fragment_result = fragment.shaderInvocation(
-                    &fragment_worker,
-                    zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, z, frag_w),
-                    null,
-                    null,
-                    true,
-                    common.interpolateLineOutputs(v0, v1, v0, t),
-                    lineQuadHelpers(&fragment_worker, v0, v1, v0, t, zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, z, frag_w)),
-                ) catch |err| {
-                    if (err == error.Killed)
-                        continue;
-
-                    std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
-                    if (comptime base.config.logs == .verbose) {
-                        if (@errorReturnTrace()) |trace| {
-                            std.debug.dumpErrorReturnTrace(trace);
-                        }
-                    }
-                    return;
+                var fragment_result: fragment.InvocationResult = .{
+                    .outputs = std.mem.zeroes([shader_types.max_output_locations][@sizeOf(F32x4)]u8),
+                    .depth = null,
+                    .sample_mask = null,
                 };
-            }
+                if (has_fragment_shader) {
+                    fragment_result = fragment.shaderInvocation(
+                        &fragment_worker,
+                        zm.f32x4(@as(f32, @floatFromInt(x)) + sample.position.x, @as(f32, @floatFromInt(y)) + sample.position.y, z, frag_w),
+                        null,
+                        sample.id,
+                        true,
+                        common.interpolateLineOutputs(v0, v1, v0, t),
+                        lineQuadHelpers(&fragment_worker, v0, v1, v0, t, zm.f32x4(@as(f32, @floatFromInt(x)) + sample.position.x, @as(f32, @floatFromInt(y)) + sample.position.y, z, frag_w)),
+                    ) catch |err| {
+                        if (err == error.Killed)
+                            continue;
 
-            try common.writeToTargets(
-                fragment_result.outputs,
-                draw_call,
-                color_attachment_access,
-                depth_attachment_access,
-                stencil_attachment_access,
-                true,
-                @intCast(x),
-                @intCast(y),
-                fragment_result.depth orelse z,
-                lineCoverageMaskFloat(
-                    v0.position,
-                    v1.position,
-                    x,
-                    y,
-                    pipeline.interface.mode.graphics.multisample.rasterization_samples.toInt(),
-                ),
-                fragment_result.sample_mask,
-                false,
-                .locked,
-            );
+                        std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
+                        if (comptime base.config.logs == .verbose) {
+                            if (@errorReturnTrace()) |trace| {
+                                std.debug.dumpErrorReturnTrace(trace);
+                            }
+                        }
+                        return;
+                    };
+                }
+
+                try common.writeToTargets(
+                    fragment_result.outputs,
+                    draw_call,
+                    color_attachment_access,
+                    depth_attachment_access,
+                    stencil_attachment_access,
+                    true,
+                    @intCast(x),
+                    @intCast(y),
+                    fragment_result.depth orelse z,
+                    sample.coverage,
+                    fragment_result.sample_mask,
+                    false,
+                    .locked,
+                );
+            }
         }
     }
 }
@@ -354,25 +355,6 @@ fn bresenhamYAtStep(y0: i32, d_x: i32, d_err: i32, y_step: i32, step: usize) i32
     return y0 + (y_step * y_offset);
 }
 
-fn standardSamplePosition(sample_count: usize, sample_index: usize) struct { x: f32, y: f32 } {
-    return switch (sample_count) {
-        1 => .{ .x = 0.5, .y = 0.5 },
-        2 => switch (sample_index) {
-            0 => .{ .x = 0.75, .y = 0.75 },
-            1 => .{ .x = 0.25, .y = 0.25 },
-            else => .{ .x = 0.5, .y = 0.5 },
-        },
-        4 => switch (sample_index) {
-            0 => .{ .x = 0.375, .y = 0.125 },
-            1 => .{ .x = 0.875, .y = 0.375 },
-            2 => .{ .x = 0.125, .y = 0.625 },
-            3 => .{ .x = 0.625, .y = 0.875 },
-            else => .{ .x = 0.5, .y = 0.5 },
-        },
-        else => .{ .x = 0.5, .y = 0.5 },
-    };
-}
-
 fn lineCoverageMask(data: RunData, pixel_x: i32, pixel_y: i32, sample_count: usize) vk.SampleMask {
     if (sample_count <= 1)
         return 1;
@@ -421,6 +403,19 @@ fn runWrapper(data: RunData) void {
     };
 }
 
+fn sampleLineParameter(a: F32x4, b: F32x4, x: i32, y: i32, sample: common.FragmentSampleIterator.Sample, pixel_t: f32) f32 {
+    if (sample.id == null)
+        return pixel_t;
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const squared_length = dx * dx + dy * dy;
+    if (squared_length == 0)
+        return pixel_t;
+    const px = @as(f32, @floatFromInt(x)) + sample.position.x - a[0];
+    const py = @as(f32, @floatFromInt(y)) + sample.position.y - a[1];
+    return std.math.clamp((px * dx + py * dy) / squared_length, 0.0, 1.0);
+}
+
 fn lineQuadHelpers(worker: *const fragment.Worker, v0: *const Renderer.Vertex, v1: *const Renderer.Vertex, provoking_vertex: *const Renderer.Vertex, t: f32, position: F32x4) ?fragment.DerivativeInputs {
     if (!worker.program.uses_derivatives)
         return null;
@@ -445,6 +440,8 @@ inline fn run(data: RunData) !void {
     defer if (data.has_fragment_shader)
         fragment_worker.release();
 
+    const sample_count = data.draw_call.renderer.state.pipeline.?.interface.mode.graphics.multisample.rasterization_samples.toInt();
+    const per_sample = data.has_fragment_shader and fragment.usesSampleId(fragment_worker.program);
     var step = data.start_step;
     while (step <= data.end_step) : (step += 1) {
         const x = data.x0 + @as(i32, @intCast(step));
@@ -457,58 +454,57 @@ inline fn run(data: RunData) !void {
             continue;
         }
 
-        const t = @as(f32, @floatFromInt(step)) / @as(f32, @floatFromInt(@max(data.d_x, 1)));
-        const z = ((1.0 - t) * data.start_vertex.position[2]) + (t * data.end_vertex.position[2]);
-        const frag_w = ((1.0 - t) / data.start_vertex.position[3]) + (t / data.end_vertex.position[3]);
+        const pixel_t = @as(f32, @floatFromInt(step)) / @as(f32, @floatFromInt(@max(data.d_x, 1)));
+        var samples = common.FragmentSampleIterator.init(sample_count, lineCoverageMask(data, pixel_x, pixel_y, sample_count), per_sample);
+        while (samples.next()) |sample| {
+            const t = sampleLineParameter(data.start_vertex.position, data.end_vertex.position, pixel_x, pixel_y, sample, pixel_t);
+            const z = ((1.0 - t) * data.start_vertex.position[2]) + (t * data.end_vertex.position[2]);
+            const frag_w = ((1.0 - t) / data.start_vertex.position[3]) + (t / data.end_vertex.position[3]);
 
-        var fragment_result: fragment.InvocationResult = .{
-            .outputs = std.mem.zeroes([shader_types.max_output_locations][@sizeOf(F32x4)]u8),
-            .depth = null,
-            .sample_mask = null,
-        };
-        if (data.has_fragment_shader) {
-            fragment_result = fragment.shaderInvocation(
-                &fragment_worker,
-                zm.f32x4(@as(f32, @floatFromInt(pixel_x)) + 0.5, @as(f32, @floatFromInt(pixel_y)) + 0.5, z, frag_w),
-                null,
-                null,
-                true,
-                common.interpolateLineOutputs(data.start_vertex, data.end_vertex, data.provoking_vertex, t),
-                lineQuadHelpers(&fragment_worker, data.start_vertex, data.end_vertex, data.provoking_vertex, t, zm.f32x4(@as(f32, @floatFromInt(pixel_x)) + 0.5, @as(f32, @floatFromInt(pixel_y)) + 0.5, z, frag_w)),
-            ) catch |err| {
-                if (err == error.Killed)
-                    continue;
-
-                std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
-                if (comptime base.config.logs == .verbose) {
-                    if (@errorReturnTrace()) |trace| {
-                        std.debug.dumpErrorReturnTrace(trace);
-                    }
-                }
-
-                return;
+            var fragment_result: fragment.InvocationResult = .{
+                .outputs = std.mem.zeroes([shader_types.max_output_locations][@sizeOf(F32x4)]u8),
+                .depth = null,
+                .sample_mask = null,
             };
-        }
+            if (data.has_fragment_shader) {
+                fragment_result = fragment.shaderInvocation(
+                    &fragment_worker,
+                    zm.f32x4(@as(f32, @floatFromInt(pixel_x)) + sample.position.x, @as(f32, @floatFromInt(pixel_y)) + sample.position.y, z, frag_w),
+                    null,
+                    sample.id,
+                    true,
+                    common.interpolateLineOutputs(data.start_vertex, data.end_vertex, data.provoking_vertex, t),
+                    lineQuadHelpers(&fragment_worker, data.start_vertex, data.end_vertex, data.provoking_vertex, t, zm.f32x4(@as(f32, @floatFromInt(pixel_x)) + sample.position.x, @as(f32, @floatFromInt(pixel_y)) + sample.position.y, z, frag_w)),
+                ) catch |err| {
+                    if (err == error.Killed)
+                        continue;
 
-        try common.writeToTargets(
-            fragment_result.outputs,
-            data.draw_call,
-            data.color_attachment_access,
-            data.depth_attachment_access,
-            data.stencil_attachment_access,
-            true,
-            @intCast(pixel_x),
-            @intCast(pixel_y),
-            fragment_result.depth orelse z,
-            lineCoverageMask(
-                data,
-                pixel_x,
-                pixel_y,
-                data.draw_call.renderer.state.pipeline.?.interface.mode.graphics.multisample.rasterization_samples.toInt(),
-            ),
-            fragment_result.sample_mask,
-            false,
-            .locked,
-        );
+                    std.log.scoped(.@"Fragment stage").err("catched a '{s}'", .{@errorName(err)});
+                    if (comptime base.config.logs == .verbose) {
+                        if (@errorReturnTrace()) |trace| {
+                            std.debug.dumpErrorReturnTrace(trace);
+                        }
+                    }
+
+                    return;
+                };
+            }
+
+            try common.writeToTargets(
+                fragment_result.outputs,
+                data.draw_call,
+                data.color_attachment_access,
+                data.depth_attachment_access,
+                data.stencil_attachment_access,
+                true,
+                @intCast(pixel_x),
+                @intCast(pixel_y),
+                fragment_result.depth orelse z,
+                sample.coverage,
+                fragment_result.sample_mask,
+                false,
+                .locked,
+            );
+        }
     }
 }

@@ -216,8 +216,10 @@ pub fn mapStorageImage(state: *const PipelineState, set: u32, binding: u32, arra
     if (binding_index >= descriptor_set.descriptors.len or binding_index >= descriptor_set.interface.layout.bindings.len)
         return null;
 
-    if (descriptor_set.interface.layout.bindings[binding_index].descriptor_type != .storage_image)
-        return null;
+    switch (descriptor_set.interface.layout.bindings[binding_index].descriptor_type) {
+        .storage_image, .input_attachment => {},
+        else => return null,
+    }
 
     const descriptors = switch (descriptor_set.descriptors[binding_index]) {
         .image => |descriptors| descriptors,

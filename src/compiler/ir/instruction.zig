@@ -240,6 +240,7 @@ pub const LoadWorkgroup = struct {
 pub const ImageRead = struct {
     resource: ResourceId,
     coordinate: ValueId,
+    sample: ?ValueId = null,
     dimension: type_ir.ImageDimension = .two_d,
     arrayed: bool = false,
 };
@@ -408,7 +409,11 @@ pub const Operation = union(enum) {
                 visitor(context, op.byte_offset);
                 visitor(context, op.value);
             },
-            .image_read => |op| visitor(context, op.coordinate),
+            .image_read => |op| {
+                visitor(context, op.coordinate);
+                if (op.sample) |sample|
+                    visitor(context, sample);
+            },
             .image_size_query_lod => |op| visitor(context, op.lod),
             .image_fetch => |op| {
                 visitor(context, op.coordinate);
@@ -516,7 +521,11 @@ pub const Operation = union(enum) {
                 replaceOne(&op.byte_offset, old, replacement, &count);
                 replaceOne(&op.value, old, replacement, &count);
             },
-            .image_read => |*op| replaceOne(&op.coordinate, old, replacement, &count),
+            .image_read => |*op| {
+                replaceOne(&op.coordinate, old, replacement, &count);
+                if (op.sample) |*sample|
+                    replaceOne(sample, old, replacement, &count);
+            },
             .image_size_query_lod => |*op| replaceOne(&op.lod, old, replacement, &count),
             .image_fetch => |*op| {
                 replaceOne(&op.coordinate, old, replacement, &count);

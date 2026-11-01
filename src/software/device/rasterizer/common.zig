@@ -24,6 +24,61 @@ pub const RenderTargetAccess = struct {
     format: vk.Format,
 };
 
+pub const SamplePosition = struct { x: f32, y: f32 };
+
+pub fn standardSamplePosition(sample_count: usize, sample_index: usize) SamplePosition {
+    return switch (sample_count) {
+        1 => .{ .x = 0.5, .y = 0.5 },
+        2 => switch (sample_index) {
+            0 => .{ .x = 0.75, .y = 0.75 },
+            1 => .{ .x = 0.25, .y = 0.25 },
+            else => .{ .x = 0.5, .y = 0.5 },
+        },
+        4 => switch (sample_index) {
+            0 => .{ .x = 0.375, .y = 0.125 },
+            1 => .{ .x = 0.875, .y = 0.375 },
+            2 => .{ .x = 0.125, .y = 0.625 },
+            3 => .{ .x = 0.625, .y = 0.875 },
+            else => .{ .x = 0.5, .y = 0.5 },
+        },
+        else => .{ .x = 0.5, .y = 0.5 },
+    };
+}
+
+pub const FragmentSampleIterator = struct {
+    remaining: vk.SampleMask,
+    sample_count: usize,
+    per_sample: bool,
+
+    pub const Sample = struct {
+        id: ?u32,
+        coverage: vk.SampleMask,
+        position: SamplePosition,
+    };
+
+    pub fn init(sample_count: usize, coverage: vk.SampleMask, per_sample: bool) FragmentSampleIterator {
+        const active_mask = if (sample_count >= @bitSizeOf(vk.SampleMask))
+            std.math.maxInt(vk.SampleMask)
+        else
+            (@as(vk.SampleMask, 1) << @intCast(sample_count)) - 1;
+        return .{ .remaining = coverage & active_mask, .sample_count = sample_count, .per_sample = per_sample };
+    }
+
+    pub fn next(self: *FragmentSampleIterator) ?Sample {
+        if (self.remaining == 0)
+            return null;
+        if (!self.per_sample) {
+            const coverage = self.remaining;
+            self.remaining = 0;
+            return .{ .id = null, .coverage = coverage, .position = .{ .x = 0.5, .y = 0.5 } };
+        }
+        const id: u5 = @intCast(@ctz(self.remaining));
+        const bit = @as(vk.SampleMask, 1) << id;
+        self.remaining &= ~bit;
+        return .{ .id = id, .coverage = bit, .position = standardSamplePosition(self.sample_count, id) };
+    }
+};
+
 const PerspectiveWeights = struct { w0: f32, w1: f32, w2: f32 };
 
 pub const RasterVertex = struct {

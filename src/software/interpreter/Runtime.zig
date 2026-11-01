@@ -2179,8 +2179,19 @@ fn imageRead(self: *Self, program: *const Program, options: RunOptions, instruct
         if (try self.imageLocation(view, access, instruction)) |location| {
             const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
             const format = format_info.fromAspect(view.interface.format, location.subresource.aspect_mask);
+            const sample_texel = if (access.sample != .invalid_register) blk: {
+                const texel_offset = image.getTexelMemoryOffset(location.offset, location.subresource) catch return RuntimeError.InvalidResource;
+                const sample_offset = std.math.mul(usize, location.sample, image.getMipLevelSize(location.subresource.aspect_mask, location.subresource.mip_level)) catch return RuntimeError.InvalidResource;
+                const byte_offset = std.math.add(usize, texel_offset, sample_offset) catch return RuntimeError.InvalidResource;
+
+                break :blk image.mapAsSliceWithAddedOffset(u8, byte_offset, format_info.texelSize(format)) catch return RuntimeError.InvalidResource;
+            } else null;
             if (floating) {
-                var pixel = image.readFloat4(location.offset, location.subresource, format) catch return RuntimeError.InvalidResource;
+                var pixel = if (sample_texel) |texel|
+                    blitter.readFloat4(texel, format)
+                else
+                    image.readFloat4(location.offset, location.subresource, format) catch return RuntimeError.InvalidResource;
+
                 if (fetch) {
                     if (format_info.isSrgb(format))
                         pixel = zm.srgbToRgb(pixel);
@@ -2188,7 +2199,11 @@ fn imageRead(self: *Self, program: *const Program, options: RunOptions, instruct
                 }
                 components = @bitCast(pixel);
             } else {
-                var pixel = image.readInt4(location.offset, location.subresource, format) catch return RuntimeError.InvalidResource;
+                var pixel = if (sample_texel) |texel|
+                    blitter.readInt4(texel, format)
+                else
+                    image.readInt4(location.offset, location.subresource, format) catch return RuntimeError.InvalidResource;
+
                 if (fetch)
                     pixel = SoftSampler.swizzleInt4(pixel, view.interface.components);
                 components = @bitCast(pixel);
@@ -2461,6 +2476,14 @@ fn validateImageInstruction(self: *const Self, program: *const Program, instruct
         return RuntimeError.InvalidBytecode;
     if (needs_lod)
         try self.validateRegisterRange(instruction.c, 1);
+
+    if (access.sample != .invalid_register) {
+        if (fetch or access.dimension != .two_d or (instruction.opcode != .image_read and instruction.opcode != .image_read_float))
+            return RuntimeError.InvalidBytecode;
+
+        try self.validateRegisterRange(access.sample, 1);
+    }
+
     if (access.offset != .invalid_register) {
         if (!fetch or access.dimension == .buffer or access.dimension == .cube)
             return RuntimeError.InvalidBytecode;
@@ -2472,13 +2495,31 @@ fn validateImageInstruction(self: *const Self, program: *const Program, instruct
 const ImageLocation = struct {
     offset: vk.Offset3D,
     subresource: vk.ImageSubresource,
+    sample: u32 = 0,
 };
 
 fn imageLocation(self: *const Self, view: *const SoftImageView, access: Program.ImageAccess, instruction: bc.Instruction) RuntimeError!?ImageLocation {
     const image: *const SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
     const range = view.interface.subresource_range;
-    if (range.base_mip_level >= image.interface.mip_levels or image.interface.samples.toInt() != 1)
+
+    if (range.base_mip_level >= image.interface.mip_levels)
         return RuntimeError.InvalidResource;
+
+    var sample: u32 = 0;
+    const sample_count = image.interface.samples.toInt();
+
+    if (access.sample != .invalid_register) {
+        if (sample_count <= 1 or image.interface.image_type != .@"2d" or
+            (view.interface.view_type != .@"2d" and view.interface.view_type != .@"2d_array") or
+            access.arrayed != (view.interface.view_type == .@"2d_array") or
+            image.interface.mip_levels != 1 or range.base_mip_level != 0 or view.interface.levelCount() != 1)
+            return RuntimeError.InvalidResource;
+        sample = low32(self.registers.at(@backingInt(access.sample)).*);
+        if (sample >= sample_count)
+            return null;
+    } else if (sample_count != 1) {
+        return RuntimeError.InvalidResource;
+    }
 
     const lod: i32 = if (instruction.c == .invalid_register) 0 else readI32(self.registers.at(@backingInt(instruction.c)).*);
     if (lod < 0 or @as(u32, @intCast(lod)) >= @min(view.interface.levelCount(), image.interface.mip_levels - range.base_mip_level))
@@ -2527,6 +2568,7 @@ fn imageLocation(self: *const Self, view: *const SoftImageView, access: Program.
     return .{
         .offset = offset,
         .subresource = .{ .aspect_mask = range.aspect_mask, .mip_level = mip, .array_layer = range.base_array_layer + relative_layer },
+        .sample = sample,
     };
 }
 

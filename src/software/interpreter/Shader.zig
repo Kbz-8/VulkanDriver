@@ -118,6 +118,8 @@ fn hasCompatibleInterface(program: *const Program, stage: ir.module.Stage) bool 
                 .fragment => switch (builtin) {
                     .frag_coord => if (binding.direction != .input or binding.span.kind != .floating or binding.span.components != 4)
                         return false,
+                    .sample_id => if (binding.direction != .input or binding.span.components != 1 or
+                        (binding.span.kind != .signed_integer and binding.span.kind != .unsigned_integer)) return false,
                     .frag_depth => if (binding.direction != .output or binding.span.kind != .floating or binding.span.components != 1)
                         return false,
                     else => return false,

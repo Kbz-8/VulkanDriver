@@ -348,6 +348,10 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             try writeNamedRef(writer, if (resource) |r| r.name else null, "resource", op.resource.index());
             try writer.writeAll(", ");
             try writeValueRef(module, writer, op.coordinate);
+            if (op.sample) |sample| {
+                try writer.writeAll(", sample ");
+                try writeValueRef(module, writer, sample);
+            }
             if (op.dimension != .two_d or op.arrayed)
                 try writer.print(", dimension {t}, arrayed {}", .{ op.dimension, op.arrayed });
         },

@@ -410,6 +410,7 @@ fn lowerOperation(
                 .operation = .{ .image_read = .{
                     .resource = resource,
                     .coordinate = coordinate,
+                    .sample = if (op.sample) |sample| resolveValue(values, sample) orelse return error.UnknownValue else null,
                     .dimension = op.dimension,
                     .arrayed = op.arrayed,
                 } },

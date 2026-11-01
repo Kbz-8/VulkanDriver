@@ -13,10 +13,7 @@ const Renderer = @import("../Renderer.zig");
 const VkError = base.VkError;
 const F32x4 = zm.F32x4;
 
-const SamplePosition = struct {
-    x: f32,
-    y: f32,
-};
+const standardSamplePosition = common.standardSamplePosition;
 
 pub const FillState = struct {
     allocator: std.mem.Allocator,
@@ -243,84 +240,75 @@ pub fn rasterizeTriangleInRect(
     const v1 = triangle.vertices[1];
     const v2 = triangle.vertices[2];
 
+    const per_sample = if (optional_worker) |worker| fragment.usesSampleId(worker.program) else false;
     var y = bounds.min_y;
     while (y <= bounds.max_y) : (y += 1) {
         var x = bounds.min_x;
         while (x <= bounds.max_x) : (x += 1) {
-            const p = zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, 0.0, 1.0);
-            const w0 = edgeFunction(v1.position, v2.position, p);
-            const w1 = edgeFunction(v2.position, v0.position, p);
-            const w2 = edgeFunction(v0.position, v1.position, p);
-            const coverage_sample_mask = if (state.sample_count == 1) blk: {
-                const inside =
-                    edgeContainsPixel(v1.position, v2.position, w0, triangle.area) and
-                    edgeContainsPixel(v2.position, v0.position, w1, triangle.area) and
-                    edgeContainsPixel(v0.position, v1.position, w2, triangle.area);
-                break :blk if (inside) @as(vk.SampleMask, 1) else @as(vk.SampleMask, 0);
-            } else triangleCoverageMask(triangle, x, y, state.sample_count);
-            if (coverage_sample_mask == 0)
-                continue;
-
-            const b0 = w0 / triangle.area;
-            const b1 = w1 / triangle.area;
-            const b2 = w2 / triangle.area;
-            const z = (b0 * v0.position[2]) + (b1 * v1.position[2]) + (b2 * v2.position[2]);
-            const depth_z = biasedDepth(state, triangle, z);
-            const frag_w = (b0 / v0.position[3]) + (b1 / v1.position[3]) + (b2 / v2.position[3]);
-            const early_depth = try applyEarlyDepth(state, coverage_sample_mask, x, y, depth_z);
-            if (early_depth.mask == 0)
-                continue;
-
-            const centroid_barycentrics = .{ b0, b1, b2 };
-
-            var fragment_result: fragment.InvocationResult = .{
-                .outputs = std.mem.zeroes([shader_types.max_output_locations][@sizeOf(F32x4)]u8),
-                .depth = null,
-                .sample_mask = null,
-            };
-            if (state.has_fragment_shader) {
-                const worker = optional_worker orelse return VkError.InvalidPipelineDrv;
-                const inputs = fragmentInputs(
-                    triangle,
-                    .{ b0, b1, b2 },
-                    centroid_barycentrics,
+            const coverage_sample_mask = triangleCoverageMask(triangle, x, y, state.sample_count);
+            var samples = common.FragmentSampleIterator.init(state.sample_count, coverage_sample_mask, per_sample);
+            while (samples.next()) |sample| {
+                const p = zm.f32x4(
+                    @as(f32, @floatFromInt(x)) + sample.position.x,
+                    @as(f32, @floatFromInt(y)) + sample.position.y,
+                    0.0,
+                    1.0,
                 );
-                const derivative_inputs: ?fragment.DerivativeInputs = if (state.fragment_uses_derivatives)
-                    irQuadHelpers(state, triangle, x, y)
-                else
-                    null;
+                const b0 = edgeFunction(v1.position, v2.position, p) / triangle.area;
+                const b1 = edgeFunction(v2.position, v0.position, p) / triangle.area;
+                const b2 = edgeFunction(v0.position, v1.position, p) / triangle.area;
+                const z = (b0 * v0.position[2]) + (b1 * v1.position[2]) + (b2 * v2.position[2]);
+                const depth_z = biasedDepth(state, triangle, z);
+                const frag_w = (b0 / v0.position[3]) + (b1 / v1.position[3]) + (b2 / v2.position[3]);
+                const early_depth = try applyEarlyDepth(state, sample.coverage, x, y, depth_z);
+                if (early_depth.mask == 0)
+                    continue;
 
-                fragment_result = fragment.shaderInvocation(
-                    worker,
-                    zm.f32x4(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, depth_z, frag_w),
-                    null,
-                    null,
-                    triangle.front_face,
-                    inputs,
-                    derivative_inputs,
-                ) catch |err| {
-                    if (err == error.Killed)
-                        continue;
-                    logFragmentError(err);
-                    return VkError.Unknown;
+                var fragment_result: fragment.InvocationResult = .{
+                    .outputs = std.mem.zeroes([shader_types.max_output_locations][@sizeOf(F32x4)]u8),
+                    .depth = null,
+                    .sample_mask = null,
                 };
-            }
+                if (state.has_fragment_shader) {
+                    const worker = optional_worker orelse return VkError.InvalidPipelineDrv;
+                    const inputs = fragmentInputs(triangle, .{ b0, b1, b2 }, .{ b0, b1, b2 });
+                    const derivative_inputs: ?fragment.DerivativeInputs = if (state.fragment_uses_derivatives)
+                        irQuadHelpers(state, triangle, x, y, sample.position)
+                    else
+                        null;
 
-            try common.writeToTargets(
-                fragment_result.outputs,
-                state.draw_call,
-                state.color_attachment_access,
-                state.depth_attachment_access,
-                state.stencil_attachment_access,
-                triangle.front_face,
-                @intCast(x),
-                @intCast(y),
-                fragment_result.depth orelse depth_z,
-                early_depth.mask,
-                fragment_result.sample_mask,
-                early_depth.applied,
-                state.ordering,
-            );
+                    fragment_result = fragment.shaderInvocation(
+                        worker,
+                        zm.f32x4(p[0], p[1], depth_z, frag_w),
+                        null,
+                        sample.id,
+                        triangle.front_face,
+                        inputs,
+                        derivative_inputs,
+                    ) catch |err| {
+                        if (err == error.Killed)
+                            continue;
+                        logFragmentError(err);
+                        return VkError.Unknown;
+                    };
+                }
+
+                try common.writeToTargets(
+                    fragment_result.outputs,
+                    state.draw_call,
+                    state.color_attachment_access,
+                    state.depth_attachment_access,
+                    state.stencil_attachment_access,
+                    triangle.front_face,
+                    @intCast(x),
+                    @intCast(y),
+                    fragment_result.depth orelse depth_z,
+                    early_depth.mask,
+                    fragment_result.sample_mask,
+                    early_depth.applied,
+                    state.ordering,
+                );
+            }
         }
     }
 }
@@ -660,7 +648,7 @@ fn irQuadCoverage(state: *const FillState, triangle: *const PreparedTriangle, bo
     return quad;
 }
 
-fn irQuadHelpers(state: *const FillState, triangle: *const PreparedTriangle, x: i32, y: i32) fragment.DerivativeInputs {
+fn irQuadHelpers(state: *const FillState, triangle: *const PreparedTriangle, x: i32, y: i32, sample_position: common.SamplePosition) fragment.DerivativeInputs {
     const v0 = triangle.vertices[0];
     const v1 = triangle.vertices[1];
     const v2 = triangle.vertices[2];
@@ -669,7 +657,7 @@ fn irQuadHelpers(state: *const FillState, triangle: *const PreparedTriangle, x: 
     for (0..4) |lane| {
         const helper_x = (x & ~@as(i32, 1)) + @as(i32, @intCast(lane & 1));
         const helper_y = (y & ~@as(i32, 1)) + @as(i32, @intCast(lane >> 1));
-        var p = zm.f32x4(@as(f32, @floatFromInt(helper_x)) + 0.5, @as(f32, @floatFromInt(helper_y)) + 0.5, 0, 1);
+        var p = zm.f32x4(@as(f32, @floatFromInt(helper_x)) + sample_position.x, @as(f32, @floatFromInt(helper_y)) + sample_position.y, 0, 1);
         const weights = [3]f32{
             edgeFunction(v1.position, v2.position, p) / triangle.area,
             edgeFunction(v2.position, v0.position, p) / triangle.area,
@@ -824,25 +812,6 @@ inline fn edgeContainsPixel(a: F32x4, b: F32x4, edge_value: f32, area: f32) bool
         edge_value > 0.0 or (edge_value == 0.0 and isInclusiveEdge(a, b))
     else
         edge_value < 0.0 or (edge_value == 0.0 and isInclusiveEdge(b, a));
-}
-
-fn standardSamplePosition(sample_count: usize, sample_index: usize) SamplePosition {
-    return switch (sample_count) {
-        1 => .{ .x = 0.5, .y = 0.5 },
-        2 => switch (sample_index) {
-            0 => .{ .x = 0.75, .y = 0.75 },
-            1 => .{ .x = 0.25, .y = 0.25 },
-            else => .{ .x = 0.5, .y = 0.5 },
-        },
-        4 => switch (sample_index) {
-            0 => .{ .x = 0.375, .y = 0.125 },
-            1 => .{ .x = 0.875, .y = 0.375 },
-            2 => .{ .x = 0.125, .y = 0.625 },
-            3 => .{ .x = 0.625, .y = 0.875 },
-            else => .{ .x = 0.5, .y = 0.5 },
-        },
-        else => .{ .x = 0.5, .y = 0.5 },
-    };
 }
 
 fn logFragmentError(err: anyerror) void {

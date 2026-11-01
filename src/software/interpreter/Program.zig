@@ -85,6 +85,7 @@ pub const ImageAccess = struct {
     dimension: ImageDimension,
     arrayed: bool,
     offset: bc.Register = .invalid_register,
+    sample: bc.Register = .invalid_register,
 };
 
 pub const DescriptorCandidate = struct {
@@ -897,7 +898,7 @@ const Lowerer = struct {
                 _ = try self.workgroupVariable(op.variable);
                 try self.emit(.store_workgroup, src.components, src.base, byte_offset, .invalid_register, .invalid_register, @backingInt(op.variable));
             },
-            .image_read => |op| try self.lowerImageRead(result orelse return CompileError.InvalidOperation, op.resource, op.coordinate, null, null, op.dimension, op.arrayed, false),
+            .image_read => |op| try self.lowerImageRead(result orelse return CompileError.InvalidOperation, op.resource, op.coordinate, null, null, op.sample, op.dimension, op.arrayed, false),
             .image_size_query_lod => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;
                 const lod = try self.span(op.lod);
@@ -935,6 +936,7 @@ const Lowerer = struct {
                 op.coordinate,
                 op.lod,
                 op.offset,
+                null,
                 op.dimension,
                 op.arrayed,
                 true,
@@ -1022,6 +1024,7 @@ const Lowerer = struct {
         coordinate_id: ids.ValueId,
         lod_id: ?ids.ValueId,
         offset_id: ?ids.ValueId,
+        sample_id: ?ids.ValueId,
         dimension: ImageDimension,
         arrayed: bool,
         fetch: bool,
@@ -1035,6 +1038,11 @@ const Lowerer = struct {
             return CompileError.InvalidOperation;
 
         self.image_accesses.items[access].offset = try self.imageOperandRegister(offset_id, spatialImageComponents(dimension), false);
+        if (sample_id) |id| {
+            if (fetch or dimension != .two_d or try scalarBits(self.module, self.module.typeOf(id).?) != 32)
+                return CompileError.InvalidOperation;
+            self.image_accesses.items[access].sample = try self.imageOperandRegister(id, 1, false);
+        }
 
         if ((fetch and dimension != .buffer) != (lod_id != null))
             return CompileError.InvalidOperation;
