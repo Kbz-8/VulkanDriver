@@ -1600,10 +1600,28 @@ test "Parser: infer and print float classification, matrix, and conversion opera
         \\        .entry():
         \\            %infinite = is_inf %scalar
         \\            %nan = is_nan %lhs
-        \\            %transposed = transpose %matrix
+        \\            %m00 = composite_extract %matrix[0][0]
+        \\            %m10 = composite_extract %matrix[1][0]
+        \\            %t0 = composite_construct %m00, %m10
+        \\            %m01 = composite_extract %matrix[0][1]
+        \\            %m11 = composite_extract %matrix[1][1]
+        \\            %t1 = composite_construct %m01, %m11
+        \\            %m02 = composite_extract %matrix[0][2]
+        \\            %m12 = composite_extract %matrix[1][2]
+        \\            %t2 = composite_construct %m02, %m12
+        \\            %transposed: mat3x2[f32] = composite_construct %t0, %t1, %t2
         \\            %remainder = float_remainder %lhs, %lhs
         \\            %product = dot %lhs, %lhs
-        \\            %outer = outer_product %lhs, %rhs
+        \\            %r0 = composite_extract %rhs[0]
+        \\            %r0_splat = composite_construct %r0, %r0
+        \\            %o0 = float_multiply %lhs, %r0_splat
+        \\            %r1 = composite_extract %rhs[1]
+        \\            %r1_splat = composite_construct %r1, %r1
+        \\            %o1 = float_multiply %lhs, %r1_splat
+        \\            %r2 = composite_extract %rhs[2]
+        \\            %r2_splat = composite_construct %r2, %r2
+        \\            %o2 = float_multiply %lhs, %r2_splat
+        \\            %outer: mat3x2[f32] = composite_construct %o0, %o1, %o2
         \\            %signed = convert float_to_signed %lhs
         \\            %unsigned = convert float_to_unsigned %scalar
         \\            return
@@ -1617,10 +1635,12 @@ test "Parser: infer and print float classification, matrix, and conversion opera
 
     try std.testing.expect(std.mem.indexOf(u8, printed, "%infinite: bool = is_inf %scalar") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "%nan: vec2[bool] = is_nan %lhs") != null);
-    try std.testing.expect(std.mem.indexOf(u8, printed, "%transposed: mat3x2[f32] = transpose %matrix") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%transposed: mat3x2[f32] = composite_construct %t0, %t1, %t2") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "%remainder: vec2[f32] = float_remainder %lhs, %lhs") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "%product: f32 = dot %lhs, %lhs") != null);
-    try std.testing.expect(std.mem.indexOf(u8, printed, "%outer: mat3x2[f32] = outer_product %lhs, %rhs") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%r0_splat: vec2[f32] = composite_construct %r0, %r0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%o0: vec2[f32] = float_multiply %lhs, %r0_splat") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%outer: mat3x2[f32] = composite_construct %o0, %o1, %o2") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "%signed: vec2[i32] = convert float_to_signed %lhs") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "%unsigned: u32 = convert float_to_unsigned %scalar") != null);
 
@@ -2029,18 +2049,39 @@ test "Parser: reject malformed block structure and opcodes" {
         \\trailing
     );
 
-    try expectParseError(Error.InvalidOpcode,
+    const prefix =
         \\shader compute @main
         \\{
         \\    %one: constant u32 = 1
         \\    fn @main() -> void
         \\    {
         \\        .entry():
-        \\            %bad = cmp_unknown %one, %one
-        \\            return
-        \\    }
-        \\}
-    );
+        \\            %bad =
+    ;
+    inline for (.{
+        "cmp_unknown %one, %one",
+        "matrix_times_matrix %one, %one",
+        "matrix_times_vector %one, %one",
+        "vector_times_matrix %one, %one",
+        "matrix_times_scalar %one, %one",
+        "outer_product %one, %one",
+        "transpose %one",
+        "degrees %one",
+        "radians %one",
+        "float_mix %one, %one, %one",
+        "smooth_step %one, %one, %one",
+        "step %one, %one",
+        "vector_times_scalar %one, %one",
+        "float_clamp %one, %one, %one",
+        "signed_clamp %one, %one, %one",
+        "unsigned_clamp %one, %one, %one",
+        "length %one",
+        "normalize %one",
+        "float_sign %one",
+        "integer_sign %one",
+    }) |operation| {
+        try expectParseError(Error.InvalidOpcode, prefix ++ " " ++ operation ++ "\nreturn\n}\n}");
+    }
 }
 
 test "Parser: report invalid stage, semantics, and types" {

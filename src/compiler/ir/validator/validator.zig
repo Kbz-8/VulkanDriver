@@ -56,12 +56,6 @@ const FloatVectorShape = struct {
     length: u8,
 };
 
-const FloatMatrixShape = struct {
-    element_type: ids.TypeId,
-    rows: u8,
-    columns: u8,
-};
-
 pub const Error = ValidationError || std.mem.Allocator.Error;
 
 pub fn validate(module: *const module_ir.Module) Error!void {
@@ -323,15 +317,9 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                     if (booleanComponentCount(module, result) != operand_shape.components)
                         return ValidationError.WrongResultType;
                 },
-                .length => {
-                    _ = floatShape(module, operand_type) orelse return ValidationError.WrongOperandType;
-                    const operand = module.types.get(operand_type).?;
-                    const scalar = if (operand.* == .vector) operand.vector.element_type else operand_type;
-                    if (result != scalar)
-                        return ValidationError.WrongResultType;
-                },
                 .d_pdx,
                 .d_pdx_coarse,
+                .d_pdx_fine,
                 .d_pdy,
                 .fwidth,
                 .fwidth_coarse,
@@ -343,9 +331,7 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                     if (result != operand_type)
                         return ValidationError.WrongResultType;
                 },
-                .integer_absolute,
-                .integer_sign,
-                => {
+                .integer_absolute => {
                     _ = integerShape(module, operand_type) orelse return ValidationError.WrongOperandType;
                     if (result != operand_type)
                         return ValidationError.WrongResultType;
@@ -359,18 +345,14 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                 .ceil,
                 .cos,
                 .cosh,
-                .degrees,
                 .exp,
                 .exp2,
                 .float_absolute,
-                .float_sign,
                 .floor,
                 .fract,
                 .inverse_sqrt,
                 .log,
                 .log2,
-                .normalize,
-                .radians,
                 .round,
                 .sin,
                 .sinh,
@@ -392,14 +374,6 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                 },
                 .negate => {
                     if (result != operand_type)
-                        return ValidationError.WrongResultType;
-                },
-                .transpose => {
-                    const operand_shape = floatMatrixShape(module, operand_type) orelse return ValidationError.WrongOperandType;
-                    const result_shape = floatMatrixShape(module, result) orelse return ValidationError.WrongResultType;
-                    if (result_shape.element_type != operand_shape.element_type or
-                        result_shape.rows != operand_shape.columns or
-                        result_shape.columns != operand_shape.rows)
                         return ValidationError.WrongResultType;
                 },
             }
@@ -445,19 +419,6 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                     if (result_type == null or result_type.? != vector.element_type)
                         return ValidationError.WrongResultType;
                 },
-                .outer_product => {
-                    const lhs = floatVectorShape(module, lhs_type) orelse return ValidationError.WrongOperandType;
-                    const rhs = floatVectorShape(module, rhs_type) orelse return ValidationError.WrongOperandType;
-                    if (lhs.element_type != rhs.element_type)
-                        return ValidationError.WrongOperandType;
-
-                    const result = result_type orelse return ValidationError.WrongResultPresence;
-                    const matrix = floatMatrixShape(module, result) orelse return ValidationError.WrongResultType;
-                    if (matrix.element_type != lhs.element_type or
-                        matrix.rows != lhs.length or
-                        matrix.columns != rhs.length)
-                        return ValidationError.WrongResultType;
-                },
                 .integer_add_carry,
                 .integer_subtract_borrow,
                 .signed_multiply_extended,
@@ -485,153 +446,6 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                         structure.members[1] != lhs_type)
                         return ValidationError.WrongResultType;
                 },
-                .matrix_times_matrix => {
-                    const lhs = module.types.get(lhs_type) orelse return ValidationError.InvalidType;
-                    const lhs_matrix = switch (lhs.*) {
-                        .matrix => |matrix| matrix,
-                        else => return ValidationError.WrongOperandType,
-                    };
-
-                    const lhs_column_type = module.types.get(lhs_matrix.element_type) orelse return ValidationError.InvalidType;
-                    const lhs_column = switch (lhs_column_type.*) {
-                        .vector => |vector| vector,
-                        else => return ValidationError.WrongOperandType,
-                    };
-
-                    const lhs_element = module.types.get(lhs_column.element_type) orelse return ValidationError.InvalidType;
-
-                    const rhs = module.types.get(rhs_type) orelse return ValidationError.InvalidType;
-                    const rhs_matrix = switch (rhs.*) {
-                        .matrix => |matrix| matrix,
-                        else => return ValidationError.WrongOperandType,
-                    };
-
-                    const rhs_column_type = module.types.get(rhs_matrix.element_type) orelse return ValidationError.InvalidType;
-                    const rhs_column = switch (rhs_column_type.*) {
-                        .vector => |vector| vector,
-                        else => return ValidationError.WrongOperandType,
-                    };
-
-                    if (lhs_element.* != .floating or
-                        rhs_column.element_type != lhs_column.element_type or
-                        lhs_matrix.column_count != rhs_column.length)
-                        return ValidationError.WrongOperandType;
-
-                    const result = module.types.get(result_type orelse return ValidationError.WrongResultType) orelse return ValidationError.InvalidType;
-                    const result_matrix = switch (result.*) {
-                        .matrix => |matrix| matrix,
-                        else => return ValidationError.WrongResultType,
-                    };
-
-                    const result_column_type = module.types.get(result_matrix.element_type) orelse return ValidationError.InvalidType;
-                    const result_column = switch (result_column_type.*) {
-                        .vector => |vector| vector,
-                        else => return ValidationError.WrongResultType,
-                    };
-
-                    if (result_column.element_type != lhs_column.element_type or
-                        result_column.length != lhs_column.length or
-                        result_matrix.column_count != rhs_matrix.column_count)
-                        return ValidationError.WrongResultType;
-                },
-                .matrix_times_scalar => {
-                    const lhs = module.types.get(lhs_type) orelse return ValidationError.InvalidType;
-                    const matrix = switch (lhs.*) {
-                        .matrix => |matrix| matrix,
-                        else => return ValidationError.WrongOperandType,
-                    };
-
-                    const column_type = module.types.get(matrix.element_type) orelse return ValidationError.InvalidType;
-                    const column = switch (column_type.*) {
-                        .vector => |vector| vector,
-                        else => return ValidationError.WrongOperandType,
-                    };
-
-                    const element = module.types.get(column.element_type) orelse return ValidationError.InvalidType;
-                    if (element.* != .floating or rhs_type != column.element_type)
-                        return ValidationError.WrongOperandType;
-
-                    if (result_type == null or result_type.? != lhs_type)
-                        return ValidationError.WrongResultType;
-                },
-                .matrix_times_vector => {
-                    const lhs = module.types.get(lhs_type) orelse return ValidationError.InvalidType;
-                    const matrix = switch (lhs.*) {
-                        .matrix => |matrix| matrix,
-                        else => return ValidationError.WrongOperandType,
-                    };
-
-                    const column_type = module.types.get(matrix.element_type) orelse return ValidationError.InvalidType;
-                    const column = switch (column_type.*) {
-                        .vector => |vector| vector,
-                        else => return ValidationError.WrongOperandType,
-                    };
-
-                    const element = module.types.get(column.element_type) orelse return ValidationError.InvalidType;
-
-                    const rhs = module.types.get(rhs_type) orelse return ValidationError.InvalidType;
-                    const vector = switch (rhs.*) {
-                        .vector => |vector| vector,
-                        else => return ValidationError.WrongOperandType,
-                    };
-
-                    if (element.* != .floating or
-                        vector.element_type != column.element_type or
-                        vector.length != matrix.column_count)
-                        return ValidationError.WrongOperandType;
-
-                    if (result_type == null or result_type.? != matrix.element_type)
-                        return ValidationError.WrongResultType;
-                },
-                .vector_times_matrix => {
-                    const lhs = module.types.get(lhs_type) orelse return ValidationError.InvalidType;
-                    const vector = switch (lhs.*) {
-                        .vector => |vector| vector,
-                        else => return ValidationError.WrongOperandType,
-                    };
-
-                    const element = module.types.get(vector.element_type) orelse return ValidationError.InvalidType;
-
-                    const rhs = module.types.get(rhs_type) orelse return ValidationError.InvalidType;
-                    const matrix = switch (rhs.*) {
-                        .matrix => |matrix| matrix,
-                        else => return ValidationError.WrongOperandType,
-                    };
-
-                    const column_type = module.types.get(matrix.element_type) orelse return ValidationError.InvalidType;
-                    const column = switch (column_type.*) {
-                        .vector => |column_vector| column_vector,
-                        else => return ValidationError.WrongOperandType,
-                    };
-
-                    if (element.* != .floating or
-                        column.element_type != vector.element_type or
-                        vector.length != column.length)
-                        return ValidationError.WrongOperandType;
-
-                    const result = module.types.get(result_type orelse return ValidationError.WrongResultType) orelse return ValidationError.InvalidType;
-                    const result_vector = switch (result.*) {
-                        .vector => |result_vector| result_vector,
-                        else => return ValidationError.WrongResultType,
-                    };
-
-                    if (result_vector.element_type != vector.element_type or result_vector.length != matrix.column_count)
-                        return ValidationError.WrongResultType;
-                },
-                .vector_times_scalar => {
-                    const lhs = module.types.get(lhs_type) orelse return ValidationError.InvalidType;
-                    const vector = switch (lhs.*) {
-                        .vector => |vector| vector,
-                        else => return ValidationError.WrongOperandType,
-                    };
-
-                    const element = module.types.get(vector.element_type) orelse return ValidationError.InvalidType;
-                    if (element.* != .floating or rhs_type != vector.element_type)
-                        return ValidationError.WrongOperandType;
-
-                    if (result_type == null or result_type.? != lhs_type)
-                        return ValidationError.WrongResultType;
-                },
                 else => {
                     if (lhs_type != rhs_type)
                         return ValidationError.WrongOperandType;
@@ -651,18 +465,7 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                 return ValidationError.WrongResultType;
 
             switch (op.opcode) {
-                .signed_clamp,
-                .unsigned_clamp,
-                => {
-                    if (integerShape(module, first_type) == null)
-                        return ValidationError.WrongOperandType;
-                },
-
-                .float_clamp,
-                .float_mix,
-                .float_mul_add,
-                .smooth_step,
-                => {
+                .float_mul_add => {
                     if (floatShape(module, first_type) == null)
                         return ValidationError.WrongOperandType;
                 },
@@ -1403,20 +1206,6 @@ fn floatVectorShape(module: *const module_ir.Module, type_id: ids.TypeId) ?Float
     };
 }
 
-fn floatMatrixShape(module: *const module_ir.Module, type_id: ids.TypeId) ?FloatMatrixShape {
-    const ty = module.types.get(type_id) orelse return null;
-    const matrix = switch (ty.*) {
-        .matrix => |matrix| matrix,
-        else => return null,
-    };
-    const column = floatVectorShape(module, matrix.element_type) orelse return null;
-    return .{
-        .element_type = column.element_type,
-        .rows = column.length,
-        .columns = matrix.column_count,
-    };
-}
-
 fn isFloatVector(module: *const module_ir.Module, type_id: ids.TypeId, bits: u16, length: u8) bool {
     const ty = module.types.get(type_id) orelse return false;
     return switch (ty.*) {
@@ -1556,7 +1345,7 @@ fn expectValidationError(expected: Error, source: []const u8) !void {
     try std.testing.expectError(expected, parser.parseString(std.testing.allocator, source));
 }
 
-test "Validator: length, fwidth, and dynamic extraction inferred types" {
+test "Validator: length primitives, fwidth, and dynamic extraction inferred types" {
     const parser = @import("../parser/parser.zig");
     var module = try parser.parseString(std.testing.allocator,
         \\shader fragment @main
@@ -1564,8 +1353,9 @@ test "Validator: length, fwidth, and dynamic extraction inferred types" {
         \\    fn @main(%scalar: f64, %vector: vec3[f64], %flags: vec2[bool], %index: i32) -> void
         \\    {
         \\        .entry():
-        \\            %scalar_length = length %scalar
-        \\            %vector_length = length %vector
+        \\            %scalar_length = float_absolute %scalar
+        \\            %squared_length = dot %vector, %vector
+        \\            %vector_length = sqrt %squared_length
         \\            %scalar_width = fwidth %scalar
         \\            %vector_width = fwidth %vector
         \\            %element = vector_extract_dynamic %vector, %index
@@ -1580,8 +1370,9 @@ test "Validator: length, fwidth, and dynamic extraction inferred types" {
     const text = try printer.allocPrint(std.testing.allocator, &module);
     defer std.testing.allocator.free(text);
     for ([_][]const u8{
-        "%scalar_length: f64 = length",
-        "%vector_length: f64 = length",
+        "%scalar_length: f64 = float_absolute",
+        "%squared_length: f64 = dot %vector, %vector",
+        "%vector_length: f64 = sqrt %squared_length",
         "%scalar_width: f64 = fwidth",
         "%vector_width: vec3[f64] = fwidth",
         "%element: f64 = vector_extract_dynamic",
@@ -1591,16 +1382,18 @@ test "Validator: length, fwidth, and dynamic extraction inferred types" {
     }
 
     const cases = .{
-        .{ "vec3[f64]", "length %vector", ValidationError.WrongResultType },
-        .{ "f32", "length %vector", ValidationError.WrongResultType },
-        .{ "f64", "length %matrix", ValidationError.WrongOperandType },
-        .{ "f64", "length %index", ValidationError.WrongOperandType },
+        .{ "vec3[f64]", "dot %vector, %vector", ValidationError.WrongResultType },
+        .{ "f32", "dot %vector, %vector", ValidationError.WrongResultType },
+        .{ "f64", "dot %matrix, %matrix", ValidationError.WrongOperandType },
+        .{ "f64", "float_absolute %index", ValidationError.WrongOperandType },
+        .{ "f64", "sqrt %index", ValidationError.WrongOperandType },
+        .{ "f32", "sqrt %scalar", ValidationError.WrongResultType },
     };
     inline for (cases) |case| {
         const source = try std.fmt.allocPrint(std.testing.allocator,
             \\shader fragment @main
             \\{{
-            \\    fn @main(%vector: vec3[f64], %matrix: mat2x3[f64], %index: i32) -> void
+            \\    fn @main(%scalar: f64, %vector: vec3[f64], %matrix: mat2x3[f64], %index: i32) -> void
             \\    {{
             \\        .entry():
             \\            %result: {s} = {s}
@@ -2064,7 +1857,7 @@ test "Validator: bit and extended integer operations" {
     );
 }
 
-test "Validator: matrix arithmetic types and dimensions" {
+test "Validator: primitive matrix arithmetic types and dimensions" {
     const parser = @import("../parser/parser.zig");
 
     var module = try parser.parseString(std.testing.allocator,
@@ -2073,10 +1866,51 @@ test "Validator: matrix arithmetic types and dimensions" {
         \\    fn @main(%lhs: mat2x3[f32], %rhs: mat4x2[f32], %scalar: f32, %columns: vec2[f32], %rows: vec3[f32]) -> void
         \\    {
         \\        .entry():
-        \\            %scaled: mat2x3[f32] = matrix_times_scalar %lhs, %scalar
-        \\            %column_result: vec3[f32] = matrix_times_vector %lhs, %columns
-        \\            %row_result: vec2[f32] = vector_times_matrix %rows, %lhs
-        \\            %matrix_result: mat4x3[f32] = matrix_times_matrix %lhs, %rhs
+        \\            %c0: vec3[f32] = composite_extract %lhs[0]
+        \\            %c1: vec3[f32] = composite_extract %lhs[1]
+        \\            %scalar_splat: vec3[f32] = composite_construct %scalar, %scalar, %scalar
+        \\            %s0: vec3[f32] = float_multiply %c0, %scalar_splat
+        \\            %s1: vec3[f32] = float_multiply %c1, %scalar_splat
+        \\            %scaled: mat2x3[f32] = composite_construct %s0, %s1
+        \\            %x: f32 = composite_extract %columns[0]
+        \\            %y: f32 = composite_extract %columns[1]
+        \\            %x_splat: vec3[f32] = composite_construct %x, %x, %x
+        \\            %y_splat: vec3[f32] = composite_construct %y, %y, %y
+        \\            %v0: vec3[f32] = float_multiply %c0, %x_splat
+        \\            %v1: vec3[f32] = float_multiply %c1, %y_splat
+        \\            %column_result: vec3[f32] = float_add %v0, %v1
+        \\            %d0: f32 = dot %rows, %c0
+        \\            %d1: f32 = dot %rows, %c1
+        \\            %row_result: vec2[f32] = composite_construct %d0, %d1
+        \\            %b00: f32 = composite_extract %rhs[0][0]
+        \\            %b01: f32 = composite_extract %rhs[0][1]
+        \\            %b00_splat: vec3[f32] = composite_construct %b00, %b00, %b00
+        \\            %b01_splat: vec3[f32] = composite_construct %b01, %b01, %b01
+        \\            %p00: vec3[f32] = float_multiply %c0, %b00_splat
+        \\            %p01: vec3[f32] = float_multiply %c1, %b01_splat
+        \\            %p0: vec3[f32] = float_add %p00, %p01
+        \\            %b10: f32 = composite_extract %rhs[1][0]
+        \\            %b11: f32 = composite_extract %rhs[1][1]
+        \\            %b10_splat: vec3[f32] = composite_construct %b10, %b10, %b10
+        \\            %b11_splat: vec3[f32] = composite_construct %b11, %b11, %b11
+        \\            %p10: vec3[f32] = float_multiply %c0, %b10_splat
+        \\            %p11: vec3[f32] = float_multiply %c1, %b11_splat
+        \\            %p1: vec3[f32] = float_add %p10, %p11
+        \\            %b20: f32 = composite_extract %rhs[2][0]
+        \\            %b21: f32 = composite_extract %rhs[2][1]
+        \\            %b20_splat: vec3[f32] = composite_construct %b20, %b20, %b20
+        \\            %b21_splat: vec3[f32] = composite_construct %b21, %b21, %b21
+        \\            %p20: vec3[f32] = float_multiply %c0, %b20_splat
+        \\            %p21: vec3[f32] = float_multiply %c1, %b21_splat
+        \\            %p2: vec3[f32] = float_add %p20, %p21
+        \\            %b30: f32 = composite_extract %rhs[3][0]
+        \\            %b31: f32 = composite_extract %rhs[3][1]
+        \\            %b30_splat: vec3[f32] = composite_construct %b30, %b30, %b30
+        \\            %b31_splat: vec3[f32] = composite_construct %b31, %b31, %b31
+        \\            %p30: vec3[f32] = float_multiply %c0, %b30_splat
+        \\            %p31: vec3[f32] = float_multiply %c1, %b31_splat
+        \\            %p3: vec3[f32] = float_add %p30, %p31
+        \\            %matrix_result: mat4x3[f32] = composite_construct %p0, %p1, %p2, %p3
         \\            return
         \\    }
         \\}
@@ -2090,7 +1924,9 @@ test "Validator: matrix arithmetic types and dimensions" {
         \\    fn @main(%matrix: mat2x3[f32], %scalar: u32) -> void
         \\    {
         \\        .entry():
-        \\            %result: mat2x3[f32] = matrix_times_scalar %matrix, %scalar
+        \\            %column: vec3[f32] = composite_extract %matrix[0]
+        \\            %scalar_splat: vec3[u32] = composite_construct %scalar, %scalar, %scalar
+        \\            %result: vec3[f32] = float_multiply %column, %scalar_splat
         \\            return
         \\    }
         \\}
@@ -2102,7 +1938,10 @@ test "Validator: matrix arithmetic types and dimensions" {
         \\    fn @main(%matrix: mat2x3[f32], %vector: vec3[f32]) -> void
         \\    {
         \\        .entry():
-        \\            %result: vec3[f32] = matrix_times_vector %matrix, %vector
+        \\            %x: f32 = composite_extract %matrix[0][0]
+        \\            %y: f32 = composite_extract %matrix[1][0]
+        \\            %row: vec2[f32] = composite_construct %x, %y
+        \\            %result: f32 = dot %row, %vector
         \\            return
         \\    }
         \\}
@@ -2114,7 +1953,8 @@ test "Validator: matrix arithmetic types and dimensions" {
         \\    fn @main(%vector: vec2[f32], %matrix: mat2x3[f32]) -> void
         \\    {
         \\        .entry():
-        \\            %result: vec2[f32] = vector_times_matrix %vector, %matrix
+        \\            %column: vec3[f32] = composite_extract %matrix[0]
+        \\            %result: f32 = dot %vector, %column
         \\            return
         \\    }
         \\}
@@ -2126,7 +1966,11 @@ test "Validator: matrix arithmetic types and dimensions" {
         \\    fn @main(%lhs: mat2x3[f32], %rhs: mat4x3[f32]) -> void
         \\    {
         \\        .entry():
-        \\            %result: mat4x3[f32] = matrix_times_matrix %lhs, %rhs
+        \\            %x: f32 = composite_extract %lhs[0][0]
+        \\            %y: f32 = composite_extract %lhs[1][0]
+        \\            %row: vec2[f32] = composite_construct %x, %y
+        \\            %column: vec3[f32] = composite_extract %rhs[0]
+        \\            %result: f32 = dot %row, %column
         \\            return
         \\    }
         \\}
@@ -2138,7 +1982,9 @@ test "Validator: matrix arithmetic types and dimensions" {
         \\    fn @main(%matrix: mat2x3[f32], %scalar: f32) -> void
         \\    {
         \\        .entry():
-        \\            %result: mat3x2[f32] = matrix_times_scalar %matrix, %scalar
+        \\            %column: vec3[f32] = composite_extract %matrix[0]
+        \\            %scalar_splat: vec3[f32] = composite_construct %scalar, %scalar, %scalar
+        \\            %result: vec2[f32] = float_multiply %column, %scalar_splat
         \\            return
         \\    }
         \\}
@@ -2150,7 +1996,15 @@ test "Validator: matrix arithmetic types and dimensions" {
         \\    fn @main(%matrix: mat2x3[f32], %vector: vec2[f32]) -> void
         \\    {
         \\        .entry():
-        \\            %result: vec2[f32] = matrix_times_vector %matrix, %vector
+        \\            %c0: vec3[f32] = composite_extract %matrix[0]
+        \\            %c1: vec3[f32] = composite_extract %matrix[1]
+        \\            %x: f32 = composite_extract %vector[0]
+        \\            %y: f32 = composite_extract %vector[1]
+        \\            %x_splat: vec3[f32] = composite_construct %x, %x, %x
+        \\            %y_splat: vec3[f32] = composite_construct %y, %y, %y
+        \\            %v0: vec3[f32] = float_multiply %c0, %x_splat
+        \\            %v1: vec3[f32] = float_multiply %c1, %y_splat
+        \\            %result: vec2[f32] = float_add %v0, %v1
         \\            return
         \\    }
         \\}
@@ -2162,7 +2016,8 @@ test "Validator: matrix arithmetic types and dimensions" {
         \\    fn @main(%vector: vec3[f32], %matrix: mat2x3[f32]) -> void
         \\    {
         \\        .entry():
-        \\            %result: vec3[f32] = vector_times_matrix %vector, %matrix
+        \\            %column: vec3[f32] = composite_extract %matrix[0]
+        \\            %result: vec3[f32] = dot %vector, %column
         \\            return
         \\    }
         \\}
@@ -2174,7 +2029,7 @@ test "Validator: matrix arithmetic types and dimensions" {
         \\    fn @main(%lhs: mat2x3[f32], %rhs: mat4x2[f32]) -> void
         \\    {
         \\        .entry():
-        \\            %result: mat4x2[f32] = matrix_times_matrix %lhs, %rhs
+        \\            %result: vec3[f32] = composite_extract %rhs[0]
         \\            return
         \\    }
         \\}
@@ -2192,10 +2047,28 @@ test "Validator: float classification, matrix, product, and conversion operation
         \\        .entry():
         \\            %infinite: bool = is_inf %scalar
         \\            %nan: vec2[bool] = is_nan %lhs
-        \\            %transposed: mat3x2[f32] = transpose %matrix
+        \\            %m00: f32 = composite_extract %matrix[0][0]
+        \\            %m10: f32 = composite_extract %matrix[1][0]
+        \\            %t0: vec2[f32] = composite_construct %m00, %m10
+        \\            %m01: f32 = composite_extract %matrix[0][1]
+        \\            %m11: f32 = composite_extract %matrix[1][1]
+        \\            %t1: vec2[f32] = composite_construct %m01, %m11
+        \\            %m02: f32 = composite_extract %matrix[0][2]
+        \\            %m12: f32 = composite_extract %matrix[1][2]
+        \\            %t2: vec2[f32] = composite_construct %m02, %m12
+        \\            %transposed: mat3x2[f32] = composite_construct %t0, %t1, %t2
         \\            %remainder: vec2[f32] = float_remainder %lhs, %lhs
         \\            %product: f32 = dot %lhs, %lhs
-        \\            %outer: mat3x2[f32] = outer_product %lhs, %rhs
+        \\            %r0: f32 = composite_extract %rhs[0]
+        \\            %r0_splat: vec2[f32] = composite_construct %r0, %r0
+        \\            %o0: vec2[f32] = float_multiply %lhs, %r0_splat
+        \\            %r1: f32 = composite_extract %rhs[1]
+        \\            %r1_splat: vec2[f32] = composite_construct %r1, %r1
+        \\            %o1: vec2[f32] = float_multiply %lhs, %r1_splat
+        \\            %r2: f32 = composite_extract %rhs[2]
+        \\            %r2_splat: vec2[f32] = composite_construct %r2, %r2
+        \\            %o2: vec2[f32] = float_multiply %lhs, %r2_splat
+        \\            %outer: mat3x2[f32] = composite_construct %o0, %o1, %o2
         \\            %signed: vec2[i32] = convert float_to_signed %lhs
         \\            %unsigned: u32 = convert float_to_unsigned %scalar
         \\            return
@@ -2235,7 +2108,7 @@ test "Validator: float classification, matrix, product, and conversion operation
         \\    fn @main(%value: mat2x3[f32]) -> void
         \\    {
         \\        .entry():
-        \\            %result: mat2x3[f32] = transpose %value
+        \\            %result: vec2[f32] = composite_extract %value[0]
         \\            return
         \\    }
         \\}
@@ -2271,7 +2144,9 @@ test "Validator: float classification, matrix, product, and conversion operation
         \\    fn @main(%lhs: vec2[f32], %rhs: vec3[f32]) -> void
         \\    {
         \\        .entry():
-        \\            %result: mat2x3[f32] = outer_product %lhs, %rhs
+        \\            %scalar: f32 = composite_extract %rhs[0]
+        \\            %scalar_splat: vec2[f32] = composite_construct %scalar, %scalar
+        \\            %result: vec3[f32] = float_multiply %lhs, %scalar_splat
         \\            return
         \\    }
         \\}

@@ -1,6 +1,7 @@
 const std = @import("std");
 const ir = @import("../../../ir/ir.zig");
 const ext = @import("../types.zig");
+const vector_helper = @import("../../vector.zig");
 
 pub const Opcode = enum(u32) {
     acos = 17,
@@ -101,15 +102,15 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
         .cos => translateUnary(emitter, invocation, .cos),
         .cosh => translateUnary(emitter, invocation, .cosh),
         .cross => translateCross(emitter, invocation),
-        .degrees => translateUnary(emitter, invocation, .degrees),
+        .degrees => translateAngleScale(emitter, invocation, 180.0 / std.math.pi),
         .exp => translateUnary(emitter, invocation, .exp),
         .exp2 => translateUnary(emitter, invocation, .exp2),
         .f_abs => translateUnary(emitter, invocation, .float_absolute),
-        .f_clamp => translateTernary(emitter, invocation, .float_clamp),
+        .f_clamp => translateClamp(emitter, invocation, .float_max, .float_min),
         .f_max => translateBinary(emitter, invocation, .float_max),
         .f_min => translateBinary(emitter, invocation, .float_min),
-        .f_mix => translateTernary(emitter, invocation, .float_mix),
-        .f_sign => translateUnary(emitter, invocation, .float_sign),
+        .f_mix => translateFMix(emitter, invocation),
+        .f_sign => translateSign(emitter, invocation, true),
         .find_i_lsb => translateUnary(emitter, invocation, .find_lsb),
         .find_s_msb => translateUnary(emitter, invocation, .find_s_msb),
         .find_u_msb => translateUnary(emitter, invocation, .find_u_msb),
@@ -121,25 +122,25 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
         .log => translateUnary(emitter, invocation, .log),
         .log2 => translateUnary(emitter, invocation, .log2),
         .n_clamp => translateNClamp(emitter, invocation),
-        .normalize => translateUnary(emitter, invocation, .normalize),
+        .normalize => translateNormalize(emitter, invocation),
         .pow => translateBinary(emitter, invocation, .pow),
-        .radians => translateUnary(emitter, invocation, .radians),
+        .radians => translateAngleScale(emitter, invocation, std.math.pi / 180.0),
         .reflect => translateReflect(emitter, invocation),
         .round => translateUnary(emitter, invocation, .round),
         .s_abs => translateUnary(emitter, invocation, .integer_absolute),
-        .s_clamp => translateTernary(emitter, invocation, .signed_clamp),
+        .s_clamp => translateClamp(emitter, invocation, .signed_max, .signed_min),
         .s_max => translateBinary(emitter, invocation, .signed_max),
         .s_min => translateBinary(emitter, invocation, .signed_min),
-        .s_sign => translateUnary(emitter, invocation, .integer_sign),
+        .s_sign => translateSign(emitter, invocation, false),
         .sin => translateUnary(emitter, invocation, .sin),
         .sinh => translateUnary(emitter, invocation, .sinh),
-        .smooth_step => translateTernary(emitter, invocation, .smooth_step),
+        .smooth_step => translateSmoothStep(emitter, invocation),
         .sqrt => translateUnary(emitter, invocation, .sqrt),
-        .step => translateBinary(emitter, invocation, .step),
+        .step => translateStep(emitter, invocation),
         .tan => translateUnary(emitter, invocation, .tan),
         .tanh => translateUnary(emitter, invocation, .tanh),
         .trunc => translateUnary(emitter, invocation, .trunc),
-        .u_clamp => translateTernary(emitter, invocation, .unsigned_clamp),
+        .u_clamp => translateClamp(emitter, invocation, .unsigned_max, .unsigned_min),
         .u_max => translateBinary(emitter, invocation, .unsigned_max),
         .u_min => translateBinary(emitter, invocation, .unsigned_min),
         .ldexp => translateBinary(emitter, invocation, .ldexp),
@@ -182,6 +183,376 @@ fn translateBinary(emitter: *ext.Emitter, invocation: ext.Invocation, opcode: ir
             .opcode = opcode,
             .lhs = lhs,
             .rhs = rhs,
+        },
+    }, invocation.result_name)).?;
+}
+
+fn validateFloatOperands(emitter: *ext.Emitter, invocation: ext.Invocation, operand_count: usize) !ir.id.TypeId {
+    if (invocation.operands.len != operand_count)
+        return error.InvalidInstruction;
+
+    const scalar_type = try floatScalarType(emitter.module, invocation.result_type);
+    for (invocation.operands) |operand| {
+        if (emitter.module.typeOf(operand) != invocation.result_type)
+            return error.InvalidInstruction;
+    }
+
+    return scalar_type;
+}
+
+fn floatConstant(emitter: *ext.Emitter, type_id: ir.id.TypeId, comptime value: comptime_float) !ir.id.ValueId {
+    const scalar_type = try floatScalarType(emitter.module, type_id);
+    const scalar = emitter.module.types.get(scalar_type).?;
+    const bits: u64 = switch (scalar.floating.bits) {
+        16 => @as(u16, @bitCast(@as(f16, value))),
+        32 => @as(u32, @bitCast(@as(f32, value))),
+        64 => @as(u64, @bitCast(@as(f64, value))),
+        else => return error.UnsupportedType,
+    };
+    const constant = try emitter.builder.internConstant(scalar_type, .{ .float_bits = bits });
+
+    if (type_id == scalar_type)
+        return constant;
+
+    const vector = emitter.module.types.get(type_id).?.vector;
+    const elements = try emitter.scratch.alloc(ir.id.ConstantId, vector.length);
+    @memset(elements, emitter.module.values.get(constant).?.definition.constant);
+    return emitter.builder.internConstant(type_id, .{ .composite = elements });
+}
+
+fn validateIntegerOperands(emitter: *ext.Emitter, invocation: ext.Invocation, operand_count: usize) !ir.id.TypeId {
+    if (invocation.operands.len != operand_count)
+        return error.InvalidInstruction;
+
+    const definition = emitter.module.types.get(invocation.result_type) orelse return error.InvalidId;
+
+    const scalar_type = switch (definition.*) {
+        .integer => invocation.result_type,
+        .vector => |vector| if (vector.length >= 2) vector.element_type else return error.InvalidInstruction,
+        else => return error.InvalidInstruction,
+    };
+
+    const scalar = emitter.module.types.get(scalar_type) orelse return error.InvalidId;
+
+    if (scalar.* != .integer)
+        return error.InvalidInstruction;
+
+    if (scalar.integer.bits == 0 or scalar.integer.bits > 64)
+        return error.UnsupportedType;
+
+    for (invocation.operands) |operand| {
+        if (emitter.module.typeOf(operand) != invocation.result_type)
+            return error.InvalidInstruction;
+    }
+
+    return scalar_type;
+}
+
+fn integerConstant(emitter: *ext.Emitter, type_id: ir.id.TypeId, scalar_type: ir.id.TypeId, comptime value: comptime_int) !ir.id.ValueId {
+    const width = emitter.module.types.get(scalar_type).?.integer.bits;
+    const mask = @as(u64, std.math.maxInt(u64)) >> @as(u6, @intCast(64 - width));
+    const bits = @as(u64, @bitCast(@as(i64, value))) & mask;
+    const constant = try emitter.builder.internConstant(scalar_type, .{ .integer_bits = bits });
+
+    if (type_id == scalar_type)
+        return constant;
+
+    const vector = emitter.module.types.get(type_id).?.vector;
+    const elements = try emitter.scratch.alloc(ir.id.ConstantId, vector.length);
+    @memset(elements, emitter.module.values.get(constant).?.definition.constant);
+    return emitter.builder.internConstant(type_id, .{ .composite = elements });
+}
+
+fn translateClamp(emitter: *ext.Emitter, invocation: ext.Invocation, maximum: ir.instruction.BinaryOpcode, minimum: ir.instruction.BinaryOpcode) !ir.id.ValueId {
+    if (maximum == .float_max) {
+        _ = try validateFloatOperands(emitter, invocation, 3);
+    } else {
+        _ = try validateIntegerOperands(emitter, invocation, 3);
+    }
+
+    const lower_clamped = (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = maximum,
+            .lhs = invocation.operands[0],
+            .rhs = invocation.operands[1],
+        },
+    }, null)).?;
+
+    return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = minimum,
+            .lhs = lower_clamped,
+            .rhs = invocation.operands[2],
+        },
+    }, invocation.result_name)).?;
+}
+
+fn translateSign(emitter: *ext.Emitter, invocation: ext.Invocation, comptime floating: bool) !ir.id.ValueId {
+    const scalar_type = if (floating)
+        try validateFloatOperands(emitter, invocation, 1)
+    else
+        try validateIntegerOperands(emitter, invocation, 1);
+
+    const zero = if (floating)
+        try floatConstant(emitter, invocation.result_type, 0.0)
+    else
+        try integerConstant(emitter, invocation.result_type, scalar_type, 0);
+
+    const one = if (floating)
+        try floatConstant(emitter, invocation.result_type, 1.0)
+    else
+        try integerConstant(emitter, invocation.result_type, scalar_type, 1);
+
+    const negative_one = if (floating)
+        try floatConstant(emitter, invocation.result_type, -1.0)
+    else
+        try integerConstant(emitter, invocation.result_type, scalar_type, -1);
+
+    const bool_type = try emitter.builder.internType(.boolean);
+
+    const condition_type = if (scalar_type == invocation.result_type)
+        bool_type
+    else
+        try emitter.builder.internType(.{
+            .vector = .{
+                .element_type = bool_type,
+                .length = emitter.module.types.get(invocation.result_type).?.vector.length,
+            },
+        });
+
+    var operand = invocation.operands[0];
+    var comparison_zero = zero;
+
+    if (!floating) {
+        const integer = emitter.module.types.get(scalar_type).?.integer;
+
+        if (integer.signedness == .unsigned) {
+            const signed_scalar = try emitter.builder.internType(.{
+                .integer = .{
+                    .bits = integer.bits,
+                    .signedness = .signed,
+                },
+            });
+
+            const signed_type = if (scalar_type == invocation.result_type)
+                signed_scalar
+            else
+                try emitter.builder.internType(.{
+                    .vector = .{
+                        .element_type = signed_scalar,
+                        .length = emitter.module.types.get(invocation.result_type).?.vector.length,
+                    },
+                });
+
+            operand = (try emitter.builder.appendInstruction(emitter.block, signed_type, .{ .bitcast = operand }, null)).?;
+            comparison_zero = (try emitter.builder.appendInstruction(emitter.block, signed_type, .{ .bitcast = zero }, null)).?;
+        }
+    }
+
+    const negative = (try emitter.builder.appendInstruction(emitter.block, condition_type, .{
+        .compare = .{
+            .opcode = if (floating) .ordered_float_less else .signed_less,
+            .lhs = operand,
+            .rhs = comparison_zero,
+        },
+    }, null)).?;
+
+    const positive = (try emitter.builder.appendInstruction(emitter.block, condition_type, .{
+        .compare = .{
+            .opcode = if (floating) .ordered_float_less else .signed_less,
+            .lhs = comparison_zero,
+            .rhs = operand,
+        },
+    }, null)).?;
+
+    const nonnegative_sign = (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .select = .{
+            .condition = positive,
+            .true_value = one,
+            .false_value = zero,
+        },
+    }, null)).?;
+
+    return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .select = .{
+            .condition = negative,
+            .true_value = negative_one,
+            .false_value = nonnegative_sign,
+        },
+    }, invocation.result_name)).?;
+}
+
+fn translateAngleScale(emitter: *ext.Emitter, invocation: ext.Invocation, comptime scale: comptime_float) !ir.id.ValueId {
+    _ = try validateFloatOperands(emitter, invocation, 1);
+    const factor = try floatConstant(emitter, invocation.result_type, scale);
+    return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = .float_multiply,
+            .lhs = invocation.operands[0],
+            .rhs = factor,
+        },
+    }, invocation.result_name)).?;
+}
+
+fn translateFMix(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
+    _ = try validateFloatOperands(emitter, invocation, 3);
+
+    const x = invocation.operands[0];
+    const y = invocation.operands[1];
+    const a = invocation.operands[2];
+
+    const one = try floatConstant(emitter, invocation.result_type, 1.0);
+
+    const complement = (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = .float_subtract,
+            .lhs = one,
+            .rhs = a,
+        },
+    }, null)).?;
+
+    const weighted_x = (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = .float_multiply,
+            .lhs = x,
+            .rhs = complement,
+        },
+    }, null)).?;
+
+    const weighted_y = (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = .float_multiply,
+            .lhs = y,
+            .rhs = a,
+        },
+    }, null)).?;
+
+    return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = .float_add,
+            .lhs = weighted_x,
+            .rhs = weighted_y,
+        },
+    }, invocation.result_name)).?;
+}
+
+fn translateSmoothStep(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
+    _ = try validateFloatOperands(emitter, invocation, 3);
+
+    const edge0 = invocation.operands[0];
+    const edge1 = invocation.operands[1];
+
+    const x = invocation.operands[2];
+
+    const zero = try floatConstant(emitter, invocation.result_type, 0.0);
+    const one = try floatConstant(emitter, invocation.result_type, 1.0);
+    const two = try floatConstant(emitter, invocation.result_type, 2.0);
+    const three = try floatConstant(emitter, invocation.result_type, 3.0);
+
+    const offset = (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = .float_subtract,
+            .lhs = x,
+            .rhs = edge0,
+        },
+    }, null)).?;
+
+    const width = (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = .float_subtract,
+            .lhs = edge1,
+            .rhs = edge0,
+        },
+    }, null)).?;
+
+    const normalized = (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = .float_divide,
+            .lhs = offset,
+            .rhs = width,
+        },
+    }, null)).?;
+
+    const lower_clamped = (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = .float_max,
+            .lhs = normalized,
+            .rhs = zero,
+        },
+    }, null)).?;
+
+    const t = (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = .float_min,
+            .lhs = lower_clamped,
+            .rhs = one,
+        },
+    }, null)).?;
+
+    const squared = (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = .float_multiply,
+            .lhs = t,
+            .rhs = t,
+        },
+    }, null)).?;
+
+    const doubled = (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = .float_multiply,
+            .lhs = two,
+            .rhs = t,
+        },
+    }, null)).?;
+
+    const factor = (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = .float_subtract,
+            .lhs = three,
+            .rhs = doubled,
+        },
+    }, null)).?;
+
+    return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = .float_multiply,
+            .lhs = squared,
+            .rhs = factor,
+        },
+    }, invocation.result_name)).?;
+}
+
+fn translateStep(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
+    const scalar_type = try validateFloatOperands(emitter, invocation, 2);
+
+    const zero = try floatConstant(emitter, invocation.result_type, 0.0);
+    const one = try floatConstant(emitter, invocation.result_type, 1.0);
+
+    const bool_type = try emitter.builder.internType(.boolean);
+
+    const condition_type = if (scalar_type == invocation.result_type)
+        bool_type
+    else
+        try emitter.builder.internType(.{
+            .vector = .{
+                .element_type = bool_type,
+                .length = emitter.module.types.get(invocation.result_type).?.vector.length,
+            },
+        });
+
+    const below_edge = (try emitter.builder.appendInstruction(emitter.block, condition_type, .{
+        .compare = .{
+            .opcode = .ordered_float_less,
+            .lhs = invocation.operands[1],
+            .rhs = invocation.operands[0],
+        },
+    }, null)).?;
+
+    return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .select = .{
+            .condition = below_edge,
+            .true_value = zero,
+            .false_value = one,
         },
     }, invocation.result_name)).?;
 }
@@ -278,13 +649,16 @@ fn translateReflect(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Va
         .binary = .{ .opcode = .float_add, .lhs = dot, .rhs = dot },
     }, null)).?;
 
-    const scaled_normal = (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
-        .binary = .{
-            .opcode = if (is_vector) .vector_times_scalar else .float_multiply,
-            .lhs = normal,
-            .rhs = doubled,
-        },
-    }, null)).?;
+    const scaled_normal = if (is_vector)
+        try vector_helper.scale(emitter.builder, emitter.block, invocation.result_type, normal, doubled, null)
+    else
+        (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+            .binary = .{
+                .opcode = .float_multiply,
+                .lhs = normal,
+                .rhs = doubled,
+            },
+        }, null)).?;
 
     return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
         .binary = .{
@@ -320,12 +694,19 @@ fn floatScalarType(module: *const ir.module.Module, type_id: ir.id.TypeId) !ir.i
     const definition = module.types.get(type_id) orelse return error.InvalidId;
     const scalar = switch (definition.*) {
         .floating => type_id,
-        .vector => |vector| vector.element_type,
+        .vector => |vector| if (vector.length >= 2) vector.element_type else return error.InvalidInstruction,
         else => return error.InvalidInstruction,
     };
+
     const element = module.types.get(scalar) orelse return error.InvalidId;
     if (element.* != .floating)
         return error.InvalidInstruction;
+
+    switch (element.floating.bits) {
+        16, 32, 64 => {},
+        else => return error.UnsupportedType,
+    }
+
     return scalar;
 }
 
@@ -336,9 +717,67 @@ fn translateLength(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Val
     const operand_type = emitter.module.typeOf(operand) orelse return error.InvalidId;
     if (try floatScalarType(emitter.module, operand_type) != invocation.result_type)
         return error.InvalidInstruction;
+
+    if (operand_type == invocation.result_type)
+        return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+            .unary = .{
+                .opcode = .float_absolute,
+                .operand = operand,
+            },
+        }, invocation.result_name)).?;
+
+    const squared = (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = .dot,
+            .lhs = operand,
+            .rhs = operand,
+        },
+    }, null)).?;
+
     return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
-        .unary = .{ .opcode = .length, .operand = operand },
+        .unary = .{
+            .opcode = .sqrt,
+            .operand = squared,
+        },
     }, invocation.result_name)).?;
+}
+
+fn translateNormalize(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
+    const scalar_type = try validateFloatOperands(emitter, invocation, 1);
+    const operand = invocation.operands[0];
+
+    if (scalar_type == invocation.result_type) {
+        const magnitude = (try emitter.builder.appendInstruction(emitter.block, scalar_type, .{
+            .unary = .{
+                .opcode = .float_absolute,
+                .operand = operand,
+            },
+        }, null)).?;
+        return (try emitter.builder.appendInstruction(emitter.block, scalar_type, .{
+            .binary = .{
+                .opcode = .float_divide,
+                .lhs = operand,
+                .rhs = magnitude,
+            },
+        }, invocation.result_name)).?;
+    }
+
+    const squared = (try emitter.builder.appendInstruction(emitter.block, scalar_type, .{
+        .binary = .{
+            .opcode = .dot,
+            .lhs = operand,
+            .rhs = operand,
+        },
+    }, null)).?;
+
+    const inverse_length = (try emitter.builder.appendInstruction(emitter.block, scalar_type, .{
+        .unary = .{
+            .opcode = .inverse_sqrt,
+            .operand = squared,
+        },
+    }, null)).?;
+
+    return vector_helper.scale(emitter.builder, emitter.block, invocation.result_type, operand, inverse_length, invocation.result_name);
 }
 
 fn translateNClamp(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {

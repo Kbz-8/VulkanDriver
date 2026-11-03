@@ -26,26 +26,6 @@ pub const Span = struct {
     }
 };
 
-pub const MatrixDimensions = struct {
-    rows: u8,
-    inner: u8,
-    columns: u8,
-
-    pub fn encode(self: MatrixDimensions) u32 {
-        return @as(u32, self.rows) |
-            (@as(u32, self.inner) << 8) |
-            (@as(u32, self.columns) << 16);
-    }
-
-    pub fn decode(value: u32) MatrixDimensions {
-        return .{
-            .rows = @truncate(value),
-            .inner = @truncate(value >> 8),
-            .columns = @truncate(value >> 16),
-        };
-    }
-};
-
 /// Native-endian internal bytecode. It is not a serialized or stable ABI
 pub const Instruction = extern struct {
     opcode: Opcode,
@@ -103,8 +83,8 @@ pub const Opcode = enum(u16) {
     cosh,
     d_pdx,
     d_pdx_coarse,
+    d_pdx_fine,
     d_pdy,
-    degrees,
     discard,
     dot,
     exp,
@@ -114,16 +94,15 @@ pub const Opcode = enum(u16) {
     find_u_msb,
     float_absolute,
     float_add,
-    float_clamp,
+
     float_divide,
     float_max,
     float_min,
-    float_mix,
     float_modulo,
     float_mul_add,
     float_multiply,
     float_remainder,
-    float_sign,
+
     float_subtract,
     float_to_signed,
     float_to_unsigned,
@@ -146,7 +125,7 @@ pub const Opcode = enum(u16) {
     integer_add,
     integer_add_carry,
     integer_multiply,
-    integer_sign,
+
     integer_subtract,
     integer_subtract_borrow,
     inverse_sqrt,
@@ -154,7 +133,7 @@ pub const Opcode = enum(u16) {
     is_nan,
     jump_edge,
     ldexp,
-    length,
+
     load_buffer,
     load_push_constant,
     load_workgroup,
@@ -164,20 +143,15 @@ pub const Opcode = enum(u16) {
     logical_not,
     logical_or,
     logical_shift_right,
-    matrix_times_matrix,
-    matrix_times_scalar,
-    matrix_times_vector,
     negate_f32,
     negate_i32,
-    normalize,
-    outer_product,
+
     pow,
-    radians,
     return_void,
     round,
     select,
     shift_left,
-    signed_clamp,
+
     signed_divide,
     signed_max,
     signed_min,
@@ -186,16 +160,13 @@ pub const Opcode = enum(u16) {
     signed_to_float,
     sin,
     sinh,
-    smooth_step,
     sqrt,
-    step,
     store_buffer,
     store_workgroup,
     tan,
     tanh,
-    transpose,
     trunc,
-    unsigned_clamp,
+
     unsigned_divide,
     unsigned_max,
     unsigned_min,
@@ -203,13 +174,12 @@ pub const Opcode = enum(u16) {
     unsigned_multiply_extended,
     unsigned_to_float,
     vector_extract_dynamic,
-    vector_times_matrix,
-    vector_times_scalar,
 
     pub fn isDerivative(self: Opcode) bool {
         return switch (self) {
             .d_pdx,
             .d_pdx_coarse,
+            .d_pdx_fine,
             .d_pdy,
             .fwidth,
             .fwidth_coarse,

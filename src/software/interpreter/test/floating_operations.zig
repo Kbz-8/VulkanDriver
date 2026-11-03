@@ -100,21 +100,39 @@ test "[interpreter] select broadcasts scalar conditions and applies vector condi
 test "[interpreter] GLSL extended floating operations execute component-wise" {
     const code = [_]bc.Instruction{
         .{ .opcode = .float_absolute, .a = reg(8), .b = reg(0) },
-        .{ .opcode = .float_sign, .components = 4, .a = reg(13), .b = reg(0) },
-        .{ .opcode = .normalize, .components = 2, .a = reg(9), .b = reg(1) },
-        .{ .opcode = .smooth_step, .a = reg(11), .b = reg(3), .c = reg(4), .d = reg(5) },
+        .{ .opcode = .compare_ordered_float_less, .components = 4, .a = reg(40), .b = reg(0), .c = reg(28) },
+        .{ .opcode = .compare_ordered_float_less, .components = 4, .a = reg(44), .b = reg(28), .c = reg(0) },
+        .{ .opcode = .select, .components = 4, .a = reg(48), .b = reg(40), .c = reg(36), .d = reg(28), .immediate = 1 },
+        .{ .opcode = .select, .components = 4, .a = reg(13), .b = reg(44), .c = reg(32), .d = reg(48), .immediate = 1 },
+        .{ .opcode = .dot, .components = 2, .a = reg(52), .b = reg(1), .c = reg(1) },
+        .{ .opcode = .inverse_sqrt, .a = reg(52), .b = reg(52) },
+        .{ .opcode = .copy, .a = reg(53), .b = reg(52) },
+        .{ .opcode = .float_multiply, .components = 2, .a = reg(9), .b = reg(1), .c = reg(52) },
+        .{ .opcode = .float_subtract, .a = reg(20), .b = reg(5), .c = reg(3) },
+        .{ .opcode = .float_subtract, .a = reg(21), .b = reg(4), .c = reg(3) },
+        .{ .opcode = .float_divide, .a = reg(20), .b = reg(20), .c = reg(21) },
+        .{ .opcode = .float_max, .a = reg(20), .b = reg(20), .c = reg(22) },
+        .{ .opcode = .float_min, .a = reg(20), .b = reg(20), .c = reg(4) },
+        .{ .opcode = .float_multiply, .a = reg(25), .b = reg(20), .c = reg(20) },
+        .{ .opcode = .float_multiply, .a = reg(26), .b = reg(23), .c = reg(20) },
+        .{ .opcode = .float_subtract, .a = reg(27), .b = reg(24), .c = reg(26) },
+        .{ .opcode = .float_multiply, .a = reg(11), .b = reg(25), .c = reg(27) },
         .{ .opcode = .atan2, .a = reg(12), .b = reg(6), .c = reg(7) },
         .{ .opcode = .pow, .a = reg(17), .b = reg(1), .c = reg(2) },
         .{ .opcode = .float_max, .a = reg(18), .b = reg(0), .c = reg(4) },
         .{ .opcode = .floor, .a = reg(19), .b = reg(0) },
         .{ .opcode = .return_void },
     };
-    var program = bytecodeProgram(&code, 20);
+    var program = bytecodeProgram(&code, 54);
     defer program.deinit();
 
     var runtime = try Runtime.init(std.testing.allocator, &program);
     defer runtime.deinit();
 
+    copyWords(runtime.registers.slice(22, 25), &.{ f32Bits(0), f32Bits(2), f32Bits(3) });
+    runtime.registers.slice(28, 32).fill(f32Bits(0));
+    runtime.registers.slice(32, 36).fill(f32Bits(1));
+    runtime.registers.slice(36, 40).fill(f32Bits(-1));
     const values = [_]u32{
         f32Bits(-2.25),
         f32Bits(3.0),
@@ -274,10 +292,19 @@ test "[interpreter] float remainder truncates and dot reduces vectors" {
 }
 
 test "[interpreter] outer product and rectangular transpose are column-major" {
-    const dimensions = bc.MatrixDimensions{ .rows = 2, .inner = 0, .columns = 3 };
     const code = [_]bc.Instruction{
-        .{ .opcode = .outer_product, .components = 6, .a = reg(11), .b = reg(0), .c = reg(2), .immediate = dimensions.encode() },
-        .{ .opcode = .transpose, .components = 6, .a = reg(17), .b = reg(5), .immediate = dimensions.encode() },
+        .{ .opcode = .float_multiply, .a = reg(11), .b = reg(0), .c = reg(2) },
+        .{ .opcode = .float_multiply, .a = reg(12), .b = reg(1), .c = reg(2) },
+        .{ .opcode = .float_multiply, .a = reg(13), .b = reg(0), .c = reg(3) },
+        .{ .opcode = .float_multiply, .a = reg(14), .b = reg(1), .c = reg(3) },
+        .{ .opcode = .float_multiply, .a = reg(15), .b = reg(0), .c = reg(4) },
+        .{ .opcode = .float_multiply, .a = reg(16), .b = reg(1), .c = reg(4) },
+        .{ .opcode = .copy, .a = reg(17), .b = reg(5) },
+        .{ .opcode = .copy, .a = reg(18), .b = reg(7) },
+        .{ .opcode = .copy, .a = reg(19), .b = reg(9) },
+        .{ .opcode = .copy, .a = reg(20), .b = reg(6) },
+        .{ .opcode = .copy, .a = reg(21), .b = reg(8) },
+        .{ .opcode = .copy, .a = reg(22), .b = reg(10) },
         .{ .opcode = .return_void },
     };
     var program = bytecodeProgram(&code, 23);
@@ -310,11 +337,11 @@ test "[interpreter] outer product and rectangular transpose are column-major" {
 test "[interpreter] malformed floating bytecode returns an error" {
     const code = [_]bc.Instruction{
         .{
-            .opcode = .transpose,
-            .components = 5,
+            .opcode = .float_multiply,
+            .components = 6,
             .a = reg(0),
-            .b = reg(5),
-            .immediate = (bc.MatrixDimensions{ .rows = 2, .inner = 0, .columns = 3 }).encode(),
+            .b = reg(6),
+            .c = reg(0),
         },
     };
     var program = bytecodeProgram(&code, 11);
@@ -334,6 +361,11 @@ test "[interpreter] shared floating IR lowers to bytecode" {
         \\    %vector3: constant vec3[f32] = null
         \\    %unsigned2: constant vec2[u32] = null
         \\    %matrix: constant mat3x2[f32] = null
+        \\    %zero: constant f32 = null
+        \\    %one: constant f32 = bits(0x3f800000)
+        \\    %two: constant f32 = bits(0x40000000)
+        \\    %three: constant f32 = bits(0x40400000)
+        \\    %negative_one: constant f32 = bits(0xbf800000)
         \\    fn @main() -> void
         \\    {
         \\        .entry():
@@ -342,16 +374,50 @@ test "[interpreter] shared floating IR lowers to bytecode" {
         \\            %selected: vec2[u32] = select %nan, %unsigned2, %unsigned2
         \\            %absolute_result: f32 = float_absolute %scalar
         \\            %floor_result: f32 = floor %scalar
-        \\            %sign_result: vec2[f32] = float_sign %vector2
-        \\            %normalized: vec2[f32] = normalize %vector2
+        \\            %zero2: vec2[f32] = composite_construct %zero, %zero
+        \\            %one2: vec2[f32] = composite_construct %one, %one
+        \\            %negative_one2: vec2[f32] = composite_construct %negative_one, %negative_one
+        \\            %negative: vec2[bool] = cmp_ordered_float_less %vector2, %zero2
+        \\            %positive: vec2[bool] = cmp_ordered_float_less %zero2, %vector2
+        \\            %nonpositive_sign: vec2[f32] = select %negative, %negative_one2, %zero2
+        \\            %sign_result: vec2[f32] = select %positive, %one2, %nonpositive_sign
+        \\            %squared_length: f32 = dot %vector2, %vector2
+        \\            %inverse_length: f32 = inverse_sqrt %squared_length
+        \\            %inverse_length2: vec2[f32] = composite_construct %inverse_length, %inverse_length
+        \\            %normalized: vec2[f32] = float_multiply %vector2, %inverse_length2
         \\            %angle: f32 = atan2 %scalar, %scalar
         \\            %powered: vec2[f32] = pow %vector2, %vector2
         \\            %maximum: vec2[f32] = float_max %vector2, %vector2
-        \\            %smooth: f32 = smooth_step %scalar, %scalar, %scalar
+        \\            %numerator: f32 = float_subtract %scalar, %zero
+        \\            %denominator: f32 = float_subtract %one, %zero
+        \\            %ratio: f32 = float_divide %numerator, %denominator
+        \\            %lower_bounded: f32 = float_max %ratio, %zero
+        \\            %t: f32 = float_min %lower_bounded, %one
+        \\            %squared: f32 = float_multiply %t, %t
+        \\            %twice: f32 = float_multiply %two, %t
+        \\            %factor: f32 = float_subtract %three, %twice
+        \\            %smooth: f32 = float_multiply %squared, %factor
         \\            %remainder: f32 = float_remainder %scalar, %scalar
         \\            %dot_result: f32 = dot %vector2, %vector2
-        \\            %outer: mat3x2[f32] = outer_product %vector2, %vector3
-        \\            %transposed: mat2x3[f32] = transpose %matrix
+        \\            %v0: f32 = composite_extract %vector3[0]
+        \\            %v1: f32 = composite_extract %vector3[1]
+        \\            %v2: f32 = composite_extract %vector3[2]
+        \\            %v0_splat: vec2[f32] = composite_construct %v0, %v0
+        \\            %v1_splat: vec2[f32] = composite_construct %v1, %v1
+        \\            %v2_splat: vec2[f32] = composite_construct %v2, %v2
+        \\            %outer0: vec2[f32] = float_multiply %vector2, %v0_splat
+        \\            %outer1: vec2[f32] = float_multiply %vector2, %v1_splat
+        \\            %outer2: vec2[f32] = float_multiply %vector2, %v2_splat
+        \\            %outer: mat3x2[f32] = composite_construct %outer0, %outer1, %outer2
+        \\            %m00: f32 = composite_extract %matrix[0][0]
+        \\            %m10: f32 = composite_extract %matrix[1][0]
+        \\            %m20: f32 = composite_extract %matrix[2][0]
+        \\            %m01: f32 = composite_extract %matrix[0][1]
+        \\            %m11: f32 = composite_extract %matrix[1][1]
+        \\            %m21: f32 = composite_extract %matrix[2][1]
+        \\            %transposed0: vec3[f32] = composite_construct %m00, %m10, %m20
+        \\            %transposed1: vec3[f32] = composite_construct %m01, %m11, %m21
+        \\            %transposed: mat2x3[f32] = composite_construct %transposed0, %transposed1
         \\            %signed: vec2[i32] = convert float_to_signed %vector2
         \\            %unsigned: vec3[u32] = convert float_to_unsigned %vector3
         \\            return
@@ -364,48 +430,66 @@ test "[interpreter] shared floating IR lowers to bytecode" {
     var program = try Program.compile(std.testing.allocator, &module);
     defer program.deinit();
 
-    const expected = [_]bc.Opcode{
-        .is_inf,
-        .is_nan,
-        .select,
-        .float_absolute,
-        .floor,
-        .float_sign,
-        .normalize,
-        .atan2,
-        .pow,
-        .float_max,
-        .smooth_step,
-        .float_remainder,
-        .dot,
-        .outer_product,
-        .transpose,
-        .float_to_signed,
-        .float_to_unsigned,
-        .return_void,
+    const expected = [_]struct { bc.Opcode, u8 }{
+        .{ .is_inf, 1 },
+        .{ .is_nan, 2 },
+        .{ .select, 2 },
+        .{ .float_absolute, 1 },
+        .{ .floor, 1 },
+        .{ .compare_ordered_float_less, 2 },
+        .{ .compare_ordered_float_less, 2 },
+        .{ .select, 2 },
+        .{ .select, 2 },
+        .{ .dot, 2 },
+        .{ .inverse_sqrt, 1 },
+        .{ .float_multiply, 2 },
+        .{ .atan2, 1 },
+        .{ .pow, 2 },
+        .{ .float_max, 2 },
+        .{ .float_subtract, 1 },
+        .{ .float_subtract, 1 },
+        .{ .float_divide, 1 },
+        .{ .float_max, 1 },
+        .{ .float_min, 1 },
+        .{ .float_multiply, 1 },
+        .{ .float_multiply, 1 },
+        .{ .float_subtract, 1 },
+        .{ .float_multiply, 1 },
+        .{ .float_remainder, 1 },
+        .{ .dot, 2 },
+        .{ .float_multiply, 2 },
+        .{ .float_multiply, 2 },
+        .{ .float_multiply, 2 },
+        .{ .float_to_signed, 2 },
+        .{ .float_to_unsigned, 3 },
+        .{ .return_void, 1 },
     };
-    try std.testing.expectEqual(2 * (expected.len - 1) + 1, program.code.len);
-    try std.testing.expectEqual(bc.Opcode.return_void, program.code[program.code.len - 1].opcode);
-
-    for (program.code[0 .. expected.len - 1], expected[0 .. expected.len - 1]) |instruction, opcode|
-        try std.testing.expectEqual(opcode, instruction.opcode);
-
-    try std.testing.expectEqual(@as(u16, 2), program.code[1].components);
-    try std.testing.expectEqual(@as(u32, 1), program.code[2].immediate);
-    try std.testing.expectEqual(@as(u16, 2), program.code[5].components);
-    try std.testing.expectEqual(@as(u16, 2), program.code[6].components);
-    try std.testing.expectEqual(@as(u16, 2), program.code[8].components);
-    try std.testing.expectEqual(@as(u16, 2), program.code[9].components);
-    try std.testing.expectEqual(@as(u16, 2), program.code[12].components);
-    try std.testing.expectEqual(@as(u16, 6), program.code[13].components);
-    try std.testing.expectEqual(bc.MatrixDimensions{ .rows = 2, .inner = 0, .columns = 3 }, bc.MatrixDimensions.decode(program.code[13].immediate));
-    try std.testing.expectEqual(bc.MatrixDimensions{ .rows = 2, .inner = 0, .columns = 3 }, bc.MatrixDimensions.decode(program.code[14].immediate));
+    var index: usize = 0;
+    var matrix_copies: usize = 0;
+    var column_copies: usize = 0;
+    for (program.code) |instruction| {
+        if (instruction.opcode == .copy) {
+            if (instruction.components == 6) matrix_copies += 1;
+            if (instruction.components == 3) column_copies += 1;
+            continue;
+        }
+        try std.testing.expect(index < expected.len);
+        try std.testing.expectEqual(expected[index][0], instruction.opcode);
+        try std.testing.expectEqual(expected[index][1], instruction.components);
+        if (instruction.opcode == .select)
+            try std.testing.expectEqual(@as(u32, 1), instruction.immediate);
+        index += 1;
+    }
+    try std.testing.expectEqual(expected.len, index);
+    try std.testing.expect(matrix_copies >= 2);
+    try std.testing.expect(column_copies >= 2);
 }
 
 test "[interpreter] length scalar absolute value and vector magnitude, dynamic extraction" {
     const code = [_]bc.Instruction{
-        .{ .opcode = .length, .a = reg(5), .b = reg(0) },
-        .{ .opcode = .length, .components = 2, .a = reg(6), .b = reg(1) },
+        .{ .opcode = .float_absolute, .a = reg(5), .b = reg(0) },
+        .{ .opcode = .dot, .components = 2, .a = reg(6), .b = reg(1), .c = reg(1) },
+        .{ .opcode = .sqrt, .a = reg(6), .b = reg(6) },
         .{ .opcode = .vector_extract_dynamic, .components = 2, .a = reg(7), .b = reg(1), .c = reg(3) },
         .{ .opcode = .vector_extract_dynamic, .components = 2, .a = reg(8), .b = reg(1), .c = reg(4) },
         .{ .opcode = .return_void },
@@ -591,8 +675,9 @@ test "[interpreter] new shared operations lower for fragment execution and signe
         \\    fn @main() -> void
         \\    {
         \\        .entry():
-        \\            %ls: f32 = length %scalar
-        \\            %lv: f32 = length %vector
+        \\            %ls: f32 = float_absolute %scalar
+        \\            %squared: f32 = dot %vector, %vector
+        \\            %lv: f32 = sqrt %squared
         \\            %ds: f32 = fwidth %scalar
         \\            %dv: vec2[f32] = fwidth %vector
         \\            %es: f32 = vector_extract_dynamic %vector, %signed
@@ -606,7 +691,7 @@ test "[interpreter] new shared operations lower for fragment execution and signe
     var program = try Program.compile(std.testing.allocator, &module);
     defer program.deinit();
     try std.testing.expect(program.uses_derivatives);
-    const expected = [_]bc.Opcode{ .length, .length, .fwidth, .fwidth, .vector_extract_dynamic, .vector_extract_dynamic, .return_void };
+    const expected = [_]bc.Opcode{ .float_absolute, .dot, .sqrt, .fwidth, .fwidth, .vector_extract_dynamic, .vector_extract_dynamic, .return_void };
     try std.testing.expectEqual(2 * (expected.len - 1) + 1, program.code.len);
     try std.testing.expectEqual(bc.Opcode.return_void, program.code[program.code.len - 1].opcode);
     for (program.code[0 .. expected.len - 1], expected[0 .. expected.len - 1]) |instruction, opcode|

@@ -174,7 +174,7 @@ fn lowerOperation(
                         .rhs = rhs,
                     },
                 },
-                .inferred_type = try inferBinaryType(module, op.opcode, lhs, rhs),
+                .inferred_type = try inferBinaryType(module, op.opcode, lhs),
             };
         },
         .ternary => |op| blk: {
@@ -627,17 +627,11 @@ fn inferUnaryType(module: *module_ir.Module, opcode: inst_ir.UnaryOpcode, operan
                 else => null,
             };
         },
-        .transpose => inferTransposeType(module, operand_type),
-        .length => switch ((module.types.get(operand_type) orelse return null).*) {
-            .floating => operand_type,
-            .vector => |vector| vector.element_type,
-            else => null,
-        },
         else => operand_type,
     };
 }
 
-fn inferBinaryType(module: *module_ir.Module, opcode: inst_ir.BinaryOpcode, lhs: ids.ValueId, rhs: ids.ValueId) !?ids.TypeId {
+fn inferBinaryType(module: *module_ir.Module, opcode: inst_ir.BinaryOpcode, lhs: ids.ValueId) !?ids.TypeId {
     const lhs_type = module.typeOf(lhs) orelse return null;
     return switch (opcode) {
         .integer_add_carry,
@@ -649,29 +643,6 @@ fn inferBinaryType(module: *module_ir.Module, opcode: inst_ir.BinaryOpcode, lhs:
         .dot, .vector_extract_dynamic => switch ((module.types.get(lhs_type) orelse return null).*) {
             .vector => |vector| vector.element_type,
             else => null,
-        },
-        .outer_product => blk: {
-            const lhs_vector = switch ((module.types.get(lhs_type) orelse return null).*) {
-                .vector => |vector| vector,
-                else => break :blk null,
-            };
-            const rhs_type = module.typeOf(rhs) orelse return null;
-            const rhs_vector = switch ((module.types.get(rhs_type) orelse return null).*) {
-                .vector => |vector| vector,
-                else => break :blk null,
-            };
-            const column_type = try module.internType(.{
-                .vector = .{
-                    .element_type = lhs_vector.element_type,
-                    .length = lhs_vector.length,
-                },
-            });
-            break :blk try module.internType(.{
-                .matrix = .{
-                    .element_type = column_type,
-                    .column_count = rhs_vector.length,
-                },
-            });
         },
         else => lhs_type,
     };
@@ -714,30 +685,6 @@ fn inferBooleanShape(module: *module_ir.Module, operand_type: ids.TypeId) !?ids.
         },
         else => null,
     };
-}
-
-fn inferTransposeType(module: *module_ir.Module, operand_type: ids.TypeId) !?ids.TypeId {
-    const matrix = switch ((module.types.get(operand_type) orelse return null).*) {
-        .matrix => |matrix| matrix,
-        else => return null,
-    };
-    const column = switch ((module.types.get(matrix.element_type) orelse return null).*) {
-        .vector => |vector| vector,
-        else => return null,
-    };
-    const transposed_column = try module.internType(.{
-        .vector = .{
-            .element_type = column.element_type,
-            .length = matrix.column_count,
-        },
-    });
-    const transposed = try module.internType(.{
-        .matrix = .{
-            .element_type = transposed_column,
-            .column_count = column.length,
-        },
-    });
-    return transposed;
 }
 
 fn floatComponentCount(module: *module_ir.Module, type_id: ids.TypeId, bits: u16) ?u8 {

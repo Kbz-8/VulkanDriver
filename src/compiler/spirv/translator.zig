@@ -5,6 +5,8 @@ const SourceModule = @import("SourceModule.zig");
 const extensions = @import("extensions/extensions.zig");
 const spirv = @import("spirv.zig");
 const ir = @import("../ir/ir.zig");
+const matrix_lowering = @import("matrix.zig");
+const vector_lowering = @import("vector.zig");
 
 pub const SpecializationValue = struct {
     constant_id: u32,
@@ -2851,6 +2853,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
         .any,
         .d_pdx,
         .d_pdx_coarse,
+        .d_pdx_fine,
         .d_pdy,
         .f_negate,
         .fwidth,
@@ -2861,7 +2864,6 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
         .logical_not,
         .not,
         .s_negate,
-        .transpose,
         .bit_reverse,
         .bit_count,
         => {
@@ -2872,6 +2874,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                 .any => .any,
                 .d_pdx => .d_pdx,
                 .d_pdx_coarse => .d_pdx_coarse,
+                .d_pdx_fine => .d_pdx_fine,
                 .d_pdy => .d_pdy,
                 .fwidth => .fwidth,
                 .fwidth_coarse => .fwidth_coarse,
@@ -2880,7 +2883,6 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                 .is_nan => .is_nan,
                 .logical_not => .logical_not,
                 .not => .bitwise_not,
-                .transpose => .transpose,
                 .bit_reverse => .bit_reverse,
                 .bit_count => .bit_count,
 
@@ -2952,62 +2954,34 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
         .vector_times_scalar => {
             try expectOperandCount(operands, 4);
 
-            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
-                .binary = .{
-                    .opcode = .vector_times_scalar,
-                    .lhs = try context.resolveValue(operands[2]),
-                    .rhs = try context.resolveValue(operands[3]),
-                },
-            }, context.nameOf(operands[1]))).?;
+            const result = try vector_lowering.scale(
+                &context.builder,
+                block,
+                try context.translateType(operands[0]),
+                try context.resolveValue(operands[2]),
+                try context.resolveValue(operands[3]),
+                context.nameOf(operands[1]),
+            );
             try context.setValue(operands[1], result);
         },
-        .vector_times_matrix => {
-            try expectOperandCount(operands, 4);
-
-            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
-                .binary = .{
-                    .opcode = .vector_times_matrix,
-                    .lhs = try context.resolveValue(operands[2]),
-                    .rhs = try context.resolveValue(operands[3]),
-                },
-            }, context.nameOf(operands[1]))).?;
-            try context.setValue(operands[1], result);
-        },
-
-        .matrix_times_matrix => {
-            try expectOperandCount(operands, 4);
-
-            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
-                .binary = .{
-                    .opcode = .matrix_times_matrix,
-                    .lhs = try context.resolveValue(operands[2]),
-                    .rhs = try context.resolveValue(operands[3]),
-                },
-            }, context.nameOf(operands[1]))).?;
-            try context.setValue(operands[1], result);
-        },
-        .matrix_times_scalar => {
-            try expectOperandCount(operands, 4);
-
-            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
-                .binary = .{
-                    .opcode = .matrix_times_scalar,
-                    .lhs = try context.resolveValue(operands[2]),
-                    .rhs = try context.resolveValue(operands[3]),
-                },
-            }, context.nameOf(operands[1]))).?;
-            try context.setValue(operands[1], result);
-        },
-        .matrix_times_vector => {
-            try expectOperandCount(operands, 4);
-
-            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
-                .binary = .{
-                    .opcode = .matrix_times_vector,
-                    .lhs = try context.resolveValue(operands[2]),
-                    .rhs = try context.resolveValue(operands[3]),
-                },
-            }, context.nameOf(operands[1]))).?;
+        .transpose,
+        .vector_times_matrix,
+        .matrix_times_matrix,
+        .matrix_times_scalar,
+        .matrix_times_vector,
+        .outer_product,
+        => {
+            const unary = instruction.opcode == .transpose;
+            try expectOperandCount(operands, if (unary) 3 else 4);
+            const result = try matrix_lowering.lower(
+                &context.builder,
+                block,
+                instruction.opcode,
+                try context.translateType(operands[0]),
+                try context.resolveValue(operands[2]),
+                if (unary) null else try context.resolveValue(operands[3]),
+                context.nameOf(operands[1]),
+            );
             try context.setValue(operands[1], result);
         },
 
@@ -3017,7 +2991,6 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
         .s_mul_extended,
         .f_rem,
         .dot,
-        .outer_product,
         => {
             try expectOperandCount(operands, 4);
 
@@ -4911,7 +4884,6 @@ fn translateBinaryOpcode(opcode: spirv.Opcode) ir.instruction.BinaryOpcode {
         .f_mod => .float_modulo,
         .f_rem => .float_remainder,
         .dot => .dot,
-        .outer_product => .outer_product,
         .shift_left_logical => .shift_left,
         .shift_right_logical => .logical_shift_right,
         .shift_right_arithmetic => .arithmetic_shift_right,
@@ -5356,7 +5328,46 @@ test "SPIR-V: vector times scalar" {
 
     const text = try ir.printer.allocPrint(std.testing.allocator, &module);
     defer std.testing.allocator.free(text);
-    try std.testing.expect(std.mem.indexOf(u8, text, "%product: vec3[f32] = vector_times_scalar") != null);
+
+    try std.testing.expect(std.mem.indexOf(u8, text, "%product: vec3[f32] = float_multiply") != null);
+
+    const product = try namedInstruction(&module, "product");
+
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.float_multiply, product.operation.binary.opcode);
+    try expectVectorLength(&module, product.operation.binary.lhs, 3);
+    try expectVectorLength(&module, product.operation.binary.rhs, 3);
+    try std.testing.expectEqual(module.typeOf(product.result.?).?, module.typeOf(product.operation.binary.lhs).?);
+    try std.testing.expectEqual(module.typeOf(product.result.?).?, module.typeOf(product.operation.binary.rhs).?);
+
+    const factor = try valueInstruction(&module, product.operation.binary.rhs);
+    try std.testing.expect(factor.operation == .composite_construct);
+    try std.testing.expectEqual(@as(usize, 3), factor.operation.composite_construct.elements.len);
+
+    const scalar = factor.operation.composite_construct.elements[0];
+    for (factor.operation.composite_construct.elements) |element|
+        try std.testing.expectEqual(scalar, element);
+
+    const source = try valueInstruction(&module, scalar);
+    try std.testing.expect(source.operation == .load_interface);
+
+    const vector_type = module.types.get(module.typeOf(product.result.?).?).?.vector;
+    try std.testing.expectEqual(vector_type.element_type, module.typeOf(scalar).?);
+
+    var builder = ir.Builder.init(&module);
+
+    const block = product.parent_block;
+    const instruction_count = module.blocks.get(block).?.instructions.items.len;
+    const scalar_type = module.typeOf(scalar).?;
+    const integer_type = try builder.internType(.{ .integer = .{ .bits = 32, .signedness = .signed } });
+    const integer = try builder.internConstant(integer_type, .{ .integer_bits = 1 });
+    const integer_vector_type = try builder.internType(.{ .vector = .{ .element_type = integer_type, .length = 3 } });
+
+    try std.testing.expectError(error.InvalidInstruction, vector_lowering.splat(&builder, block, scalar_type, scalar));
+    try std.testing.expectError(error.InvalidInstruction, vector_lowering.splat(&builder, block, module.typeOf(product.result.?).?, integer));
+    try std.testing.expectError(error.InvalidInstruction, vector_lowering.scale(&builder, block, module.typeOf(product.result.?).?, scalar, scalar, null));
+    try std.testing.expectError(error.InvalidInstruction, vector_lowering.scale(&builder, block, module.typeOf(product.result.?).?, product.operation.binary.lhs, integer, null));
+    try std.testing.expectError(error.InvalidInstruction, vector_lowering.scale(&builder, block, integer_vector_type, product.operation.binary.lhs, integer, null));
+    try std.testing.expectEqual(instruction_count, module.blocks.get(block).?.instructions.items.len);
 }
 
 test "SPIR-V: function-local promotion preserves initial state across edges" {
@@ -6004,6 +6015,18 @@ test "SPIR-V: core floating, matrix, and conversion operation mappings" {
         \\OpMemoryModel Logical GLSL450
         \\OpEntryPoint GLCompute %main "main"
         \\OpExecutionMode %main LocalSize 1 1 1
+        \\OpName %infinite "infinite"
+        \\OpName %nan "nan"
+        \\OpName %transposed "transposed"
+        \\OpName %remainder "remainder"
+        \\OpName %dot "dot"
+        \\OpName %outer "outer"
+        \\OpName %scaled "scaled"
+        \\OpName %matrix_vector "matrix_vector"
+        \\OpName %vector_matrix "vector_matrix"
+        \\OpName %matrix_matrix "matrix_matrix"
+        \\OpName %signed "signed"
+        \\OpName %unsigned "unsigned"
         \\%void = OpTypeVoid
         \\%bool = OpTypeBool
         \\%int = OpTypeInt 32 1
@@ -6016,6 +6039,7 @@ test "SPIR-V: core floating, matrix, and conversion operation mappings" {
         \\%vec3 = OpTypeVector %float 3
         \\%mat2x3 = OpTypeMatrix %vec3 2
         \\%mat3x2 = OpTypeMatrix %vec2 3
+        \\%mat3x3 = OpTypeMatrix %vec3 3
         \\%fn_void = OpTypeFunction %void
         \\%one = OpConstant %float 1
         \\%two = OpConstant %float 2
@@ -6030,6 +6054,10 @@ test "SPIR-V: core floating, matrix, and conversion operation mappings" {
         \\    %remainder = OpFRem %vec3 %vector3 %vector3
         \\    %dot = OpDot %float %vector3 %vector3
         \\    %outer = OpOuterProduct %mat2x3 %vector3 %vector2
+        \\    %scaled = OpMatrixTimesScalar %mat2x3 %matrix2x3 %two
+        \\    %matrix_vector = OpMatrixTimesVector %vec3 %matrix2x3 %vector2
+        \\    %vector_matrix = OpVectorTimesMatrix %vec2 %vector3 %matrix2x3
+        \\    %matrix_matrix = OpMatrixTimesMatrix %mat3x3 %matrix2x3 %transposed
         \\    %signed = OpConvertFToS %ivec3 %vector3
         \\    %unsigned = OpConvertFToU %uvec2 %vector2
         \\    OpReturn
@@ -6041,50 +6069,172 @@ test "SPIR-V: core floating, matrix, and conversion operation mappings" {
     var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
     defer module.deinit();
 
-    const function = module.functions.get(module.entry_point.?).?;
-    const block = module.blocks.get(function.entry_block.?).?;
-    try std.testing.expectEqual(@as(usize, 8), block.instructions.items.len);
-
-    const infinite = module.instructions.get(block.instructions.items[0]).?;
+    const infinite = try namedInstruction(&module, "infinite");
     try std.testing.expectEqual(ir.instruction.UnaryOpcode.is_inf, infinite.operation.unary.opcode);
     try expectVectorLength(&module, infinite.operation.unary.operand, 3);
     try expectVectorLength(&module, infinite.result.?, 3);
 
-    const nan = module.instructions.get(block.instructions.items[1]).?;
+    const nan = try namedInstruction(&module, "nan");
     try std.testing.expectEqual(ir.instruction.UnaryOpcode.is_nan, nan.operation.unary.opcode);
 
-    const transposed = module.instructions.get(block.instructions.items[2]).?;
-    try std.testing.expectEqual(ir.instruction.UnaryOpcode.transpose, transposed.operation.unary.opcode);
-    try expectMatrixShape(&module, transposed.operation.unary.operand, 2, 3);
+    const transposed = try namedInstruction(&module, "transposed");
+    try std.testing.expect(transposed.operation == .composite_construct);
     try expectMatrixShape(&module, transposed.result.?, 3, 2);
+    try std.testing.expectEqual(@as(usize, 3), transposed.operation.composite_construct.elements.len);
 
-    const remainder = module.instructions.get(block.instructions.items[3]).?;
+    var source_matrix: ?ir.id.ValueId = null;
+
+    for (transposed.operation.composite_construct.elements, 0..) |column_value, column_index| {
+        const column = try valueInstruction(&module, column_value);
+
+        try expectVectorLength(&module, column_value, 2);
+        try std.testing.expect(column.operation == .composite_construct);
+        try std.testing.expectEqual(@as(usize, 2), column.operation.composite_construct.elements.len);
+
+        for (column.operation.composite_construct.elements, 0..) |element, row_index| {
+            const extract = try valueInstruction(&module, element);
+            try std.testing.expect(extract.operation == .composite_extract);
+            try std.testing.expectEqualSlices(u32, &.{ @intCast(row_index), @intCast(column_index) }, extract.operation.composite_extract.indices);
+
+            const source = extract.operation.composite_extract.composite;
+            try expectMatrixShape(&module, source, 2, 3);
+
+            if (source_matrix) |previous|
+                try std.testing.expectEqual(previous, source)
+            else
+                source_matrix = source;
+
+            const source_type = module.types.get(module.typeOf(source).?).?.matrix;
+            const scalar_type = module.types.get(source_type.element_type).?.vector.element_type;
+
+            try std.testing.expectEqual(scalar_type, module.typeOf(element).?);
+        }
+    }
+
+    const remainder = try namedInstruction(&module, "remainder");
     try std.testing.expectEqual(ir.instruction.BinaryOpcode.float_remainder, remainder.operation.binary.opcode);
     try expectVectorLength(&module, remainder.operation.binary.lhs, 3);
     try expectVectorLength(&module, remainder.operation.binary.rhs, 3);
     try expectVectorLength(&module, remainder.result.?, 3);
 
-    const dot = module.instructions.get(block.instructions.items[4]).?;
+    const dot = try namedInstruction(&module, "dot");
     try std.testing.expectEqual(ir.instruction.BinaryOpcode.dot, dot.operation.binary.opcode);
     try expectVectorLength(&module, dot.operation.binary.lhs, 3);
     try expectVectorLength(&module, dot.operation.binary.rhs, 3);
     try std.testing.expect(module.types.get(module.typeOf(dot.result.?).?).?.* == .floating);
 
-    const outer = module.instructions.get(block.instructions.items[5]).?;
-    try std.testing.expectEqual(ir.instruction.BinaryOpcode.outer_product, outer.operation.binary.opcode);
-    try expectVectorLength(&module, outer.operation.binary.lhs, 3);
-    try expectVectorLength(&module, outer.operation.binary.rhs, 2);
+    const outer = try namedInstruction(&module, "outer");
+    try std.testing.expect(outer.operation == .composite_construct);
     try expectMatrixShape(&module, outer.result.?, 2, 3);
+    try std.testing.expectEqual(@as(usize, 2), outer.operation.composite_construct.elements.len);
 
-    const signed = module.instructions.get(block.instructions.items[6]).?;
+    for (outer.operation.composite_construct.elements, 0..) |column_value, index| {
+        const scale = try valueInstruction(&module, column_value);
+        try std.testing.expect(scale.operation == .binary);
+        try std.testing.expectEqual(ir.instruction.BinaryOpcode.float_multiply, scale.operation.binary.opcode);
+        try expectVectorLength(&module, column_value, 3);
+        try std.testing.expectEqual(dot.operation.binary.lhs, scale.operation.binary.lhs);
+        try std.testing.expectEqual(module.typeOf(column_value).?, module.typeOf(scale.operation.binary.rhs).?);
+
+        const splat = try valueInstruction(&module, scale.operation.binary.rhs);
+        try std.testing.expect(splat.operation == .composite_construct);
+        try std.testing.expectEqual(@as(usize, 3), splat.operation.composite_construct.elements.len);
+
+        const scalar = splat.operation.composite_construct.elements[0];
+        for (splat.operation.composite_construct.elements) |element|
+            try std.testing.expectEqual(scalar, element);
+
+        const factor = try valueInstruction(&module, scalar);
+        try std.testing.expect(factor.operation == .composite_extract);
+        try std.testing.expectEqualSlices(u32, &.{@intCast(index)}, factor.operation.composite_extract.indices);
+        try expectVectorLength(&module, factor.operation.composite_extract.composite, 2);
+        try std.testing.expectEqual(module.typeOf(dot.result.?).?, module.typeOf(factor.result.?).?);
+    }
+
+    const scaled = try namedInstruction(&module, "scaled");
+    try std.testing.expect(scaled.operation == .composite_construct);
+    try expectMatrixShape(&module, scaled.result.?, 2, 3);
+
+    for (scaled.operation.composite_construct.elements, 0..) |column, index| {
+        const multiply = try valueInstruction(&module, column);
+        try std.testing.expectEqual(ir.instruction.BinaryOpcode.float_multiply, multiply.operation.binary.opcode);
+
+        const extract = try valueInstruction(&module, multiply.operation.binary.lhs);
+        try std.testing.expectEqual(source_matrix.?, extract.operation.composite_extract.composite);
+        try std.testing.expectEqualSlices(u32, &.{@intCast(index)}, extract.operation.composite_extract.indices);
+    }
+
+    const matrix_vector = try namedInstruction(&module, "matrix_vector");
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.float_add, matrix_vector.operation.binary.opcode);
+    try expectVectorLength(&module, matrix_vector.result.?, 3);
+
+    const vector_matrix = try namedInstruction(&module, "vector_matrix");
+    try std.testing.expect(vector_matrix.operation == .composite_construct);
+    try expectVectorLength(&module, vector_matrix.result.?, 2);
+
+    for (vector_matrix.operation.composite_construct.elements) |element| {
+        const product = try valueInstruction(&module, element);
+        try std.testing.expectEqual(ir.instruction.BinaryOpcode.dot, product.operation.binary.opcode);
+    }
+
+    const matrix_matrix = try namedInstruction(&module, "matrix_matrix");
+    try std.testing.expect(matrix_matrix.operation == .composite_construct);
+    try expectMatrixShape(&module, matrix_matrix.result.?, 3, 3);
+
+    for (matrix_matrix.operation.composite_construct.elements) |column| {
+        const sum = try valueInstruction(&module, column);
+        try std.testing.expectEqual(ir.instruction.BinaryOpcode.float_add, sum.operation.binary.opcode);
+    }
+
+    var multiply_count: usize = 0;
+    for (module.instructions.entries.items) |entry| {
+        const instruction = entry orelse continue;
+        if (instruction.operation != .binary or instruction.operation.binary.opcode != .float_multiply)
+            continue;
+
+        multiply_count += 1;
+        const multiply = instruction.operation.binary;
+        const result_type = module.typeOf(instruction.result.?).?;
+
+        try std.testing.expectEqual(result_type, module.typeOf(multiply.lhs).?);
+        try std.testing.expectEqual(result_type, module.typeOf(multiply.rhs).?);
+
+        const splat = try valueInstruction(&module, multiply.rhs);
+        try std.testing.expect(splat.operation == .composite_construct);
+        try std.testing.expectEqual(@as(usize, 3), splat.operation.composite_construct.elements.len);
+
+        for (splat.operation.composite_construct.elements) |element|
+            try std.testing.expectEqual(splat.operation.composite_construct.elements[0], element);
+    }
+
+    try std.testing.expectEqual(@as(usize, 12), multiply_count);
+
+    const signed = try namedInstruction(&module, "signed");
     try std.testing.expectEqual(ir.instruction.ConvertOpcode.float_to_signed, signed.operation.convert.opcode);
     try expectVectorLength(&module, signed.operation.convert.operand, 3);
     try expectVectorLength(&module, signed.result.?, 3);
 
-    const unsigned = module.instructions.get(block.instructions.items[7]).?;
+    const unsigned = try namedInstruction(&module, "unsigned");
     try std.testing.expectEqual(ir.instruction.ConvertOpcode.float_to_unsigned, unsigned.operation.convert.opcode);
     try expectVectorLength(&module, unsigned.operation.convert.operand, 2);
     try expectVectorLength(&module, unsigned.result.?, 2);
+}
+
+fn namedInstruction(module: *const ir.module.Module, name: []const u8) !*const ir.instruction.Instruction {
+    for (module.values.entries.items) |entry| {
+        const value = entry orelse continue;
+        if (value.name) |value_name| {
+            if (std.mem.eql(u8, value_name, name) and value.definition == .instruction)
+                return module.instructions.get(value.definition.instruction) orelse error.MissingInstruction;
+        }
+    }
+    return error.MissingNamedInstruction;
+}
+
+fn valueInstruction(module: *const ir.module.Module, value_id: ir.id.ValueId) !*const ir.instruction.Instruction {
+    const value = module.values.get(value_id) orelse return error.MissingValue;
+    try std.testing.expect(value.definition == .instruction);
+    return module.instructions.get(value.definition.instruction) orelse error.MissingInstruction;
 }
 
 fn expectVectorLength(module: *const ir.module.Module, value: ir.id.ValueId, expected_length: u8) !void {
@@ -6306,7 +6456,24 @@ test "SPIR-V: translates common GLSL extended floating instructions" {
         \\OpMemoryModel Logical GLSL450
         \\OpEntryPoint GLCompute %main "main"
         \\OpExecutionMode %main LocalSize 1 1 1
+        \\OpName %absolute "absolute"
+        \\OpName %sign "sign"
+        \\OpName %floored "floored"
+        \\OpName %normalized "normalized"
+        \\OpName %scalar_normalized "scalar_normalized"
+        \\OpName %magnitude "magnitude"
+        \\OpName %scalar_magnitude "scalar_magnitude"
+        \\OpName %integer_sign "integer_sign"
+        \\OpName %float_clamped "float_clamped"
+        \\OpName %signed_clamped "signed_clamped"
+        \\OpName %unsigned_clamped "unsigned_clamped"
+        \\OpName %smooth "smooth"
+        \\OpName %angle "angle"
+        \\OpName %powered "powered"
+        \\OpName %maximum "maximum"
         \\%void = OpTypeVoid
+        \\%int = OpTypeInt 32 1
+        \\%uint = OpTypeInt 32 0
         \\%float = OpTypeFloat 32
         \\%vec2 = OpTypeVector %float 2
         \\%fn_void = OpTypeFunction %void
@@ -6314,12 +6481,25 @@ test "SPIR-V: translates common GLSL extended floating instructions" {
         \\%one = OpConstant %float 1
         \\%negative = OpConstant %float -2
         \\%vector = OpConstantComposite %vec2 %negative %one
+        \\%signed_negative = OpConstant %int -2
+        \\%signed_zero = OpConstant %int 0
+        \\%signed_one = OpConstant %int 1
+        \\%unsigned_zero = OpConstant %uint 0
+        \\%unsigned_one = OpConstant %uint 1
+        \\%unsigned_two = OpConstant %uint 2
         \\%main = OpFunction %void None %fn_void
         \\    %entry = OpLabel
         \\    %absolute = OpExtInst %float %glsl FAbs %negative
         \\    %sign = OpExtInst %vec2 %glsl FSign %vector
         \\    %floored = OpExtInst %vec2 %glsl Floor %vector
         \\    %normalized = OpExtInst %vec2 %glsl Normalize %vector
+        \\    %scalar_normalized = OpExtInst %float %glsl Normalize %negative
+        \\    %magnitude = OpExtInst %float %glsl Length %vector
+        \\    %scalar_magnitude = OpExtInst %float %glsl Length %negative
+        \\    %integer_sign = OpExtInst %int %glsl SSign %signed_negative
+        \\    %float_clamped = OpExtInst %vec2 %glsl FClamp %vector %vector %vector
+        \\    %signed_clamped = OpExtInst %int %glsl SClamp %signed_negative %signed_zero %signed_one
+        \\    %unsigned_clamped = OpExtInst %uint %glsl UClamp %unsigned_two %unsigned_zero %unsigned_one
         \\    %smooth = OpExtInst %float %glsl SmoothStep %zero %one %negative
         \\    %angle = OpExtInst %float %glsl Atan2 %one %one
         \\    %powered = OpExtInst %float %glsl Pow %one %negative
@@ -6333,32 +6513,120 @@ test "SPIR-V: translates common GLSL extended floating instructions" {
     var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
     defer module.deinit();
 
-    const function = module.functions.get(module.entry_point.?).?;
-    const block = module.blocks.get(function.entry_block.?).?;
-    try std.testing.expectEqual(@as(usize, 8), block.instructions.items.len);
-
-    const absolute = module.instructions.get(block.instructions.items[0]).?;
+    const absolute = try namedInstruction(&module, "absolute");
     try std.testing.expectEqual(ir.instruction.UnaryOpcode.float_absolute, absolute.operation.unary.opcode);
 
-    const sign = module.instructions.get(block.instructions.items[1]).?;
-    try std.testing.expectEqual(ir.instruction.UnaryOpcode.float_sign, sign.operation.unary.opcode);
+    for ([_]struct { name: []const u8, opcode: ir.instruction.CompareOpcode }{
+        .{ .name = "sign", .opcode = .ordered_float_less },
+        .{ .name = "integer_sign", .opcode = .signed_less },
+    }) |case| {
+        const sign = try namedInstruction(&module, case.name);
+        try std.testing.expect(sign.operation == .select);
 
-    const floored = module.instructions.get(block.instructions.items[2]).?;
+        const negative = try valueInstruction(&module, sign.operation.select.condition);
+        try std.testing.expectEqual(case.opcode, negative.operation.compare.opcode);
+
+        const nonnegative = try valueInstruction(&module, sign.operation.select.false_value);
+        try std.testing.expect(nonnegative.operation == .select);
+
+        const positive = try valueInstruction(&module, nonnegative.operation.select.condition);
+        try std.testing.expectEqual(case.opcode, positive.operation.compare.opcode);
+        try std.testing.expectEqual(negative.operation.compare.lhs, positive.operation.compare.rhs);
+        try std.testing.expectEqual(negative.operation.compare.rhs, positive.operation.compare.lhs);
+        try std.testing.expectEqual(negative.operation.compare.rhs, nonnegative.operation.select.false_value);
+
+        const result_type = module.typeOf(sign.result.?).?;
+        try std.testing.expectEqual(result_type, module.typeOf(sign.operation.select.true_value).?);
+        try std.testing.expectEqual(result_type, module.typeOf(nonnegative.operation.select.true_value).?);
+    }
+
+    const integer_sign = try namedInstruction(&module, "integer_sign");
+    try expectIntegerValue(&module, integer_sign.operation.select.true_value, std.math.maxInt(u32));
+
+    const nonnegative_integer_sign = try valueInstruction(&module, integer_sign.operation.select.false_value);
+    try expectIntegerValue(&module, nonnegative_integer_sign.operation.select.true_value, 1);
+    try expectIntegerValue(&module, nonnegative_integer_sign.operation.select.false_value, 0);
+
+    const floored = try namedInstruction(&module, "floored");
     try std.testing.expectEqual(ir.instruction.UnaryOpcode.floor, floored.operation.unary.opcode);
 
-    const normalized = module.instructions.get(block.instructions.items[3]).?;
-    try std.testing.expectEqual(ir.instruction.UnaryOpcode.normalize, normalized.operation.unary.opcode);
+    const normalized = try namedInstruction(&module, "normalized");
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.float_multiply, normalized.operation.binary.opcode);
+    try std.testing.expectEqual(module.typeOf(normalized.result.?).?, module.typeOf(normalized.operation.binary.rhs).?);
 
-    const smooth = module.instructions.get(block.instructions.items[4]).?;
-    try std.testing.expectEqual(ir.instruction.TernaryOpcode.smooth_step, smooth.operation.ternary.opcode);
+    const splat = try valueInstruction(&module, normalized.operation.binary.rhs);
+    try std.testing.expect(splat.operation == .composite_construct);
+    try std.testing.expectEqual(@as(usize, 2), splat.operation.composite_construct.elements.len);
 
-    const angle = module.instructions.get(block.instructions.items[5]).?;
+    const inverse_length = splat.operation.composite_construct.elements[0];
+    try std.testing.expectEqual(inverse_length, splat.operation.composite_construct.elements[1]);
+
+    const inverse = try valueInstruction(&module, inverse_length);
+    try std.testing.expectEqual(ir.instruction.UnaryOpcode.inverse_sqrt, inverse.operation.unary.opcode);
+
+    const norm_squared = try valueInstruction(&module, inverse.operation.unary.operand);
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.dot, norm_squared.operation.binary.opcode);
+    try std.testing.expectEqual(normalized.operation.binary.lhs, norm_squared.operation.binary.lhs);
+    try std.testing.expectEqual(norm_squared.operation.binary.lhs, norm_squared.operation.binary.rhs);
+
+    const magnitude = try namedInstruction(&module, "magnitude");
+    try std.testing.expectEqual(ir.instruction.UnaryOpcode.sqrt, magnitude.operation.unary.opcode);
+
+    const length_squared = try valueInstruction(&module, magnitude.operation.unary.operand);
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.dot, length_squared.operation.binary.opcode);
+    try std.testing.expectEqual(normalized.operation.binary.lhs, length_squared.operation.binary.lhs);
+    try std.testing.expectEqual(length_squared.operation.binary.lhs, length_squared.operation.binary.rhs);
+
+    const scalar_magnitude = try namedInstruction(&module, "scalar_magnitude");
+    try std.testing.expectEqual(ir.instruction.UnaryOpcode.float_absolute, scalar_magnitude.operation.unary.opcode);
+
+    const scalar_normalized = try namedInstruction(&module, "scalar_normalized");
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.float_divide, scalar_normalized.operation.binary.opcode);
+
+    const absolute_scalar = try valueInstruction(&module, scalar_normalized.operation.binary.rhs);
+    try std.testing.expectEqual(ir.instruction.UnaryOpcode.float_absolute, absolute_scalar.operation.unary.opcode);
+    try std.testing.expectEqual(scalar_magnitude.operation.unary.operand, absolute_scalar.operation.unary.operand);
+    try std.testing.expectEqual(absolute_scalar.operation.unary.operand, scalar_normalized.operation.binary.lhs);
+
+    for ([_]struct { name: []const u8, minimum: ir.instruction.BinaryOpcode, maximum: ir.instruction.BinaryOpcode }{
+        .{ .name = "float_clamped", .minimum = .float_min, .maximum = .float_max },
+        .{ .name = "signed_clamped", .minimum = .signed_min, .maximum = .signed_max },
+        .{ .name = "unsigned_clamped", .minimum = .unsigned_min, .maximum = .unsigned_max },
+    }) |case| {
+        const minimum = try namedInstruction(&module, case.name);
+        try std.testing.expectEqual(case.minimum, minimum.operation.binary.opcode);
+
+        const maximum = try valueInstruction(&module, minimum.operation.binary.lhs);
+        try std.testing.expectEqual(case.maximum, maximum.operation.binary.opcode);
+        try std.testing.expectEqual(module.typeOf(minimum.result.?).?, module.typeOf(maximum.result.?).?);
+    }
+
+    const smooth = try namedInstruction(&module, "smooth");
+    try std.testing.expect(smooth.operation == .binary);
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.float_multiply, smooth.operation.binary.opcode);
+
+    const squared = try valueInstruction(&module, smooth.operation.binary.lhs);
+    try std.testing.expect(squared.operation == .binary);
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.float_multiply, squared.operation.binary.opcode);
+    try std.testing.expectEqual(squared.operation.binary.lhs, squared.operation.binary.rhs);
+
+    const clamped = try valueInstruction(&module, squared.operation.binary.lhs);
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.float_min, clamped.operation.binary.opcode);
+
+    const lower_clamped = try valueInstruction(&module, clamped.operation.binary.lhs);
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.float_max, lower_clamped.operation.binary.opcode);
+
+    const ratio = try valueInstruction(&module, lower_clamped.operation.binary.lhs);
+    try std.testing.expect(ratio.operation == .binary);
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.float_divide, ratio.operation.binary.opcode);
+
+    const angle = try namedInstruction(&module, "angle");
     try std.testing.expectEqual(ir.instruction.BinaryOpcode.atan2, angle.operation.binary.opcode);
 
-    const powered = module.instructions.get(block.instructions.items[6]).?;
+    const powered = try namedInstruction(&module, "powered");
     try std.testing.expectEqual(ir.instruction.BinaryOpcode.pow, powered.operation.binary.opcode);
 
-    const maximum = module.instructions.get(block.instructions.items[7]).?;
+    const maximum = try namedInstruction(&module, "maximum");
     try std.testing.expectEqual(ir.instruction.BinaryOpcode.float_max, maximum.operation.binary.opcode);
 }
 

@@ -124,10 +124,52 @@ test "[interpreter] matrix arithmetic uses column-major dimensions" {
         \\            %scalar_value: f32 = load_interface @scalar
         \\            %columns_value: vec2[f32] = load_interface @columns
         \\            %rows_value: vec3[f32] = load_interface @rows
-        \\            %scaled_value: mat2x3[f32] = matrix_times_scalar %lhs_value, %scalar_value
-        \\            %matrix_vector_value: vec3[f32] = matrix_times_vector %lhs_value, %columns_value
-        \\            %vector_matrix_value: vec2[f32] = vector_times_matrix %rows_value, %lhs_value
-        \\            %matrix_matrix_value: mat4x3[f32] = matrix_times_matrix %lhs_value, %rhs_value
+        \\            %lhs0: vec3[f32] = composite_extract %lhs_value[0]
+        \\            %lhs1: vec3[f32] = composite_extract %lhs_value[1]
+        \\            %scaled0_scale: vec3[f32] = composite_construct %scalar_value, %scalar_value, %scalar_value
+        \\            %scaled0: vec3[f32] = float_multiply %lhs0, %scaled0_scale
+        \\            %scaled1_scale: vec3[f32] = composite_construct %scalar_value, %scalar_value, %scalar_value
+        \\            %scaled1: vec3[f32] = float_multiply %lhs1, %scaled1_scale
+        \\            %scaled_value: mat2x3[f32] = composite_construct %scaled0, %scaled1
+        \\            %column0: f32 = composite_extract %columns_value[0]
+        \\            %column1: f32 = composite_extract %columns_value[1]
+        \\            %mv0_scale: vec3[f32] = composite_construct %column0, %column0, %column0
+        \\            %mv0: vec3[f32] = float_multiply %lhs0, %mv0_scale
+        \\            %mv1_scale: vec3[f32] = composite_construct %column1, %column1, %column1
+        \\            %mv1: vec3[f32] = float_multiply %lhs1, %mv1_scale
+        \\            %matrix_vector_value: vec3[f32] = float_add %mv0, %mv1
+        \\            %vm0: f32 = dot %rows_value, %lhs0
+        \\            %vm1: f32 = dot %rows_value, %lhs1
+        \\            %vector_matrix_value: vec2[f32] = composite_construct %vm0, %vm1
+        \\            %rhs00: f32 = composite_extract %rhs_value[0][0]
+        \\            %rhs01: f32 = composite_extract %rhs_value[0][1]
+        \\            %mm00_scale: vec3[f32] = composite_construct %rhs00, %rhs00, %rhs00
+        \\            %mm00: vec3[f32] = float_multiply %lhs0, %mm00_scale
+        \\            %mm01_scale: vec3[f32] = composite_construct %rhs01, %rhs01, %rhs01
+        \\            %mm01: vec3[f32] = float_multiply %lhs1, %mm01_scale
+        \\            %mm0: vec3[f32] = float_add %mm00, %mm01
+        \\            %rhs10: f32 = composite_extract %rhs_value[1][0]
+        \\            %rhs11: f32 = composite_extract %rhs_value[1][1]
+        \\            %mm10_scale: vec3[f32] = composite_construct %rhs10, %rhs10, %rhs10
+        \\            %mm10: vec3[f32] = float_multiply %lhs0, %mm10_scale
+        \\            %mm11_scale: vec3[f32] = composite_construct %rhs11, %rhs11, %rhs11
+        \\            %mm11: vec3[f32] = float_multiply %lhs1, %mm11_scale
+        \\            %mm1: vec3[f32] = float_add %mm10, %mm11
+        \\            %rhs20: f32 = composite_extract %rhs_value[2][0]
+        \\            %rhs21: f32 = composite_extract %rhs_value[2][1]
+        \\            %mm20_scale: vec3[f32] = composite_construct %rhs20, %rhs20, %rhs20
+        \\            %mm20: vec3[f32] = float_multiply %lhs0, %mm20_scale
+        \\            %mm21_scale: vec3[f32] = composite_construct %rhs21, %rhs21, %rhs21
+        \\            %mm21: vec3[f32] = float_multiply %lhs1, %mm21_scale
+        \\            %mm2: vec3[f32] = float_add %mm20, %mm21
+        \\            %rhs30: f32 = composite_extract %rhs_value[3][0]
+        \\            %rhs31: f32 = composite_extract %rhs_value[3][1]
+        \\            %mm30_scale: vec3[f32] = composite_construct %rhs30, %rhs30, %rhs30
+        \\            %mm30: vec3[f32] = float_multiply %lhs0, %mm30_scale
+        \\            %mm31_scale: vec3[f32] = composite_construct %rhs31, %rhs31, %rhs31
+        \\            %mm31: vec3[f32] = float_multiply %lhs1, %mm31_scale
+        \\            %mm3: vec3[f32] = float_add %mm30, %mm31
+        \\            %matrix_matrix_value: mat4x3[f32] = composite_construct %mm0, %mm1, %mm2, %mm3
         \\            store_interface @scaled, %scaled_value
         \\            store_interface @matrix_vector, %matrix_vector_value
         \\            store_interface @vector_matrix, %vector_matrix_value
@@ -176,7 +218,8 @@ test "[interpreter] vector times scalar broadcasts" {
         \\        .entry():
         \\            %vector_value: vec4[f32] = load_interface @vector
         \\            %scalar_value: f32 = load_interface @scalar
-        \\            %product: vec4[f32] = vector_times_scalar %vector_value, %scalar_value
+        \\            %product_scale: vec4[f32] = composite_construct %scalar_value, %scalar_value, %scalar_value, %scalar_value
+        \\            %product: vec4[f32] = float_multiply %vector_value, %product_scale
         \\            store_interface @output, %product
         \\            return
         \\    }

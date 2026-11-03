@@ -415,25 +415,6 @@ const Lowerer = struct {
         return .{ .base = .invalid_register, .components = components, .kind = kind };
     }
 
-    const MatrixLayout = struct {
-        rows: u8,
-        columns: u8,
-    };
-
-    fn matrixLayout(self: *const Lowerer, type_id: ids.TypeId) CompileError!MatrixLayout {
-        const ty = self.module.types.get(type_id) orelse return CompileError.UnsupportedType;
-        const matrix = switch (ty.*) {
-            .matrix => |matrix| matrix,
-            else => return CompileError.UnsupportedType,
-        };
-        const column_type = self.module.types.get(matrix.element_type) orelse return CompileError.UnsupportedType;
-        const column = switch (column_type.*) {
-            .vector => |vector| vector,
-            else => return CompileError.UnsupportedType,
-        };
-        return .{ .rows = column.length, .columns = matrix.column_count };
-    }
-
     fn allocate(self: *Lowerer, type_id: ids.TypeId) !bc.Span {
         const layout = try self.shape(type_id);
         const components = layout.components;
@@ -527,31 +508,6 @@ const Lowerer = struct {
                     return;
                 }
 
-                if (op.opcode == .length) {
-                    if (dst.kind != .floating or dst.components != 1 or src.kind != .floating)
-                        return CompileError.InvalidOperation;
-                    try self.emitTyped(.length, src.components, dst.base, src.base, .invalid_register, .invalid_register, 0, bits);
-                    return;
-                }
-
-                if (op.opcode == .transpose) {
-                    const result_id = instruction.result orelse return CompileError.InvalidOperation;
-                    const src_layout = try self.matrixLayout(self.module.typeOf(op.operand) orelse return CompileError.InvalidValue);
-                    const dst_layout = try self.matrixLayout(self.module.typeOf(result_id) orelse return CompileError.InvalidValue);
-                    if (src.kind != .floating or dst.kind != .floating or
-                        dst_layout.rows != src_layout.columns or dst_layout.columns != src_layout.rows or
-                        src.components != try componentProduct(src_layout.rows, src_layout.columns) or
-                        dst.components != try componentProduct(dst_layout.rows, dst_layout.columns))
-                        return CompileError.InvalidOperation;
-
-                    try self.emitTyped(.transpose, dst.components, dst.base, src.base, .invalid_register, .invalid_register, (bc.MatrixDimensions{
-                        .rows = src_layout.rows,
-                        .inner = 0,
-                        .columns = src_layout.columns,
-                    }).encode(), bits);
-                    return;
-                }
-
                 const opcode: bc.Opcode = switch (op.opcode) {
                     .acos => if (dst.kind == .floating) .acos else return CompileError.InvalidOperation,
                     .acosh => if (dst.kind == .floating) .acosh else return CompileError.InvalidOperation,
@@ -569,19 +525,19 @@ const Lowerer = struct {
                     .cosh => if (dst.kind == .floating) .cosh else return CompileError.InvalidOperation,
                     .d_pdx => if (dst.kind == .floating and self.module.stage == .fragment) .d_pdx else return CompileError.InvalidOperation,
                     .d_pdx_coarse => if (dst.kind == .floating and self.module.stage == .fragment) .d_pdx_coarse else return CompileError.InvalidOperation,
+                    .d_pdx_fine => if (dst.kind == .floating and self.module.stage == .fragment) .d_pdx_fine else return CompileError.InvalidOperation,
                     .d_pdy => if (dst.kind == .floating and self.module.stage == .fragment) .d_pdy else return CompileError.InvalidOperation,
-                    .degrees => if (dst.kind == .floating) .degrees else return CompileError.InvalidOperation,
                     .exp => if (dst.kind == .floating) .exp else return CompileError.InvalidOperation,
                     .exp2 => if (dst.kind == .floating) .exp2 else return CompileError.InvalidOperation,
                     .float_absolute => if (dst.kind == .floating) .float_absolute else return CompileError.InvalidOperation,
-                    .float_sign => if (dst.kind == .floating) .float_sign else return CompileError.InvalidOperation,
+
                     .floor => if (dst.kind == .floating) .floor else return CompileError.InvalidOperation,
                     .fract => if (dst.kind == .floating) .fract else return CompileError.InvalidOperation,
                     .fwidth => if (dst.kind == .floating and self.module.stage == .fragment) .fwidth else return CompileError.InvalidOperation,
                     .fwidth_coarse => if (dst.kind == .floating and self.module.stage == .fragment) .fwidth_coarse else return CompileError.InvalidOperation,
                     .fwidth_fine => if (dst.kind == .floating and self.module.stage == .fragment) .fwidth_fine else return CompileError.InvalidOperation,
                     .integer_absolute => if (dst.kind == .signed_integer) .integer_absolute else return CompileError.InvalidOperation,
-                    .integer_sign => if (dst.kind == .signed_integer or dst.kind == .unsigned_integer) .integer_sign else return CompileError.InvalidOperation,
+
                     .inverse_sqrt => if (dst.kind == .floating) .inverse_sqrt else return CompileError.InvalidOperation,
                     .log => if (dst.kind == .floating) .log else return CompileError.InvalidOperation,
                     .log2 => if (dst.kind == .floating) .log2 else return CompileError.InvalidOperation,
@@ -591,8 +547,7 @@ const Lowerer = struct {
                         .floating => .negate_f32,
                         else => return CompileError.InvalidOperation,
                     },
-                    .normalize => if (dst.kind == .floating) .normalize else return CompileError.InvalidOperation,
-                    .radians => if (dst.kind == .floating) .radians else return CompileError.InvalidOperation,
+
                     .round => if (dst.kind == .floating) .round else return CompileError.InvalidOperation,
                     .sin => if (dst.kind == .floating) .sin else return CompileError.InvalidOperation,
                     .sinh => if (dst.kind == .floating) .sinh else return CompileError.InvalidOperation,
@@ -627,21 +582,6 @@ const Lowerer = struct {
                     return;
                 }
 
-                if (op.opcode == .outer_product) {
-                    const result_id = instruction.result orelse return CompileError.InvalidOperation;
-                    const layout = try self.matrixLayout(self.module.typeOf(result_id) orelse return CompileError.InvalidValue);
-                    if (dst.kind != .floating or lhs.kind != .floating or rhs.kind != .floating or
-                        lhs.components != layout.rows or rhs.components != layout.columns or
-                        dst.components != try componentProduct(layout.rows, layout.columns))
-                        return CompileError.InvalidOperation;
-                    try self.emitTyped(opcode, dst.components, dst.base, lhs.base, rhs.base, .invalid_register, (bc.MatrixDimensions{
-                        .rows = layout.rows,
-                        .inner = 0,
-                        .columns = layout.columns,
-                    }).encode(), bits);
-                    return;
-                }
-
                 if (isExtendedBinaryOpcode(op.opcode)) {
                     const result_components = std.math.mul(u8, lhs.components, 2) catch return CompileError.InvalidOperation;
                     if (!lhs.sameShape(rhs) or lhs.kind != dst.kind or dst.components != result_components)
@@ -651,59 +591,6 @@ const Lowerer = struct {
                 }
 
                 switch (op.opcode) {
-                    .matrix_times_matrix => {
-                        const lhs_layout = try self.matrixLayout(self.module.typeOf(op.lhs) orelse return CompileError.InvalidValue);
-                        const rhs_layout = try self.matrixLayout(self.module.typeOf(op.rhs) orelse return CompileError.InvalidValue);
-                        if (lhs.kind != .floating or rhs.kind != .floating or dst.kind != .floating or
-                            lhs_layout.columns != rhs_layout.rows or
-                            lhs.components != try componentProduct(lhs_layout.rows, lhs_layout.columns) or
-                            rhs.components != try componentProduct(rhs_layout.rows, rhs_layout.columns) or
-                            dst.components != try componentProduct(lhs_layout.rows, rhs_layout.columns))
-                            return CompileError.InvalidOperation;
-
-                        try self.emitTyped(opcode, dst.components, dst.base, lhs.base, rhs.base, .invalid_register, (bc.MatrixDimensions{
-                            .rows = lhs_layout.rows,
-                            .inner = lhs_layout.columns,
-                            .columns = rhs_layout.columns,
-                        }).encode(), bits);
-                    },
-                    .matrix_times_scalar => {
-                        if (!dst.sameShape(lhs) or rhs.kind != .floating or rhs.components != 1)
-                            return CompileError.InvalidOperation;
-                        try self.emitTyped(opcode, dst.components, dst.base, lhs.base, rhs.base, .invalid_register, 0, bits);
-                    },
-                    .matrix_times_vector => {
-                        const layout = try self.matrixLayout(self.module.typeOf(op.lhs) orelse return CompileError.InvalidValue);
-                        if (lhs.kind != .floating or rhs.kind != .floating or dst.kind != .floating or
-                            lhs.components != try componentProduct(layout.rows, layout.columns) or
-                            rhs.components != layout.columns or dst.components != layout.rows)
-                            return CompileError.InvalidOperation;
-
-                        try self.emitTyped(opcode, dst.components, dst.base, lhs.base, rhs.base, .invalid_register, (bc.MatrixDimensions{
-                            .rows = layout.rows,
-                            .inner = layout.columns,
-                            .columns = 1,
-                        }).encode(), bits);
-                    },
-                    .vector_times_matrix => {
-                        const layout = try self.matrixLayout(self.module.typeOf(op.rhs) orelse return CompileError.InvalidValue);
-                        if (lhs.kind != .floating or rhs.kind != .floating or dst.kind != .floating or
-                            lhs.components != layout.rows or
-                            rhs.components != try componentProduct(layout.rows, layout.columns) or
-                            dst.components != layout.columns)
-                            return CompileError.InvalidOperation;
-
-                        try self.emitTyped(opcode, dst.components, dst.base, lhs.base, rhs.base, .invalid_register, (bc.MatrixDimensions{
-                            .rows = 1,
-                            .inner = layout.rows,
-                            .columns = layout.columns,
-                        }).encode(), bits);
-                    },
-                    .vector_times_scalar => {
-                        if (!dst.sameShape(lhs) or rhs.kind != .floating or rhs.components != 1)
-                            return CompileError.InvalidOperation;
-                        try self.emitTyped(opcode, dst.components, dst.base, lhs.base, rhs.base, .invalid_register, 0, bits);
-                    },
                     .ldexp => try self.emitTyped(opcode, dst.components, dst.base, lhs.base, rhs.base, .invalid_register, 0, bits),
                     else => {
                         if (!dst.sameShape(lhs) or !dst.sameShape(rhs))
@@ -1589,10 +1476,6 @@ fn binaryOpcode(op: inst_ir.BinaryOpcode, kind: bc.ValueKind) !bc.Opcode {
         .logical_and => if (kind == .boolean) .logical_and else CompileError.InvalidOperation,
         .logical_or => if (kind == .boolean) .logical_or else CompileError.InvalidOperation,
         .logical_shift_right => if (kind == .signed_integer or kind == .unsigned_integer) .logical_shift_right else CompileError.InvalidOperation,
-        .matrix_times_matrix => if (kind == .floating) .matrix_times_matrix else CompileError.InvalidOperation,
-        .matrix_times_scalar => if (kind == .floating) .matrix_times_scalar else CompileError.InvalidOperation,
-        .matrix_times_vector => if (kind == .floating) .matrix_times_vector else CompileError.InvalidOperation,
-        .outer_product => if (kind == .floating) .outer_product else CompileError.InvalidOperation,
         .pow => if (kind == .floating) .pow else CompileError.InvalidOperation,
         .shift_left => if (kind == .signed_integer or kind == .unsigned_integer) .shift_left else CompileError.InvalidOperation,
         .signed_divide => if (kind == .signed_integer) .signed_divide else CompileError.InvalidOperation,
@@ -1600,26 +1483,18 @@ fn binaryOpcode(op: inst_ir.BinaryOpcode, kind: bc.ValueKind) !bc.Opcode {
         .signed_min => .signed_min,
         .signed_modulo => if (kind == .signed_integer) .signed_modulo else CompileError.InvalidOperation,
         .signed_multiply_extended => if (kind == .signed_integer) .signed_multiply_extended else CompileError.InvalidOperation,
-        .step => if (kind == .floating) .step else CompileError.InvalidOperation,
         .unsigned_divide => if (kind == .unsigned_integer) .unsigned_divide else CompileError.InvalidOperation,
         .unsigned_max => .unsigned_max,
         .unsigned_min => .unsigned_min,
         .unsigned_modulo => if (kind == .unsigned_integer) .unsigned_modulo else CompileError.InvalidOperation,
         .unsigned_multiply_extended => if (kind == .unsigned_integer) .unsigned_multiply_extended else CompileError.InvalidOperation,
         .vector_extract_dynamic => .vector_extract_dynamic,
-        .vector_times_matrix => if (kind == .floating) .vector_times_matrix else CompileError.InvalidOperation,
-        .vector_times_scalar => if (kind == .floating) .vector_times_scalar else CompileError.InvalidOperation,
     };
 }
 
 fn ternaryOpcode(op: inst_ir.TernaryOpcode, kind: bc.ValueKind) !bc.Opcode {
     return switch (op) {
-        .float_clamp => if (kind == .floating) .float_clamp else CompileError.InvalidOperation,
-        .float_mix => if (kind == .floating) .float_mix else CompileError.InvalidOperation,
         .float_mul_add => if (kind == .floating) .float_mul_add else CompileError.InvalidOperation,
-        .signed_clamp => if (kind == .signed_integer) .signed_clamp else CompileError.InvalidOperation,
-        .smooth_step => if (kind == .floating) .smooth_step else CompileError.InvalidOperation,
-        .unsigned_clamp => if (kind == .unsigned_integer) .unsigned_clamp else CompileError.InvalidOperation,
     };
 }
 
@@ -1658,10 +1533,6 @@ fn compareOpcode(op: inst_ir.CompareOpcode, kind: bc.ValueKind) !bc.Opcode {
     };
 }
 
-fn componentProduct(lhs: u8, rhs: u8) CompileError!u8 {
-    return std.math.mul(u8, lhs, rhs) catch CompileError.UnsupportedType;
-}
-
 fn offset(base: bc.Register, component: usize) !bc.Register {
     const value = @as(usize, @backingInt(base)) + component;
     if (value >= @backingInt(bc.Register.invalid_register))
@@ -1687,17 +1558,27 @@ test "[interpreter] lowering preserves floating scalar widths" {
         const bool_type = try builder.internType(.boolean);
         const bool_vector_type = try builder.internType(.{ .vector = .{ .element_type = bool_type, .length = 2 } });
         const scalar = try builder.internConstant(float_type, .undef);
-        const vector = try builder.internConstant(vector_type, .undef);
         const matrix = try builder.internConstant(matrix_type, .undef);
         const function = try builder.addFunction(void_type, "main");
         builder.setEntryPoint(function);
         const block = try builder.addBlock(function, "entry");
+        const vector = (try builder.appendInstruction(block, vector_type, .{ .composite_extract = .{ .composite = matrix, .indices = &.{0} } }, null)).?;
+        const squared_length = (try builder.appendInstruction(block, float_type, .{ .binary = .{ .opcode = .dot, .lhs = vector, .rhs = vector } }, null)).?;
+        const inverse_length = (try builder.appendInstruction(block, float_type, .{ .unary = .{ .opcode = .inverse_sqrt, .operand = squared_length } }, null)).?;
+        const inverse_vector = (try builder.appendInstruction(block, vector_type, .{ .composite_construct = .{ .elements = &.{ inverse_length, inverse_length } } }, null)).?;
+        const scalar_vector = (try builder.appendInstruction(block, vector_type, .{ .composite_construct = .{ .elements = &.{ scalar, scalar } } }, null)).?;
+        const lower_bounded = (try builder.appendInstruction(block, vector_type, .{ .binary = .{ .opcode = .float_max, .lhs = vector, .rhs = vector } }, null)).?;
+        const prefix = [_]struct { opcode: bc.Opcode, components: u8 }{
+            .{ .opcode = .dot, .components = 2 },
+            .{ .opcode = .inverse_sqrt, .components = 1 },
+            .{ .opcode = .float_max, .components = 2 },
+        };
         const cases = [_]struct { type: ids.TypeId, operation: inst_ir.Operation, opcode: bc.Opcode, components: u8 }{
             .{ .type = float_type, .operation = .{ .unary = .{ .opcode = .float_absolute, .operand = scalar } }, .opcode = .float_absolute, .components = 1 },
             .{ .type = vector_type, .operation = .{ .unary = .{ .opcode = .float_absolute, .operand = vector } }, .opcode = .float_absolute, .components = 2 },
             .{ .type = vector_type, .operation = .{ .unary = .{ .opcode = .negate, .operand = vector } }, .opcode = .negate_f32, .components = 2 },
             .{ .type = vector_type, .operation = .{ .unary = .{ .opcode = .inverse_sqrt, .operand = vector } }, .opcode = .inverse_sqrt, .components = 2 },
-            .{ .type = vector_type, .operation = .{ .unary = .{ .opcode = .normalize, .operand = vector } }, .opcode = .normalize, .components = 2 },
+            .{ .type = vector_type, .operation = .{ .binary = .{ .opcode = .float_multiply, .lhs = vector, .rhs = inverse_vector } }, .opcode = .float_multiply, .components = 2 },
             .{ .type = vector_type, .operation = .{ .unary = .{ .opcode = .d_pdx, .operand = vector } }, .opcode = .d_pdx, .components = 2 },
             .{ .type = float_type, .operation = .{ .unary = .{ .opcode = .d_pdx_coarse, .operand = scalar } }, .opcode = .d_pdx_coarse, .components = 1 },
             .{ .type = vector_type, .operation = .{ .unary = .{ .opcode = .d_pdx_coarse, .operand = vector } }, .opcode = .d_pdx_coarse, .components = 2 },
@@ -1705,22 +1586,17 @@ test "[interpreter] lowering preserves floating scalar widths" {
             .{ .type = vector_type, .operation = .{ .unary = .{ .opcode = .fwidth_coarse, .operand = vector } }, .opcode = .fwidth_coarse, .components = 2 },
             .{ .type = float_type, .operation = .{ .unary = .{ .opcode = .fwidth_fine, .operand = scalar } }, .opcode = .fwidth_fine, .components = 1 },
             .{ .type = vector_type, .operation = .{ .unary = .{ .opcode = .fwidth_fine, .operand = vector } }, .opcode = .fwidth_fine, .components = 2 },
-            .{ .type = float_type, .operation = .{ .unary = .{ .opcode = .length, .operand = vector } }, .opcode = .length, .components = 2 },
-            .{ .type = matrix_type, .operation = .{ .unary = .{ .opcode = .transpose, .operand = matrix } }, .opcode = .transpose, .components = 4 },
+            .{ .type = float_type, .operation = .{ .unary = .{ .opcode = .sqrt, .operand = squared_length } }, .opcode = .sqrt, .components = 1 },
             .{ .type = bool_vector_type, .operation = .{ .unary = .{ .opcode = .is_inf, .operand = vector } }, .opcode = .is_inf, .components = 2 },
             .{ .type = bool_vector_type, .operation = .{ .unary = .{ .opcode = .is_nan, .operand = vector } }, .opcode = .is_nan, .components = 2 },
             .{ .type = vector_type, .operation = .{ .binary = .{ .opcode = .float_add, .lhs = vector, .rhs = vector } }, .opcode = .float_add, .components = 2 },
             .{ .type = float_type, .operation = .{ .binary = .{ .opcode = .dot, .lhs = vector, .rhs = vector } }, .opcode = .dot, .components = 2 },
-            .{ .type = matrix_type, .operation = .{ .binary = .{ .opcode = .outer_product, .lhs = vector, .rhs = vector } }, .opcode = .outer_product, .components = 4 },
-            .{ .type = matrix_type, .operation = .{ .binary = .{ .opcode = .matrix_times_matrix, .lhs = matrix, .rhs = matrix } }, .opcode = .matrix_times_matrix, .components = 4 },
-            .{ .type = matrix_type, .operation = .{ .binary = .{ .opcode = .matrix_times_scalar, .lhs = matrix, .rhs = scalar } }, .opcode = .matrix_times_scalar, .components = 4 },
-            .{ .type = vector_type, .operation = .{ .binary = .{ .opcode = .matrix_times_vector, .lhs = matrix, .rhs = vector } }, .opcode = .matrix_times_vector, .components = 2 },
-            .{ .type = vector_type, .operation = .{ .binary = .{ .opcode = .vector_times_matrix, .lhs = vector, .rhs = matrix } }, .opcode = .vector_times_matrix, .components = 2 },
-            .{ .type = vector_type, .operation = .{ .binary = .{ .opcode = .vector_times_scalar, .lhs = vector, .rhs = scalar } }, .opcode = .vector_times_scalar, .components = 2 },
+            .{ .type = vector_type, .operation = .{ .binary = .{ .opcode = .float_multiply, .lhs = vector, .rhs = vector } }, .opcode = .float_multiply, .components = 2 },
+            .{ .type = vector_type, .operation = .{ .binary = .{ .opcode = .float_subtract, .lhs = vector, .rhs = vector } }, .opcode = .float_subtract, .components = 2 },
+            .{ .type = vector_type, .operation = .{ .binary = .{ .opcode = .float_divide, .lhs = vector, .rhs = vector } }, .opcode = .float_divide, .components = 2 },
+            .{ .type = vector_type, .operation = .{ .binary = .{ .opcode = .float_multiply, .lhs = vector, .rhs = scalar_vector } }, .opcode = .float_multiply, .components = 2 },
             .{ .type = vector_type, .operation = .{ .ternary = .{ .opcode = .float_mul_add, .first = vector, .second = vector, .third = vector } }, .opcode = .float_mul_add, .components = 2 },
-            .{ .type = vector_type, .operation = .{ .ternary = .{ .opcode = .float_clamp, .first = vector, .second = vector, .third = vector } }, .opcode = .float_clamp, .components = 2 },
-            .{ .type = vector_type, .operation = .{ .ternary = .{ .opcode = .float_mix, .first = vector, .second = vector, .third = vector } }, .opcode = .float_mix, .components = 2 },
-            .{ .type = vector_type, .operation = .{ .ternary = .{ .opcode = .smooth_step, .first = vector, .second = vector, .third = vector } }, .opcode = .smooth_step, .components = 2 },
+            .{ .type = vector_type, .operation = .{ .binary = .{ .opcode = .float_min, .lhs = lower_bounded, .rhs = vector } }, .opcode = .float_min, .components = 2 },
             .{ .type = bool_vector_type, .operation = .{ .compare = .{ .opcode = .ordered_float_less, .lhs = vector, .rhs = vector } }, .opcode = .compare_ordered_float_less, .components = 2 },
             .{ .type = bool_type, .operation = .{ .compare = .{ .opcode = .unordered_float_equal, .lhs = scalar, .rhs = scalar } }, .opcode = .compare_unordered_float_equal, .components = 1 },
         };
@@ -1729,28 +1605,28 @@ test "[interpreter] lowering preserves floating scalar widths" {
             const output = try builder.addInterfaceVariable(case.type, .output, .{ .location = .{ .location = @intCast(index * 2) } }, null);
             _ = try builder.appendInstruction(block, null, .{ .store_interface = .{ .variable = output, .value = value } }, null);
         }
+        const reconstructed = (try builder.appendInstruction(block, matrix_type, .{ .composite_construct = .{ .elements = &.{ vector, vector } } }, null)).?;
+        const matrix_output = try builder.addInterfaceVariable(matrix_type, .output, .{ .location = .{ .location = @intCast(cases.len * 2) } }, null);
+        _ = try builder.appendInstruction(block, null, .{ .store_interface = .{ .variable = matrix_output, .value = reconstructed } }, null);
         try builder.setTerminator(block, .return_void);
         var program = try compile(std.testing.allocator, &module);
         defer program.deinit();
         var index: usize = 0;
         for (program.code) |instruction| {
             if (instruction.opcode == .copy or instruction.opcode == .return_void) continue;
-            try std.testing.expect(index < cases.len);
-            try std.testing.expectEqual(cases[index].opcode, instruction.opcode);
-            try std.testing.expectEqual(cases[index].components, instruction.components);
+            try std.testing.expect(index < prefix.len + cases.len);
+            const opcode = if (index < prefix.len) prefix[index].opcode else cases[index - prefix.len].opcode;
+            const components = if (index < prefix.len) prefix[index].components else cases[index - prefix.len].components;
+            try std.testing.expectEqual(opcode, instruction.opcode);
+            try std.testing.expectEqual(components, instruction.components);
             try std.testing.expectEqual(bits, instruction.scalar_bits);
-            const dimensions: ?bc.MatrixDimensions = switch (instruction.opcode) {
-                .transpose, .outer_product => .{ .rows = 2, .inner = 0, .columns = 2 },
-                .matrix_times_matrix => .{ .rows = 2, .inner = 2, .columns = 2 },
-                .matrix_times_vector => .{ .rows = 2, .inner = 2, .columns = 1 },
-                .vector_times_matrix => .{ .rows = 1, .inner = 2, .columns = 2 },
-                else => null,
-            };
-            if (dimensions) |expected|
-                try std.testing.expectEqual(expected.encode(), instruction.immediate);
+            try std.testing.expectEqual(@as(u32, 0), instruction.immediate);
             index += 1;
         }
-        try std.testing.expectEqual(cases.len, index);
+        try std.testing.expectEqual(prefix.len + cases.len, index);
+        const matrix_store = program.code[program.code.len - 2];
+        try std.testing.expectEqual(bc.Opcode.copy, matrix_store.opcode);
+        try std.testing.expectEqual(@as(u8, 4), matrix_store.components);
         try std.testing.expectEqual(@as(usize, 16), @sizeOf(bc.Instruction));
     }
 }

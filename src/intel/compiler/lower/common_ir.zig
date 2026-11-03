@@ -474,8 +474,8 @@ const LoweringState = struct {
             .exp,
             .d_pdx,
             .d_pdx_coarse,
+            .d_pdx_fine,
             .d_pdy,
-            .degrees,
             .find_lsb,
             .find_s_msb,
             .find_u_msb,
@@ -483,15 +483,9 @@ const LoweringState = struct {
             .fwidth,
             .fwidth_coarse,
             .fwidth_fine,
-            .length,
             .is_inf,
             .is_nan,
-            .normalize,
-            .radians,
-            .float_sign,
-            .integer_sign,
             .sqrt,
-            .transpose,
             .trunc,
             => return Error.UnsupportedOperation,
             else => {},
@@ -560,8 +554,8 @@ const LoweringState = struct {
                 .cosh,
                 .d_pdx,
                 .d_pdx_coarse,
+                .d_pdx_fine,
                 .d_pdy,
-                .degrees,
                 .exp,
                 .exp2,
                 .find_lsb,
@@ -575,21 +569,15 @@ const LoweringState = struct {
                 .is_inf,
                 .is_nan,
                 .inverse_sqrt,
-                .length,
                 .log,
                 .log2,
                 .logical_not,
-                .normalize,
-                .radians,
                 .round,
-                .float_sign,
-                .integer_sign,
                 .sin,
                 .sinh,
                 .sqrt,
                 .tan,
                 .tanh,
-                .transpose,
                 .trunc,
                 => unreachable,
                 .bit_count,
@@ -608,7 +596,6 @@ const LoweringState = struct {
             .float_remainder,
             .pow,
             .dot,
-            .outer_product,
             .vector_extract_dynamic,
             => return Error.UnsupportedOperation,
             else => {},
@@ -617,9 +604,8 @@ const LoweringState = struct {
         const lhs_components = try self.components(operation.lhs);
         const rhs_components = try self.components(operation.rhs);
         const result_components = try self.addRegisterLocation(result_id, .temporary);
-        const broadcast_rhs = operation.opcode == .vector_times_scalar;
         if (lhs_components.len == 0 or lhs_components.len != result_components.len or
-            (broadcast_rhs and rhs_components.len != 1) or (!broadcast_rhs and lhs_components.len != rhs_components.len))
+            lhs_components.len != rhs_components.len)
             return Error.InvalidModule;
 
         switch (operation.opcode) {
@@ -655,13 +641,7 @@ const LoweringState = struct {
             .integer_subtract => if (data_type == .u32 or data_type == .i32) .add else return Error.UnsupportedOperation,
             .float_subtract => if (data_type == .f32) .add else return Error.UnsupportedOperation,
             .integer_multiply => if (data_type == .u32 or data_type == .i32) .multiply else return Error.UnsupportedOperation,
-            .float_multiply,
-            .vector_times_scalar,
-            .vector_times_matrix,
-            .matrix_times_matrix,
-            .matrix_times_scalar,
-            .matrix_times_vector,
-            => if (data_type == .f32) .multiply else return Error.UnsupportedOperation,
+            .float_multiply => if (data_type == .f32) .multiply else return Error.UnsupportedOperation,
             .shift_left => if (data_type == .u32 or data_type == .i32) .shift_left else return Error.UnsupportedOperation,
             .logical_shift_right => if (data_type == .u32) .shift_right else return Error.UnsupportedOperation,
             .arithmetic_shift_right => if (data_type == .i32) .shift_right else return Error.UnsupportedOperation,
@@ -674,16 +654,15 @@ const LoweringState = struct {
             .float_max,
             .float_min,
             .float_remainder,
-            .outer_product,
             .pow,
             .signed_divide,
             .signed_max,
             .signed_min,
-            .step,
             .unsigned_divide,
             .unsigned_max,
             .unsigned_min,
             .vector_extract_dynamic,
+            .ldexp,
             => unreachable,
 
             .unsigned_modulo,
@@ -699,10 +678,10 @@ const LoweringState = struct {
             => return Error.UnsupportedOperation,
         };
 
-        for (lhs_components, result_components, 0..) |lhs, result_component, component| {
+        for (lhs_components, rhs_components, result_components) |lhs, rhs_value, result_component| {
             if (lhs.type != data_type or result_component.type != data_type)
                 return Error.InvalidModule;
-            var rhs = rhs_components[if (broadcast_rhs) 0 else component];
+            var rhs = rhs_value;
             if (rhs.type != data_type)
                 return Error.InvalidModule;
             if (operation.opcode == .integer_subtract or operation.opcode == .float_subtract)
