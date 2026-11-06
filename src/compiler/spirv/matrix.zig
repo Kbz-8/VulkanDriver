@@ -72,6 +72,7 @@ const Emitter = struct {
     }
 
     fn matrixVector(self: Emitter, shape: MatrixShape, lhs: ir.id.ValueId, rhs: ir.id.ValueId, name: ?[]const u8) !ir.id.ValueId {
+        // SAFETY: will be overwritten by the following loop
         var sum: ir.id.ValueId = undefined;
         for (0..shape.columns) |index| {
             const column = try self.extract(shape.column_type, lhs, &.{@intCast(index)});
