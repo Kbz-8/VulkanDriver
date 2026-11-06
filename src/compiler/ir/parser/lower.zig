@@ -634,8 +634,6 @@ fn inferUnaryType(module: *module_ir.Module, opcode: inst_ir.UnaryOpcode, operan
 fn inferBinaryType(module: *module_ir.Module, opcode: inst_ir.BinaryOpcode, lhs: ids.ValueId) !?ids.TypeId {
     const lhs_type = module.typeOf(lhs) orelse return null;
     return switch (opcode) {
-        .integer_add_carry,
-        .integer_subtract_borrow,
         .signed_multiply_extended,
         .unsigned_multiply_extended,
         => try module.internType(.{ .structure = .{ .members = &.{ lhs_type, lhs_type } } }),

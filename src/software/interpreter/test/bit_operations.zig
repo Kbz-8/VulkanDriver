@@ -93,8 +93,10 @@ test "[interpreter] signed and unsigned bit field operations use scalar ranges" 
 
 test "[interpreter] carry borrow and extended multiply preserve structure layout" {
     const code = [_]bc.Instruction{
-        .{ .opcode = .integer_add_carry, .components = 2, .a = reg(16), .b = reg(0), .c = reg(2) },
-        .{ .opcode = .integer_subtract_borrow, .components = 2, .a = reg(20), .b = reg(4), .c = reg(6) },
+        .{ .opcode = .integer_add, .components = 2, .a = reg(16), .b = reg(0), .c = reg(2) },
+        .{ .opcode = .compare_unsigned_less, .components = 2, .a = reg(18), .b = reg(16), .c = reg(0) },
+        .{ .opcode = .integer_subtract, .components = 2, .a = reg(20), .b = reg(4), .c = reg(6) },
+        .{ .opcode = .compare_unsigned_less, .components = 2, .a = reg(22), .b = reg(4), .c = reg(6) },
         .{ .opcode = .unsigned_multiply_extended, .components = 2, .a = reg(24), .b = reg(8), .c = reg(10) },
         .{ .opcode = .signed_multiply_extended, .components = 2, .a = reg(28), .b = reg(12), .c = reg(14) },
         .{ .opcode = .return_void },
@@ -132,8 +134,14 @@ test "[interpreter] shared integer operations lower to bytecode" {
         \\        .entry():
         \\            %counted: u32 = bit_count %one
         \\            %reversed: u32 = bit_reverse %one
-        \\            %carry = integer_add_carry %one, %one
-        \\            %borrow = integer_subtract_borrow %zero, %one
+        \\            %sum: u32 = integer_add %one, %one
+        \\            %has_carry: bool = cmp_unsigned_less %sum, %one
+        \\            %carry_bit: u32 = select %has_carry, %one, %zero
+        \\            %carry: struct[u32, u32] = composite_construct %sum, %carry_bit
+        \\            %difference: u32 = integer_subtract %zero, %one
+        \\            %has_borrow: bool = cmp_unsigned_less %zero, %one
+        \\            %borrow_bit: u32 = select %has_borrow, %one, %zero
+        \\            %borrow: struct[u32, u32] = composite_construct %difference, %borrow_bit
         \\            %unsigned_product = unsigned_multiply_extended %one, %one
         \\            %signed_product = signed_multiply_extended %signed_one, %signed_one
         \\            %signed_extract: i32 = bit_field_extract signed %signed_one, %zero, %one
@@ -152,8 +160,10 @@ test "[interpreter] shared integer operations lower to bytecode" {
     const expected = [_]bc.Opcode{
         .bit_count,
         .bit_reverse,
-        .integer_add_carry,
-        .integer_subtract_borrow,
+        .integer_add,
+        .integer_subtract,
+        .compare_unsigned_less,
+        .select,
         .unsigned_multiply_extended,
         .signed_multiply_extended,
         .bit_field_extract_signed,

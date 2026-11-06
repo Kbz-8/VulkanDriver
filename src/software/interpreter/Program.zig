@@ -532,7 +532,6 @@ const Lowerer = struct {
                     .float_absolute => if (dst.kind == .floating) .float_absolute else return CompileError.InvalidOperation,
 
                     .floor => if (dst.kind == .floating) .floor else return CompileError.InvalidOperation,
-                    .fract => if (dst.kind == .floating) .fract else return CompileError.InvalidOperation,
                     .fwidth => if (dst.kind == .floating and self.module.stage == .fragment) .fwidth else return CompileError.InvalidOperation,
                     .fwidth_coarse => if (dst.kind == .floating and self.module.stage == .fragment) .fwidth_coarse else return CompileError.InvalidOperation,
                     .fwidth_fine => if (dst.kind == .floating and self.module.stage == .fragment) .fwidth_fine else return CompileError.InvalidOperation,
@@ -1468,10 +1467,8 @@ fn binaryOpcode(op: inst_ir.BinaryOpcode, kind: bc.ValueKind) !bc.Opcode {
         .float_remainder => if (kind == .floating) .float_remainder else CompileError.InvalidOperation,
         .float_subtract => if (kind == .floating) .float_subtract else CompileError.InvalidOperation,
         .integer_add => if (kind == .signed_integer or kind == .unsigned_integer) .integer_add else CompileError.InvalidOperation,
-        .integer_add_carry => if (kind == .unsigned_integer) .integer_add_carry else CompileError.InvalidOperation,
         .integer_multiply => if (kind == .signed_integer or kind == .unsigned_integer) .integer_multiply else CompileError.InvalidOperation,
         .integer_subtract => if (kind == .signed_integer or kind == .unsigned_integer) .integer_subtract else CompileError.InvalidOperation,
-        .integer_subtract_borrow => if (kind == .unsigned_integer) .integer_subtract_borrow else CompileError.InvalidOperation,
         .ldexp => if (kind == .floating) .ldexp else CompileError.InvalidOperation,
         .logical_and => if (kind == .boolean) .logical_and else CompileError.InvalidOperation,
         .logical_or => if (kind == .boolean) .logical_or else CompileError.InvalidOperation,
@@ -1500,8 +1497,6 @@ fn ternaryOpcode(op: inst_ir.TernaryOpcode, kind: bc.ValueKind) !bc.Opcode {
 
 fn isExtendedBinaryOpcode(op: inst_ir.BinaryOpcode) bool {
     return switch (op) {
-        .integer_add_carry,
-        .integer_subtract_borrow,
         .signed_multiply_extended,
         .unsigned_multiply_extended,
         => true,

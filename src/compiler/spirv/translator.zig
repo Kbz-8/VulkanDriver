@@ -3,6 +3,7 @@ const builtin_info = @import("builtin");
 const Parser = @import("Parser.zig");
 const SourceModule = @import("SourceModule.zig");
 const extensions = @import("extensions/extensions.zig");
+const glsl_std_450 = @import("extensions/glsl_std_450/glsl_std_450.zig");
 const spirv = @import("spirv.zig");
 const ir = @import("../ir/ir.zig");
 const matrix_lowering = @import("matrix.zig");
@@ -2985,8 +2986,8 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             try context.setValue(operands[1], result);
         },
 
-        .i_add_carry,
-        .i_sub_borrow,
+        .i_add_carry, .i_sub_borrow => try translateCarryBorrow(context, block, instruction.opcode, operands),
+
         .u_mul_extended,
         .s_mul_extended,
         .f_rem,
@@ -3283,6 +3284,70 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
     }
 }
 
+fn translateCarryBorrow(context: *Context, block: ir.id.BlockId, opcode: spirv.Opcode, operands: []const u32) !void {
+    try expectOperandCount(operands, 4);
+    const result_type = try context.translateType(operands[0]);
+    const lhs = try context.resolveValue(operands[2]);
+    const rhs = try context.resolveValue(operands[3]);
+    const value_type = context.module.typeOf(lhs) orelse return TranslationError.InvalidId;
+    const result = context.module.types.get(result_type) orelse return TranslationError.InvalidId;
+    if (context.module.typeOf(rhs) != value_type or result.* != .structure or
+        result.structure.members.len != 2 or result.structure.members[0] != value_type or
+        result.structure.members[1] != value_type)
+        return TranslationError.InvalidInstruction;
+
+    const value = context.module.types.get(value_type) orelse return TranslationError.InvalidId;
+    const scalar_type = switch (value.*) {
+        .integer => value_type,
+        .vector => |vector| if (vector.length >= 2 and vector.length <= 4)
+            vector.element_type
+        else
+            return TranslationError.InvalidInstruction,
+        else => return TranslationError.InvalidInstruction,
+    };
+    const scalar = context.module.types.get(scalar_type) orelse return TranslationError.InvalidId;
+    if (scalar.* != .integer or scalar.integer.signedness != .unsigned)
+        return TranslationError.InvalidInstruction;
+
+    const boolean = try context.builder.internType(.boolean);
+    const condition_type = if (value_type == scalar_type)
+        boolean
+    else
+        try context.builder.internType(.{ .vector = .{
+            .element_type = boolean,
+            .length = value.vector.length,
+        } });
+    var zero = try context.builder.internConstant(scalar_type, .{ .integer_bits = 0 });
+    var one = try context.builder.internConstant(scalar_type, .{ .integer_bits = 1 });
+    if (value_type != scalar_type) {
+        zero = try vector_lowering.splat(&context.builder, block, value_type, zero);
+        one = try vector_lowering.splat(&context.builder, block, value_type, one);
+    }
+
+    const addition = opcode == .i_add_carry;
+    const arithmetic = (try context.builder.appendInstruction(block, value_type, .{
+        .binary = .{
+            .opcode = if (addition) .integer_add else .integer_subtract,
+            .lhs = lhs,
+            .rhs = rhs,
+        },
+    }, null)).?;
+    const overflow = (try context.builder.appendInstruction(block, condition_type, .{
+        .compare = .{
+            .opcode = .unsigned_less,
+            .lhs = if (addition) arithmetic else lhs,
+            .rhs = if (addition) lhs else rhs,
+        },
+    }, null)).?;
+    const flag = (try context.builder.appendInstruction(block, value_type, .{
+        .select = .{ .condition = overflow, .true_value = one, .false_value = zero },
+    }, null)).?;
+    const pair = (try context.builder.appendInstruction(block, result_type, .{
+        .composite_construct = .{ .elements = &.{ arithmetic, flag } },
+    }, context.nameOf(operands[1]))).?;
+    try context.setValue(operands[1], pair);
+}
+
 fn translateExtendedInstruction(context: *Context, block: ir.id.BlockId, operands: []const u32) !void {
     if (operands.len < 4)
         return TranslationError.InvalidInstruction;
@@ -3291,16 +3356,36 @@ fn translateExtendedInstruction(context: *Context, block: ir.id.BlockId, operand
     const set = context.extended_instruction_sets[set_index] orelse return TranslationError.InvalidInstruction;
     try extensions.validateSupported(set);
 
-    const resolved_operands = try context.scratch.alloc(ir.id.ValueId, operands.len - 4);
-    for (operands[4..], resolved_operands) |operand, *resolved|
-        resolved.* = try context.resolveValue(operand);
-
     var emitter: extensions.Emitter = .{
         .module = context.module,
         .builder = &context.builder,
         .scratch = context.scratch,
         .block = block,
     };
+
+    // Modf's second operand is an output pointer and not an SSA value
+    if (set == .glsl_std_450 and operands[3] == @backingInt(glsl_std_450.Opcode.modf)) {
+        if (operands.len != 6)
+            return TranslationError.InvalidInstruction;
+
+        const value_type = try context.translateType(operands[0]);
+        const operand = try context.resolveValue(operands[4]);
+
+        if (context.module.typeOf(operand) != value_type)
+            return TranslationError.InvalidInstruction;
+
+        const parts = try glsl_std_450.emitModf(&emitter, operand, context.nameOf(operands[1]));
+
+        try storePointerValue(context, block, operands[5], parts.whole);
+        try context.setValue(operands[1], parts.fraction);
+
+        return;
+    }
+
+    const resolved_operands = try context.scratch.alloc(ir.id.ValueId, operands.len - 4);
+    for (operands[4..], resolved_operands) |operand, *resolved|
+        resolved.* = try context.resolveValue(operand);
+
     const result = try extensions.translate(set, &emitter, .{
         .result_type = try context.translateType(operands[0]),
         .result_name = context.nameOf(operands[1]),
@@ -4869,8 +4954,7 @@ fn translateBinaryOpcode(opcode: spirv.Opcode) ir.instruction.BinaryOpcode {
         .i_add => .integer_add,
         .i_sub => .integer_subtract,
         .i_mul => .integer_multiply,
-        .i_add_carry => .integer_add_carry,
-        .i_sub_borrow => .integer_subtract_borrow,
+
         .u_mul_extended => .unsigned_multiply_extended,
         .s_mul_extended => .signed_multiply_extended,
         .u_div => .unsigned_divide,
@@ -6303,40 +6387,40 @@ test "SPIR-V: core integer extended and bit-field operations" {
 
     const function = module.functions.get(module.entry_point.?).?;
     const block = module.blocks.get(function.entry_block.?).?;
-    try std.testing.expectEqual(@as(usize, 17), block.instructions.items.len);
+    try std.testing.expectEqual(@as(usize, 23), block.instructions.items.len);
 
-    try expectExtendedIntegerOperation(&module, block.instructions.items, 0, .integer_add_carry, 1, 2);
-    try expectExtendedIntegerOperation(&module, block.instructions.items, 3, .integer_subtract_borrow, 2, 1);
-    try expectExtendedIntegerOperation(&module, block.instructions.items, 6, .unsigned_multiply_extended, 1, 2);
-    try expectExtendedIntegerOperation(&module, block.instructions.items, 9, .signed_multiply_extended, 2, 3);
+    try expectExtendedIntegerOperation(&module, block.instructions.items, 0, .integer_add, 1, 2);
+    try expectExtendedIntegerOperation(&module, block.instructions.items, 6, .integer_subtract, 2, 1);
+    try expectExtendedIntegerOperation(&module, block.instructions.items, 12, .unsigned_multiply_extended, 1, 2);
+    try expectExtendedIntegerOperation(&module, block.instructions.items, 15, .signed_multiply_extended, 2, 3);
 
-    const signed_extract = module.instructions.get(block.instructions.items[12]).?;
+    const signed_extract = module.instructions.get(block.instructions.items[18]).?;
     try std.testing.expect(signed_extract.operation == .bit_field_extract);
     try std.testing.expect(signed_extract.operation.bit_field_extract.opcode == .signed);
     try expectIntegerValue(&module, signed_extract.operation.bit_field_extract.base, 3);
     try expectIntegerValue(&module, signed_extract.operation.bit_field_extract.offset, 4);
     try expectIntegerValue(&module, signed_extract.operation.bit_field_extract.count, 8);
 
-    const unsigned_extract = module.instructions.get(block.instructions.items[13]).?;
+    const unsigned_extract = module.instructions.get(block.instructions.items[19]).?;
     try std.testing.expect(unsigned_extract.operation == .bit_field_extract);
     try std.testing.expect(unsigned_extract.operation.bit_field_extract.opcode == .unsigned);
     try expectIntegerValue(&module, unsigned_extract.operation.bit_field_extract.base, 2);
     try expectIntegerValue(&module, unsigned_extract.operation.bit_field_extract.offset, 4);
     try expectIntegerValue(&module, unsigned_extract.operation.bit_field_extract.count, 8);
 
-    const insert = module.instructions.get(block.instructions.items[14]).?;
+    const insert = module.instructions.get(block.instructions.items[20]).?;
     try std.testing.expect(insert.operation == .bit_field_insert);
     try expectIntegerValue(&module, insert.operation.bit_field_insert.base, 1);
     try expectIntegerValue(&module, insert.operation.bit_field_insert.insert, 2);
     try expectIntegerValue(&module, insert.operation.bit_field_insert.offset, 4);
     try expectIntegerValue(&module, insert.operation.bit_field_insert.count, 8);
 
-    const reverse = module.instructions.get(block.instructions.items[15]).?;
+    const reverse = module.instructions.get(block.instructions.items[21]).?;
     try std.testing.expect(reverse.operation == .unary);
     try std.testing.expect(reverse.operation.unary.opcode == .bit_reverse);
     try expectIntegerValue(&module, reverse.operation.unary.operand, 1);
 
-    const population = module.instructions.get(block.instructions.items[16]).?;
+    const population = module.instructions.get(block.instructions.items[22]).?;
     try std.testing.expect(population.operation == .unary);
     try std.testing.expect(population.operation.unary.opcode == .bit_count);
     try expectIntegerValue(&module, population.operation.unary.operand, 2);
@@ -6356,7 +6440,31 @@ fn expectExtendedIntegerOperation(
     try expectIntegerValue(module, instruction.operation.binary.lhs, expected_lhs);
     try expectIntegerValue(module, instruction.operation.binary.rhs, expected_rhs);
 
-    const result = instruction.result orelse return error.MissingInstructionResult;
+    var result = instruction.result orelse return error.MissingInstructionResult;
+    var extract_index = instruction_index + 1;
+    if (expected_opcode == .integer_add or expected_opcode == .integer_subtract) {
+        const comparison = module.instructions.get(instructions[instruction_index + 1]).?;
+        try std.testing.expect(comparison.operation == .compare);
+        try std.testing.expectEqual(ir.instruction.CompareOpcode.unsigned_less, comparison.operation.compare.opcode);
+        try std.testing.expectEqual(
+            if (expected_opcode == .integer_add) result else instruction.operation.binary.lhs,
+            comparison.operation.compare.lhs,
+        );
+        try std.testing.expectEqual(
+            if (expected_opcode == .integer_add) instruction.operation.binary.lhs else instruction.operation.binary.rhs,
+            comparison.operation.compare.rhs,
+        );
+        const flag = module.instructions.get(instructions[instruction_index + 2]).?;
+        try std.testing.expect(flag.operation == .select);
+        try std.testing.expectEqual(comparison.result.?, flag.operation.select.condition);
+        try expectIntegerValue(module, flag.operation.select.true_value, 1);
+        try expectIntegerValue(module, flag.operation.select.false_value, 0);
+        const pair = module.instructions.get(instructions[instruction_index + 3]).?;
+        try std.testing.expect(pair.operation == .composite_construct);
+        try std.testing.expectEqualSlices(ir.id.ValueId, &.{ result, flag.result.? }, pair.operation.composite_construct.elements);
+        result = pair.result orelse return error.MissingInstructionResult;
+        extract_index = instruction_index + 4;
+    }
     const result_type = module.typeOf(result) orelse return error.MissingResultType;
     const result_type_data = module.types.get(result_type) orelse return error.MissingResultType;
     try std.testing.expect(result_type_data.* == .structure);
@@ -6365,7 +6473,7 @@ fn expectExtendedIntegerOperation(
     try std.testing.expectEqual(result_type_data.structure.members[1], module.typeOf(instruction.operation.binary.rhs).?);
 
     for (0..2) |index| {
-        const extract = module.instructions.get(instructions[instruction_index + index + 1]).?;
+        const extract = module.instructions.get(instructions[extract_index + index]).?;
         try std.testing.expect(extract.operation == .composite_extract);
         try std.testing.expectEqual(result, extract.operation.composite_extract.composite);
         try std.testing.expectEqualSlices(u32, &.{@as(u32, @intCast(index))}, extract.operation.composite_extract.indices);
@@ -6437,7 +6545,7 @@ test "SPIR-V: unsupported GLSL extended instruction reports its own error" {
         \\%one = OpConstant %float 1
         \\%main = OpFunction %void None %fn_void
         \\    %entry = OpLabel
-        \\    %result = OpExtInst %float %glsl RoundEven %one
+        \\    %result = OpExtInst %float %glsl NMin %one %one
         \\    OpReturn
         \\OpFunctionEnd
     ;

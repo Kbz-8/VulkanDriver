@@ -103,6 +103,7 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
         .cosh => translateUnary(emitter, invocation, .cosh),
         .cross => translateCross(emitter, invocation),
         .degrees => translateAngleScale(emitter, invocation, 180.0 / std.math.pi),
+        .distance => translateDistance(emitter, invocation),
         .exp => translateUnary(emitter, invocation, .exp),
         .exp2 => translateUnary(emitter, invocation, .exp2),
         .f_abs => translateUnary(emitter, invocation, .float_absolute),
@@ -116,17 +117,19 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
         .find_u_msb => translateUnary(emitter, invocation, .find_u_msb),
         .floor => translateUnary(emitter, invocation, .floor),
         .fma => translateTernary(emitter, invocation, .float_mul_add),
-        .fract => translateUnary(emitter, invocation, .fract),
+        .fract => translateFract(emitter, invocation),
         .inverse_sqrt => translateUnary(emitter, invocation, .inverse_sqrt),
         .length => translateLength(emitter, invocation),
         .log => translateUnary(emitter, invocation, .log),
         .log2 => translateUnary(emitter, invocation, .log2),
+        .modf_struct => translateModfStruct(emitter, invocation),
         .n_clamp => translateNClamp(emitter, invocation),
         .normalize => translateNormalize(emitter, invocation),
         .pow => translateBinary(emitter, invocation, .pow),
         .radians => translateAngleScale(emitter, invocation, std.math.pi / 180.0),
         .reflect => translateReflect(emitter, invocation),
         .round => translateUnary(emitter, invocation, .round),
+        .round_even => translateRoundEven(emitter, invocation),
         .s_abs => translateUnary(emitter, invocation, .integer_absolute),
         .s_clamp => translateClamp(emitter, invocation, .signed_max, .signed_min),
         .s_max => translateBinary(emitter, invocation, .signed_max),
@@ -168,6 +171,106 @@ fn translateUnary(emitter: *ext.Emitter, invocation: ext.Invocation, opcode: ir.
         .unary = .{
             .opcode = opcode,
             .operand = operand,
+        },
+    }, invocation.result_name)).?;
+}
+
+fn translateFract(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
+    _ = try validateFloatOperands(emitter, invocation, 1);
+    const operand = invocation.operands[0];
+    const floored = (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .unary = .{
+            .opcode = .floor,
+            .operand = operand,
+        },
+    }, null)).?;
+
+    return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .binary = .{
+            .opcode = .float_subtract,
+            .lhs = operand,
+            .rhs = floored,
+        },
+    }, invocation.result_name)).?;
+}
+
+fn translateRoundEven(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
+    const scalar_type = try validateFloatOperands(emitter, invocation, 1);
+    const value_type = invocation.result_type;
+    const operand = invocation.operands[0];
+
+    const half = try floatConstant(emitter, value_type, 0.5);
+    const two = try floatConstant(emitter, value_type, 2.0);
+    const boolean = try emitter.builder.internType(.boolean);
+
+    const condition_type = if (value_type == scalar_type)
+        boolean
+    else
+        try emitter.builder.internType(.{
+            .vector = .{
+                .element_type = boolean,
+                .length = emitter.module.types.get(value_type).?.vector.length,
+            },
+        });
+
+    const rounded = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .unary = .{
+            .opcode = .round,
+            .operand = operand,
+        },
+    }, null)).?;
+
+    const difference = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .binary = .{
+            .opcode = .float_subtract,
+            .lhs = operand,
+            .rhs = rounded,
+        },
+    }, null)).?;
+
+    const distance = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .unary = .{
+            .opcode = .float_absolute,
+            .operand = difference,
+        },
+    }, null)).?;
+
+    const halfway = (try emitter.builder.appendInstruction(emitter.block, condition_type, .{
+        .compare = .{
+            .opcode = .ordered_float_equal,
+            .lhs = distance,
+            .rhs = half,
+        },
+    }, null)).?;
+
+    const halved = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .binary = .{
+            .opcode = .float_multiply,
+            .lhs = rounded,
+            .rhs = half,
+        },
+    }, null)).?;
+
+    const truncated = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .unary = .{
+            .opcode = .trunc,
+            .operand = halved,
+        },
+    }, null)).?;
+
+    const even = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .binary = .{
+            .opcode = .float_multiply,
+            .lhs = truncated,
+            .rhs = two,
+        },
+    }, null)).?;
+
+    return (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .select = .{
+            .condition = halfway,
+            .true_value = even,
+            .false_value = rounded,
         },
     }, invocation.result_name)).?;
 }
@@ -218,6 +321,97 @@ fn floatConstant(emitter: *ext.Emitter, type_id: ir.id.TypeId, comptime value: c
     const elements = try emitter.scratch.alloc(ir.id.ConstantId, vector.length);
     @memset(elements, emitter.module.values.get(constant).?.definition.constant);
     return emitter.builder.internConstant(type_id, .{ .composite = elements });
+}
+
+fn translateModfStruct(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
+    if (invocation.operands.len != 1)
+        return error.InvalidInstruction;
+
+    const operand = invocation.operands[0];
+    const value_type = emitter.module.typeOf(operand) orelse return error.InvalidId;
+    const result = emitter.module.types.get(invocation.result_type) orelse return error.InvalidId;
+
+    if (result.* != .structure or result.structure.members.len != 2 or result.structure.members[0] != value_type or result.structure.members[1] != value_type)
+        return error.InvalidInstruction;
+
+    const parts = try emitModf(emitter, operand, null);
+
+    return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .composite_construct = .{
+            .elements = &.{
+                parts.fraction,
+                parts.whole,
+            },
+        },
+    }, invocation.result_name)).?;
+}
+
+pub fn emitModf(emitter: *ext.Emitter, operand: ir.id.ValueId, result_name: ?[]const u8) !struct { fraction: ir.id.ValueId, whole: ir.id.ValueId } {
+    const value_type = emitter.module.typeOf(operand) orelse return error.InvalidId;
+    const scalar_type = try floatScalarType(emitter.module, value_type);
+    const zero = try floatConstant(emitter, value_type, 0.0);
+    const negative_zero = try floatConstant(emitter, value_type, -0.0);
+    const one = try floatConstant(emitter, value_type, 1.0);
+    const boolean = try emitter.builder.internType(.boolean);
+
+    const condition_type = if (value_type == scalar_type)
+        boolean
+    else
+        try emitter.builder.internType(.{
+            .vector = .{
+                .element_type = boolean,
+                .length = emitter.module.types.get(value_type).?.vector.length,
+            },
+        });
+
+    const whole = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .unary = .{
+            .opcode = .trunc,
+            .operand = operand,
+        },
+    }, null)).?;
+
+    // Remainder by one preserves negative fractions and signed zero unlike fract
+    const remainder = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .binary = .{
+            .opcode = .float_remainder,
+            .lhs = operand,
+            .rhs = one,
+        },
+    }, null)).?;
+
+    const infinite = (try emitter.builder.appendInstruction(emitter.block, condition_type, .{
+        .unary = .{
+            .opcode = .is_inf,
+            .operand = operand,
+        },
+    }, null)).?;
+
+    const negative = (try emitter.builder.appendInstruction(emitter.block, condition_type, .{
+        .compare = .{
+            .opcode = .ordered_float_less,
+            .lhs = operand,
+            .rhs = zero,
+        },
+    }, null)).?;
+
+    const infinite_fraction = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .select = .{
+            .condition = negative,
+            .true_value = negative_zero,
+            .false_value = zero,
+        },
+    }, null)).?;
+
+    const fraction = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .select = .{
+            .condition = infinite,
+            .true_value = infinite_fraction,
+            .false_value = remainder,
+        },
+    }, result_name)).?;
+
+    return .{ .fraction = fraction, .whole = whole };
 }
 
 fn validateIntegerOperands(emitter: *ext.Emitter, invocation: ext.Invocation, operand_count: usize) !ir.id.TypeId {
@@ -710,6 +904,28 @@ fn floatScalarType(module: *const ir.module.Module, type_id: ir.id.TypeId) !ir.i
     return scalar;
 }
 
+fn translateDistance(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
+    if (invocation.operands.len != 2)
+        return error.InvalidInstruction;
+
+    const lhs = invocation.operands[0];
+    const rhs = invocation.operands[1];
+    const operand_type = emitter.module.typeOf(lhs) orelse return error.InvalidId;
+
+    if (emitter.module.typeOf(rhs) != operand_type or try floatScalarType(emitter.module, operand_type) != invocation.result_type)
+        return error.InvalidInstruction;
+
+    const difference = (try emitter.builder.appendInstruction(emitter.block, operand_type, .{
+        .binary = .{
+            .opcode = .float_subtract,
+            .lhs = lhs,
+            .rhs = rhs,
+        },
+    }, null)).?;
+
+    return emitLength(emitter, difference, invocation.result_type, invocation.result_name);
+}
+
 fn translateLength(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
     if (invocation.operands.len != 1)
         return error.InvalidInstruction;
@@ -718,15 +934,19 @@ fn translateLength(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Val
     if (try floatScalarType(emitter.module, operand_type) != invocation.result_type)
         return error.InvalidInstruction;
 
-    if (operand_type == invocation.result_type)
-        return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+    return emitLength(emitter, operand, invocation.result_type, invocation.result_name);
+}
+
+fn emitLength(emitter: *ext.Emitter, operand: ir.id.ValueId, result_type: ir.id.TypeId, result_name: ?[]const u8) !ir.id.ValueId {
+    if (emitter.module.typeOf(operand) == result_type)
+        return (try emitter.builder.appendInstruction(emitter.block, result_type, .{
             .unary = .{
                 .opcode = .float_absolute,
                 .operand = operand,
             },
-        }, invocation.result_name)).?;
+        }, result_name)).?;
 
-    const squared = (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+    const squared = (try emitter.builder.appendInstruction(emitter.block, result_type, .{
         .binary = .{
             .opcode = .dot,
             .lhs = operand,
@@ -734,12 +954,12 @@ fn translateLength(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Val
         },
     }, null)).?;
 
-    return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+    return (try emitter.builder.appendInstruction(emitter.block, result_type, .{
         .unary = .{
             .opcode = .sqrt,
             .operand = squared,
         },
-    }, invocation.result_name)).?;
+    }, result_name)).?;
 }
 
 fn translateNormalize(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {

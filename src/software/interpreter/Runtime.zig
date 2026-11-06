@@ -68,8 +68,6 @@ const BinaryInt = enum {
 };
 
 const ExtendedInt = enum {
-    add_carry,
-    subtract_borrow,
     signed_multiply,
     unsigned_multiply,
 };
@@ -93,7 +91,6 @@ const UnaryFloat = enum {
     exp,
     exp2,
     floor,
-    fract,
     inverse_sqrt,
     log,
     log2,
@@ -667,7 +664,6 @@ fn executeVectorGroup(self: *Self, program: *const Program, options: RunOptions,
         .float_multiply => try self.groupBinaryFloat(instruction, .multiply, mask),
         .float_subtract => try self.groupBinaryFloat(instruction, .subtract, mask),
         .floor => try self.groupUnaryFloat(instruction, .floor, mask),
-        .fract => try self.groupUnaryFloat(instruction, .fract, mask),
         .integer_absolute => try self.groupUnaryInt(instruction, .absolute, mask),
         .integer_add => try self.groupBinaryInt(instruction, .add, mask),
         .integer_multiply => try self.groupBinaryInt(instruction, .multiply, mask),
@@ -772,7 +768,6 @@ fn groupUnaryFloat(self: *Self, instruction: bc.Instruction, comptime operation:
             .exp => @exp(source),
             .exp2 => @exp2(source),
             .floor => @floor(source),
-            .fract => source - @floor(source),
             .inverse_sqrt => @as(F32x4, @splat(1.0)) / @sqrt(source),
             .log => @log(source),
             .log2 => @log2(source),
@@ -1000,7 +995,6 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .float_to_signed => try self.floatToInt(instruction, true),
         .float_to_unsigned => try self.floatToInt(instruction, false),
         .floor => try self.unaryFloat(instruction, .floor),
-        .fract => try self.unaryFloat(instruction, .fract),
         .image_fetch => try self.imageRead(program, options, instruction, false, true),
         .image_fetch_float => try self.imageRead(program, options, instruction, true, true),
         .image_gather => try self.imageGather(program, options.resource_images, options.resource_samplers, instruction),
@@ -1013,10 +1007,8 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .image_write_float => if (self.isObservable()) try self.imageWrite(program, options, instruction, true),
         .integer_absolute => try self.unaryInt(instruction, .absolute),
         .integer_add => try self.binaryInt(instruction, .add),
-        .integer_add_carry => try self.extendedInt(instruction, .add_carry),
         .integer_multiply => try self.binaryInt(instruction, .multiply),
         .integer_subtract => try self.binaryInt(instruction, .subtract),
-        .integer_subtract_borrow => try self.extendedInt(instruction, .subtract_borrow),
         .inverse_sqrt => try self.unaryFloat(instruction, .inverse_sqrt),
         .is_inf => try self.classifyFloat(instruction, .infinite),
         .is_nan => try self.classifyFloat(instruction, .nan),
@@ -1233,7 +1225,6 @@ fn unaryFloatTyped(self: *Self, comptime Float: type, instruction: bc.Instructio
             .exp => @exp(value),
             .exp2 => @exp2(value),
             .floor => @floor(value),
-            .fract => value - @floor(value),
             .inverse_sqrt => 1.0 / @sqrt(value),
             .log => @log(value),
             .log2 => @log2(value),
@@ -1492,14 +1483,6 @@ fn extendedInt(self: *Self, instruction: bc.Instruction, comptime operation: Ext
         const lhs = low32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
         const rhs = low32(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
         const low, const high = switch (operation) {
-            .add_carry => blk: {
-                const result, const carry = @addWithOverflow(lhs, rhs);
-                break :blk .{ result, @as(u32, carry) };
-            },
-            .subtract_borrow => blk: {
-                const result, const borrow = @subWithOverflow(lhs, rhs);
-                break :blk .{ result, @as(u32, borrow) };
-            },
             .signed_multiply => blk: {
                 const product = @as(i64, @as(i32, @bitCast(lhs))) * @as(i64, @as(i32, @bitCast(rhs)));
                 const bits: u64 = @bitCast(product);

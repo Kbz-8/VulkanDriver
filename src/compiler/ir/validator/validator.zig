@@ -349,7 +349,6 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                 .exp2,
                 .float_absolute,
                 .floor,
-                .fract,
                 .inverse_sqrt,
                 .log,
                 .log2,
@@ -419,8 +418,6 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                     if (result_type == null or result_type.? != vector.element_type)
                         return ValidationError.WrongResultType;
                 },
-                .integer_add_carry,
-                .integer_subtract_borrow,
                 .signed_multiply_extended,
                 .unsigned_multiply_extended,
                 => {
@@ -430,7 +427,7 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                     const operand_shape = conversionIntegerShape(module, lhs_type) orelse return ValidationError.WrongOperandType;
                     const expected_signedness: type_ir.Signedness = switch (op.opcode) {
                         .signed_multiply_extended => .signed,
-                        .integer_add_carry, .integer_subtract_borrow, .unsigned_multiply_extended => .unsigned,
+                        .unsigned_multiply_extended => .unsigned,
                         else => unreachable,
                     };
                     if (operand_shape.signedness != expected_signedness)
@@ -1746,8 +1743,8 @@ test "Validator: bit and extended integer operations" {
         \\        .entry():
         \\            %bit_counted: u32 = bit_count %unsigned
         \\            %bit_reversed: vec2[u32] = bit_reverse %vector
-        \\            %carry: struct[u32, u32] = integer_add_carry %unsigned, %unsigned
-        \\            %borrow: struct[u32, u32] = integer_subtract_borrow %unsigned, %unsigned
+        \\            %vector_extended: struct[vec2[u32], vec2[u32]] = unsigned_multiply_extended %vector, %vector
+        \\            %inferred_extended = unsigned_multiply_extended %unsigned, %unsigned
         \\            %signed_extended: struct[i32, i32] = signed_multiply_extended %signed, %signed
         \\            %unsigned_extended: struct[u32, u32] = unsigned_multiply_extended %unsigned, %unsigned
         \\            %signed_extract: i32 = bit_field_extract signed %signed, %offset, %count
@@ -1790,7 +1787,7 @@ test "Validator: bit and extended integer operations" {
         \\    fn @main(%value: i32) -> void
         \\    {
         \\        .entry():
-        \\            %result: struct[i32, i32] = integer_add_carry %value, %value
+        \\            %result: struct[i32, i32] = unsigned_multiply_extended %value, %value
         \\            return
         \\    }
         \\}

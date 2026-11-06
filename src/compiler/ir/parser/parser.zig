@@ -1541,8 +1541,8 @@ test "Parser: types, operations, calls, terminators" {
         \\             %19: mat3x3[u32] = composite_construct %14, %14, %14
         \\             %20: u32 = bit_count %1
         \\             %21: vec3[u32] = bit_reverse %14
-        \\             %22 = integer_add_carry %1, %2
-        \\             %23: struct[u32, u32] = integer_subtract_borrow %1, %2
+        \\             %inferred_extended = unsigned_multiply_extended %1, %2
+        \\             %23: struct[vec3[u32], vec3[u32]] = unsigned_multiply_extended %14, %14
         \\             %24: struct[i32, i32] = signed_multiply_extended %signed_one, %signed_one
         \\             %25: struct[u32, u32] = unsigned_multiply_extended %1, %2
         \\             %26: i32 = bit_field_extract signed %signed_one, %1, %2
@@ -1583,7 +1583,7 @@ test "Parser: types, operations, calls, terminators" {
     try std.testing.expectEqualStrings(printed, printed_again);
     try std.testing.expect(std.mem.indexOf(u8, printed, "cmp_equal %1, %2") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "cmp.") == null);
-    try std.testing.expect(std.mem.indexOf(u8, printed, "struct[u32, u32] = integer_add_carry %1, %2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "%inferred_extended: struct[u32, u32] = unsigned_multiply_extended %1, %2") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "bit_field_extract signed %signed_one, %1, %2") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "bit_field_extract unsigned %1, %1, %2") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "bit_field_insert %1, %2, %1, %2") != null);
