@@ -57,7 +57,6 @@ pub fn init(allocator: std.mem.Allocator, instance: *Instance) VkError!Self {
         .queue_family_props = .empty,
         .features = .{},
         .instance = instance,
-        // SAFETY: the backend assigns the dispatch table before returning the physical device.
         .dispatch_table = undefined,
     };
 }

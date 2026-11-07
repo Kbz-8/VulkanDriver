@@ -95,46 +95,26 @@ pub const Geometry = struct {
     depth: u8,
 };
 
-// SAFETY: load assigns every function pointer before any helper is used.
 var xcb_connection_has_error: *const fn (*Connection) callconv(.c) c_int = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var xcb_create_gc_checked: *const fn (*Connection, Gcontext, Drawable, u32, ?*const anyopaque) callconv(.c) VoidCookie = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var xcb_depth_next: *const fn (*DepthIterator) callconv(.c) void = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var xcb_depth_visuals_iterator: *const fn (*const Depth) callconv(.c) VisualTypeIterator = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var xcb_flush: *const fn (*Connection) callconv(.c) c_int = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var xcb_format_next: *const fn (*FormatIterator) callconv(.c) void = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var xcb_free_gc: *const fn (*Connection, Gcontext) callconv(.c) VoidCookie = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var xcb_generate_id: *const fn (*Connection) callconv(.c) u32 = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var xcb_get_geometry: *const fn (*Connection, Drawable) callconv(.c) GetGeometryCookie = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var xcb_get_geometry_reply: *const fn (*Connection, GetGeometryCookie, *?*GenericError) callconv(.c) ?*GetGeometryReply = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var xcb_get_maximum_request_length: *const fn (*Connection) callconv(.c) u32 = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var xcb_get_setup: *const fn (*Connection) callconv(.c) ?*const Setup = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var xcb_put_image: *const fn (*Connection, u8, Drawable, Gcontext, u16, u16, i16, i16, u8, u8, u32, [*]const u8) callconv(.c) VoidCookie = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var xcb_request_check: *const fn (*Connection, VoidCookie) callconv(.c) ?*GenericError = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var xcb_screen_allowed_depths_iterator: *const fn (*const Screen) callconv(.c) DepthIterator = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var xcb_screen_next: *const fn (*ScreenIterator) callconv(.c) void = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var xcb_setup_pixmap_formats_iterator: *const fn (*const Setup) callconv(.c) FormatIterator = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var xcb_setup_roots_iterator: *const fn (*const Setup) callconv(.c) ScreenIterator = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var xcb_visualtype_next: *const fn (*VisualTypeIterator) callconv(.c) void = undefined;
 
-// SAFETY: load initializes the module before it can be closed.
 var module: std.DynLib = undefined;
 var ref_count = std.atomic.Value(usize).init(0);
 var load_mutex: lib.SpinMutex = .{};

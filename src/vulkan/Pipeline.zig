@@ -103,7 +103,6 @@ pub fn initCompute(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipel
 
     return .{
         .owner = device,
-        // SAFETY: the backend assigns the vtable before returning the compute pipeline.
         .vtable = undefined,
         .bind_point = .compute,
         .stages = info.stage.stage,
@@ -161,7 +160,6 @@ pub fn initGraphics(device: *Device, allocator: std.mem.Allocator, cache: ?*Pipe
 
     return .{
         .owner = device,
-        // SAFETY: the backend assigns the vtable before returning the graphics pipeline.
         .vtable = undefined,
         .bind_point = .graphics,
         .stages = stages,
@@ -323,7 +321,6 @@ fn instantiateCommonStage(result: *CommonStage, allocator: std.mem.Allocator, in
 
     result.* = .{
         .stage = stage,
-        // SAFETY: properly initialized just after
         .module = undefined,
         .allocator = VulkanAllocator.from(allocator).clone(),
     };

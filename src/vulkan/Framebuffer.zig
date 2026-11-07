@@ -44,7 +44,6 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Frame
         .height = @intCast(info.height),
         .layers = @intCast(info.layers),
         .attachments = attachments,
-        // SAFETY: the backend assigns the vtable before returning the framebuffer.
         .vtable = undefined,
     };
 }

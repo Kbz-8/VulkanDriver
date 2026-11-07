@@ -41,7 +41,6 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Pipel
         .push_ranges_count = info.push_constant_range_count,
         .push_ranges = @splat(std.mem.zeroes(vk.PushConstantRange)),
         .ref_count = std.atomic.Value(usize).init(1),
-        // SAFETY: the backend assigns the vtable before returning the pipeline layout.
         .vtable = undefined,
     };
 

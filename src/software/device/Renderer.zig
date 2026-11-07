@@ -284,9 +284,7 @@ pub const DrawCall = struct {
             .vertex_count = vertex_count,
             .instance_count = instance_count,
             .renderer = renderer,
-            // SAFETY: draw assigns the viewport before the rasterizer receives this value.
             .viewport = undefined,
-            // SAFETY: draw assigns the scissor before the rasterizer receives this value.
             .scissor = undefined,
             .color_attachments = framebuffer.interface.attachments[0..],
             .depth_attachment = if (render_pass.interface.subpasses[renderer.subpass_index].depth_stencil_attachments) |desc| framebuffer.interface.attachments[desc.attachment] else null,
@@ -386,7 +384,6 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
     var draw_call = try DrawCall.init(allocator, vertex_count, instance_count, self);
     defer draw_call.deinit(allocator);
 
-    // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
     const profile_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
     defer if (comptime base.config.soft_profile) {
         draw_call.profile.draw_wall_ns = profileElapsedNs(profile_timer, io);
@@ -395,7 +392,6 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
 
     const pipeline = self.state.pipeline orelse return VkError.InvalidPipelineDrv;
 
-    // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
     const vertex_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
     self.vertexShaderStage(allocator, &draw_call, vertex_count, instance_count, first_vertex, first_instance, indices, primitive_restart) catch |err| {
         std.log.scoped(.@"Vertex stage").err("catched a '{s}'", .{@errorName(err)});
@@ -416,7 +412,6 @@ fn drawCall(self: *Self, bounded_allocator: *BoundedAllocator, vertex_count: usi
     draw_call.viewport = try self.resolveViewport(0);
     draw_call.scissor = try self.resolveScissor(0);
 
-    // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
     const raster_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(io, .real) else undefined;
     try rasterizer.processThenFragmentStage(self, allocator, &draw_call);
     if (comptime base.config.soft_profile)

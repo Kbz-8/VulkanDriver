@@ -27,7 +27,6 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, layout: *DescriptorSe
     return .{
         .owner = device,
         .layout = layout,
-        // SAFETY: the backend assigns the vtable before returning the descriptor set.
         .vtable = undefined,
     };
 }

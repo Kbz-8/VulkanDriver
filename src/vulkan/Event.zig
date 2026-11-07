@@ -25,7 +25,6 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Event
     _ = info;
     return .{
         .owner = device,
-        // SAFETY: the backend assigns the vtable before returning the event.
         .vtable = undefined,
     };
 }

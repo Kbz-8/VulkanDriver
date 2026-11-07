@@ -188,7 +188,6 @@ fn drawLineDiamond(
     const has_fragment_shader = fragment_stage != null;
     const batch_id: usize = 0;
 
-    // SAFETY: only used if has_fragment_shader
     var fragment_worker: fragment.Worker = if (has_fragment_shader) try fragment.acquireWorker(draw_call, batch_id) else undefined;
     defer if (has_fragment_shader)
         fragment_worker.release();
@@ -435,7 +434,6 @@ fn lineQuadHelpers(worker: *const fragment.Worker, v0: *const Renderer.Vertex, v
 }
 
 inline fn run(data: RunData) !void {
-    // SAFETY: only used if data.has_fragment_shader
     var fragment_worker: fragment.Worker = if (data.has_fragment_shader) try fragment.acquireWorker(data.draw_call, data.batch_id) else undefined;
     defer if (data.has_fragment_shader)
         fragment_worker.release();

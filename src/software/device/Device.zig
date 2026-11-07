@@ -61,9 +61,7 @@ pub fn setup(self: *Self, device: *SoftDevice) void {
             .data = switch (i) {
                 graphics_pipeline_state => .{
                     .graphics = .{
-                        // SAFETY: indexed draws bind the index buffer before the renderer reads it.
                         .index_buffer = undefined,
-                        // SAFETY: each vertex binding is populated before an attribute reads it.
                         .vertex_buffers = undefined,
                     },
                 },

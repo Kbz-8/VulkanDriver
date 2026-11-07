@@ -16,30 +16,18 @@ const bo_transfer_write: u32 = 1 << 1;
 pub const gbm_device = opaque {};
 pub const gbm_bo = opaque {};
 
-// SAFETY: load assigns every function pointer before any public GBM wrapper is used.
 var gbm_create_device: *const fn (fd: c_int) callconv(.c) ?*gbm_device = undefined;
-// SAFETY: load assigns every function pointer before any public GBM wrapper is used.
 var gbm_device_destroy: *const fn (device: *gbm_device) callconv(.c) void = undefined;
-// SAFETY: load assigns every function pointer before any public GBM wrapper is used.
 var gbm_device_is_format_supported: *const fn (device: *gbm_device, format: u32, usage: u32) callconv(.c) c_int = undefined;
-// SAFETY: load assigns every function pointer before any public GBM wrapper is used.
 var gbm_bo_create: *const fn (device: *gbm_device, width: u32, height: u32, format: u32, usage: u32) callconv(.c) ?*gbm_bo = undefined;
-// SAFETY: load assigns every function pointer before any public GBM wrapper is used.
 var gbm_bo_destroy: *const fn (bo: *gbm_bo) callconv(.c) void = undefined;
-// SAFETY: load assigns every function pointer before any public GBM wrapper is used.
 var gbm_bo_get_fd: *const fn (bo: *gbm_bo) callconv(.c) c_int = undefined;
-// SAFETY: load assigns every function pointer before any public GBM wrapper is used.
 var gbm_bo_get_modifier: *const fn (bo: *gbm_bo) callconv(.c) u64 = undefined;
-// SAFETY: load assigns every function pointer before any public GBM wrapper is used.
 var gbm_bo_get_plane_count: *const fn (bo: *gbm_bo) callconv(.c) c_int = undefined;
-// SAFETY: load assigns every function pointer before any public GBM wrapper is used.
 var gbm_bo_get_stride: *const fn (bo: *gbm_bo) callconv(.c) u32 = undefined;
-// SAFETY: load assigns every function pointer before any public GBM wrapper is used.
 var gbm_bo_map: *const fn (bo: *gbm_bo, x: u32, y: u32, width: u32, height: u32, flags: u32, stride: *u32, map_data: *?*anyopaque) callconv(.c) ?*anyopaque = undefined;
-// SAFETY: load assigns every function pointer before any public GBM wrapper is used.
 var gbm_bo_unmap: *const fn (bo: *gbm_bo, map_data: ?*anyopaque) callconv(.c) void = undefined;
 
-// SAFETY: load initializes the module before it can be closed or queried.
 var module: std.DynLib = undefined;
 var ref_count = std.atomic.Value(usize).init(0);
 var load_mutex: lib.SpinMutex = .{};

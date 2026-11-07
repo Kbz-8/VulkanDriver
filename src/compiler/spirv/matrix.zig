@@ -71,8 +71,42 @@ const Emitter = struct {
         }, name)).?;
     }
 
+    fn determinant(self: Emitter, scalar_type: ir.id.TypeId, elements: []const ir.id.ValueId, size: usize) anyerror!ir.id.ValueId {
+        if (size == 1)
+            return elements[0];
+
+        var sum: ir.id.ValueId = undefined;
+        for (0..size) |column| {
+            const minor = try self.minorDeterminant(scalar_type, elements, size, 0, column);
+            const product = try self.binary(scalar_type, .float_multiply, elements[column], minor, null);
+            sum = if (column == 0)
+                product
+            else
+                try self.binary(scalar_type, if (column % 2 == 0) .float_add else .float_subtract, sum, product, null);
+        }
+        return sum;
+    }
+
+    fn minorDeterminant(self: Emitter, scalar_type: ir.id.TypeId, elements: []const ir.id.ValueId, size: usize, excluded_row: usize, excluded_column: usize) anyerror!ir.id.ValueId {
+        var minor: [9]ir.id.ValueId = undefined;
+        var index: usize = 0;
+        for (0..size) |row| {
+            if (row == excluded_row)
+                continue;
+
+            for (0..size) |column| {
+                if (column == excluded_column)
+                    continue;
+
+                minor[index] = elements[row * size + column];
+                index += 1;
+            }
+        }
+
+        return self.determinant(scalar_type, minor[0..index], size - 1);
+    }
+
     fn matrixVector(self: Emitter, shape: MatrixShape, lhs: ir.id.ValueId, rhs: ir.id.ValueId, name: ?[]const u8) !ir.id.ValueId {
-        // SAFETY: will be overwritten by the following loop
         var sum: ir.id.ValueId = undefined;
         for (0..shape.columns) |index| {
             const column = try self.extract(shape.column_type, lhs, &.{@intCast(index)});
@@ -90,6 +124,65 @@ const Emitter = struct {
         return sum;
     }
 };
+
+pub fn inverse(builder: *ir.Builder, block: ir.id.BlockId, result_type: ir.id.TypeId, operand: ir.id.ValueId, name: ?[]const u8) !ir.id.ValueId {
+    const emit = Emitter{
+        .builder = builder,
+        .block = block,
+    };
+    const shape = try emit.matrix(result_type);
+
+    if (try emit.typeOf(operand) != result_type or shape.columns != shape.rows)
+        return error.InvalidInstruction;
+
+    switch (builder.module.types.get(shape.scalar_type).?.floating.bits) {
+        16, 32, 64 => {},
+        else => return error.UnsupportedType,
+    }
+
+    const size = shape.columns;
+    var elements: [16]ir.id.ValueId = undefined;
+    for (0..size) |row| {
+        for (0..size) |column|
+            elements[row * size + column] = try emit.extract(shape.scalar_type, operand, &.{ @intCast(column), @intCast(row) });
+    }
+
+    var adjugate: [4][4]ir.id.ValueId = undefined;
+    for (0..size) |column| {
+        for (0..size) |row| {
+            const minor = try emit.minorDeterminant(shape.scalar_type, elements[0 .. size * size], size, column, row);
+            adjugate[column][row] = if ((column + row) % 2 == 0)
+                minor
+            else
+                (try builder.appendInstruction(block, shape.scalar_type, .{
+                    .unary = .{
+                        .opcode = .negate,
+                        .operand = minor,
+                    },
+                }, null)).?;
+        }
+    }
+
+    var determinant: ir.id.ValueId = undefined;
+    for (0..size) |column| {
+        const product = try emit.binary(shape.scalar_type, .float_multiply, elements[column], adjugate[0][column], null);
+        determinant = if (column == 0)
+            product
+        else
+            try emit.binary(shape.scalar_type, .float_add, determinant, product, null);
+    }
+
+    var columns: [4]ir.id.ValueId = undefined;
+    for (columns[0..size], 0..) |*column, column_index| {
+        var entries: [4]ir.id.ValueId = undefined;
+        for (entries[0..size], 0..) |*entry, row_index|
+            entry.* = try emit.binary(shape.scalar_type, .float_divide, adjugate[column_index][row_index], determinant, null);
+
+        column.* = try emit.construct(shape.column_type, entries[0..size], null);
+    }
+
+    return emit.construct(result_type, columns[0..size], name);
+}
 
 pub fn lower(
     builder: *ir.Builder,

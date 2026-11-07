@@ -106,9 +106,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Comma
         .device_mask = 1,
         .host_allocator = VulkanAllocator.from(allocator).cloneWithScope(.object),
         .state_mutex = .init,
-        // SAFETY: the backend assigns both tables before returning the command buffer.
         .vtable = undefined,
-        // SAFETY: the backend assigns both tables before returning the command buffer.
         .dispatch_table = undefined,
     };
 }

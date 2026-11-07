@@ -602,7 +602,6 @@ fn storeScratchVectorMasked(self: *Self, index: usize, values: SlotVector, mask:
 }
 
 fn laneMaskVector(mask: LaneMask) @Vector(lane_count, bool) {
-    // SAFETY: the following loop initializes every vector lane before result is returned
     var result: @Vector(lane_count, bool) = undefined;
     inline for (0..lane_count) |lane|
         result[lane] = (mask & laneBit(lane)) != 0;
@@ -1286,7 +1285,6 @@ fn groupDerivativeTyped(self: *Self, comptime Float: type, instruction: bc.Instr
             };
         }
 
-        // SAFETY: will be filled by the loop bellow
         var result_slots: SlotVector = undefined;
 
         inline for (0..lane_count) |lane|
@@ -2031,7 +2029,6 @@ fn imageSample(
     if (derivatives) |gradient|
         lod = SoftSampler.lodFromDerivatives(image, view, dimension, coordinate, gradient);
 
-    // SAFETY: initialized in the next condition
     var biased_sampler: SoftSampler = undefined;
     const sampling_sampler = if (pair.bias != .invalid_register) blk: {
         if (lod == null)

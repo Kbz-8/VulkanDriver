@@ -90,24 +90,15 @@ pub const Geometry = struct {
     visual: *Visual,
 };
 
-// SAFETY: load assigns every function pointer before any helper is used.
 var XCreateGC: *const fn (*Display, Drawable, c_ulong, ?*anyopaque) callconv(.c) ?*GC = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var XCreateImage: *const fn (*Display, *Visual, c_uint, c_int, c_int, [*c]u8, c_uint, c_uint, c_int, c_int) callconv(.c) ?*XImage = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var XFlush: *const fn (*Display) callconv(.c) c_int = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var XFree: *const fn (?*anyopaque) callconv(.c) c_int = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var XFreeGC: *const fn (*Display, *GC) callconv(.c) c_int = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var XGetVisualInfo: *const fn (*Display, c_long, *VisualInfo, *c_int) callconv(.c) ?[*]VisualInfo = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var XGetWindowAttributes: *const fn (*Display, Window, *WindowAttributes) callconv(.c) c_int = undefined;
-// SAFETY: load assigns every function pointer before any helper is used.
 var XPutImage: *const fn (*Display, Drawable, *GC, *XImage, c_int, c_int, c_int, c_int, c_uint, c_uint) callconv(.c) c_int = undefined;
 
-// SAFETY: load initializes the module before it can be closed.
 var module: std.DynLib = undefined;
 var ref_count = std.atomic.Value(usize).init(0);
 var load_mutex: lib.SpinMutex = .{};
@@ -172,7 +163,6 @@ pub fn supportsVisual(display: *Display, visual_id: vk.VisualID) bool {
 }
 
 pub fn getGeometry(display: *Display, window: Window) VkError!Geometry {
-    // SAFETY: will be overwritten by XGetWindowAttributes
     var attributes: WindowAttributes = undefined;
     if (XGetWindowAttributes(display, window, &attributes) == 0)
         return VkError.SurfaceLostKhr;

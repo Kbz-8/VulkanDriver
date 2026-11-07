@@ -23,7 +23,6 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Semap
     _ = info;
     return .{
         .owner = device,
-        // SAFETY: the backend assigns the vtable before returning the semaphore.
         .vtable = undefined,
     };
 }

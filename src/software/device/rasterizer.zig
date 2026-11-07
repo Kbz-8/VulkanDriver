@@ -473,7 +473,6 @@ fn rasterizeTransformedPoint(
     const pipeline = draw_call.renderer.state.pipeline orelse return;
     const has_fragment_shader = pipeline.stages.getPtr(.fragment) != null;
 
-    // SAFETY: only used if has_fragment_shader
     var fragment_worker: fragment.Worker = if (has_fragment_shader) try fragment.acquireWorker(draw_call, 0) else undefined;
 
     defer if (has_fragment_shader)

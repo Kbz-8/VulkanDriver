@@ -40,7 +40,6 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Pipel
     return .{
         .owner = device,
         .data = data,
-        // SAFETY: the backend assigns the vtable before returning the pipeline cache.
         .vtable = undefined,
     };
 }

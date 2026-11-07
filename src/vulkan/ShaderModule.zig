@@ -72,7 +72,6 @@ pub fn init(device: *Device, _: std.mem.Allocator, info: *const vk.ShaderModuleC
     return .{
         .owner = device,
         .source = source,
-        // SAFETY: the backend assigns the vtable before returning the shader module.
         .vtable = undefined,
     };
 }

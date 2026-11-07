@@ -365,7 +365,6 @@ fn rasterizeTriangleInRectWave(
             var early_applied: [lane_count]bool = undefined;
             var mask: interpreter_simd.LaneMask = 0;
 
-            // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
             const coverage_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
             for (0..lane_count) |lane| {
                 const lane_x = x + @as(i32, @intCast(lane));
@@ -393,7 +392,6 @@ fn rasterizeTriangleInRectWave(
             if (mask == 0)
                 continue;
 
-            // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
             const depth_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
             for (0..lane_count) |lane| {
                 const bit = interpreter_simd.laneBit(@intCast(lane));
@@ -413,7 +411,6 @@ fn rasterizeTriangleInRectWave(
             if (mask == 0)
                 continue;
 
-            // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
             const interpolation_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
             for (0..lane_count) |lane| {
                 const bit = interpreter_simd.laneBit(@intCast(lane));
@@ -435,7 +432,6 @@ fn rasterizeTriangleInRectWave(
                 return VkError.Unknown;
             };
 
-            // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
             const target_output_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
             if (state.opaque_single_sample_output) {
                 var output_depths = depths;
@@ -510,7 +506,6 @@ fn rasterizeTriangleInRectQuads(state: *const FillState, worker: *fragment.Worke
                 if (quad_x > bounds.max_x)
                     break;
 
-                // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
                 const coverage_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
                 const quad = irQuadCoverage(state, triangle, bounds, quad_x, y);
 
@@ -521,7 +516,6 @@ fn rasterizeTriangleInRectQuads(state: *const FillState, worker: *fragment.Worke
                     continue;
 
                 var quad_mask = quad.mask;
-                // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
                 const depth_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
 
                 for (0..4) |quad_lane| {
@@ -546,7 +540,6 @@ fn rasterizeTriangleInRectQuads(state: *const FillState, worker: *fragment.Worke
                 if (quad_mask == 0)
                     continue;
 
-                // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
                 const interpolation_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
 
                 // Remaining fragments need all four interpolated lanes
@@ -574,7 +567,6 @@ fn rasterizeTriangleInRectQuads(state: *const FillState, worker: *fragment.Worke
                 return VkError.Unknown;
             };
 
-            // SAFETY: only read when soft_profile is enabled at comptime, which also initializes the timer
             const target_output_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
 
             for (0..lane_count) |lane| {
@@ -619,7 +611,6 @@ fn irQuadCoverage(state: *const FillState, triangle: *const PreparedTriangle, bo
     const v1 = triangle.vertices[1].position;
     const v2 = triangle.vertices[2].position;
 
-    // SAFETY: the loop initializes all four positions and barycentrics before returning the quad.
     var quad: QuadCoverage = .{ .positions = undefined, .barycentrics = undefined, .mask = 0 };
 
     for (0..4) |lane| {
@@ -770,7 +761,6 @@ fn runWrapper(data: RunData) void {
 }
 
 fn run(data: RunData) VkError!void {
-    // SAFETY: only used if data.sate.has_fragment_shader
     var fragment_worker: fragment.Worker = if (data.state.has_fragment_shader) try fragment.acquireWorker(data.state.draw_call, data.batch_id) else undefined;
     defer if (data.state.has_fragment_shader)
         fragment_worker.release();

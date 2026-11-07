@@ -18,22 +18,14 @@ pub const Prot = enum(c_int) {
 pub const send_block = 1;
 pub const recv_block = 1;
 
-// SAFETY: load assigns every function pointer before the public wrappers can be used.
 var scif_open: *const fn () callconv(.c) epd_t = undefined;
-// SAFETY: load assigns every function pointer before the public wrappers can be used.
 var scif_close: *const fn (epd: epd_t) callconv(.c) c_int = undefined;
-// SAFETY: load assigns every function pointer before the public wrappers can be used.
 var scif_connect: *const fn (epd: epd_t, dst: *const PortId) callconv(.c) c_int = undefined;
-// SAFETY: load assigns every function pointer before the public wrappers can be used.
 var scif_send: *const fn (epd: epd_t, msg: ?*const anyopaque, len: usize, flags: c_int) callconv(.c) isize = undefined;
-// SAFETY: load assigns every function pointer before the public wrappers can be used.
 var scif_recv: *const fn (epd: epd_t, msg: ?*anyopaque, len: usize, flags: c_int) callconv(.c) isize = undefined;
-// SAFETY: load assigns every function pointer before the public wrappers can be used.
 var scif_register: *const fn (epd: epd_t, addr: ?*anyopaque, len: usize, offset: i64, prot_flags: c_int, map_flags: c_int) callconv(.c) i64 = undefined;
-// SAFETY: load assigns every function pointer before the public wrappers can be used.
 var scif_unregister: *const fn (epd: epd_t, offset: i64, len: usize) callconv(.c) c_int = undefined;
 
-// SAFETY: load initializes the module before it can be closed or queried.
 var module: std.DynLib = undefined;
 var ref_count = std.atomic.Value(usize).init(0);
 var load_mutex: base.SpinMutex = .{};

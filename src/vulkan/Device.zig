@@ -117,9 +117,7 @@ pub fn init(allocator: std.mem.Allocator, instance: *Instance, physical_device: 
         .enabled_khr_swapchain = enabled_khr_swapchain,
         .enabled_khr_device_group = enabled_khr_device_group,
         .device_allocator = if (config.device_debug_allocator) .init else .{},
-        // SAFETY: the backend assigns both tables before returning the device.
         .dispatch_table = undefined,
-        // SAFETY: the backend assigns both tables before returning the device.
         .vtable = undefined,
     };
 }

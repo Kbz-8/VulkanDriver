@@ -110,46 +110,27 @@ pub const zwp_linux_buffer_params_v1_interface: wl_interface = .{
 };
 
 // The loaded wl_buffer_interface is copied here before any linux-dmabuf request is made.
-// SAFETY: load assigns every global pointer before any protocol wrapper is used.
 var wl_buffer_interface_storage: wl_interface = undefined;
 
-// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_display_cancel_read: *const fn (*wl_display) callconv(.c) void = undefined;
-// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_display_create_queue: *const fn (*wl_display) callconv(.c) ?*wl_event_queue = undefined;
-// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_display_dispatch_queue: *const fn (*wl_display, *wl_event_queue) callconv(.c) c_int = undefined;
-// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_display_dispatch_queue_pending: *const fn (*wl_display, *wl_event_queue) callconv(.c) c_int = undefined;
-// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_display_get_fd: *const fn (*wl_display) callconv(.c) c_int = undefined;
-// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_display_prepare_read_queue: *const fn (*wl_display, *wl_event_queue) callconv(.c) c_int = undefined;
-// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_display_read_events: *const fn (*wl_display) callconv(.c) c_int = undefined;
-// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_display_roundtrip_queue: *const fn (*wl_display, *wl_event_queue) callconv(.c) c_int = undefined;
-// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_event_queue_destroy: *const fn (*wl_event_queue) callconv(.c) void = undefined;
-// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_proxy_marshal_flags: *const fn (*wl_proxy, u32, ?*const wl_interface, u32, u32, ...) callconv(.c) ?*wl_proxy = undefined;
-// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_proxy_get_version: *const fn (*wl_proxy) callconv(.c) u32 = undefined;
-// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_proxy_add_listener: *const fn (*wl_proxy, **const fn (void) void, ?*anyopaque) callconv(.c) c_int = undefined;
-// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_proxy_destroy: *const fn (*wl_proxy) callconv(.c) void = undefined;
-// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_proxy_set_queue: *const fn (*wl_proxy, ?*wl_event_queue) callconv(.c) void = undefined;
-// SAFETY: load assigns every function pointer before any protocol wrapper is used.
 pub var wl_display_flush: *const fn (*wl_display) callconv(.c) c_int = undefined;
 
-// SAFETY: load resolves every interface pointer before a surface can be created.
 pub var wl_buffer_interface: *wl_interface = undefined;
-// SAFETY: load resolves every interface pointer before a surface can be created.
 pub var wl_registry_interface: *wl_interface = undefined;
 
-// SAFETY: load initializes the module before it can be closed or queried.
 var module: std.DynLib = undefined;
 var ref_count = std.atomic.Value(usize).init(0);
 var load_mutex: lib.SpinMutex = .{};

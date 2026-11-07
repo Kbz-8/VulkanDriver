@@ -129,7 +129,6 @@ pub fn create(device: *base.Device, allocator: std.mem.Allocator, info: *const v
 
     self.* = .{
         .interface = interface,
-        // SAFETY: the command allocator is initialized after the object is constructed
         .command_allocator = undefined,
         .commands = .empty,
     };
@@ -1089,7 +1088,6 @@ pub fn endRenderPass(interface: *Interface) VkError!void {
     };
 
     self.commands.append(allocator, .{
-        // SAFETY: this command's execute callback does not inspect its context pointer.
         .ptr = undefined,
         .vtable = &.{ .execute = CommandImpl.execute },
     }) catch return VkError.OutOfHostMemory;

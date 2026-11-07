@@ -457,7 +457,6 @@ const GroupTask = struct {
             .backend = backend,
             .context = context_copy,
             .start = start,
-            // SAFETY: will be overwritten
             .state = undefined,
         };
         return task;

@@ -46,7 +46,6 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Sampl
         .max_lod = info.max_lod,
         .border_color = info.border_color,
         .unnormalized_coordinates = info.unnormalized_coordinates,
-        // SAFETY: the backend assigns the vtable before returning the sampler.
         .vtable = undefined,
     };
 }

@@ -110,7 +110,6 @@ pub fn request(self: *Self, command: c_uint, payload: []const u8, reply_payload:
     try self.writeAll(std.mem.asBytes(&header));
     try self.writeAll(payload);
 
-    // SAFETY: will be entirely written with the readAll
     var reply_header: proto.PhiMessageHeader = undefined;
     try self.readAll(std.mem.asBytes(&reply_header));
 
@@ -135,7 +134,6 @@ pub fn sendQueueDoorbell(self: *Self, sequence: u64) VkError!void {
 }
 
 pub fn receiveQueueCompletion(self: *Self) VkError!proto.PhiQueueCompletion {
-    // SAFETY: readAll initializes the complete structure.
     var completion: proto.PhiQueueCompletion = undefined;
     try self.readAll(std.mem.asBytes(&completion));
     return completion;
@@ -190,7 +188,6 @@ fn handshake(self: *Self) VkError!void {
         .reserved = 0,
     };
 
-    // SAFETY: will be entirely written by the request
     var reply: proto.PhiHelloReply = undefined;
     try self.request(proto.PHI_PACKET_HELLO, std.mem.asBytes(&request_payload), std.mem.asBytes(&reply));
     if (reply.result.status != proto.PHI_STATUS_OK) {

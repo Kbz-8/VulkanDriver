@@ -2,6 +2,7 @@ const std = @import("std");
 const ir = @import("../../../ir/ir.zig");
 const ext = @import("../types.zig");
 const vector_helper = @import("../../vector.zig");
+const matrix_helper = @import("../../matrix.zig");
 
 pub const Opcode = enum(u32) {
     acos = 17,
@@ -122,6 +123,7 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
         .length => translateLength(emitter, invocation),
         .log => translateUnary(emitter, invocation, .log),
         .log2 => translateUnary(emitter, invocation, .log2),
+        .matrix_inverse => translateMatrixInverse(emitter, invocation),
         .modf_struct => translateModfStruct(emitter, invocation),
         .n_clamp => translateNClamp(emitter, invocation),
         .normalize => translateNormalize(emitter, invocation),
@@ -153,6 +155,13 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
             return error.UnsupportedExtendedInstruction;
         },
     };
+}
+
+fn translateMatrixInverse(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
+    if (invocation.operands.len != 1)
+        return error.InvalidInstruction;
+
+    return matrix_helper.inverse(emitter.builder, emitter.block, invocation.result_type, invocation.operands[0], invocation.result_name);
 }
 
 fn translateUnary(emitter: *ext.Emitter, invocation: ext.Invocation, opcode: ir.instruction.UnaryOpcode) !ir.id.ValueId {

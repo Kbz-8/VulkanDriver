@@ -134,7 +134,6 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Descr
         .dynamic_descriptor_count = dynamic_descriptor_count,
         .stages = stages,
         .ref_count = std.atomic.Value(usize).init(1),
-        // SAFETY: the backend assigns the vtable before returning the descriptor set layout.
         .vtable = undefined,
     };
 }

@@ -35,7 +35,6 @@ pub fn init(device: *Device, alloc: std.mem.Allocator, info: *const vk.Descripto
         .max_sets = info.max_sets,
         .host_allocator = VulkanAllocator.from(alloc).clone(),
         .sets = .empty,
-        // SAFETY: the backend assigns the vtable before returning the descriptor pool.
         .vtable = undefined,
     };
 }

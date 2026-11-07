@@ -369,7 +369,6 @@ pub export fn apeCreateInstance(info: *const vk.InstanceCreateInfo, callbacks: ?
     const allocator = VulkanAllocator.init(callbacks, .instance).allocator();
     Instance.validateCreateInfo(info) catch |err| return toVkResult(err);
 
-    // SAFETY: will be proprely initiated when not in test
     var instance: *lib.Instance = undefined;
     if (!builtin.is_test) {
         // Will call impl instead of interface as `root` refs the impl module

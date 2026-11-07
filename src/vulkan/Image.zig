@@ -53,7 +53,6 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Image
         .memory = null,
         .memory_offset = 0,
         .allowed_memory_types = .full,
-        // SAFETY: the backend assigns the vtable before returning the image.
         .vtable = undefined,
     };
 }

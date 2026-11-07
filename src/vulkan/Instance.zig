@@ -46,9 +46,7 @@ pub fn init(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) V
     _ = infos;
     return .{
         .physical_devices = .empty,
-        // SAFETY: the backend assigns both tables before returning the instance.
         .dispatch_table = undefined,
-        // SAFETY: the backend assigns both tables before returning the instance.
         .vtable = undefined,
     };
 }

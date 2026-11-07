@@ -79,7 +79,6 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Query
         .owner = device,
         .query_type = info.query_type,
         .queries = queries,
-        // SAFETY: the backend assigns the vtable before returning the query pool.
         .vtable = undefined,
     };
 }
