@@ -33,6 +33,8 @@ pub const UnaryOpcode = enum {
     d_pdx_coarse,
     d_pdx_fine,
     d_pdy,
+    d_pdy_coarse,
+    d_pdy_fine,
     exp,
     exp2,
     find_lsb,

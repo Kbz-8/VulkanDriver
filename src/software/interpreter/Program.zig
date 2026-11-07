@@ -525,6 +525,8 @@ const Lowerer = struct {
                     .d_pdx_coarse => if (dst.kind == .floating and self.module.stage == .fragment) .d_pdx_coarse else return CompileError.InvalidOperation,
                     .d_pdx_fine => if (dst.kind == .floating and self.module.stage == .fragment) .d_pdx_fine else return CompileError.InvalidOperation,
                     .d_pdy => if (dst.kind == .floating and self.module.stage == .fragment) .d_pdy else return CompileError.InvalidOperation,
+                    .d_pdy_coarse => if (dst.kind == .floating and self.module.stage == .fragment) .d_pdy_coarse else return CompileError.InvalidOperation,
+                    .d_pdy_fine => if (dst.kind == .floating and self.module.stage == .fragment) .d_pdy_fine else return CompileError.InvalidOperation,
                     .exp => if (dst.kind == .floating) .exp else return CompileError.InvalidOperation,
                     .exp2 => if (dst.kind == .floating) .exp2 else return CompileError.InvalidOperation,
                     .float_absolute => if (dst.kind == .floating) .float_absolute else return CompileError.InvalidOperation,

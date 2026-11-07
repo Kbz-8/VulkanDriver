@@ -965,6 +965,8 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .d_pdx_coarse,
         .d_pdx_fine,
         .d_pdy,
+        .d_pdy_coarse,
+        .d_pdy_fine,
         .fwidth,
         .fwidth_coarse,
         .fwidth_fine,
@@ -1187,7 +1189,8 @@ fn groupDerivativeTyped(self: *Self, comptime Float: type, instruction: bc.Instr
             result[lane] = switch (instruction.opcode) {
                 .d_pdx, .d_pdx_fine => values[lane | 1] - values[lane & ~@as(usize, 1)],
                 .d_pdx_coarse => values[(lane & ~@as(usize, 3)) | 1] - values[lane & ~@as(usize, 3)],
-                .d_pdy => values[lane | 2] - values[lane & ~@as(usize, 2)],
+                .d_pdy, .d_pdy_fine => values[lane | 2] - values[lane & ~@as(usize, 2)],
+                .d_pdy_coarse => values[(lane & ~@as(usize, 3)) | 2] - values[lane & ~@as(usize, 3)],
                 .fwidth, .fwidth_fine => @abs(values[lane ^ 1] - values[lane]) + @abs(values[lane ^ 2] - values[lane]),
                 .fwidth_coarse => blk: {
                     const base = lane & ~@as(usize, 3);

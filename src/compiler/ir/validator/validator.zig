@@ -312,6 +312,8 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                 .d_pdx_coarse,
                 .d_pdx_fine,
                 .d_pdy,
+                .d_pdy_coarse,
+                .d_pdy_fine,
                 .fwidth,
                 .fwidth_coarse,
                 .fwidth_fine,
