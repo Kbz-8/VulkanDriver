@@ -511,8 +511,6 @@ const Lowerer = struct {
                 const opcode: bc.Opcode = switch (op.opcode) {
                     .acos => if (dst.kind == .floating) .acos else return CompileError.InvalidOperation,
                     .acosh => if (dst.kind == .floating) .acosh else return CompileError.InvalidOperation,
-                    .all => return if (dst.kind == .boolean and dst.components == 1 and src.kind == .boolean) self.emit(.all, src.components, dst.base, src.base, .invalid_register, .invalid_register, 0) else CompileError.InvalidOperation,
-                    .any => return if (dst.kind == .boolean and dst.components == 1 and src.kind == .boolean) self.emit(.any, src.components, dst.base, src.base, .invalid_register, .invalid_register, 0) else CompileError.InvalidOperation,
                     .asin => if (dst.kind == .floating) .asin else return CompileError.InvalidOperation,
                     .asinh => if (dst.kind == .floating) .asinh else return CompileError.InvalidOperation,
                     .atan => if (dst.kind == .floating) .atan else return CompileError.InvalidOperation,
@@ -591,6 +589,14 @@ const Lowerer = struct {
 
                 switch (op.opcode) {
                     .ldexp => try self.emitTyped(opcode, dst.components, dst.base, lhs.base, rhs.base, .invalid_register, 0, bits),
+                    .shift_left,
+                    .logical_shift_right,
+                    .arithmetic_shift_right,
+                    => {
+                        if (!dst.sameShape(lhs) or !isIntegerKind(rhs.kind) or dst.components != rhs.components)
+                            return CompileError.InvalidOperation;
+                        try self.emitTyped(opcode, dst.components, dst.base, lhs.base, rhs.base, .invalid_register, 0, bits);
+                    },
                     else => {
                         if (!dst.sameShape(lhs) or !dst.sameShape(rhs))
                             return CompileError.InvalidOperation;
@@ -610,33 +616,6 @@ const Lowerer = struct {
                 const opcode = try ternaryOpcode(op.opcode, dst.kind);
                 const bits = if (dst.kind == .floating) try self.valueScalarBits(op.first) else 32;
                 try self.emitTyped(opcode, dst.components, dst.base, first.base, second.base, third.base, 0, bits);
-            },
-            .bit_field_extract => |op| {
-                const dst = result orelse return CompileError.InvalidOperation;
-                const base = try self.span(op.base);
-                const bit_offset = try self.span(op.offset);
-                const count = try self.span(op.count);
-                if (!dst.sameShape(base) or !isIntegerKind(dst.kind) or
-                    !isScalarInteger(bit_offset) or !isScalarInteger(count))
-                    return CompileError.InvalidOperation;
-
-                const opcode: bc.Opcode = switch (op.opcode) {
-                    .signed => .bit_field_extract_signed,
-                    .unsigned => .bit_field_extract_unsigned,
-                };
-                try self.emit(opcode, dst.components, dst.base, base.base, bit_offset.base, count.base, 0);
-            },
-            .bit_field_insert => |op| {
-                const dst = result orelse return CompileError.InvalidOperation;
-                const base = try self.span(op.base);
-                const insert = try self.span(op.insert);
-                const bit_offset = try self.span(op.offset);
-                const count = try self.span(op.count);
-                if (!dst.sameShape(base) or !dst.sameShape(insert) or !isIntegerKind(dst.kind) or
-                    !isScalarInteger(bit_offset) or !isScalarInteger(count))
-                    return CompileError.InvalidOperation;
-
-                try self.emit(.bit_field_insert, dst.components, dst.base, base.base, insert.base, bit_offset.base, @backingInt(count.base));
             },
             .compare => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;

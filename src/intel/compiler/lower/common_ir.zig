@@ -422,10 +422,7 @@ const LoweringState = struct {
         switch (source_instruction.operation) {
             .unary => |operation| try self.lowerUnary(block_id, source_instruction.result, operation),
             .binary => |operation| try self.lowerBinary(block_id, source_instruction.result, operation),
-            .ternary,
-            .bit_field_extract,
-            .bit_field_insert,
-            => return Error.UnsupportedOperation,
+            .ternary => return Error.UnsupportedOperation,
             .compare => |operation| try self.lowerCompare(block_id, source_instruction.result, operation),
             .select => |operation| try self.lowerSelect(block_id, source_instruction.result, operation),
             .bitcast => |value_id| try self.lowerBitcast(block_id, source_instruction.result, value_id),
@@ -467,7 +464,6 @@ const LoweringState = struct {
         switch (operation.opcode) {
             .float_absolute,
             .integer_absolute,
-            .any,
             .ceil,
             .round,
             .floor,
@@ -512,7 +508,6 @@ const LoweringState = struct {
             if (source_component.type != result_component.type)
                 return Error.InvalidModule;
             switch (operation.opcode) {
-                .all => unreachable,
                 .negate => {
                     if (source_component.type != .i32 and source_component.type != .f32)
                         return Error.UnsupportedOperation;
@@ -543,7 +538,6 @@ const LoweringState = struct {
                 .integer_absolute,
                 .acos,
                 .acosh,
-                .any,
                 .asin,
                 .asinh,
                 .atan,
@@ -678,8 +672,12 @@ const LoweringState = struct {
             if (lhs.type != data_type or result_component.type != data_type)
                 return Error.InvalidModule;
             var rhs = rhs_value;
-            if (rhs.type != data_type)
-                return Error.InvalidModule;
+            if (rhs.type != data_type) {
+                switch (operation.opcode) {
+                    .shift_left, .logical_shift_right, .arithmetic_shift_right => rhs = try retypeIntegerSource(rhs, data_type),
+                    else => return Error.InvalidModule,
+                }
+            }
             if (operation.opcode == .integer_subtract or operation.opcode == .float_subtract)
                 rhs.negate = !rhs.negate;
             try self.appendInstruction(block_id, null, .{

@@ -926,8 +926,6 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .@"unreachable" => return RuntimeError.UnreachableExecuted,
         .acos => try self.unaryFloat(instruction, .acos),
         .acosh => try self.unaryFloat(instruction, .acosh),
-        .all => try self.all(instruction),
-        .any => try self.any(instruction),
         .arithmetic_shift_right => try self.binaryInt(instruction, .arithmetic_shift_right),
         .array_length => try self.arrayLength(program, options.resource_buffers, instruction),
         .asin => try self.unaryFloat(instruction, .asin),
@@ -936,9 +934,6 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .atan2 => try self.binaryFloat(instruction, .atan2),
         .atanh => try self.unaryFloat(instruction, .atanh),
         .bit_count => try self.unaryInt(instruction, .bit_count),
-        .bit_field_extract_signed => try self.bitFieldExtract(instruction, true),
-        .bit_field_extract_unsigned => try self.bitFieldExtract(instruction, false),
-        .bit_field_insert => try self.bitFieldInsert(instruction),
         .bit_reverse => try self.unaryInt(instruction, .bit_reverse),
         .bitwise_and => try self.binaryInt(instruction, .bitwise_and),
         .bitwise_not => try self.unaryInt(instruction, .bitwise_not),
@@ -1054,26 +1049,6 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
     return null;
 }
 
-fn all(self: *Self, instruction: bc.Instruction) RuntimeError!void {
-    self.registers.at(@backingInt(instruction.a)).* = blk: {
-        for (0..instruction.components) |component| {
-            if (low32(self.registers.at(@backingInt(instruction.b) + component).*) == 0)
-                break :blk 0;
-        }
-        break :blk 1;
-    };
-}
-
-fn any(self: *Self, instruction: bc.Instruction) RuntimeError!void {
-    self.registers.at(@backingInt(instruction.a)).* = blk: {
-        for (0..instruction.components) |component| {
-            if (low32(self.registers.at(@backingInt(instruction.b) + component).*) != 0)
-                break :blk 1;
-        }
-        break :blk 0;
-    };
-}
-
 fn arrayLength(self: *Self, program: *const Program, resource_buffers: []const ?[]u8, instruction: bc.Instruction) RuntimeError!void {
     if (instruction.components != 1)
         return RuntimeError.InvalidBytecode;
@@ -1122,69 +1097,6 @@ fn unaryInt(self: *Self, instruction: bc.Instruction, comptime operation: UnaryI
         };
         self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = result;
     }
-}
-
-fn bitFieldExtract(self: *Self, instruction: bc.Instruction, comptime signed: bool) RuntimeError!void {
-    try self.validateRegisterRange(instruction.a, instruction.components);
-    try self.validateRegisterRange(instruction.b, instruction.components);
-    try self.validateRegisterRange(instruction.c, 1);
-    try self.validateRegisterRange(instruction.d, 1);
-
-    const bit_offset = low32(self.registers.at(@backingInt(instruction.c)).*);
-    const count = low32(self.registers.at(@backingInt(instruction.d)).*);
-    const valid_range = validBitFieldRange(bit_offset, count);
-
-    for (0..instruction.components) |component| {
-        const value = low32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
-        const result: u32 = if (!valid_range or count == 0)
-            0
-        else blk: {
-            const shifted = value >> @intCast(bit_offset);
-            const extracted = shifted & bitMask(count);
-            if (!signed or count == 32)
-                break :blk extracted;
-
-            const sign_shift: u5 = @intCast(32 - count);
-            break :blk @as(u32, @bitCast(@as(i32, @bitCast(extracted << sign_shift)) >> sign_shift));
-        };
-        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = result;
-    }
-}
-
-fn bitFieldInsert(self: *Self, instruction: bc.Instruction) RuntimeError!void {
-    if (instruction.immediate >= @backingInt(bc.Register.invalid_register))
-        return RuntimeError.InvalidBytecode;
-    const count_register: bc.Register = @fromBackingInt(@intCast(instruction.immediate));
-
-    try self.validateRegisterRange(instruction.a, instruction.components);
-    try self.validateRegisterRange(instruction.b, instruction.components);
-    try self.validateRegisterRange(instruction.c, instruction.components);
-    try self.validateRegisterRange(instruction.d, 1);
-    try self.validateRegisterRange(count_register, 1);
-
-    const bit_offset = low32(self.registers.at(@backingInt(instruction.d)).*);
-    const count = low32(self.registers.at(@backingInt(count_register)).*);
-    const valid_range = validBitFieldRange(bit_offset, count);
-
-    for (0..instruction.components) |component| {
-        const base = low32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
-        const insert = low32(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
-        const result: u32 = if (!valid_range or count == 0)
-            base
-        else blk: {
-            const field_mask = bitMask(count) << @intCast(bit_offset);
-            break :blk (base & ~field_mask) | ((insert << @intCast(bit_offset)) & field_mask);
-        };
-        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = result;
-    }
-}
-
-fn validBitFieldRange(bit_offset: u32, count: u32) bool {
-    return bit_offset <= 32 and count <= 32 - bit_offset;
-}
-
-fn bitMask(count: u32) u32 {
-    return if (count == 32) std.math.maxInt(u32) else (@as(u32, 1) << @intCast(count)) - 1;
 }
 
 fn unaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: UnaryFloat) RuntimeError!void {

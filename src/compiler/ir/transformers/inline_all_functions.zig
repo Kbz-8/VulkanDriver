@@ -362,22 +362,6 @@ fn remapOperation(module: *module_ir.Module, value_map: []const ?ids.ValueId, op
                 .third = try mappedValue(module, value_map, op.third),
             },
         },
-        .bit_field_extract => |op| .{
-            .bit_field_extract = .{
-                .opcode = op.opcode,
-                .base = try mappedValue(module, value_map, op.base),
-                .offset = try mappedValue(module, value_map, op.offset),
-                .count = try mappedValue(module, value_map, op.count),
-            },
-        },
-        .bit_field_insert => |op| .{
-            .bit_field_insert = .{
-                .base = try mappedValue(module, value_map, op.base),
-                .insert = try mappedValue(module, value_map, op.insert),
-                .offset = try mappedValue(module, value_map, op.offset),
-                .count = try mappedValue(module, value_map, op.count),
-            },
-        },
         .compare => |op| .{
             .compare = .{
                 .opcode = op.opcode,

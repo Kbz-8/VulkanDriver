@@ -279,15 +279,6 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             const operand_type = try operandType(module, function_id, op.operand);
 
             switch (op.opcode) {
-                .all,
-                .any,
-                => {
-                    if (!isBoolean(module, result))
-                        return ValidationError.WrongResultType;
-
-                    if (!isBooleanVector(module, operand_type))
-                        return ValidationError.WrongOperandType;
-                },
                 .bit_count,
                 .bit_reverse,
                 .bitwise_not,
@@ -382,6 +373,17 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             const rhs_type = try operandType(module, function_id, op.rhs);
 
             switch (op.opcode) {
+                .shift_left,
+                .logical_shift_right,
+                .arithmetic_shift_right,
+                => {
+                    const lhs_shape = integerShape(module, lhs_type) orelse return ValidationError.WrongOperandType;
+                    const rhs_shape = integerShape(module, rhs_type) orelse return ValidationError.WrongOperandType;
+                    if (lhs_shape.components != rhs_shape.components)
+                        return ValidationError.WrongOperandType;
+                    if (result_type == null or result_type.? != lhs_type)
+                        return ValidationError.WrongResultType;
+                },
                 .atan2,
                 .float_max,
                 .float_min,
@@ -467,35 +469,6 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                         return ValidationError.WrongOperandType;
                 },
             }
-        },
-        .bit_field_extract => |op| {
-            const base_type = try operandType(module, function_id, op.base);
-            if (!isIntegerScalarOrVector(module, base_type))
-                return ValidationError.WrongOperandType;
-            if (!isIntegerScalar(module, try operandType(module, function_id, op.offset)) or
-                !isIntegerScalar(module, try operandType(module, function_id, op.count)))
-                return ValidationError.WrongOperandType;
-
-            const result = result_type orelse return ValidationError.WrongResultPresence;
-            if (!isIntegerScalarOrVector(module, result) or
-                !haveSameIntegerShape(module, base_type, result))
-                return ValidationError.WrongResultType;
-        },
-        .bit_field_insert => |op| {
-            const base_type = try operandType(module, function_id, op.base);
-            const insert_type = try operandType(module, function_id, op.insert);
-            if (!isIntegerScalarOrVector(module, base_type) or
-                !isIntegerScalarOrVector(module, insert_type) or
-                !haveSameIntegerShape(module, base_type, insert_type))
-                return ValidationError.WrongOperandType;
-            if (!isIntegerScalar(module, try operandType(module, function_id, op.offset)) or
-                !isIntegerScalar(module, try operandType(module, function_id, op.count)))
-                return ValidationError.WrongOperandType;
-
-            const result = result_type orelse return ValidationError.WrongResultPresence;
-            if (!isIntegerScalarOrVector(module, result) or
-                !haveSameIntegerShape(module, base_type, result))
-                return ValidationError.WrongResultType;
         },
         .compare => |op| {
             const lhs_type = try operandType(module, function_id, op.lhs);
@@ -1312,11 +1285,6 @@ fn conversionIntegerShape(module: *const module_ir.Module, type_id: ids.TypeId) 
     };
 }
 
-fn isIntegerScalar(module: *const module_ir.Module, type_id: ids.TypeId) bool {
-    const ty = module.types.get(type_id) orelse return false;
-    return ty.* == .integer;
-}
-
 fn isIntegerScalarOrVector(module: *const module_ir.Module, type_id: ids.TypeId) bool {
     return integerShape(module, type_id) != null;
 }
@@ -1738,7 +1706,12 @@ test "Validator: bit and extended integer operations" {
     var module = try parser.parseString(std.testing.allocator,
         \\shader compute @main
         \\{
-        \\    fn @main(%unsigned: u32, %signed: i32, %vector: vec2[u32], %offset: u32, %count: i32) -> void
+        \\    %offset: constant u32 = 1
+        \\    %extract_left: constant i32 = 29
+        \\    %extract_right: constant i32 = 30
+        \\    %extract_mask: constant u32 = 3
+        \\    %insert_mask: constant u32 = 6
+        \\    fn @main(%unsigned: u32, %signed: i32, %vector: vec2[u32]) -> void
         \\    {
         \\        .entry():
         \\            %bit_counted: u32 = bit_count %unsigned
@@ -1747,9 +1720,18 @@ test "Validator: bit and extended integer operations" {
         \\            %inferred_extended = unsigned_multiply_extended %unsigned, %unsigned
         \\            %signed_extended: struct[i32, i32] = signed_multiply_extended %signed, %signed
         \\            %unsigned_extended: struct[u32, u32] = unsigned_multiply_extended %unsigned, %unsigned
-        \\            %signed_extract: i32 = bit_field_extract signed %signed, %offset, %count
-        \\            %unsigned_extract: vec2[u32] = bit_field_extract unsigned %vector, %offset, %count
-        \\            %inserted: vec2[u32] = bit_field_insert %vector, %vector, %offset, %count
+        \\            %signed_shifted: i32 = shift_left %signed, %extract_left
+        \\            %signed_extract: i32 = arithmetic_shift_right %signed_shifted, %extract_right
+        \\            %vector_offset: vec2[u32] = composite_construct %offset, %offset
+        \\            %vector_extract_mask: vec2[u32] = composite_construct %extract_mask, %extract_mask
+        \\            %vector_shifted: vec2[u32] = logical_shift_right %vector, %vector_offset
+        \\            %unsigned_extract: vec2[u32] = bitwise_and %vector_shifted, %vector_extract_mask
+        \\            %vector_insert_mask: vec2[u32] = composite_construct %insert_mask, %insert_mask
+        \\            %inverse_mask: vec2[u32] = bitwise_not %vector_insert_mask
+        \\            %cleared: vec2[u32] = bitwise_and %vector, %inverse_mask
+        \\            %insert_shifted: vec2[u32] = shift_left %vector, %vector_offset
+        \\            %insert_masked: vec2[u32] = bitwise_and %insert_shifted, %vector_insert_mask
+        \\            %inserted: vec2[u32] = bitwise_or %cleared, %insert_masked
         \\            return
         \\    }
         \\}
@@ -1820,10 +1802,10 @@ test "Validator: bit and extended integer operations" {
     try expectValidationError(Error.WrongOperandType,
         \\shader compute @main
         \\{
-        \\    fn @main(%base: u32, %offset: vec2[u32], %count: u32) -> void
+        \\    fn @main(%base: u32, %offset: vec2[u32]) -> void
         \\    {
         \\        .entry():
-        \\            %result: u32 = bit_field_extract unsigned %base, %offset, %count
+        \\            %result: u32 = logical_shift_right %base, %offset
         \\            return
         \\    }
         \\}
@@ -1832,10 +1814,10 @@ test "Validator: bit and extended integer operations" {
     try expectValidationError(Error.WrongOperandType,
         \\shader compute @main
         \\{
-        \\    fn @main(%base: u32, %insert: u64, %offset: u32, %count: u32) -> void
+        \\    fn @main(%base: u32, %insert: u64) -> void
         \\    {
         \\        .entry():
-        \\            %result: u32 = bit_field_insert %base, %insert, %offset, %count
+        \\            %result: u32 = bitwise_or %base, %insert
         \\            return
         \\    }
         \\}
@@ -1844,10 +1826,10 @@ test "Validator: bit and extended integer operations" {
     try expectValidationError(Error.WrongResultType,
         \\shader compute @main
         \\{
-        \\    fn @main(%base: i32, %offset: u32, %count: u32) -> void
+        \\    fn @main(%base: i32, %offset: i32) -> void
         \\    {
         \\        .entry():
-        \\            %result: i64 = bit_field_extract signed %base, %offset, %count
+        \\            %result: i64 = arithmetic_shift_right %base, %offset
         \\            return
         \\    }
         \\}

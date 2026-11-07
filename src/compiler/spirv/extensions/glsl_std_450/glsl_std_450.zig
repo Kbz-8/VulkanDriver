@@ -130,6 +130,7 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
         .pow => translateBinary(emitter, invocation, .pow),
         .radians => translateAngleScale(emitter, invocation, std.math.pi / 180.0),
         .reflect => translateReflect(emitter, invocation),
+        .refract => translateRefract(emitter, invocation),
         .round => translateUnary(emitter, invocation, .round),
         .round_even => translateRoundEven(emitter, invocation),
         .s_abs => translateUnary(emitter, invocation, .integer_absolute),
@@ -868,6 +869,149 @@ fn translateReflect(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Va
             .opcode = .float_subtract,
             .lhs = incident,
             .rhs = scaled_normal,
+        },
+    }, invocation.result_name)).?;
+}
+
+fn translateRefract(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
+    if (invocation.operands.len != 3)
+        return error.InvalidInstruction;
+
+    const value_type = invocation.result_type;
+    const scalar_type = try floatScalarType(emitter.module, value_type);
+    const incident = invocation.operands[0];
+    const normal = invocation.operands[1];
+    const eta = invocation.operands[2];
+
+    if (emitter.module.typeOf(incident) != value_type or emitter.module.typeOf(normal) != value_type or emitter.module.typeOf(eta) != scalar_type)
+        return error.InvalidInstruction;
+
+    const is_vector = value_type != scalar_type;
+    const zero = try floatConstant(emitter, scalar_type, 0.0);
+    const one = try floatConstant(emitter, scalar_type, 1.0);
+    const zero_result = try floatConstant(emitter, value_type, 0.0);
+    const boolean = try emitter.builder.internType(.boolean);
+
+    const dot = (try emitter.builder.appendInstruction(emitter.block, scalar_type, .{
+        .binary = .{
+            .opcode = if (is_vector) .dot else .float_multiply,
+            .lhs = normal,
+            .rhs = incident,
+        },
+    }, null)).?;
+
+    // k = 1 - eta^2 * (1 - dot(N, I)^2)
+    const eta_squared = (try emitter.builder.appendInstruction(emitter.block, scalar_type, .{
+        .binary = .{
+            .opcode = .float_multiply,
+            .lhs = eta,
+            .rhs = eta,
+        },
+    }, null)).?;
+
+    const dot_squared = (try emitter.builder.appendInstruction(emitter.block, scalar_type, .{
+        .binary = .{
+            .opcode = .float_multiply,
+            .lhs = dot,
+            .rhs = dot,
+        },
+    }, null)).?;
+
+    const complement = (try emitter.builder.appendInstruction(emitter.block, scalar_type, .{
+        .binary = .{
+            .opcode = .float_subtract,
+            .lhs = one,
+            .rhs = dot_squared,
+        },
+    }, null)).?;
+
+    const discriminant_term = (try emitter.builder.appendInstruction(emitter.block, scalar_type, .{
+        .binary = .{
+            .opcode = .float_multiply,
+            .lhs = eta_squared,
+            .rhs = complement,
+        },
+    }, null)).?;
+
+    const k = (try emitter.builder.appendInstruction(emitter.block, scalar_type, .{
+        .binary = .{
+            .opcode = .float_subtract,
+            .lhs = one,
+            .rhs = discriminant_term,
+        },
+    }, null)).?;
+
+    const total_internal_reflection = (try emitter.builder.appendInstruction(emitter.block, boolean, .{
+        .compare = .{
+            .opcode = .ordered_float_less,
+            .lhs = k,
+            .rhs = zero,
+        },
+    }, null)).?;
+
+    // Otherwise R = eta * I - (eta * dot(N, I) + sqrt(k)) * N
+    const root = (try emitter.builder.appendInstruction(emitter.block, scalar_type, .{
+        .unary = .{
+            .opcode = .sqrt,
+            .operand = k,
+        },
+    }, null)).?;
+
+    const eta_dot = (try emitter.builder.appendInstruction(emitter.block, scalar_type, .{
+        .binary = .{
+            .opcode = .float_multiply,
+            .lhs = eta,
+            .rhs = dot,
+        },
+    }, null)).?;
+
+    const normal_scale = (try emitter.builder.appendInstruction(emitter.block, scalar_type, .{
+        .binary = .{
+            .opcode = .float_add,
+            .lhs = eta_dot,
+            .rhs = root,
+        },
+    }, null)).?;
+
+    const incident_factor = if (is_vector)
+        try vector_helper.splat(emitter.builder, emitter.block, value_type, eta)
+    else
+        eta;
+
+    const normal_factor = if (is_vector)
+        try vector_helper.splat(emitter.builder, emitter.block, value_type, normal_scale)
+    else
+        normal_scale;
+
+    const scaled_incident = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .binary = .{
+            .opcode = .float_multiply,
+            .lhs = incident_factor,
+            .rhs = incident,
+        },
+    }, null)).?;
+
+    const scaled_normal = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .binary = .{
+            .opcode = .float_multiply,
+            .lhs = normal_factor,
+            .rhs = normal,
+        },
+    }, null)).?;
+
+    const refracted = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .binary = .{
+            .opcode = .float_subtract,
+            .lhs = scaled_incident,
+            .rhs = scaled_normal,
+        },
+    }, null)).?;
+
+    return (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .select = .{
+            .condition = total_internal_reflection,
+            .true_value = zero_result,
+            .false_value = refracted,
         },
     }, invocation.result_name)).?;
 }

@@ -367,36 +367,6 @@ const Parser = struct {
             return .{ .ternary = .{ .opcode = opcode, .first = first, .second = second, .third = try self.parseValueRef() } };
         }
 
-        if (std.mem.eql(u8, name, "bit_field_extract")) {
-            const opcode_name = (try self.expect(.identifier)).text;
-            const opcode = std.meta.stringToEnum(inst_ir.BitFieldExtractOpcode, opcode_name) orelse return Error.InvalidOpcode;
-            const base = try self.parseValueRef();
-            try self.expectDiscard(.comma);
-            const offset = try self.parseValueRef();
-            try self.expectDiscard(.comma);
-            return .{ .bit_field_extract = .{
-                .opcode = opcode,
-                .base = base,
-                .offset = offset,
-                .count = try self.parseValueRef(),
-            } };
-        }
-
-        if (std.mem.eql(u8, name, "bit_field_insert")) {
-            const base = try self.parseValueRef();
-            try self.expectDiscard(.comma);
-            const insert = try self.parseValueRef();
-            try self.expectDiscard(.comma);
-            const offset = try self.parseValueRef();
-            try self.expectDiscard(.comma);
-            return .{ .bit_field_insert = .{
-                .base = base,
-                .insert = insert,
-                .offset = offset,
-                .count = try self.parseValueRef(),
-            } };
-        }
-
         if (std.mem.eql(u8, name, "select")) {
             const condition = try self.parseValueRef();
             try self.expectDiscard(.comma);
@@ -1524,6 +1494,10 @@ test "Parser: types, operations, calls, terminators" {
         \\     %6: constant ptr[private, u32] = null
         \\     %7: constant resourceHandle[sampler] = null
         \\     %signed_one: constant i32 = bits(0x1)
+        \\     %extract_left: constant i32 = 29
+        \\     %extract_right: constant i32 = 30
+        \\     %extract_mask: constant u32 = 3
+        \\     %insert_mask: constant u32 = 6
         \\
         \\     fn @main() -> void
         \\     {
@@ -1545,9 +1519,15 @@ test "Parser: types, operations, calls, terminators" {
         \\             %23: struct[vec3[u32], vec3[u32]] = unsigned_multiply_extended %14, %14
         \\             %24: struct[i32, i32] = signed_multiply_extended %signed_one, %signed_one
         \\             %25: struct[u32, u32] = unsigned_multiply_extended %1, %2
-        \\             %26: i32 = bit_field_extract signed %signed_one, %1, %2
-        \\             %27: u32 = bit_field_extract unsigned %1, %1, %2
-        \\             %28: u32 = bit_field_insert %1, %2, %1, %2
+        \\             %signed_shifted: i32 = shift_left %signed_one, %extract_left
+        \\             %26: i32 = arithmetic_shift_right %signed_shifted, %extract_right
+        \\             %unsigned_shifted: u32 = logical_shift_right %1, %1
+        \\             %27: u32 = bitwise_and %unsigned_shifted, %extract_mask
+        \\             %inverse_mask: u32 = bitwise_not %insert_mask
+        \\             %cleared: u32 = bitwise_and %1, %inverse_mask
+        \\             %insert_shifted: u32 = shift_left %2, %1
+        \\             %insert_masked: u32 = bitwise_and %insert_shifted, %insert_mask
+        \\             %28: u32 = bitwise_or %cleared, %insert_masked
         \\             return
         \\     }
         \\
@@ -1584,9 +1564,9 @@ test "Parser: types, operations, calls, terminators" {
     try std.testing.expect(std.mem.indexOf(u8, printed, "cmp_equal %1, %2") != null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "cmp.") == null);
     try std.testing.expect(std.mem.indexOf(u8, printed, "%inferred_extended: struct[u32, u32] = unsigned_multiply_extended %1, %2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, printed, "bit_field_extract signed %signed_one, %1, %2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, printed, "bit_field_extract unsigned %1, %1, %2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, printed, "bit_field_insert %1, %2, %1, %2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "arithmetic_shift_right %signed_shifted, %extract_right") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "bitwise_and %unsigned_shifted, %extract_mask") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "bitwise_or %cleared, %insert_masked") != null);
 }
 
 test "Parser: infer and print float classification, matrix, and conversion operations" {

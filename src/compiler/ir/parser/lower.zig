@@ -192,37 +192,6 @@ fn lowerOperation(
                 .inferred_type = module.typeOf(first),
             };
         },
-        .bit_field_extract => |op| blk: {
-            const base = resolveValue(values, op.base) orelse return error.UnknownValue;
-            const offset = resolveValue(values, op.offset) orelse return error.UnknownValue;
-            const count = resolveValue(values, op.count) orelse return error.UnknownValue;
-
-            break :blk .{
-                .operation = .{ .bit_field_extract = .{
-                    .opcode = op.opcode,
-                    .base = base,
-                    .offset = offset,
-                    .count = count,
-                } },
-                .inferred_type = module.typeOf(base),
-            };
-        },
-        .bit_field_insert => |op| blk: {
-            const base = resolveValue(values, op.base) orelse return error.UnknownValue;
-            const insert = resolveValue(values, op.insert) orelse return error.UnknownValue;
-            const offset = resolveValue(values, op.offset) orelse return error.UnknownValue;
-            const count = resolveValue(values, op.count) orelse return error.UnknownValue;
-
-            break :blk .{
-                .operation = .{ .bit_field_insert = .{
-                    .base = base,
-                    .insert = insert,
-                    .offset = offset,
-                    .count = count,
-                } },
-                .inferred_type = module.typeOf(base),
-            };
-        },
         .compare => |op| blk: {
             const lhs = resolveValue(values, op.lhs) orelse return error.UnknownValue;
             const rhs = resolveValue(values, op.rhs) orelse return error.UnknownValue;

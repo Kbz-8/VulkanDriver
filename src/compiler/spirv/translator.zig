@@ -8,6 +8,7 @@ const spirv = @import("spirv.zig");
 const ir = @import("../ir/ir.zig");
 const matrix_lowering = @import("matrix.zig");
 const vector_lowering = @import("vector.zig");
+const bit_field_lowering = @import("bit_field.zig");
 
 pub const SpecializationValue = struct {
     constant_id: u32,
@@ -2850,8 +2851,8 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
         .atomic_i_add => try translateAtomicIAdd(context, block, operands),
         .atomic_exchange => try translateAtomicExchange(context, block, operands),
 
-        .all,
-        .any,
+        .all, .any => try translateBooleanReduction(context, block, instruction.opcode, operands),
+
         .d_pdx,
         .d_pdx_coarse,
         .d_pdx_fine,
@@ -2871,8 +2872,6 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             try expectOperandCount(operands, 3);
 
             const opcode: ir.instruction.UnaryOpcode = switch (instruction.opcode) {
-                .all => .all,
-                .any => .any,
                 .d_pdx => .d_pdx,
                 .d_pdx_coarse => .d_pdx_coarse,
                 .d_pdx_fine => .d_pdx_fine,
@@ -3041,39 +3040,20 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             try context.setValue(operands[1], result);
         },
 
-        .bit_field_s_extract,
-        .bit_field_u_extract,
-        => {
-            try expectOperandCount(operands, 5);
-
-            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
-                .bit_field_extract = .{
-                    .opcode = switch (instruction.opcode) {
-                        .bit_field_s_extract => .signed,
-                        .bit_field_u_extract => .unsigned,
-                        else => unreachable,
-                    },
-                    .base = try context.resolveValue(operands[2]),
-                    .offset = try context.resolveValue(operands[3]),
-                    .count = try context.resolveValue(operands[4]),
-                },
-            }, context.nameOf(operands[1]))).?;
-
-            try context.setValue(operands[1], result);
-        },
-
-        .bit_field_insert => {
-            try expectOperandCount(operands, 6);
-
-            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
-                .bit_field_insert = .{
-                    .base = try context.resolveValue(operands[2]),
-                    .insert = try context.resolveValue(operands[3]),
-                    .offset = try context.resolveValue(operands[4]),
-                    .count = try context.resolveValue(operands[5]),
-                },
-            }, context.nameOf(operands[1]))).?;
-
+        .bit_field_s_extract, .bit_field_u_extract, .bit_field_insert => {
+            const inserting = instruction.opcode == .bit_field_insert;
+            try expectOperandCount(operands, if (inserting) 6 else 5);
+            const result = try bit_field_lowering.lower(
+                &context.builder,
+                block,
+                instruction.opcode,
+                try context.translateType(operands[0]),
+                try context.resolveValue(operands[2]),
+                if (inserting) try context.resolveValue(operands[3]) else null,
+                try context.resolveValue(operands[if (inserting) 4 else 3]),
+                try context.resolveValue(operands[if (inserting) 5 else 4]),
+                context.nameOf(operands[1]),
+            );
             try context.setValue(operands[1], result);
         },
 
@@ -3282,6 +3262,38 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             return TranslationError.UnsupportedOpcode;
         },
     }
+}
+
+fn translateBooleanReduction(context: *Context, block: ir.id.BlockId, opcode: spirv.Opcode, operands: []const u32) !void {
+    try expectOperandCount(operands, 3);
+    const result_type = try context.translateType(operands[0]);
+    const result = context.module.types.get(result_type) orelse return TranslationError.InvalidId;
+    if (result.* != .boolean)
+        return TranslationError.InvalidInstruction;
+    const operand = try context.resolveValue(operands[2]);
+    const operand_type = context.module.typeOf(operand) orelse return TranslationError.InvalidId;
+    const vector = context.module.types.get(operand_type) orelse return TranslationError.InvalidId;
+    if (vector.* != .vector or vector.vector.length < 2 or vector.vector.length > 4 or
+        vector.vector.element_type != result_type)
+        return TranslationError.InvalidInstruction;
+
+    var reduced: ir.id.ValueId = undefined;
+    for (0..vector.vector.length) |index| {
+        const component = (try context.builder.appendInstruction(block, result_type, .{
+            .composite_extract = .{ .composite = operand, .indices = &.{@intCast(index)} },
+        }, null)).?;
+        reduced = if (index == 0)
+            component
+        else
+            (try context.builder.appendInstruction(block, result_type, .{
+                .binary = .{
+                    .opcode = if (opcode == .all) .logical_and else .logical_or,
+                    .lhs = reduced,
+                    .rhs = component,
+                },
+            }, if (index + 1 == vector.vector.length) context.nameOf(operands[1]) else null)).?;
+    }
+    try context.setValue(operands[1], reduced);
 }
 
 fn translateCarryBorrow(context: *Context, block: ir.id.BlockId, opcode: spirv.Opcode, operands: []const u32) !void {
@@ -6387,40 +6399,43 @@ test "SPIR-V: core integer extended and bit-field operations" {
 
     const function = module.functions.get(module.entry_point.?).?;
     const block = module.blocks.get(function.entry_block.?).?;
-    try std.testing.expectEqual(@as(usize, 23), block.instructions.items.len);
+    try std.testing.expectEqual(@as(usize, 55), block.instructions.items.len);
 
     try expectExtendedIntegerOperation(&module, block.instructions.items, 0, .integer_add, 1, 2);
     try expectExtendedIntegerOperation(&module, block.instructions.items, 6, .integer_subtract, 2, 1);
     try expectExtendedIntegerOperation(&module, block.instructions.items, 12, .unsigned_multiply_extended, 1, 2);
     try expectExtendedIntegerOperation(&module, block.instructions.items, 15, .signed_multiply_extended, 2, 3);
 
-    const signed_extract = module.instructions.get(block.instructions.items[18]).?;
-    try std.testing.expect(signed_extract.operation == .bit_field_extract);
-    try std.testing.expect(signed_extract.operation.bit_field_extract.opcode == .signed);
-    try expectIntegerValue(&module, signed_extract.operation.bit_field_extract.base, 3);
-    try expectIntegerValue(&module, signed_extract.operation.bit_field_extract.offset, 4);
-    try expectIntegerValue(&module, signed_extract.operation.bit_field_extract.count, 8);
+    const signed_result = module.instructions.get(block.instructions.items[30]).?;
+    try std.testing.expect(signed_result.operation == .bitcast);
+    const signed_extract = try valueInstruction(&module, signed_result.operation.bitcast);
+    try std.testing.expect(signed_extract.operation == .binary);
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.arithmetic_shift_right, signed_extract.operation.binary.opcode);
+    const signed_aligned = try valueInstruction(&module, signed_extract.operation.binary.lhs);
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.shift_left, signed_aligned.operation.binary.opcode);
 
-    const unsigned_extract = module.instructions.get(block.instructions.items[19]).?;
-    try std.testing.expect(unsigned_extract.operation == .bit_field_extract);
-    try std.testing.expect(unsigned_extract.operation.bit_field_extract.opcode == .unsigned);
-    try expectIntegerValue(&module, unsigned_extract.operation.bit_field_extract.base, 2);
-    try expectIntegerValue(&module, unsigned_extract.operation.bit_field_extract.offset, 4);
-    try expectIntegerValue(&module, unsigned_extract.operation.bit_field_extract.count, 8);
+    const unsigned_result = module.instructions.get(block.instructions.items[39]).?;
+    try std.testing.expect(unsigned_result.operation == .bitcast);
+    const unsigned_extract = try valueInstruction(&module, unsigned_result.operation.bitcast);
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.bitwise_and, unsigned_extract.operation.binary.opcode);
+    const unsigned_shifted = try valueInstruction(&module, unsigned_extract.operation.binary.lhs);
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.logical_shift_right, unsigned_shifted.operation.binary.opcode);
+    try expectIntegerValue(&module, unsigned_shifted.operation.binary.lhs, 2);
 
-    const insert = module.instructions.get(block.instructions.items[20]).?;
-    try std.testing.expect(insert.operation == .bit_field_insert);
-    try expectIntegerValue(&module, insert.operation.bit_field_insert.base, 1);
-    try expectIntegerValue(&module, insert.operation.bit_field_insert.insert, 2);
-    try expectIntegerValue(&module, insert.operation.bit_field_insert.offset, 4);
-    try expectIntegerValue(&module, insert.operation.bit_field_insert.count, 8);
+    const insert_result = module.instructions.get(block.instructions.items[52]).?;
+    try std.testing.expect(insert_result.operation == .bitcast);
+    const insert = try valueInstruction(&module, insert_result.operation.bitcast);
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.bitwise_or, insert.operation.binary.opcode);
+    const preserved = try valueInstruction(&module, insert.operation.binary.lhs);
+    try std.testing.expectEqual(ir.instruction.BinaryOpcode.bitwise_and, preserved.operation.binary.opcode);
+    try expectIntegerValue(&module, preserved.operation.binary.lhs, 1);
 
-    const reverse = module.instructions.get(block.instructions.items[21]).?;
+    const reverse = module.instructions.get(block.instructions.items[53]).?;
     try std.testing.expect(reverse.operation == .unary);
     try std.testing.expect(reverse.operation.unary.opcode == .bit_reverse);
     try expectIntegerValue(&module, reverse.operation.unary.operand, 1);
 
-    const population = module.instructions.get(block.instructions.items[22]).?;
+    const population = module.instructions.get(block.instructions.items[54]).?;
     try std.testing.expect(population.operation == .unary);
     try std.testing.expect(population.operation.unary.opcode == .bit_count);
     try expectIntegerValue(&module, population.operation.unary.operand, 2);

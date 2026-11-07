@@ -60,15 +60,45 @@ test "[interpreter] bit count and reverse scalar and vector edge values" {
 }
 
 test "[interpreter] signed and unsigned bit field operations use scalar ranges" {
-    const code = [_]bc.Instruction{
-        .{ .opcode = .bit_field_extract_unsigned, .components = 2, .a = reg(6), .b = reg(0), .c = reg(4), .d = reg(5) },
-        .{ .opcode = .bit_field_extract_signed, .components = 2, .a = reg(8), .b = reg(0), .c = reg(4), .d = reg(5) },
-        .{ .opcode = .bit_field_insert, .components = 2, .a = reg(10), .b = reg(0), .c = reg(2), .d = reg(4), .immediate = @backingInt(reg(5)) },
-        .{ .opcode = .bit_field_extract_unsigned, .components = 2, .a = reg(14), .b = reg(0), .c = reg(12), .d = reg(13) },
-        .{ .opcode = .bit_field_insert, .components = 2, .a = reg(16), .b = reg(0), .c = reg(2), .d = reg(12), .immediate = @backingInt(reg(13)) },
-        .{ .opcode = .return_void },
+    var code: std.ArrayList(bc.Instruction) = .empty;
+    defer code.deinit(std.testing.allocator);
+
+    const ranges = [_]struct { offset: u16, count: u16, unsigned: u16, signed: u16, inserted: u16 }{
+        .{ .offset = 4, .count = 5, .unsigned = 6, .signed = 8, .inserted = 10 },
+        .{ .offset = 12, .count = 13, .unsigned = 14, .signed = 18, .inserted = 16 },
     };
-    var program = bytecodeProgram(&code, 18);
+    for (ranges) |range| {
+        for (0..2) |component_index| {
+            const component: u16 = @intCast(component_index);
+            try code.appendSlice(std.testing.allocator, &.{
+                .{ .opcode = .integer_subtract, .a = reg(20), .b = reg(36), .c = reg(range.offset) },
+                .{ .opcode = .compare_unsigned_less, .a = reg(21), .b = reg(20), .c = reg(range.count) },
+                .{ .opcode = .compare_equal, .a = reg(22), .b = reg(range.count), .c = reg(38) },
+                .{ .opcode = .logical_or, .a = reg(23), .b = reg(21), .c = reg(22) },
+                .{ .opcode = .logical_not, .a = reg(23), .b = reg(23) },
+                .{ .opcode = .bitwise_and, .a = reg(24), .b = reg(range.offset), .c = reg(40) },
+                .{ .opcode = .integer_subtract, .a = reg(25), .b = reg(36), .c = reg(range.count) },
+                .{ .opcode = .bitwise_and, .a = reg(25), .b = reg(25), .c = reg(40) },
+                .{ .opcode = .logical_shift_right, .a = reg(26), .b = reg(39), .c = reg(25) },
+                .{ .opcode = .select, .a = reg(26), .b = reg(22), .c = reg(38), .d = reg(26) },
+                .{ .opcode = .logical_shift_right, .a = reg(27), .b = reg(component), .c = reg(24) },
+                .{ .opcode = .bitwise_and, .a = reg(27), .b = reg(27), .c = reg(26) },
+                .{ .opcode = .select, .a = reg(range.unsigned + component), .b = reg(23), .c = reg(27), .d = reg(38) },
+                .{ .opcode = .shift_left, .a = reg(28), .b = reg(27), .c = reg(25) },
+                .{ .opcode = .arithmetic_shift_right, .a = reg(28), .b = reg(28), .c = reg(25) },
+                .{ .opcode = .select, .a = reg(range.signed + component), .b = reg(23), .c = reg(28), .d = reg(38) },
+                .{ .opcode = .shift_left, .a = reg(29), .b = reg(26), .c = reg(24) },
+                .{ .opcode = .bitwise_not, .a = reg(30), .b = reg(29) },
+                .{ .opcode = .bitwise_and, .a = reg(30), .b = reg(component), .c = reg(30) },
+                .{ .opcode = .shift_left, .a = reg(31), .b = reg(2 + component), .c = reg(24) },
+                .{ .opcode = .bitwise_and, .a = reg(31), .b = reg(31), .c = reg(29) },
+                .{ .opcode = .bitwise_or, .a = reg(31), .b = reg(30), .c = reg(31) },
+                .{ .opcode = .select, .a = reg(range.inserted + component), .b = reg(23), .c = reg(31), .d = reg(component) },
+            });
+        }
+    }
+    try code.append(std.testing.allocator, .{ .opcode = .return_void });
+    var program = bytecodeProgram(code.items, 41);
     defer program.deinit();
 
     var runtime = try Runtime.init(std.testing.allocator, &program);
@@ -82,6 +112,10 @@ test "[interpreter] signed and unsigned bit field operations use scalar ranges" 
     runtime.registers.at(5).* = 8;
     runtime.registers.at(12).* = 31;
     runtime.registers.at(13).* = 2;
+    runtime.registers.at(36).* = 32;
+    runtime.registers.at(38).* = 0;
+    runtime.registers.at(39).* = 0xffff_ffff;
+    runtime.registers.at(40).* = 31;
 
     try std.testing.expectEqual(Runtime.Outcome.returned, try runtime.run(&program, .{}));
     try expectWords(&.{ 0xff, 0x80 }, runtime.registers.slice(6, 8));
@@ -89,6 +123,7 @@ test "[interpreter] signed and unsigned bit field operations use scalar ranges" 
     try expectWords(&.{ 0x0000_1200, 0x0000_3400 }, runtime.registers.slice(10, 12));
     try expectWords(&.{ 0, 0 }, runtime.registers.slice(14, 16));
     try expectWords(&.{ 0x0000_ff00, 0x0000_8000 }, runtime.registers.slice(16, 18));
+    try expectWords(&.{ 0, 0 }, runtime.registers.slice(18, 20));
 }
 
 test "[interpreter] carry borrow and extended multiply preserve structure layout" {
@@ -129,6 +164,7 @@ test "[interpreter] shared integer operations lower to bytecode" {
         \\    %zero: constant u32 = bits(0)
         \\    %one: constant u32 = bits(1)
         \\    %signed_one: constant i32 = bits(1)
+        \\    %sign_shift: constant i32 = bits(31)
         \\    fn @main() -> void
         \\    {
         \\        .entry():
@@ -144,9 +180,14 @@ test "[interpreter] shared integer operations lower to bytecode" {
         \\            %borrow: struct[u32, u32] = composite_construct %difference, %borrow_bit
         \\            %unsigned_product = unsigned_multiply_extended %one, %one
         \\            %signed_product = signed_multiply_extended %signed_one, %signed_one
-        \\            %signed_extract: i32 = bit_field_extract signed %signed_one, %zero, %one
-        \\            %unsigned_extract: u32 = bit_field_extract unsigned %one, %zero, %one
-        \\            %inserted: u32 = bit_field_insert %zero, %one, %zero, %one
+        \\            %signed_shifted: i32 = shift_left %signed_one, %sign_shift
+        \\            %signed_extract: i32 = arithmetic_shift_right %signed_shifted, %sign_shift
+        \\            %unsigned_shifted: u32 = logical_shift_right %one, %zero
+        \\            %unsigned_extract: u32 = bitwise_and %unsigned_shifted, %one
+        \\            %inverse_mask: u32 = bitwise_not %one
+        \\            %preserved: u32 = bitwise_and %zero, %inverse_mask
+        \\            %insert_bits: u32 = bitwise_and %one, %one
+        \\            %inserted: u32 = bitwise_or %preserved, %insert_bits
         \\            return
         \\    }
         \\}
@@ -166,9 +207,12 @@ test "[interpreter] shared integer operations lower to bytecode" {
         .select,
         .unsigned_multiply_extended,
         .signed_multiply_extended,
-        .bit_field_extract_signed,
-        .bit_field_extract_unsigned,
-        .bit_field_insert,
+        .shift_left,
+        .arithmetic_shift_right,
+        .logical_shift_right,
+        .bitwise_and,
+        .bitwise_not,
+        .bitwise_or,
     };
     var found: [expected.len]bool = @splat(false);
     for (program.code) |instruction| {

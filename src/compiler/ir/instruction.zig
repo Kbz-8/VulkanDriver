@@ -19,8 +19,6 @@ pub const SourceLocation = struct {
 pub const UnaryOpcode = enum {
     acos,
     acosh,
-    all,
-    any,
     asin,
     asinh,
     atan,
@@ -103,11 +101,6 @@ pub const TernaryOpcode = enum {
     float_mul_add,
 };
 
-pub const BitFieldExtractOpcode = enum {
-    signed,
-    unsigned,
-};
-
 pub const ConvertOpcode = enum {
     float_to_signed,
     float_to_unsigned,
@@ -145,20 +138,6 @@ pub const Ternary = struct {
     first: ValueId,
     second: ValueId,
     third: ValueId,
-};
-
-pub const BitFieldExtract = struct {
-    opcode: BitFieldExtractOpcode,
-    base: ValueId,
-    offset: ValueId,
-    count: ValueId,
-};
-
-pub const BitFieldInsert = struct {
-    base: ValueId,
-    insert: ValueId,
-    offset: ValueId,
-    count: ValueId,
 };
 
 pub const Compare = struct {
@@ -307,8 +286,6 @@ pub const Operation = union(enum) {
     unary: Unary,
     binary: Binary,
     ternary: Ternary,
-    bit_field_extract: BitFieldExtract,
-    bit_field_insert: BitFieldInsert,
     compare: Compare,
     select: Select,
     bitcast: ValueId,
@@ -344,17 +321,6 @@ pub const Operation = union(enum) {
                 visitor(context, op.first);
                 visitor(context, op.second);
                 visitor(context, op.third);
-            },
-            .bit_field_extract => |op| {
-                visitor(context, op.base);
-                visitor(context, op.offset);
-                visitor(context, op.count);
-            },
-            .bit_field_insert => |op| {
-                visitor(context, op.base);
-                visitor(context, op.insert);
-                visitor(context, op.offset);
-                visitor(context, op.count);
             },
             .compare => |op| {
                 visitor(context, op.lhs);
@@ -453,17 +419,6 @@ pub const Operation = union(enum) {
                 replaceOne(&op.first, old, replacement, &count);
                 replaceOne(&op.second, old, replacement, &count);
                 replaceOne(&op.third, old, replacement, &count);
-            },
-            .bit_field_extract => |*op| {
-                replaceOne(&op.base, old, replacement, &count);
-                replaceOne(&op.offset, old, replacement, &count);
-                replaceOne(&op.count, old, replacement, &count);
-            },
-            .bit_field_insert => |*op| {
-                replaceOne(&op.base, old, replacement, &count);
-                replaceOne(&op.insert, old, replacement, &count);
-                replaceOne(&op.offset, old, replacement, &count);
-                replaceOne(&op.count, old, replacement, &count);
             },
             .compare => |*op| {
                 replaceOne(&op.lhs, old, replacement, &count);
