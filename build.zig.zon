@@ -3,7 +3,7 @@
     .version = "26.0.0",
 
     .fingerprint = 0x52cb73649f1107de,
-    .minimum_zig_version = "0.17.0",
+    .minimum_zig_version = "0.17.1",
 
     .dependencies = .{
         .vulkan_headers = .{

@@ -181,6 +181,51 @@ pub fn shaderWaveMasked(worker: *Worker, invocations: *const [Runtime.lane_count
     const draw_call = worker.draw_call;
     const state = draw_call.renderer.state;
     const program = worker.program;
+    if (program.uses_atomics and @popCount(mask) > 1) {
+        var result = std.mem.zeroes(WaveResult);
+        for (0..Runtime.lane_count) |lane| {
+            const bit = @as(Runtime.LaneMask, 1) << @intCast(lane);
+            if ((mask & bit) == 0)
+                continue;
+
+            // Helpers still execute for derivatives but only this lane may store
+            const lane_execution_mask = if (program.uses_derivatives) execution_mask else bit;
+            const single = try shaderWaveMasked(worker, invocations, lane_execution_mask, bit);
+            const output_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
+
+            for (0..shader_types.max_output_locations) |location| {
+                for (0..4) |component| {
+                    const component_bit = @as(u4, 1) << @intCast(component);
+                    if ((single.output_components[location] & component_bit) == 0)
+                        continue;
+
+                    var component_lanes: [Runtime.lane_count]u32 = @bitCast(result.outputs[location][component]);
+                    const single_lanes: [Runtime.lane_count]u32 = @bitCast(single.outputs[location][component]);
+
+                    component_lanes[lane] = single_lanes[lane];
+                    result.outputs[location][component] = @bitCast(component_lanes);
+                }
+                result.output_components[location] |= single.output_components[location];
+            }
+
+            if ((single.depth_mask & bit) != 0) {
+                var depth_lanes: [Runtime.lane_count]f32 = @bitCast(result.depths);
+                const single_depths: [Runtime.lane_count]f32 = @bitCast(single.depths);
+                depth_lanes[lane] = single_depths[lane];
+                result.depths = @bitCast(depth_lanes);
+            }
+
+            result.depth_mask |= single.depth_mask;
+            result.returned_mask |= single.returned_mask;
+            result.discarded_mask |= single.discarded_mask;
+
+            if (comptime base.config.soft_profile)
+                worker.output_ns += Renderer.profileElapsedNs(output_timer, worker.io);
+        }
+
+        return result;
+    }
+
     const runtime = &worker.slot.runtime;
     runtime.resetWave(program, execution_mask, mask);
 

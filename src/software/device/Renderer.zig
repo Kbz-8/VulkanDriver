@@ -436,7 +436,7 @@ fn vertexShaderStage(self: *Self, allocator: std.mem.Allocator, draw_call: *Draw
         return;
     const estimated_work = std.math.mul(usize, invocation_count, vertex_shader.program.code.len) catch std.math.maxInt(usize);
     const inline_vertex_work_limit = 4096;
-    if (estimated_work <= inline_vertex_work_limit) {
+    if (vertex_shader.program.uses_atomics or estimated_work <= inline_vertex_work_limit) {
         for (0..instance_count) |instance_index| {
             try vertex_dispatcher.runInline(.{
                 .allocator = allocator,

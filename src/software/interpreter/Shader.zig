@@ -75,7 +75,7 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn workerCount(self: *const Self) usize {
-    return self.runtimes.len;
+    return if (self.program.uses_atomics) 1 else self.runtimes.len;
 }
 
 fn hasCompatibleInterface(program: *const Program, stage: ir.module.Stage) bool {

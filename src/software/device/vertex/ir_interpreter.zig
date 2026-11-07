@@ -102,11 +102,13 @@ pub fn run(data: RunData) VkError!void {
             sampler.* = try ExecutionDevice.mapSampler(draw_call.renderer.state, resource.set, resource.binding, resource.array_element);
     }
 
-    const wave_stride = std.math.mul(usize, batch_size, Runtime.lane_count) catch return VkError.ValidationFailed;
-    var wave_base = std.math.mul(usize, batch_id, Runtime.lane_count) catch return VkError.ValidationFailed;
+    const invocations_per_wave: usize = if (shader.program.uses_atomics) 1 else Runtime.lane_count;
+    const wave_stride = std.math.mul(usize, batch_size, invocations_per_wave) catch return VkError.ValidationFailed;
+    var wave_base = std.math.mul(usize, batch_id, invocations_per_wave) catch return VkError.ValidationFailed;
+
     while (wave_base < invocation_count) : (wave_base += wave_stride) {
         var mask: Runtime.LaneMask = 0;
-        for (0..Runtime.lane_count) |lane| {
+        for (0..invocations_per_wave) |lane| {
             const work_index = wave_base + lane;
             if (work_index >= invocation_count)
                 continue;
