@@ -8,7 +8,6 @@ cts_report/
 scripts/__pycache__/
 *.o
 .gdb_history
-*.json
 *.bin
 *.qpa
 *.xml
