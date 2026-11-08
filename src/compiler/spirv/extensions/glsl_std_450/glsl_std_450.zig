@@ -107,6 +107,7 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
         .distance => translateDistance(emitter, invocation),
         .exp => translateUnary(emitter, invocation, .exp),
         .exp2 => translateUnary(emitter, invocation, .exp2),
+        .face_forward => translateFaceforward(emitter, invocation),
         .f_abs => translateUnary(emitter, invocation, .float_absolute),
         .f_clamp => translateClamp(emitter, invocation, .float_max, .float_min),
         .f_max => translateBinary(emitter, invocation, .float_max),
@@ -1019,9 +1020,11 @@ fn translateRefract(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Va
 fn translateTernary(emitter: *ext.Emitter, invocation: ext.Invocation, opcode: ir.instruction.TernaryOpcode) !ir.id.ValueId {
     if (invocation.operands.len != 3)
         return error.InvalidInstruction;
+
     const first = invocation.operands[0];
     const second = invocation.operands[1];
     const third = invocation.operands[2];
+
     if (emitter.module.typeOf(first) != invocation.result_type or
         emitter.module.typeOf(second) != invocation.result_type or
         emitter.module.typeOf(third) != invocation.result_type)
@@ -1229,6 +1232,59 @@ fn translateNClamp(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Val
     return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
         .composite_construct = .{
             .elements = elements,
+        },
+    }, invocation.result_name)).?;
+}
+
+fn translateFaceforward(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
+    if (invocation.operands.len != 3)
+        return error.InvalidInstruction;
+
+    const n = invocation.operands[0];
+    const i = invocation.operands[1];
+    const nref = invocation.operands[2];
+
+    if (emitter.module.typeOf(n) != invocation.result_type or
+        emitter.module.typeOf(i) != invocation.result_type or
+        emitter.module.typeOf(nref) != invocation.result_type)
+        return error.InvalidInstruction;
+
+    const value_type = emitter.module.typeOf(n) orelse return error.InvalidId;
+    const scalar_type = try floatScalarType(emitter.module, invocation.result_type);
+
+    const zero = try floatConstant(emitter, scalar_type, 0.0);
+    const boolean = try emitter.builder.internType(.boolean);
+
+    const is_vector = scalar_type != value_type;
+
+    const dot = (try emitter.builder.appendInstruction(emitter.block, scalar_type, .{
+        .binary = .{
+            .opcode = if (is_vector) .dot else .float_multiply,
+            .lhs = nref,
+            .rhs = i,
+        },
+    }, null)).?;
+
+    const facing = (try emitter.builder.appendInstruction(emitter.block, boolean, .{
+        .compare = .{
+            .opcode = .ordered_float_less,
+            .lhs = dot,
+            .rhs = zero,
+        },
+    }, null)).?;
+
+    const flipped = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .unary = .{
+            .opcode = .negate,
+            .operand = n,
+        },
+    }, null)).?;
+
+    return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .select = .{
+            .condition = facing,
+            .true_value = n,
+            .false_value = flipped,
         },
     }, invocation.result_name)).?;
 }

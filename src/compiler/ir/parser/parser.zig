@@ -538,6 +538,43 @@ const Parser = struct {
             } };
         }
 
+        if (std.mem.eql(u8, name, "image_query_lod")) {
+            const image_name = (try self.expect(.at_name)).text;
+            try self.expectDiscard(.comma);
+
+            const sampler_name = (try self.expect(.at_name)).text;
+            try self.expectDiscard(.comma);
+
+            const coordinate = try self.parseValueRef();
+            const options = try self.parseImageOptions();
+
+            return .{
+                .image_query_lod = .{
+                    .image_name = image_name,
+                    .sampler_name = sampler_name,
+                    .coordinate = coordinate,
+                    .dimension = options.dimension,
+                    .arrayed = options.arrayed,
+                },
+            };
+        }
+
+        if (std.mem.eql(u8, name, "image_query_levels")) {
+            return .{
+                .image_query_levels = .{
+                    .resource_name = (try self.expect(.at_name)).text,
+                },
+            };
+        }
+
+        if (std.mem.eql(u8, name, "image_query_samples")) {
+            return .{
+                .image_query_samples = .{
+                    .resource_name = (try self.expect(.at_name)).text,
+                },
+            };
+        }
+
         if (std.mem.eql(u8, name, "image_fetch")) {
             const resource_name = (try self.expect(.at_name)).text;
             try self.expectDiscard(.comma);

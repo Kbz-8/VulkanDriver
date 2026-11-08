@@ -217,6 +217,21 @@ fn filterLod(sampler: *Self, lod: ?f32) f32 {
     return std.math.clamp(requested_lod, sampler.interface.min_lod, sampler.interface.max_lod);
 }
 
+pub fn queryLod(image_view: *SoftImageView, sampler: *Self, implicit_lod: f32) @Vector(2, f32) {
+    const unclamped = implicit_lod + std.math.clamp(sampler.interface.mip_lod_bias, -max_lod_bias, max_lod_bias);
+    const levels = @min(viewMipCount(image_view), image_view.interface.image.mip_levels - image_view.interface.subresource_range.base_mip_level);
+    const max_level: f32 = @floatFromInt(levels - 1);
+    const lod = std.math.clamp(std.math.clamp(unclamped, sampler.interface.min_lod, sampler.interface.max_lod), 0.0, max_level);
+
+    const sampled = switch (sampler.interface.mipmap_mode) {
+        .nearest => @max(0.0, @ceil(lod + 0.5) - 1.0),
+        .linear => lod,
+        else => unreachable,
+    };
+
+    return .{ sampled, unclamped };
+}
+
 fn sampleMipLevel(image_view: *SoftImageView, sampler: *Self, lod: ?f32) u32 {
     const range = image_view.interface.subresource_range;
     const mip_count = viewMipCount(image_view);

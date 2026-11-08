@@ -421,8 +421,12 @@ pub fn runWave(self: *Self, program: *const Program, options: RunOptions) Runtim
             self.advanceGroupPcs(group_mask);
             continue;
         }
-        if (program.stage == .fragment and instruction.opcode == .image_sample_implicit_lod) {
-            try self.groupImageSample(program, options, instruction, group_mask);
+        if (program.stage == .fragment and instruction.opcode.usesImplicitDerivatives()) {
+            if (instruction.opcode == .image_query_lod)
+                try self.groupImageQueryLod(program, options, instruction, group_mask)
+            else
+                try self.groupImageSample(program, options, instruction, group_mask);
+
             self.advanceGroupPcs(group_mask);
             continue;
         }
@@ -493,7 +497,7 @@ fn nextExecutionGroup(self: *const Self, program: *const Program) RuntimeError!s
         }
 
         if (program.code[pc].opcode.isDerivative() or
-            (program.stage == .fragment and program.code[pc].opcode == .image_sample_implicit_lod))
+            (program.stage == .fragment and program.code[pc].opcode.usesImplicitDerivatives()))
         {
             const waiting = mask;
             for (0..lane_count / 4) |quad| {
@@ -996,6 +1000,9 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .image_gather => try self.imageGather(program, options.resource_images, options.resource_samplers, instruction),
         .image_read => try self.imageRead(program, options, instruction, false, false),
         .image_read_float => try self.imageRead(program, options, instruction, true, false),
+        .image_query_lod => return RuntimeError.DerivativeUnavailable,
+        .image_query_levels => try self.imageQueryLevels(program, options.resource_images, instruction),
+        .image_query_samples => try self.imageQuerySamples(program, options.resource_images, instruction),
         .image_sample_explicit_lod => try self.imageSample(program, options.resource_images, options.resource_samplers, instruction, true, null),
         .image_sample_implicit_lod => try self.imageSample(program, options.resource_images, options.resource_samplers, instruction, false, null),
         .image_size_query_lod => try self.imageSizeQueryLod(program, options.resource_images, instruction),
@@ -1636,6 +1643,39 @@ fn storeBuffer(self: *const Self, program: *const Program, resource_buffers: []c
     try self.storeWords(instruction, bytes);
 }
 
+fn imageViewLevels(view: *const SoftImageView) RuntimeError!u32 {
+    const image = view.interface.image;
+    const base_mip = view.interface.subresource_range.base_mip_level;
+    if (base_mip >= image.mip_levels)
+        return RuntimeError.InvalidResource;
+
+    const levels = @min(view.interface.levelCount(), image.mip_levels - base_mip);
+    if (levels == 0)
+        return RuntimeError.InvalidResource;
+
+    return levels;
+}
+
+fn imageQueryLevels(self: *Self, program: *const Program, resource_images: []const ?*SoftImageView, instruction: bc.Instruction) RuntimeError!void {
+    if (instruction.components != 1 or instruction.scalar_bits != 32 or instruction.b != .invalid_register or
+        instruction.c != .invalid_register or instruction.d != .invalid_register)
+        return RuntimeError.InvalidBytecode;
+
+    try self.validateRegisterRange(instruction.a, 1);
+    const view = try sampledImage(program, resource_images, @fromBackingInt(instruction.immediate));
+    self.registers.at(@backingInt(instruction.a)).* = try imageViewLevels(view);
+}
+
+fn imageQuerySamples(self: *Self, program: *const Program, resource_images: []const ?*SoftImageView, instruction: bc.Instruction) RuntimeError!void {
+    if (instruction.components != 1 or instruction.scalar_bits != 32 or instruction.b != .invalid_register or
+        instruction.c != .invalid_register or instruction.d != .invalid_register)
+        return RuntimeError.InvalidBytecode;
+
+    try self.validateRegisterRange(instruction.a, 1);
+    const view = try sampledImage(program, resource_images, @fromBackingInt(instruction.immediate));
+    self.registers.at(@backingInt(instruction.a)).* = view.interface.image.samples.toInt();
+}
+
 fn imageSizeQueryLod(self: *Self, program: *const Program, resource_images: []const ?*SoftImageView, instruction: bc.Instruction) RuntimeError!void {
     if (instruction.immediate >= program.image_accesses.len or instruction.c != .invalid_register or
         instruction.d != .invalid_register or instruction.scalar_bits != 32)
@@ -1660,7 +1700,7 @@ fn imageSizeQueryLod(self: *Self, program: *const Program, resource_images: []co
     const image: *const SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
     const range = view.interface.subresource_range;
 
-    if (range.base_mip_level >= image.interface.mip_levels or image.interface.samples.toInt() != 1)
+    if (range.base_mip_level >= image.interface.mip_levels)
         return RuntimeError.InvalidResource;
 
     const levels = @min(view.interface.levelCount(), image.interface.mip_levels - range.base_mip_level);
@@ -1668,6 +1708,10 @@ fn imageSizeQueryLod(self: *Self, program: *const Program, resource_images: []co
         return RuntimeError.InvalidResource;
 
     const lod = low32(self.registers.at(@backingInt(instruction.b)).*);
+
+    if (image.interface.samples.toInt() != 1 and lod != 0)
+        return RuntimeError.InvalidResource;
+
     const destination: usize = @backingInt(instruction.a);
 
     self.registers.slice(destination, destination + instruction.components).fill(0);
@@ -1824,6 +1868,78 @@ fn floatRegisterVector(registers: LaneView, first: bc.Register, components: u16)
 
 fn vectorDerivative(value: @Vector(4, f32)) shader_types.ImageGradient {
     return .{ .x = value[0], .y = value[1], .z = value[2], .w = value[3] };
+}
+
+fn groupImageQueryLod(self: *Self, program: *const Program, options: RunOptions, instruction: bc.Instruction, mask: LaneMask) RuntimeError!void {
+    if (program.stage != .fragment or instruction.components != 2 or instruction.scalar_bits != 32 or
+        instruction.c != .invalid_register or instruction.d != .invalid_register or
+        instruction.immediate >= program.image_sampler_pairs.len)
+        return RuntimeError.InvalidBytecode;
+
+    const pair = program.image_sampler_pairs[instruction.immediate];
+
+    if (pair.dimension == .buffer or (pair.arrayed and pair.dimension == .three_d) or
+        pair.destination_kind != .floating or pair.bias != .invalid_register or
+        pair.grad_x != .invalid_register or pair.grad_y != .invalid_register or
+        pair.offset != .invalid_register or pair.dref != .invalid_register)
+        return RuntimeError.InvalidBytecode;
+
+    const spatial = Program.spatialImageComponents(pair.dimension);
+
+    try self.validateRegisterRange(instruction.a, 2);
+    try self.validateRegisterRange(instruction.b, spatial);
+
+    const view = try sampledImage(program, options.resource_images, pair.image);
+    const sampler = try resourceSampler(program, options.resource_samplers, pair.sampler);
+    const image: *SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
+
+    _ = try imageViewLevels(view);
+
+    if (view.interface.subresource_range.base_mip_level >= 32 or image.interface.samples.toInt() != 1)
+        return RuntimeError.InvalidResource;
+
+    const dimension: shader_types.ImageDimension = switch (pair.dimension) {
+        .one_d => .@"1D",
+        .two_d => .@"2D",
+        .three_d => .@"3D",
+        .cube => .Cube,
+        .buffer => return RuntimeError.InvalidBytecode,
+    };
+
+    var results: [lane_count]@Vector(2, f32) = undefined;
+    for (0..lane_count) |lane| {
+        if ((mask & laneBit(@intCast(lane))) == 0)
+            continue;
+
+        const quad_mask = @as(LaneMask, 0b1111) << @intCast(lane & ~@as(usize, 3));
+
+        if ((mask & quad_mask) != quad_mask)
+            return RuntimeError.DerivativeUnavailable;
+
+        const coordinate = floatRegisterVector(self.laneRegisters(lane), instruction.b, spatial);
+
+        const left = floatRegisterVector(self.laneRegisters(lane & ~@as(usize, 1)), instruction.b, spatial);
+        const right = floatRegisterVector(self.laneRegisters(lane | 1), instruction.b, spatial);
+        const top = floatRegisterVector(self.laneRegisters(lane & ~@as(usize, 2)), instruction.b, spatial);
+        const bottom = floatRegisterVector(self.laneRegisters(lane | 2), instruction.b, spatial);
+
+        const derivatives: shader_types.ImageDerivatives = .{
+            .dx = vectorDerivative(right - left),
+            .dy = vectorDerivative(bottom - top),
+        };
+
+        const lod = SoftSampler.lodFromDerivatives(image, view, dimension, coordinate, derivatives);
+        results[lane] = SoftSampler.queryLod(view, sampler, lod);
+    }
+
+    for (0..lane_count) |lane| {
+        if ((mask & laneBit(@intCast(lane))) == 0)
+            continue;
+
+        const registers = self.laneRegisters(lane);
+        inline for (0..2) |component|
+            registers.at(@as(usize, @backingInt(instruction.a)) + component).* = @as(u32, @bitCast(results[lane][component]));
+    }
 }
 
 fn groupImageSample(self: *Self, program: *const Program, options: RunOptions, instruction: bc.Instruction, mask: LaneMask) RuntimeError!void {

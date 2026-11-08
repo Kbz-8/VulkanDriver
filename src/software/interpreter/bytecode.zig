@@ -112,6 +112,9 @@ pub const Opcode = enum(u16) {
     image_gather,
     image_read,
     image_read_float,
+    image_query_lod,
+    image_query_levels,
+    image_query_samples,
     image_sample_explicit_lod,
     image_sample_implicit_lod,
     image_size_query_lod,
@@ -168,6 +171,10 @@ pub const Opcode = enum(u16) {
     unsigned_multiply_extended,
     unsigned_to_float,
     vector_extract_dynamic,
+
+    pub fn usesImplicitDerivatives(self: Opcode) bool {
+        return self == .image_sample_implicit_lod or self == .image_query_lod;
+    }
 
     pub fn isDerivative(self: Opcode) bool {
         return switch (self) {

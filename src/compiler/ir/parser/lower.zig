@@ -414,6 +414,37 @@ fn lowerOperation(
                 .inferred_type = null,
             };
         },
+        .image_query_lod => |op| blk: {
+            const image = resources.get(op.image_name) orelse return error.UnknownResource;
+            const sampler = resources.get(op.sampler_name) orelse return error.UnknownResource;
+            const coordinate = resolveValue(values, op.coordinate) orelse return error.UnknownValue;
+            break :blk .{
+                .operation = .{
+                    .image_query_lod = .{
+                        .image = image,
+                        .sampler = sampler,
+                        .coordinate = coordinate,
+                        .dimension = op.dimension,
+                        .arrayed = op.arrayed,
+                    },
+                },
+                .inferred_type = null,
+            };
+        },
+        .image_query_levels => |op| blk: {
+            const resource = resources.get(op.resource_name) orelse return error.UnknownResource;
+            break :blk .{
+                .operation = .{ .image_query_levels = .{ .resource = resource } },
+                .inferred_type = null,
+            };
+        },
+        .image_query_samples => |op| blk: {
+            const resource = resources.get(op.resource_name) orelse return error.UnknownResource;
+            break :blk .{
+                .operation = .{ .image_query_samples = .{ .resource = resource } },
+                .inferred_type = null,
+            };
+        },
         .image_fetch => |op| blk: {
             const resource = resources.get(op.resource_name) orelse return error.UnknownResource;
             const coordinate = resolveValue(values, op.coordinate) orelse return error.UnknownValue;

@@ -146,7 +146,7 @@ pub fn compile(backing_allocator: std.mem.Allocator, module: *const module_ir.Mo
         .image_accesses = lowerer.image_accesses.items,
         .uses_derivatives = blk: {
             for (lowerer.code.items) |instruction| {
-                if (instruction.opcode.isDerivative() or (module.stage == .fragment and instruction.opcode == .image_sample_implicit_lod))
+                if (instruction.opcode.isDerivative() or (module.stage == .fragment and instruction.opcode.usesImplicitDerivatives()))
                     break :blk true;
             }
             break :blk false;
@@ -788,6 +788,47 @@ const Lowerer = struct {
                 try self.emit(.store_workgroup, src.components, src.base, byte_offset, .invalid_register, .invalid_register, @backingInt(op.variable));
             },
             .image_read => |op| try self.lowerImageRead(result orelse return CompileError.InvalidOperation, op.resource, op.coordinate, null, null, op.sample, op.dimension, op.arrayed, false),
+            .image_query_lod => |op| {
+                const dst = result orelse return CompileError.InvalidOperation;
+                const coordinate = try self.span(op.coordinate);
+                if (self.module.stage != .fragment or op.dimension == .buffer or
+                    (op.arrayed and op.dimension == .three_d) or dst.kind != .floating or dst.components != 2 or
+                    coordinate.kind != .floating or coordinate.components != spatialImageComponents(op.dimension) or
+                    try scalarBits(self.module, self.module.typeOf(instruction.result.?).?) != 32 or
+                    try scalarBits(self.module, self.module.typeOf(op.coordinate).?) != 32)
+                    return CompileError.InvalidOperation;
+
+                _ = try self.sampledImage(op.image);
+                _ = try self.sampler(op.sampler);
+
+                const pair = try u32Index(self.image_sampler_pairs.items.len);
+
+                try self.image_sampler_pairs.append(self.allocator, .{
+                    .image = op.image,
+                    .sampler = op.sampler,
+                    .dimension = op.dimension,
+                    .arrayed = op.arrayed,
+                    .destination_kind = dst.kind,
+                });
+
+                try self.emit(.image_query_lod, 2, dst.base, coordinate.base, .invalid_register, .invalid_register, pair);
+            },
+            .image_query_levels => |op| {
+                const dst = result orelse return CompileError.InvalidOperation;
+                if (!isScalarInteger(dst) or try scalarBits(self.module, self.module.typeOf(instruction.result.?).?) != 32)
+                    return CompileError.InvalidOperation;
+
+                _ = try self.sampledImage(op.resource);
+                try self.emit(.image_query_levels, 1, dst.base, .invalid_register, .invalid_register, .invalid_register, @backingInt(op.resource));
+            },
+            .image_query_samples => |op| {
+                const dst = result orelse return CompileError.InvalidOperation;
+                if (!isScalarInteger(dst) or try scalarBits(self.module, self.module.typeOf(instruction.result.?).?) != 32)
+                    return CompileError.InvalidOperation;
+
+                _ = try self.sampledImage(op.resource);
+                try self.emit(.image_query_samples, 1, dst.base, .invalid_register, .invalid_register, .invalid_register, @backingInt(op.resource));
+            },
             .image_size_query_lod => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;
                 const lod = try self.span(op.lod);

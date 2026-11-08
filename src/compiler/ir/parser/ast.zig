@@ -115,6 +115,9 @@ pub const ParsedOperation = union(enum) {
     store_workgroup: struct { variable_name: []const u8, byte_offset: ValueRef, value: ValueRef },
     image_read: struct { resource_name: []const u8, coordinate: ValueRef, sample: ?ValueRef = null, dimension: type_ir.ImageDimension = .two_d, arrayed: bool = false },
     image_size_query_lod: struct { resource_name: []const u8, lod: ValueRef, dimension: type_ir.ImageDimension = .two_d, arrayed: bool = false },
+    image_query_lod: struct { image_name: []const u8, sampler_name: []const u8, coordinate: ValueRef, dimension: type_ir.ImageDimension = .two_d, arrayed: bool = false },
+    image_query_levels: struct { resource_name: []const u8 },
+    image_query_samples: struct { resource_name: []const u8 },
     image_write: struct { resource_name: []const u8, coordinate: ValueRef, value: ValueRef, dimension: type_ir.ImageDimension = .two_d, arrayed: bool = false },
     image_fetch: struct { resource_name: []const u8, coordinate: ValueRef, lod: ?ValueRef = null, offset: ?ValueRef = null, dimension: type_ir.ImageDimension = .two_d, arrayed: bool = false },
     image_sample_explicit_lod: struct {

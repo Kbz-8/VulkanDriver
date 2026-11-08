@@ -472,11 +472,7 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
                 },
             }
         },
-        .compare => |op| {
-            const lhs_type = try operandType(module, function_id, op.lhs);
-            if (try operandType(module, function_id, op.rhs) != lhs_type)
-                return ValidationError.WrongOperandType;
-
+        .compare => {
             const result = result_type orelse return ValidationError.WrongResultPresence;
             if (!isBoolean(module, result) and !isBooleanVector(module, result))
                 return ValidationError.WrongResultType;
@@ -717,6 +713,55 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             const result = result_type orelse return ValidationError.WrongResultPresence;
             const result_shape = integerShape(module, result) orelse return ValidationError.WrongResultType;
             if (result_shape.bits != 32 or result_shape.components != components)
+                return ValidationError.WrongResultType;
+        },
+        .image_query_lod => |op| {
+            if (module.stage != .fragment or op.dimension == .buffer)
+                return ValidationError.InvalidInstruction;
+
+            try validateImageShape(op.dimension, op.arrayed);
+
+            const image = module.resources.get(op.image) orelse return ValidationError.InvalidValue;
+            if (image.kind != .sampled_image)
+                return ValidationError.WrongResourceKind;
+
+            const sampler = module.resources.get(op.sampler) orelse return ValidationError.InvalidValue;
+            if (sampler.kind != .sampler)
+                return ValidationError.WrongResourceKind;
+
+            const image_type = module.types.get(image.type) orelse return ValidationError.InvalidType;
+            if (image_type.* == .resource_handle and image_type.resource_handle.kind != .sampled_image)
+                return ValidationError.WrongResourceKind;
+
+            const coordinate_type = try operandType(module, function_id, op.coordinate);
+            if (op.dimension == .one_d) {
+                if (!isFloat(module, coordinate_type, 32))
+                    return ValidationError.WrongOperandType;
+            } else if (floatComponentCount(module, coordinate_type, 32) != imageSpatialComponents(op.dimension)) {
+                return ValidationError.WrongOperandType;
+            }
+
+            const result = result_type orelse return ValidationError.WrongResultPresence;
+
+            if (floatComponentCount(module, result, 32) != 2)
+                return ValidationError.WrongResultType;
+        },
+        .image_query_levels => |op| {
+            const resource = module.resources.get(op.resource) orelse return ValidationError.InvalidValue;
+            if (resource.kind != .sampled_image)
+                return ValidationError.WrongResourceKind;
+
+            const result = module.types.get(result_type orelse return ValidationError.WrongResultPresence) orelse return ValidationError.InvalidType;
+            if (result.* != .integer or result.integer.bits != 32)
+                return ValidationError.WrongResultType;
+        },
+        .image_query_samples => |op| {
+            const resource = module.resources.get(op.resource) orelse return ValidationError.InvalidValue;
+            if (resource.kind != .sampled_image)
+                return ValidationError.WrongResourceKind;
+
+            const result = module.types.get(result_type orelse return ValidationError.WrongResultPresence) orelse return ValidationError.InvalidType;
+            if (result.* != .integer or result.integer.bits != 32)
                 return ValidationError.WrongResultType;
         },
         .image_fetch => |op| {

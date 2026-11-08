@@ -705,7 +705,7 @@ fn imageTypeInfo(context: *const Context, image_type: u32) TranslationError!Imag
         else => return TranslationError.UnsupportedType,
     };
     if (definition.operands[3] > 2 or definition.operands[5] > 1 or
-        (definition.operands[5] == 1 and definition.operands[2] != 6) or
+        (definition.operands[5] == 1 and dimension != .two_d) or
         (arrayed and (dimension == .three_d or dimension == .buffer)))
         return TranslationError.UnsupportedType;
 
@@ -1011,7 +1011,7 @@ fn translateImageSample(context: *Context, block: ir.id.BlockId, opcode: spirv.O
     const sampled = (try context.sampledImage(operands[2])) orelse return TranslationError.UnsupportedOpcode;
     const image = try imageTypeInfo(context, sampled.image_type);
 
-    if (image.dimension == .buffer)
+    if (image.dimension == .buffer or image.multisampled or image.input_attachment)
         return TranslationError.UnsupportedOpcode;
 
     if (projected and (image.arrayed or image.dimension == .cube))
@@ -2682,19 +2682,88 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             context.image_types[result_index] = sampled_image.image_type;
         },
 
-        .image_query_size_lod => {
+        .image_query_lod => {
             try expectOperandCount(operands, 4);
+            const sampled = (try context.sampledImage(operands[2])) orelse return TranslationError.UnsupportedOpcode;
+            const image_info = try imageTypeInfo(context, sampled.image_type);
+
+            if (image_info.dimension == .buffer or image_info.multisampled or image_info.input_attachment)
+                return TranslationError.UnsupportedOpcode;
+
+            var coordinate_info = image_info;
+            coordinate_info.arrayed = false;
+            var dref: ?ir.id.ValueId = null;
+            const coordinate = try canonicalizeSampleCoordinate(context, block, try context.resolveValue(operands[3]), coordinate_info, false, &dref);
+            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+                .image_query_lod = .{
+                    .image = sampled.image,
+                    .sampler = sampled.sampler orelse return TranslationError.UnsupportedOpcode,
+                    .coordinate = coordinate,
+                    .dimension = image_info.dimension,
+                    .arrayed = image_info.arrayed,
+                },
+            }, context.nameOf(operands[1]))).?;
+
+            try context.setValue(operands[1], result);
+        },
+
+        .image_query_levels => {
+            try expectOperandCount(operands, 3);
             const resource = (try context.imageResource(operands[2])) orelse return TranslationError.UnsupportedOpcode;
             const image_type = context.image_types[try context.idIndex(operands[2])] orelse return TranslationError.MissingDefinition;
             const image_info = try imageTypeInfo(context, image_type);
             const image = context.module.resources.get(resource) orelse return TranslationError.InvalidId;
-            if (image.kind != .sampled_image or image_info.dimension == .buffer)
+            if (image.kind != .sampled_image or image_info.dimension == .buffer or
+                image_info.multisampled or image_info.input_attachment)
                 return TranslationError.UnsupportedOpcode;
+
+            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+                .image_query_levels = .{ .resource = resource },
+            }, context.nameOf(operands[1]))).?;
+
+            try context.setValue(operands[1], result);
+        },
+
+        .image_query_samples => {
+            try expectOperandCount(operands, 3);
+            const resource = (try context.imageResource(operands[2])) orelse return TranslationError.UnsupportedOpcode;
+            const image_type = context.image_types[try context.idIndex(operands[2])] orelse return TranslationError.MissingDefinition;
+            const image_info = try imageTypeInfo(context, image_type);
+            const image = context.module.resources.get(resource) orelse return TranslationError.InvalidId;
+            if (image.kind != .sampled_image or image_info.dimension != .two_d or !image_info.multisampled)
+                return TranslationError.UnsupportedOpcode;
+
+            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+                .image_query_samples = .{ .resource = resource },
+            }, context.nameOf(operands[1]))).?;
+
+            try context.setValue(operands[1], result);
+        },
+
+        .image_query_size, .image_query_size_lod => {
+            const explicit_lod = instruction.opcode == .image_query_size_lod;
+            try expectOperandCount(operands, if (explicit_lod) 4 else 3);
+
+            const resource = (try context.imageResource(operands[2])) orelse return TranslationError.UnsupportedOpcode;
+            const image_type = context.image_types[try context.idIndex(operands[2])] orelse return TranslationError.MissingDefinition;
+            const image_info = try imageTypeInfo(context, image_type);
+            const image = context.module.resources.get(resource) orelse return TranslationError.InvalidId;
+
+            if (image.kind != .sampled_image or image_info.dimension == .buffer or image_info.input_attachment)
+                return TranslationError.UnsupportedOpcode;
+
+            if (explicit_lod == image_info.multisampled)
+                return TranslationError.InvalidInstruction;
+
+            const lod = if (explicit_lod)
+                try context.resolveValue(operands[3])
+            else
+                try context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = 0 });
 
             const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
                 .image_size_query_lod = .{
                     .resource = resource,
-                    .lod = try context.resolveValue(operands[3]),
+                    .lod = lod,
                     .dimension = image_info.dimension,
                     .arrayed = image_info.arrayed,
                 },
@@ -2709,7 +2778,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             const resource = (try context.imageResource(operands[2])) orelse return TranslationError.UnsupportedOpcode;
             const image_type = context.image_types[try context.idIndex(operands[2])] orelse return TranslationError.MissingDefinition;
             const image_info = try imageTypeInfo(context, image_type);
-            if (image_info.dimension == .cube)
+            if (image_info.dimension == .cube or image_info.multisampled)
                 return TranslationError.UnsupportedOpcode;
 
             const image_operands = try parseImageOperands(context, operands[4..], .fetch);

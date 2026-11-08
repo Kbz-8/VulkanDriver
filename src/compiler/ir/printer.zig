@@ -346,6 +346,28 @@ fn writeOperation(module: *const module_ir.Module, writer: *std.Io.Writer, opera
             if (op.dimension != .two_d or op.arrayed)
                 try writer.print(", dimension {t}, arrayed {}", .{ op.dimension, op.arrayed });
         },
+        .image_query_lod => |op| {
+            try writer.writeAll("image_query_lod ");
+            const image = module.resources.get(op.image);
+            try writeNamedRef(writer, if (image) |r| r.name else null, "resource", op.image.index());
+            try writer.writeAll(", ");
+            const sampler = module.resources.get(op.sampler);
+            try writeNamedRef(writer, if (sampler) |r| r.name else null, "resource", op.sampler.index());
+            try writer.writeAll(", ");
+            try writeValueRef(module, writer, op.coordinate);
+            if (op.dimension != .two_d or op.arrayed)
+                try writer.print(", dimension {t}, arrayed {}", .{ op.dimension, op.arrayed });
+        },
+        .image_query_levels => |op| {
+            try writer.writeAll("image_query_levels ");
+            const resource = module.resources.get(op.resource);
+            try writeNamedRef(writer, if (resource) |r| r.name else null, "resource", op.resource.index());
+        },
+        .image_query_samples => |op| {
+            try writer.writeAll("image_query_samples ");
+            const resource = module.resources.get(op.resource);
+            try writeNamedRef(writer, if (resource) |r| r.name else null, "resource", op.resource.index());
+        },
         .image_fetch => |op| {
             try writer.writeAll("image_fetch ");
             const resource = module.resources.get(op.resource);

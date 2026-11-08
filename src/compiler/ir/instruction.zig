@@ -216,6 +216,22 @@ pub const ImageSizeQueryLod = struct {
     arrayed: bool = false,
 };
 
+pub const ImageQueryLod = struct {
+    image: ResourceId,
+    sampler: ResourceId,
+    coordinate: ValueId,
+    dimension: type_ir.ImageDimension = .two_d,
+    arrayed: bool = false,
+};
+
+pub const ImageQueryLevels = struct {
+    resource: ResourceId,
+};
+
+pub const ImageQuerySamples = struct {
+    resource: ResourceId,
+};
+
 pub const ImageFetch = struct {
     resource: ResourceId,
     coordinate: ValueId,
@@ -303,6 +319,9 @@ pub const Operation = union(enum) {
     store_workgroup: StoreWorkgroup,
     image_read: ImageRead,
     image_size_query_lod: ImageSizeQueryLod,
+    image_query_lod: ImageQueryLod,
+    image_query_levels: ImageQueryLevels,
+    image_query_samples: ImageQuerySamples,
     image_fetch: ImageFetch,
     image_sample_explicit_lod: ImageSampleExplicitLod,
     image_sample_implicit_lod: ImageSampleImplicitLod,
@@ -366,6 +385,9 @@ pub const Operation = union(enum) {
                     visitor(context, sample);
             },
             .image_size_query_lod => |op| visitor(context, op.lod),
+            .image_query_lod => |op| visitor(context, op.coordinate),
+            .image_query_levels => {},
+            .image_query_samples => {},
             .image_fetch => |op| {
                 visitor(context, op.coordinate);
                 if (op.lod) |lod|
@@ -467,6 +489,9 @@ pub const Operation = union(enum) {
                     replaceOne(sample, old, replacement, &count);
             },
             .image_size_query_lod => |*op| replaceOne(&op.lod, old, replacement, &count),
+            .image_query_lod => |*op| replaceOne(&op.coordinate, old, replacement, &count),
+            .image_query_levels => {},
+            .image_query_samples => {},
             .image_fetch => |*op| {
                 replaceOne(&op.coordinate, old, replacement, &count);
                 if (op.lod) |*lod| replaceOne(lod, old, replacement, &count);
