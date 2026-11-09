@@ -384,8 +384,6 @@ fn addCTS(
     caselist_file: ?[]const u8,
 ) !*Step {
     const arch = if (target.query.cpu_arch) |arch| arch else builtin.cpu.arch;
-    if (!arch.isX86())
-        return error.NoCTSForPlatform;
 
     const cts = b.dependency("cts_bin", .{});
 
@@ -393,7 +391,7 @@ fn addCTS(
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
             .linux => "linux.x86_64",
             .windows => "windows.exe",
-            .macos => "macos.x86_64",
+            .macos => if (arch.isX86()) "macos.x86_64" else "macos.aarch64",
             else => return error.NoCTSForPlatform,
         },
     }));
@@ -472,8 +470,6 @@ fn addMultithreadedCTS(
     jobs: ?u32,
 ) !*Step {
     const arch = if (target.query.cpu_arch) |arch| arch else builtin.cpu.arch;
-    if (!arch.isX86())
-        return error.NoCTSForPlatform;
 
     const cts = b.dependency("cts_bin", .{});
 
@@ -481,7 +477,7 @@ fn addMultithreadedCTS(
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
             .linux => "linux.x86_64",
             .windows => "windows.exe",
-            .macos => "macos.x86_64",
+            .macos => if (arch.isX86()) "macos.x86_64" else "macos.aarch64",
             else => return error.NoCTSForPlatform,
         },
     }));
