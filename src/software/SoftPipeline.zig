@@ -1,6 +1,8 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const base = @import("base");
+const shader_ir = @import("shader_ir");
+const shader_types = @import("shader_types.zig");
 
 const VkError = base.VkError;
 
@@ -27,9 +29,15 @@ const Stages = enum {
     compute,
 };
 
+pub const FragmentInterpolation = struct {
+    interpolation_type: shader_ir.ir.module.Interpolation = .smooth,
+    centroid: bool = false,
+};
+
 interface: Interface,
 runtimes_allocator: std.heap.ArenaAllocator,
 stages: std.EnumMap(Stages, InterpreterShader),
+fragment_interpolation: [shader_types.max_output_locations][4]FragmentInterpolation = @splat(@splat(.{})),
 
 pub fn createCompute(device: *base.Device, allocator: std.mem.Allocator, cache: ?*base.PipelineCache, info: *const vk.ComputePipelineCreateInfo) VkError!*Self {
     const self = allocator.create(Self) catch return VkError.OutOfHostMemory;
@@ -104,6 +112,25 @@ pub fn createGraphics(device: *base.Device, allocator: std.mem.Allocator, cache:
         }
     } else {
         return VkError.ValidationFailed;
+    }
+
+    if (self.stages.getPtr(.fragment)) |fragment| {
+        for (fragment.program.interfaces) |optional_binding| {
+            const binding = optional_binding orelse continue;
+            if (binding.direction != .input)
+                continue;
+            switch (binding.semantic) {
+                .location => |location| {
+                    for (binding.words) |word| {
+                        self.fragment_interpolation[word.location][word.component] = .{
+                            .interpolation_type = location.interpolation,
+                            .centroid = location.centroid,
+                        };
+                    }
+                },
+                .builtin => {},
+            }
+        }
     }
 
     return self;

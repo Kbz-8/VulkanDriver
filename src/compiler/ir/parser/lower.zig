@@ -663,7 +663,7 @@ fn inferConvertType(module: *module_ir.Module, opcode: inst_ir.ConvertOpcode, op
                     .length = components,
                 } });
         },
-        .signed_to_float, .unsigned_to_float => null,
+        .signed_to_float, .unsigned_to_float, .signed_convert, .unsigned_convert, .float_convert => null,
     };
 }
 

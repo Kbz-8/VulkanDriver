@@ -120,6 +120,7 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
         .floor => translateUnary(emitter, invocation, .floor),
         .fma => translateTernary(emitter, invocation, .float_mul_add),
         .fract => translateFract(emitter, invocation),
+        .frexp_struct => translateFrexpStruct(emitter, invocation),
         .inverse_sqrt => translateUnary(emitter, invocation, .inverse_sqrt),
         .length => translateLength(emitter, invocation),
         .log => translateUnary(emitter, invocation, .log),
@@ -127,6 +128,8 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
         .matrix_inverse => translateMatrixInverse(emitter, invocation),
         .modf_struct => translateModfStruct(emitter, invocation),
         .n_clamp => translateNClamp(emitter, invocation),
+        .n_max => translateNMinMax(emitter, invocation, .float_max),
+        .n_min => translateNMinMax(emitter, invocation, .float_min),
         .normalize => translateNormalize(emitter, invocation),
         .pow => translateBinary(emitter, invocation, .pow),
         .radians => translateAngleScale(emitter, invocation, std.math.pi / 180.0),
@@ -425,6 +428,218 @@ pub fn emitModf(emitter: *ext.Emitter, operand: ir.id.ValueId, result_name: ?[]c
     return .{ .fraction = fraction, .whole = whole };
 }
 
+fn typeWithScalar(emitter: *ext.Emitter, value_type: ir.id.TypeId, scalar_type: ir.id.TypeId) !ir.id.TypeId {
+    const definition = emitter.module.types.get(value_type) orelse return error.InvalidId;
+    return switch (definition.*) {
+        .vector => |vector| emitter.builder.internType(.{
+            .vector = .{
+                .element_type = scalar_type,
+                .length = vector.length,
+            },
+        }),
+        else => scalar_type,
+    };
+}
+
+fn translateFrexpStruct(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
+    if (invocation.operands.len != 1)
+        return error.InvalidInstruction;
+
+    const operand = invocation.operands[0];
+    const value_type = emitter.module.typeOf(operand) orelse return error.InvalidId;
+
+    _ = try floatScalarType(emitter.module, value_type);
+
+    const exponent_scalar = try emitter.builder.internType(.{ .integer = .{ .bits = 32, .signedness = .signed } });
+    const exponent_type = try typeWithScalar(emitter, value_type, exponent_scalar);
+    const result = emitter.module.types.get(invocation.result_type) orelse return error.InvalidId;
+
+    if (result.* != .structure or result.structure.members.len != 2 or result.structure.members[0] != value_type or result.structure.members[1] != exponent_type)
+        return error.InvalidInstruction;
+
+    const parts = try emitFrexp(emitter, operand, null);
+    return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
+        .composite_construct = .{
+            .elements = &.{
+                parts.fraction,
+                parts.exponent,
+            },
+        },
+    }, invocation.result_name)).?;
+}
+
+pub fn emitFrexp(emitter: *ext.Emitter, operand: ir.id.ValueId, result_name: ?[]const u8) !struct { fraction: ir.id.ValueId, exponent: ir.id.ValueId } {
+    const value_type = emitter.module.typeOf(operand) orelse return error.InvalidId;
+    const scalar_type = try floatScalarType(emitter.module, value_type);
+    const parts = try switch (emitter.module.types.get(scalar_type).?.floating.bits) {
+        16 => emitFrexpTyped(emitter, operand, result_name, 16),
+        32 => emitFrexpTyped(emitter, operand, result_name, 32),
+        64 => emitFrexpTyped(emitter, operand, result_name, 64),
+        else => error.UnsupportedType,
+    };
+    return .{ .fraction = parts.fraction, .exponent = parts.exponent };
+}
+
+fn emitFrexpTyped(emitter: *ext.Emitter, operand: ir.id.ValueId, result_name: ?[]const u8, comptime width: u16) !struct { fraction: ir.id.ValueId, exponent: ir.id.ValueId } {
+    const mantissa_bits = switch (width) {
+        16 => 10,
+        32 => 23,
+        64 => 52,
+        else => unreachable,
+    };
+
+    const bias = (1 << (width - mantissa_bits - 2)) - 1;
+    const exponent_mask = ((1 << (width - mantissa_bits - 1)) - 1) << mantissa_bits;
+    const fraction_mask = ((1 << width) - 1) ^ exponent_mask;
+    const value_type = emitter.module.typeOf(operand).?;
+    const integer_scalar = try emitter.builder.internType(.{ .integer = .{ .bits = width, .signedness = .unsigned } });
+    const integer_type = try typeWithScalar(emitter, value_type, integer_scalar);
+    const exponent_scalar = try emitter.builder.internType(.{ .integer = .{ .bits = 32, .signedness = .signed } });
+    const exponent_type = try typeWithScalar(emitter, value_type, exponent_scalar);
+    const boolean = try emitter.builder.internType(.boolean);
+    const condition_type = try typeWithScalar(emitter, value_type, boolean);
+    const integer_zero = try integerConstant(emitter, integer_type, integer_scalar, 0);
+    const mask = try integerConstant(emitter, integer_type, integer_scalar, exponent_mask);
+    const bits = (try emitter.builder.appendInstruction(emitter.block, integer_type, .{ .bitcast = operand }, null)).?;
+
+    const exponent_bits = (try emitter.builder.appendInstruction(emitter.block, integer_type, .{
+        .binary = .{
+            .opcode = .bitwise_and,
+            .lhs = bits,
+            .rhs = mask,
+        },
+    }, null)).?;
+
+    const subnormal = (try emitter.builder.appendInstruction(emitter.block, condition_type, .{
+        .compare = .{
+            .opcode = .equal,
+            .lhs = exponent_bits,
+            .rhs = integer_zero,
+        },
+    }, null)).?;
+
+    const zero = try floatConstant(emitter, value_type, 0.0);
+    const scale = try floatConstant(emitter, value_type, @floatFromInt(1 << mantissa_bits));
+
+    const normalization_input = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .select = .{
+            .condition = subnormal,
+            .true_value = operand,
+            .false_value = zero,
+        },
+    }, null)).?;
+
+    const scaled = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .binary = .{
+            .opcode = .float_multiply,
+            .lhs = normalization_input,
+            .rhs = scale,
+        },
+    }, null)).?;
+
+    const normalized = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .select = .{
+            .condition = subnormal,
+            .true_value = scaled,
+            .false_value = operand,
+        },
+    }, null)).?;
+
+    const normalized_bits = (try emitter.builder.appendInstruction(emitter.block, integer_type, .{ .bitcast = normalized }, null)).?;
+    const normalized_exponent = (try emitter.builder.appendInstruction(emitter.block, integer_type, .{
+        .binary = .{
+            .opcode = .bitwise_and,
+            .lhs = normalized_bits,
+            .rhs = mask,
+        },
+    }, null)).?;
+
+    const shift = try integerConstant(emitter, integer_type, integer_scalar, mantissa_bits);
+    const biased_exponent = (try emitter.builder.appendInstruction(emitter.block, integer_type, .{
+        .binary = .{
+            .opcode = .logical_shift_right,
+            .lhs = normalized_exponent,
+            .rhs = shift,
+        },
+    }, null)).?;
+
+    const wide_exponent = (try emitter.builder.appendInstruction(emitter.block, exponent_type, .{
+        .convert = .{
+            .opcode = .unsigned_convert,
+            .operand = biased_exponent,
+        },
+    }, null)).?;
+
+    const normal_bias = try integerConstant(emitter, exponent_type, exponent_scalar, bias - 1);
+    const subnormal_bias = try integerConstant(emitter, exponent_type, exponent_scalar, bias - 1 + mantissa_bits);
+    const correction = (try emitter.builder.appendInstruction(emitter.block, exponent_type, .{
+        .select = .{
+            .condition = subnormal,
+            .true_value = subnormal_bias,
+            .false_value = normal_bias,
+        },
+    }, null)).?;
+
+    const nonzero_exponent = (try emitter.builder.appendInstruction(emitter.block, exponent_type, .{
+        .binary = .{
+            .opcode = .integer_subtract,
+            .lhs = wide_exponent,
+            .rhs = correction,
+        },
+    }, null)).?;
+
+    // Retain the sign/significand and set the exponent to -1: |fraction| is
+    // exactly in [0.5, 1). Special-case zero to preserve its original sign.
+    const significand_mask = try integerConstant(emitter, integer_type, integer_scalar, fraction_mask);
+    const significand = (try emitter.builder.appendInstruction(emitter.block, integer_type, .{
+        .binary = .{
+            .opcode = .bitwise_and,
+            .lhs = normalized_bits,
+            .rhs = significand_mask,
+        },
+    }, null)).?;
+
+    const half_exponent = try integerConstant(emitter, integer_type, integer_scalar, (bias - 1) << mantissa_bits);
+    const fraction_bits = (try emitter.builder.appendInstruction(emitter.block, integer_type, .{
+        .binary = .{
+            .opcode = .bitwise_or,
+            .lhs = significand,
+            .rhs = half_exponent,
+        },
+    }, null)).?;
+
+    const nonzero_fraction = (try emitter.builder.appendInstruction(emitter.block, value_type, .{ .bitcast = fraction_bits }, null)).?;
+    const is_zero = (try emitter.builder.appendInstruction(emitter.block, condition_type, .{
+        .compare = .{
+            .opcode = .ordered_float_equal,
+            .lhs = operand,
+            .rhs = zero,
+        },
+    }, null)).?;
+
+    const fraction = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .select = .{
+            .condition = is_zero,
+            .true_value = operand,
+            .false_value = nonzero_fraction,
+        },
+    }, result_name)).?;
+
+    const exponent_zero = try integerConstant(emitter, exponent_type, exponent_scalar, 0);
+    const exponent = (try emitter.builder.appendInstruction(emitter.block, exponent_type, .{
+        .select = .{
+            .condition = is_zero,
+            .true_value = exponent_zero,
+            .false_value = nonzero_exponent,
+        },
+    }, null)).?;
+
+    return .{
+        .fraction = fraction,
+        .exponent = exponent,
+    };
+}
+
 fn validateIntegerOperands(emitter: *ext.Emitter, invocation: ext.Invocation, operand_count: usize) !ir.id.TypeId {
     if (invocation.operands.len != operand_count)
         return error.InvalidInstruction;
@@ -456,7 +671,7 @@ fn validateIntegerOperands(emitter: *ext.Emitter, invocation: ext.Invocation, op
 fn integerConstant(emitter: *ext.Emitter, type_id: ir.id.TypeId, scalar_type: ir.id.TypeId, comptime value: comptime_int) !ir.id.ValueId {
     const width = emitter.module.types.get(scalar_type).?.integer.bits;
     const mask = @as(u64, std.math.maxInt(u64)) >> @as(u6, @intCast(64 - width));
-    const bits = @as(u64, @bitCast(@as(i64, value))) & mask;
+    const bits = (if (value < 0) @as(u64, @bitCast(@as(i64, value))) else @as(u64, value)) & mask;
     const constant = try emitter.builder.internConstant(scalar_type, .{ .integer_bits = bits });
 
     if (type_id == scalar_type)
@@ -1156,84 +1371,59 @@ fn translateNormalize(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.
     return vector_helper.scale(emitter.builder, emitter.block, invocation.result_type, operand, inverse_length, invocation.result_name);
 }
 
-fn translateNClamp(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
-    if (invocation.operands.len != 3)
-        return error.InvalidInstruction;
+fn translateNMinMax(emitter: *ext.Emitter, invocation: ext.Invocation, opcode: ir.instruction.BinaryOpcode) !ir.id.ValueId {
+    _ = try validateFloatOperands(emitter, invocation, 2);
+    return emitNMinMax(emitter, invocation.operands[0], invocation.operands[1], opcode, invocation.result_name);
+}
 
-    const result_definition = emitter.module.types.get(invocation.result_type) orelse return error.InvalidId;
-    const vector = switch (result_definition.*) {
-        .vector => |value| value,
-        else => return error.UnsupportedType,
-    };
-    const element_definition = emitter.module.types.get(vector.element_type) orelse return error.InvalidId;
-    if (element_definition.* != .floating or element_definition.floating.bits != 32)
-        return error.UnsupportedType;
+fn emitNMinMax(emitter: *ext.Emitter, lhs: ir.id.ValueId, rhs: ir.id.ValueId, opcode: ir.instruction.BinaryOpcode, result_name: ?[]const u8) !ir.id.ValueId {
+    const value_type = emitter.module.typeOf(lhs) orelse return error.InvalidId;
+    const boolean = try emitter.builder.internType(.boolean);
+    const condition_type = try typeWithScalar(emitter, value_type, boolean);
 
-    const input = invocation.operands[0];
-    const minimum = invocation.operands[1];
-    const maximum = invocation.operands[2];
-    if (emitter.module.typeOf(input) != invocation.result_type or
-        emitter.module.typeOf(minimum) != invocation.result_type or
-        emitter.module.typeOf(maximum) != invocation.result_type)
-        return error.InvalidInstruction;
-
-    const bool_type = try emitter.builder.internType(.boolean);
-    const elements = try emitter.scratch.alloc(ir.id.ValueId, vector.length);
-    for (elements, 0..) |*element, index| {
-        const indices = &.{@as(u32, @intCast(index))};
-        const input_element = (try emitter.builder.appendInstruction(emitter.block, vector.element_type, .{
-            .composite_extract = .{
-                .composite = input,
-                .indices = indices,
-            },
-        }, null)).?;
-        const minimum_element = (try emitter.builder.appendInstruction(emitter.block, vector.element_type, .{
-            .composite_extract = .{
-                .composite = minimum,
-                .indices = indices,
-            },
-        }, null)).?;
-        const maximum_element = (try emitter.builder.appendInstruction(emitter.block, vector.element_type, .{
-            .composite_extract = .{
-                .composite = maximum,
-                .indices = indices,
-            },
-        }, null)).?;
-        const below_minimum = (try emitter.builder.appendInstruction(emitter.block, bool_type, .{
-            .compare = .{
-                .opcode = .ordered_float_less,
-                .lhs = input_element,
-                .rhs = minimum_element,
-            },
-        }, null)).?;
-        const lower_clamped = (try emitter.builder.appendInstruction(emitter.block, vector.element_type, .{
-            .select = .{
-                .condition = below_minimum,
-                .true_value = minimum_element,
-                .false_value = input_element,
-            },
-        }, null)).?;
-        const above_maximum = (try emitter.builder.appendInstruction(emitter.block, bool_type, .{
-            .compare = .{
-                .opcode = .ordered_float_less,
-                .lhs = maximum_element,
-                .rhs = lower_clamped,
-            },
-        }, null)).?;
-        element.* = (try emitter.builder.appendInstruction(emitter.block, vector.element_type, .{
-            .select = .{
-                .condition = above_maximum,
-                .true_value = maximum_element,
-                .false_value = lower_clamped,
-            },
-        }, null)).?;
-    }
-
-    return (try emitter.builder.appendInstruction(emitter.block, invocation.result_type, .{
-        .composite_construct = .{
-            .elements = elements,
+    const minimum_or_maximum = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .binary = .{
+            .opcode = opcode,
+            .lhs = lhs,
+            .rhs = rhs,
         },
-    }, invocation.result_name)).?;
+    }, null)).?;
+
+    const lhs_nan = (try emitter.builder.appendInstruction(emitter.block, condition_type, .{
+        .unary = .{
+            .opcode = .is_nan,
+            .operand = lhs,
+        },
+    }, null)).?;
+
+    const rhs_nan = (try emitter.builder.appendInstruction(emitter.block, condition_type, .{
+        .unary = .{
+            .opcode = .is_nan,
+            .operand = rhs,
+        },
+    }, null)).?;
+
+    const lhs_selected = (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .select = .{
+            .condition = lhs_nan,
+            .true_value = rhs,
+            .false_value = minimum_or_maximum,
+        },
+    }, null)).?;
+
+    return (try emitter.builder.appendInstruction(emitter.block, value_type, .{
+        .select = .{
+            .condition = rhs_nan,
+            .true_value = lhs,
+            .false_value = lhs_selected,
+        },
+    }, result_name)).?;
+}
+
+fn translateNClamp(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
+    _ = try validateFloatOperands(emitter, invocation, 3);
+    const lower_clamped = try emitNMinMax(emitter, invocation.operands[0], invocation.operands[1], .float_max, null);
+    return emitNMinMax(emitter, lower_clamped, invocation.operands[2], .float_min, invocation.result_name);
 }
 
 fn translateFaceforward(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {

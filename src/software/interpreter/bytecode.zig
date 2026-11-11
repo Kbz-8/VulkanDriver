@@ -17,6 +17,7 @@ pub const ValueKind = enum(u8) {
 };
 
 pub const Span = struct {
+    /// Empty aggregate spans have no storage and may use invalid_register.
     base: Register,
     components: u8,
     kind: ValueKind,
@@ -30,6 +31,7 @@ pub const Span = struct {
 pub const Instruction = extern struct {
     opcode: Opcode,
     components: u8 = 1,
+    /// Operand width, or destination width for same-kind conversions.
     scalar_bits: u8 = 32,
     a: Register = .invalid_register,
     b: Register = .invalid_register,
@@ -92,6 +94,7 @@ pub const Opcode = enum(u16) {
     float_absolute,
     float_add,
 
+    float_convert,
     float_divide,
     float_max,
     float_min,
@@ -149,11 +152,13 @@ pub const Opcode = enum(u16) {
     select,
     shift_left,
 
+    signed_convert,
     signed_divide,
     signed_max,
     signed_min,
     signed_modulo,
     signed_multiply_extended,
+    signed_remainder,
     signed_to_float,
     sin,
     sinh,
@@ -164,6 +169,7 @@ pub const Opcode = enum(u16) {
     tanh,
     trunc,
 
+    unsigned_convert,
     unsigned_divide,
     unsigned_max,
     unsigned_min,

@@ -71,11 +71,11 @@ fn checkDominanceUse(context: *DominanceUseContext, value_id: ids.ValueId) void 
     context.valid = switch (value.definition) {
         .constant, .undef => true,
         .function_parameter => |definition| definition.function == context.function_id,
-        .block_parameter => |definition| context.analysis.dominates(definition.block, context.use_block),
+        .block_parameter => |definition| !context.analysis.isReachable(context.use_block) or context.analysis.dominates(definition.block, context.use_block),
         .instruction => |instruction_id| blk: {
             const definition = context.module.instructions.get(instruction_id) orelse break :blk false;
 
-            if (!context.analysis.dominates(definition.parent_block, context.use_block))
+            if (context.analysis.isReachable(context.use_block) and !context.analysis.dominates(definition.parent_block, context.use_block))
                 break :blk false;
 
             if (definition.parent_block != context.use_block)

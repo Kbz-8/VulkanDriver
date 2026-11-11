@@ -12,8 +12,27 @@ pub const WorkgroupVariableId = ids.WorkgroupVariableId;
 
 pub const SourceLocation = struct {
     file: ?[]const u8 = null,
-    line: u32,
-    column: u32,
+    line: u32 = 0,
+    column: u32 = 0,
+    opcode: ?[]const u8 = null,
+    opcode_number: ?u32 = null,
+    word_offset: ?usize = null,
+
+    pub fn reportError(self: SourceLocation, phase: []const u8, err: anyerror) void {
+        std.log.scoped(.compiler).err("{f}: {s} failed: {s}", .{ self, phase, @errorName(err) });
+    }
+
+    pub fn format(self: SourceLocation, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        if (self.file) |file|
+            try writer.print("{s}:{d}:{d}: ", .{ file, self.line, self.column });
+
+        try writer.print("opcode {s}", .{self.opcode orelse "unknown"});
+        if (self.opcode_number) |number|
+            try writer.print(" ({d})", .{number});
+
+        if (self.word_offset) |offset|
+            try writer.print(" at SPIR-V word offset {d}", .{offset});
+    }
 };
 
 pub const UnaryOpcode = enum {
@@ -90,6 +109,7 @@ pub const BinaryOpcode = enum {
     signed_max,
     signed_min,
     signed_modulo,
+    signed_remainder,
     signed_multiply_extended,
     unsigned_divide,
     unsigned_max,
@@ -104,6 +124,9 @@ pub const TernaryOpcode = enum {
 };
 
 pub const ConvertOpcode = enum {
+    signed_convert,
+    unsigned_convert,
+    float_convert,
     float_to_signed,
     float_to_unsigned,
     signed_to_float,

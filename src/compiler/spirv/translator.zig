@@ -10,6 +10,7 @@ const matrix_lowering = @import("matrix.zig");
 const vector_lowering = @import("vector.zig");
 const bit_field_lowering = @import("bit_field.zig");
 const atomic_lowering = @import("atomic.zig");
+const specialization_folding = @import("specialization.zig");
 
 pub const SpecializationValue = struct {
     constant_id: u32,
@@ -67,6 +68,8 @@ const Decorations = struct {
     array_stride: ?u32 = null,
     block: bool = false,
     buffer_block: bool = false,
+    interpolation: ir.module.Interpolation = .smooth,
+    centroid: bool = false,
 };
 
 const MemberOffset = struct {
@@ -145,12 +148,15 @@ const MemberInterface = struct {
     structure_id: u32,
     member: u32,
     decoration: Decorations,
+    has_component: bool = false,
+    has_index: bool = false,
 };
 
 const InterfaceBlock = struct {
     variable: u32,
     structure_id: u32,
     direction: ir.module.InterfaceDirection,
+    source_variable: ?u32 = null,
 };
 
 const CompositeAddress = struct {
@@ -181,11 +187,50 @@ const FunctionLowering = struct {
     source_return_type: ir.id.TypeId,
     lowered_return_type: ir.id.TypeId,
     pointer_parameters: []const PointerParameter,
+    private_variables: []const u32 = &.{},
+    inline_leaf: ?InlineLeaf = null,
+};
+
+const InlineLeaf = struct {
+    parameters: []const Parser.Instruction,
+    instructions: []const Parser.Instruction,
+    binding_indices: []const usize,
+};
+
+const InlineBinding = struct {
+    values: ?ir.id.ValueId,
+    resources: ?ir.id.ResourceId,
+    image_resources: ?ir.id.ResourceId,
+    image_types: ?u32,
+    sampled_images: ?SampledImage,
+    sampled_image_arrays: ?[]const SampledImage,
+    image_addresses: ?ImageAddress,
+    buffer_addresses: ?BufferAddress,
+    push_constant_addresses: ?PushConstantAddress,
+    descriptor_arrays: ?DescriptorArray,
+    workgroup_addresses: ?WorkgroupAddress,
+    composite_addresses: ?CompositeAddress,
+    local_indices: ?usize,
+    function_parameter_pointees: ?u32,
 };
 
 const PhiInfo = struct {
     target_label: u32,
     incoming_words: []const u32,
+};
+
+const DecorationGroups = std.AutoHashMapUnmanaged(u32, std.ArrayList(Parser.Instruction));
+const GroupApplication = struct {
+    group: u32,
+    target: u32,
+    member: ?u32,
+};
+
+const SourceLine = struct {
+    word_offset: usize,
+    file_id: ?u32 = null,
+    line: u32 = 0,
+    column: u32 = 0,
 };
 
 const Context = struct {
@@ -200,6 +245,9 @@ const Context = struct {
     variable_defs: []?Parser.Instruction,
     extended_instruction_sets: []?extensions.Set,
     names: []?[]const u8,
+    source_files: []?[]const u8,
+    source_lines: std.ArrayList(SourceLine) = .empty,
+    error_reported: bool = false,
     decorations: []Decorations,
     specializations: []const SpecializationValue,
 
@@ -238,6 +286,76 @@ const Context = struct {
     entry_label: ?u32 = null,
     has_volatile_decorations: bool = false,
 
+    fn instructionSource(self: *const Context, instruction: Parser.Instruction) !ir.instruction.SourceLocation {
+        var source: ir.instruction.SourceLocation = .{
+            .opcode = std.enums.tagName(spirv.Opcode, instruction.opcode),
+            .opcode_number = @backingInt(instruction.opcode),
+            .word_offset = instruction.word_offset,
+        };
+
+        var low: usize = 0;
+        var high = self.source_lines.items.len;
+
+        while (low < high) {
+            const middle = low + (high - low) / 2;
+            if (self.source_lines.items[middle].word_offset <= instruction.word_offset)
+                low = middle + 1
+            else
+                high = middle;
+        }
+
+        if (low != 0) {
+            const location = self.source_lines.items[low - 1];
+            if (location.file_id) |file_id|
+                source.file = self.source_files[file_id];
+
+            source.line = location.line;
+            source.column = location.column;
+        }
+
+        if (instruction.opcode == .ext_inst and instruction.operands.len >= 4) {
+            const set_id = instruction.operands[2];
+            if (set_id > 0 and set_id < self.bound) {
+                if (self.extended_instruction_sets[set_id]) |set| {
+                    const extended_opcode = instruction.operands[3];
+                    const set_name = switch (set) {
+                        .glsl_std_450 => "GLSL.std.450",
+                        .non_semantic, .unsupported => |name| name,
+                    };
+
+                    const extended_name = if (set == .glsl_std_450)
+                        std.enums.tagName(glsl_std_450.Opcode, @fromBackingInt(extended_opcode)) orelse "unknown"
+                    else
+                        "unknown";
+
+                    source.opcode = try std.fmt.allocPrint(self.module.allocator(), "ext_inst {s}.{s} [{d}]", .{ set_name, extended_name, extended_opcode });
+                }
+            }
+        }
+
+        return source;
+    }
+
+    fn reportError(self: *Context, instruction: ?Parser.Instruction, err: anyerror) void {
+        if (self.error_reported)
+            return;
+
+        if (instruction) |item| {
+            const source = self.instructionSource(item) catch ir.instruction.SourceLocation{
+                .opcode = std.enums.tagName(spirv.Opcode, item.opcode),
+                .opcode_number = @backingInt(item.opcode),
+                .word_offset = item.word_offset,
+            };
+            source.reportError("SPIR-V translation", err);
+        } else if (self.builder.source) |source| {
+            source.reportError("SPIR-V translation", err);
+        } else {
+            return;
+        }
+
+        self.error_reported = true;
+    }
+
     fn idIndex(self: *const Context, id: u32) TranslationError!usize {
         if (id == 0 or id >= self.bound)
             return TranslationError.InvalidId;
@@ -268,6 +386,18 @@ const Context = struct {
     }
 
     fn translateType(self: *Context, spv_id: u32) anyerror!ir.id.TypeId {
+        return self.translateTypeImpl(spv_id) catch |err| {
+            const index = self.idIndex(spv_id) catch {
+                self.reportError(null, err);
+                return err;
+            };
+
+            self.reportError(self.type_defs[index], err);
+            return err;
+        };
+    }
+
+    fn translateTypeImpl(self: *Context, spv_id: u32) anyerror!ir.id.TypeId {
         const index = try self.idIndex(spv_id);
         if (self.types[index]) |translated|
             return translated;
@@ -423,6 +553,18 @@ const Context = struct {
     }
 
     fn translateValue(self: *Context, spv_id: u32) anyerror!ir.id.ValueId {
+        return self.translateValueImpl(spv_id) catch |err| {
+            const index = self.idIndex(spv_id) catch {
+                self.reportError(null, err);
+                return err;
+            };
+
+            self.reportError(self.value_defs[index], err);
+            return err;
+        };
+    }
+
+    fn translateValueImpl(self: *Context, spv_id: u32) anyerror!ir.id.ValueId {
         const index = try self.idIndex(spv_id);
 
         if (self.values[index]) |translated|
@@ -473,12 +615,16 @@ const Context = struct {
                 const elements = try self.scratch.alloc(ir.id.ConstantId, operands.len - 2);
 
                 for (operands[2..], elements) |element_id, *element| {
-                    const element_value = self.module.values.get(try self.translateValue(element_id)) orelse return TranslationError.InvalidId;
+                    const element_value = (self.module.values.get(try self.translateValue(element_id)) orelse return TranslationError.InvalidId).*;
 
-                    if (element_value.definition != .constant)
-                        return TranslationError.UnsupportedConstant;
-
-                    element.* = element_value.definition.constant;
+                    element.* = switch (element_value.definition) {
+                        .constant => |constant| constant,
+                        .undef => undef_element: {
+                            const value = try self.builder.internConstant(element_value.type, .undef);
+                            break :undef_element (self.module.values.get(value) orelse return TranslationError.InvalidId).definition.constant;
+                        },
+                        else => return TranslationError.UnsupportedConstant,
+                    };
                 }
 
                 break :blk try self.builder.internConstant(
@@ -525,63 +671,32 @@ const Context = struct {
                 };
             },
             .spec_constant_op => blk: {
-                try expectOperandCount(operands, 5);
-                const opcode: spirv.Opcode = @fromBackingInt(@intCast(operands[2]));
-                if (opcode != .i_equal and opcode != .i_not_equal and opcode != .bitwise_and and opcode != .shift_right_logical) {
+                if (operands.len < 3)
+                    return TranslationError.InvalidInstruction;
+                const opcode: spirv.Opcode = @fromBackingInt(operands[2]);
+                const operand_count = specialization_folding.operandCount(opcode) catch |err| {
                     const name = std.enums.tagName(spirv.Opcode, opcode) orelse "unknown";
                     std.log.scoped(.spirv_translator).err("unsupported OpSpecConstantOp {s} ({d}) for %{d}", .{ name, operands[2], spv_id });
-                    return TranslationError.SpecializationConstantsNotApplied;
-                }
+                    return err;
+                };
+
+                if (operands.len < 3 + operand_count)
+                    return TranslationError.InvalidInstruction;
 
                 const result_type = try self.translateType(operands[0]);
-                const result_type_data = self.module.types.get(result_type) orelse return TranslationError.InvalidId;
-                const lhs = (self.module.values.get(try self.translateValue(operands[3])) orelse return TranslationError.InvalidId).*;
-                const rhs = (self.module.values.get(try self.translateValue(operands[4])) orelse return TranslationError.InvalidId).*;
-                if (lhs.type != rhs.type or lhs.definition != .constant or rhs.definition != .constant)
-                    return TranslationError.UnsupportedConstant;
 
-                const operand_type = self.module.types.get(lhs.type) orelse return TranslationError.InvalidId;
-                const operand_integer = switch (operand_type.*) {
-                    .integer => |integer| integer,
-                    else => return TranslationError.UnsupportedConstant,
-                };
+                var values: [3]ir.id.ValueId = undefined;
+                for (operands[3..][0..operand_count], values[0..operand_count]) |operand, *value|
+                    value.* = try self.translateValue(operand);
 
-                const lhs_constant = self.module.constants.get(lhs.definition.constant) orelse return TranslationError.InvalidId;
-                const rhs_constant = self.module.constants.get(rhs.definition.constant) orelse return TranslationError.InvalidId;
-                if (lhs_constant.value != .integer_bits or rhs_constant.value != .integer_bits)
-                    return TranslationError.UnsupportedConstant;
-
-                break :blk switch (opcode) {
-                    .i_equal, .i_not_equal => result: {
-                        if (result_type_data.* != .boolean)
-                            return TranslationError.UnsupportedConstant;
-                        break :result try self.builder.internConstant(result_type, .{
-                            .boolean = if (opcode == .i_equal)
-                                lhs_constant.value.integer_bits == rhs_constant.value.integer_bits
-                            else
-                                lhs_constant.value.integer_bits != rhs_constant.value.integer_bits,
-                        });
-                    },
-                    .bitwise_and => result: {
-                        if (result_type != lhs.type or result_type_data.* != .integer)
-                            return TranslationError.UnsupportedConstant;
-                        break :result try self.builder.internConstant(result_type, .{
-                            .integer_bits = lhs_constant.value.integer_bits & rhs_constant.value.integer_bits,
-                        });
-                    },
-                    .shift_right_logical => result: {
-                        if (result_type != lhs.type or result_type_data.* != .integer or rhs_constant.value.integer_bits >= operand_integer.bits)
-                            return TranslationError.UnsupportedConstant;
-                        const mask = if (operand_integer.bits == 64)
-                            std.math.maxInt(u64)
-                        else
-                            (@as(u64, 1) << @intCast(operand_integer.bits)) - 1;
-                        break :result try self.builder.internConstant(result_type, .{
-                            .integer_bits = (lhs_constant.value.integer_bits & mask) >> @intCast(rhs_constant.value.integer_bits),
-                        });
-                    },
-                    else => unreachable,
-                };
+                break :blk try specialization_folding.fold(
+                    &self.builder,
+                    self.scratch,
+                    opcode,
+                    result_type,
+                    values[0..operand_count],
+                    operands[3 + operand_count ..],
+                );
             },
 
             else => return TranslationError.MissingDefinition,
@@ -1058,8 +1173,6 @@ fn translateImageSample(context: *Context, block: ir.id.BlockId, opcode: spirv.O
     try context.setValue(operands[1], result);
 }
 
-/// Translates one entry point from a retained SPIR-V source into an independent
-/// common IR module. The returned module does not borrow from `source`.
 pub fn instantiate(allocator: std.mem.Allocator, source: *const SourceModule, options: Options) !ir.module.Module {
     try validateSpecializations(options.specializations);
     const parser = source.parser();
@@ -1085,6 +1198,7 @@ pub fn instantiate(allocator: std.mem.Allocator, source: *const SourceModule, op
         .variable_defs = try allocOptional(Parser.Instruction, scratch, bound),
         .extended_instruction_sets = try allocOptional(extensions.Set, scratch, bound),
         .names = try allocOptional([]const u8, scratch, bound),
+        .source_files = try allocOptional([]const u8, scratch, bound),
         .decorations = try scratch.alloc(Decorations, bound),
         .specializations = options.specializations,
         .types = try allocOptional(ir.id.TypeId, scratch, bound),
@@ -1112,11 +1226,14 @@ pub fn instantiate(allocator: std.mem.Allocator, source: *const SourceModule, op
         .block_local_outputs = try allocOptional(ir.id.ValueId, scratch, 0),
         .current_locals = try allocOptional(ir.id.ValueId, scratch, 0),
     };
+
     @memset(context.decorations, .{});
+
     defer context.member_offsets.deinit(scratch);
     defer context.member_matrix_layouts.deinit(scratch);
     defer context.phi_infos.deinit(scratch);
     defer context.locals.deinit(scratch);
+    defer context.source_lines.deinit(scratch);
 
     try collectDeclarations(&context);
     try translateInterfaces(&context, entry_point.interface_ids);
@@ -1146,11 +1263,15 @@ pub fn instantiate(allocator: std.mem.Allocator, source: *const SourceModule, op
     } else {
         module.properties.no_function_calls = true;
     }
+
     if (output_reads)
         try promoteOutputReads(&context);
+
     try ir.validator.validate(&module);
+
     module.properties.valid_cfg = true;
     module.properties.valid_ssa = true;
+
     return module;
 }
 
@@ -1260,56 +1381,168 @@ pub fn translate(allocator: std.mem.Allocator, words: []const u32, options: Opti
 }
 
 fn collectDeclarations(context: *Context) !void {
+    var groups: DecorationGroups = .empty;
+    defer {
+        var values = groups.valueIterator();
+        while (values.next()) |group|
+            group.deinit(context.scratch);
+        groups.deinit(context.scratch);
+    }
+
+    var group_iterator = context.parser.iterator();
+    while (try group_iterator.next()) |instruction| {
+        if (instruction.opcode == .decoration_group) {
+            collectDecorationGroup(context, &groups, instruction.operands) catch |err| {
+                context.reportError(instruction, err);
+                return err;
+            };
+        }
+    }
+
     var iterator = context.parser.iterator();
     while (try iterator.next()) |instruction| {
-        const operands = instruction.operands;
-        if (isTypeOpcode(instruction.opcode)) {
-            if (operands.len == 0)
-                return TranslationError.InvalidInstruction;
+        collectDeclaration(context, &groups, instruction) catch |err| {
+            context.reportError(instruction, err);
+            return err;
+        };
+    }
 
-            try context.recordDefinition(context.type_defs, operands[0], instruction);
-            continue;
+    var applied: std.AutoHashMapUnmanaged(GroupApplication, void) = .empty;
+    defer applied.deinit(context.scratch);
+
+    var application_iterator = context.parser.iterator();
+    while (try application_iterator.next()) |instruction| {
+        if (instruction.opcode == .group_decorate or instruction.opcode == .group_member_decorate) {
+            applyDecorationGroup(context, &groups, &applied, instruction) catch |err| {
+                context.reportError(instruction, err);
+                return err;
+            };
         }
-        if (isConstantOpcode(instruction.opcode) or instruction.opcode == .undef) {
+    }
+}
+
+fn collectDecorationGroup(context: *Context, groups: *DecorationGroups, operands: []const u32) !void {
+    try expectOperandCount(operands, 1);
+    _ = try context.idIndex(operands[0]);
+
+    const entry = try groups.getOrPut(context.scratch, operands[0]);
+    if (entry.found_existing)
+        return TranslationError.DuplicateId;
+
+    entry.value_ptr.* = .empty;
+}
+
+fn applyDecorationGroup(context: *Context, groups: *const DecorationGroups, applied: *std.AutoHashMapUnmanaged(GroupApplication, void), instruction: Parser.Instruction) !void {
+    const operands = instruction.operands;
+    const members = instruction.opcode == .group_member_decorate;
+
+    if (operands.len < (if (members) @as(usize, 3) else 2) or (members and (operands.len - 1) % 2 != 0))
+        return TranslationError.InvalidInstruction;
+
+    _ = try context.idIndex(operands[0]);
+    const group = groups.get(operands[0]) orelse return TranslationError.InvalidId;
+
+    var index: usize = 1;
+    while (index < operands.len) : (index += if (members) 2 else 1) {
+        const target = operands[index];
+        const target_index = try context.idIndex(target);
+
+        if (groups.contains(target))
+            return TranslationError.InvalidInstruction;
+
+        const member: ?u32 = if (members) operands[index + 1] else null;
+        if (member) |member_index| {
+            const structure = context.type_defs[target_index] orelse return TranslationError.InvalidInstruction;
+            if (structure.opcode != .type_struct or structure.operands.len == 0 or member_index >= structure.operands.len - 1)
+                return TranslationError.InvalidInstruction;
+        }
+
+        const entry = try applied.getOrPut(context.scratch, .{ .group = operands[0], .target = target, .member = member });
+        if (entry.found_existing)
+            continue;
+
+        for (group.items) |decoration| {
+            const expanded = try context.scratch.alloc(u32, decoration.operands.len + @intFromBool(members));
+            expanded[0] = target;
+
+            if (member) |member_index| {
+                expanded[1] = member_index;
+                @memcpy(expanded[2..], decoration.operands[1..]);
+                try collectMemberDecoration(context, expanded);
+            } else {
+                @memcpy(expanded[1..], decoration.operands[1..]);
+                try collectDecoration(context, expanded);
+            }
+        }
+    }
+}
+
+fn collectDeclaration(context: *Context, groups: *DecorationGroups, instruction: Parser.Instruction) !void {
+    const operands = instruction.operands;
+    switch (instruction.opcode) {
+        .string => {
             if (operands.len < 2)
                 return TranslationError.InvalidInstruction;
-
-            try context.recordDefinition(context.value_defs, operands[1], instruction);
-            continue;
-        }
-        if (instruction.opcode == .ext_inst_import) {
-            if (operands.len < 2)
-                return TranslationError.InvalidInstruction;
-
             const index = try context.idIndex(operands[0]);
-            if (context.extended_instruction_sets[index] != null)
+            if (context.source_files[index] != null)
                 return TranslationError.DuplicateId;
-            const name = try Parser.copyLiteralString(context.scratch, operands[1..]);
-            context.extended_instruction_sets[index] = extensions.classify(name);
-            continue;
-        }
-        if (instruction.opcode == .name) {
-            if (operands.len < 2)
-                return TranslationError.InvalidInstruction;
 
-            const index = try context.idIndex(operands[0]);
-            context.names[index] = try Parser.copyLiteralString(context.scratch, operands[1..]);
-            continue;
-        }
-        if (instruction.opcode == .variable) {
-            if (operands.len < 3)
-                return TranslationError.InvalidInstruction;
+            context.source_files[index] = try Parser.copyLiteralString(context.module.allocator(), operands[1..]);
+        },
+        .line => {
+            try expectOperandCount(operands, 3);
+            _ = try context.idIndex(operands[0]);
+            try context.source_lines.append(context.scratch, .{
+                .word_offset = instruction.word_offset,
+                .file_id = operands[0],
+                .line = operands[1],
+                .column = operands[2],
+            });
+        },
+        .no_line, .function, .function_end => try context.source_lines.append(context.scratch, .{ .word_offset = instruction.word_offset }),
+        else => {},
+    }
 
-            try context.recordDefinition(context.variable_defs, operands[1], instruction);
-            continue;
-        }
-        if (instruction.opcode == .decorate) {
+    if (isTypeOpcode(instruction.opcode)) {
+        if (operands.len == 0)
+            return TranslationError.InvalidInstruction;
+
+        try context.recordDefinition(context.type_defs, operands[0], instruction);
+    } else if (isConstantOpcode(instruction.opcode) or instruction.opcode == .undef) {
+        if (operands.len < 2)
+            return TranslationError.InvalidInstruction;
+
+        try context.recordDefinition(context.value_defs, operands[1], instruction);
+    } else if (instruction.opcode == .ext_inst_import) {
+        if (operands.len < 2)
+            return TranslationError.InvalidInstruction;
+
+        const index = try context.idIndex(operands[0]);
+        if (context.extended_instruction_sets[index] != null)
+            return TranslationError.DuplicateId;
+
+        const name = try Parser.copyLiteralString(context.scratch, operands[1..]);
+        context.extended_instruction_sets[index] = extensions.classify(name);
+    } else if (instruction.opcode == .name) {
+        if (operands.len < 2)
+            return TranslationError.InvalidInstruction;
+
+        const index = try context.idIndex(operands[0]);
+        context.names[index] = try Parser.copyLiteralString(context.scratch, operands[1..]);
+    } else if (instruction.opcode == .variable) {
+        if (operands.len < 3)
+            return TranslationError.InvalidInstruction;
+
+        try context.recordDefinition(context.variable_defs, operands[1], instruction);
+    } else if (instruction.opcode == .decorate) {
+        if (operands.len < 2)
+            return TranslationError.InvalidInstruction;
+        if (groups.getPtr(operands[0])) |group|
+            try group.append(context.scratch, instruction)
+        else
             try collectDecoration(context, operands);
-            continue;
-        }
-        if (instruction.opcode == .member_decorate) {
-            try collectMemberDecoration(context, operands);
-        }
+    } else if (instruction.opcode == .member_decorate) {
+        try collectMemberDecoration(context, operands);
     }
 }
 
@@ -1341,6 +1574,14 @@ fn collectDecoration(context: *Context, operands: []const u32) !void {
             try expectOperandCount(operands, 3);
             if (operands[2] > std.math.maxInt(u8)) return TranslationError.InvalidInstruction;
             context.decorations[index].index = @intCast(operands[2]);
+        },
+        .flat, .no_perspective => {
+            try expectOperandCount(operands, 2);
+            context.decorations[index].interpolation = if (decoration == .flat) .flat else .noperspective;
+        },
+        .centroid => {
+            try expectOperandCount(operands, 2);
+            context.decorations[index].centroid = true;
         },
         .binding => {
             try expectOperandCount(operands, 3);
@@ -1416,9 +1657,10 @@ fn collectMemberDecoration(context: *Context, operands: []const u32) !void {
     }
 
     if (decoration != .offset) {
-        if (decoration != .built_in and decoration != .location and decoration != .component and decoration != .index)
+        if (decoration != .built_in and decoration != .location and decoration != .component and decoration != .index and
+            decoration != .flat and decoration != .no_perspective and decoration != .centroid)
             return;
-        try expectOperandCount(operands, 4);
+        try expectOperandCount(operands, if (decoration == .flat or decoration == .no_perspective or decoration == .centroid) 3 else 4);
         var entry: ?*MemberInterface = null;
         for (context.member_interfaces.items) |*member| {
             if (member.structure_id == operands[0] and member.member == operands[1]) {
@@ -1433,8 +1675,16 @@ fn collectMemberDecoration(context: *Context, operands: []const u32) !void {
         switch (decoration) {
             .built_in => entry.?.decoration.builtin = operands[3],
             .location => entry.?.decoration.location = operands[3],
-            .component => entry.?.decoration.component = std.math.cast(u8, operands[3]) orelse return TranslationError.InvalidInstruction,
-            .index => entry.?.decoration.index = std.math.cast(u8, operands[3]) orelse return TranslationError.InvalidInstruction,
+            .component => {
+                entry.?.decoration.component = std.math.cast(u8, operands[3]) orelse return TranslationError.InvalidInstruction;
+                entry.?.has_component = true;
+            },
+            .index => {
+                entry.?.decoration.index = std.math.cast(u8, operands[3]) orelse return TranslationError.InvalidInstruction;
+                entry.?.has_index = true;
+            },
+            .flat, .no_perspective => entry.?.decoration.interpolation = if (decoration == .flat) .flat else .noperspective,
+            .centroid => entry.?.decoration.centroid = true,
             else => unreachable,
         }
         return;
@@ -1476,14 +1726,16 @@ fn translateInterfaces(context: *Context, interface_ids: []const u32) !void {
             return TranslationError.InvalidInstruction;
 
         const decoration = context.decorations[index];
+        if (decoration.location != null and decoration.builtin != null)
+            return TranslationError.InvalidInstruction;
+
         const pointee = context.type_defs[try context.idIndex(pointer.operands[2])] orelse return TranslationError.MissingDefinition;
-        if (pointee.opcode == .type_struct and decoration.location == null and decoration.builtin == null) {
+        if (pointee.opcode == .type_struct and decoration.builtin == null and
+            (decoration.location == null or hasInterfaceMemberDecorations(context, pointer.operands[2])))
+        {
             try context.interface_blocks.append(context.scratch, .{ .variable = spv_id, .structure_id = pointer.operands[2], .direction = direction });
             continue;
         }
-
-        if (decoration.location != null and decoration.builtin != null)
-            return TranslationError.InvalidInstruction;
 
         const semantic: ir.module.InterfaceSemantic = if (decoration.location) |location|
             .{
@@ -1491,6 +1743,8 @@ fn translateInterfaces(context: *Context, interface_ids: []const u32) !void {
                     .location = location,
                     .component = decoration.component,
                     .index = decoration.index,
+                    .interpolation = decoration.interpolation,
+                    .centroid = decoration.centroid,
                 },
             }
         else if (decoration.builtin) |builtin|
@@ -1507,6 +1761,103 @@ fn translateInterfaces(context: *Context, interface_ids: []const u32) !void {
             context.nameOf(spv_id),
         );
     }
+}
+
+fn hasInterfaceMemberDecorations(context: *const Context, structure_id: u32) bool {
+    for (context.member_interfaces.items) |member| {
+        if (member.structure_id == structure_id)
+            return true;
+    }
+    return false;
+}
+
+fn findInterfaceBlock(context: *const Context, pointer: u32) ?InterfaceBlock {
+    for (context.interface_blocks.items) |interface_block| {
+        if (interface_block.variable == pointer)
+            return interface_block;
+    }
+    return null;
+}
+
+fn interfaceLocationCount(module: *const ir.module.Module, type_id: ir.id.TypeId) anyerror!u32 {
+    const definition = module.types.get(type_id) orelse return TranslationError.InvalidId;
+    return switch (definition.*) {
+        .boolean, .integer, .floating, .vector => 1,
+        .array => |array| std.math.mul(u32, array.length, try interfaceLocationCount(module, array.element_type)) catch return TranslationError.InvalidInstruction,
+        .matrix => |matrix| std.math.mul(u32, matrix.column_count, try interfaceLocationCount(module, matrix.element_type)) catch return TranslationError.InvalidInstruction,
+        .structure => |structure| blk: {
+            var count: u32 = 0;
+            for (structure.members) |member|
+                count = std.math.add(u32, count, try interfaceLocationCount(module, member)) catch return TranslationError.InvalidInstruction;
+            break :blk count;
+        },
+        else => TranslationError.UnsupportedType,
+    };
+}
+
+fn interfaceBlockMemberBinding(context: *Context, interface_block: InterfaceBlock, member: u32) !ir.id.InterfaceVariableId {
+    const structure = context.type_defs[try context.idIndex(interface_block.structure_id)] orelse return TranslationError.MissingDefinition;
+    if (structure.opcode != .type_struct or member >= structure.operands.len - 1)
+        return TranslationError.InvalidInstruction;
+
+    const source = interface_block.source_variable orelse interface_block.variable;
+    const key = (@as(u64, source) << 32) | member;
+    if (context.member_bindings.get(key)) |binding|
+        return binding;
+
+    const inherited = context.decorations[try context.idIndex(source)];
+    var next_location = inherited.location;
+    for (structure.operands[1..], 0..) |member_type, index| {
+        var decoration = inherited;
+        decoration.location = next_location;
+        for (context.member_interfaces.items) |info| {
+            if (info.structure_id != interface_block.structure_id or info.member != index)
+                continue;
+
+            if (info.decoration.builtin) |builtin| {
+                decoration.builtin = builtin;
+                decoration.location = null;
+            }
+            if (info.decoration.location) |location|
+                decoration.location = location;
+            if (info.has_component)
+                decoration.component = info.decoration.component;
+            if (info.has_index)
+                decoration.index = info.decoration.index;
+            if (info.decoration.interpolation != .smooth)
+                decoration.interpolation = info.decoration.interpolation;
+            decoration.centroid = inherited.centroid or info.decoration.centroid;
+            break;
+        }
+
+        if (decoration.location != null and decoration.builtin != null)
+            return TranslationError.InvalidInstruction;
+
+        if (index == member) {
+            const semantic: ir.module.InterfaceSemantic = if (decoration.builtin) |builtin|
+                .{ .builtin = try translateBuiltin(std.enums.fromInt(spirv.Builtin, builtin) orelse return TranslationError.UnsupportedOpcode) }
+            else if (decoration.location) |location|
+                .{
+                    .location = .{
+                        .location = location,
+                        .component = decoration.component,
+                        .index = decoration.index,
+                        .interpolation = decoration.interpolation,
+                        .centroid = decoration.centroid,
+                    },
+                }
+            else
+                return TranslationError.UnsupportedOpcode;
+
+            const binding = try context.builder.addInterfaceVariable(try context.translateType(member_type), interface_block.direction, semantic, null);
+            try context.member_bindings.put(context.scratch, key, binding);
+            return binding;
+        }
+
+        if (decoration.location) |location|
+            next_location = std.math.add(u32, location, try interfaceLocationCount(context.module, try context.translateType(member_type))) catch return TranslationError.InvalidInstruction;
+    }
+    unreachable;
 }
 
 fn translateResources(context: *Context) !void {
@@ -1838,7 +2189,253 @@ fn collectReachableFunctions(context: *Context, entry_function: u32) !void {
     }
 }
 
+fn inlineLeafResultIndex(context: *const Context, instruction: Parser.Instruction) TranslationError!?usize {
+    switch (instruction.opcode) {
+        .nop, .line, .no_line, .store, .copy_memory, .image_write, .memory_barrier, .control_barrier, .atomic_store => return null,
+        else => {},
+    }
+    const operands = instruction.operands;
+    if (operands.len < 2 or operands[0] == 0 or operands[0] >= context.bound or context.type_defs[operands[0]] == null)
+        return TranslationError.UnsupportedOpcode;
+    return try context.idIndex(operands[1]);
+}
+
+fn inlineLeafUsesPrivate(context: *const Context, instruction: Parser.Instruction) bool {
+    const operands = instruction.operands;
+    const pointers: []const u32 = switch (instruction.opcode) {
+        .load, .access_chain, .in_bounds_access_chain, .copy_object => if (operands.len >= 3) operands[2..3] else &.{},
+        .store => if (operands.len >= 1) operands[0..1] else &.{},
+        .copy_memory => if (operands.len >= 2) operands[0..2] else &.{},
+        else => &.{},
+    };
+    for (pointers) |pointer| {
+        if (pointer == 0 or pointer >= context.bound)
+            continue;
+        const variable = context.variable_defs[pointer] orelse continue;
+        if (variable.operands.len >= 3 and variable.operands[2] == @backingInt(spirv.StorageClass.private))
+            return true;
+    }
+    return false;
+}
+
+fn collectInlineLeaf(context: *Context, spv_function: u32, function_type: Parser.Instruction) !?InlineLeaf {
+    const return_type = context.type_defs[try context.idIndex(function_type.operands[1])] orelse return TranslationError.MissingDefinition;
+    switch (return_type.opcode) {
+        .type_pointer, .type_image, .type_sampler, .type_sampled_image => return null,
+        else => {},
+    }
+
+    var parameters: std.ArrayList(Parser.Instruction) = .empty;
+    defer parameters.deinit(context.scratch);
+    var instructions: std.ArrayList(Parser.Instruction) = .empty;
+    defer instructions.deinit(context.scratch);
+    var bindings: std.ArrayList(usize) = .empty;
+    defer bindings.deinit(context.scratch);
+    var active = false;
+    var has_label = false;
+    var returned = false;
+    var needs_identity = false;
+    var iterator = context.parser.iterator();
+    while (try iterator.next()) |instruction| {
+        if (instruction.opcode == .function) {
+            active = instruction.operands.len >= 2 and instruction.operands[1] == spv_function;
+            continue;
+        }
+        if (!active)
+            continue;
+        const operands = instruction.operands;
+        switch (instruction.opcode) {
+            .function_parameter => {
+                if (has_label)
+                    return null;
+                try expectOperandCount(operands, 2);
+                const parameter_index = parameters.items.len;
+                if (parameter_index + 2 >= function_type.operands.len or function_type.operands[parameter_index + 2] != operands[0])
+                    return TranslationError.InvalidFunctionParameter;
+                const parameter_type = context.type_defs[try context.idIndex(operands[0])] orelse return TranslationError.MissingDefinition;
+                needs_identity = needs_identity or switch (parameter_type.opcode) {
+                    .type_image, .type_sampler, .type_sampled_image => true,
+                    .type_pointer => parameter_type.operands.len == 3 and parameter_type.operands[1] == @backingInt(spirv.StorageClass.private),
+                    else => false,
+                };
+                try parameters.append(context.scratch, instruction);
+                const index = try context.idIndex(operands[1]);
+                if (std.mem.indexOfScalar(usize, bindings.items, index) != null)
+                    return TranslationError.DuplicateId;
+                try bindings.append(context.scratch, index);
+            },
+            .label => {
+                try expectOperandCount(operands, 1);
+                _ = try context.idIndex(operands[0]);
+                if (has_label or parameters.items.len + 2 != function_type.operands.len)
+                    return null;
+                has_label = true;
+            },
+            .function_end => {
+                if (!has_label or !returned or !needs_identity)
+                    return null;
+                return .{
+                    .parameters = try context.scratch.dupe(Parser.Instruction, parameters.items),
+                    .instructions = try context.scratch.dupe(Parser.Instruction, instructions.items),
+                    .binding_indices = try context.scratch.dupe(usize, bindings.items),
+                };
+            },
+            .function_call, .variable, .phi, .selection_merge, .loop_merge, .branch, .branch_conditional, .@"switch", .kill, .@"unreachable" => return null,
+            .return_, .return_value => {
+                if (!has_label or returned)
+                    return null;
+                try expectOperandCount(operands, if (instruction.opcode == .return_) 0 else 1);
+                if ((instruction.opcode == .return_) != (return_type.opcode == .type_void))
+                    return TranslationError.InvalidInstruction;
+                returned = true;
+                try instructions.append(context.scratch, instruction);
+            },
+            .nop, .line, .no_line => {
+                if (has_label)
+                    try instructions.append(context.scratch, instruction);
+            },
+            else => {
+                if (!has_label or returned)
+                    return null;
+                const result_index = inlineLeafResultIndex(context, instruction) catch |err| switch (err) {
+                    TranslationError.UnsupportedOpcode => return null,
+                    else => return err,
+                };
+                if (result_index) |index| {
+                    if (std.mem.indexOfScalar(usize, bindings.items, index) != null)
+                        return TranslationError.DuplicateId;
+                    try bindings.append(context.scratch, index);
+                }
+                needs_identity = needs_identity or inlineLeafUsesPrivate(context, instruction);
+                try instructions.append(context.scratch, instruction);
+            },
+        }
+    }
+    return TranslationError.MissingFunction;
+}
+
+fn bindInlineResource(context: *Context, parameter: usize, argument: usize, type_id: u32) !void {
+    const definition = context.type_defs[try context.idIndex(type_id)] orelse return TranslationError.MissingDefinition;
+    if (definition.opcode == .type_sampled_image) {
+        const sampled = context.sampled_images[argument] orelse return TranslationError.InvalidFunctionParameter;
+        if (definition.operands.len != 2 or definition.operands[1] != sampled.image_type)
+            return TranslationError.InvalidFunctionParameter;
+        context.sampled_images[parameter] = sampled;
+    } else {
+        const resource = context.resources[argument] orelse return TranslationError.InvalidFunctionParameter;
+        if (context.module.resources.get(resource).?.type != try context.translateType(type_id))
+            return TranslationError.InvalidFunctionParameter;
+        context.resources[parameter] = resource;
+        context.image_resources[parameter] = context.image_resources[argument];
+        context.image_types[parameter] = context.image_types[argument];
+    }
+}
+
+fn bindInlineArgument(context: *Context, parameter: Parser.Instruction, argument_id: u32) !void {
+    const type_id = parameter.operands[0];
+    const parameter_index = try context.idIndex(parameter.operands[1]);
+    const argument = try context.idIndex(argument_id);
+    const definition = context.type_defs[try context.idIndex(type_id)] orelse return TranslationError.MissingDefinition;
+    switch (definition.opcode) {
+        .type_image, .type_sampler, .type_sampled_image => try bindInlineResource(context, parameter_index, argument, type_id),
+        .type_pointer => {
+            try expectOperandCount(definition.operands, 3);
+            const pointee = definition.operands[2];
+            if (try context.localIndex(argument_id)) |local_index| {
+                if (context.locals.items[local_index].type != try context.translateType(pointee))
+                    return TranslationError.InvalidFunctionParameter;
+                context.local_indices[parameter_index] = local_index;
+                context.function_parameter_pointees[parameter_index] = pointee;
+            } else if (try context.compositeAddress(argument_id)) |address| {
+                if (address.pointee_type != pointee)
+                    return TranslationError.InvalidFunctionParameter;
+                context.composite_addresses[parameter_index] = address;
+            } else if (try context.bufferAddress(argument_id)) |address| {
+                if (address.pointee_type != pointee)
+                    return TranslationError.InvalidFunctionParameter;
+                context.buffer_addresses[parameter_index] = address;
+            } else if (try context.pushConstantAddress(argument_id)) |address| {
+                if (address.pointee_type != pointee)
+                    return TranslationError.InvalidFunctionParameter;
+                context.push_constant_addresses[parameter_index] = address;
+            } else if (try context.workgroupAddress(argument_id)) |address| {
+                if (address.pointee_type != pointee)
+                    return TranslationError.InvalidFunctionParameter;
+                context.workgroup_addresses[parameter_index] = address;
+            } else if (context.interfaces[argument]) |variable| {
+                if (context.module.interface_variables.get(variable).?.type != try context.translateType(pointee))
+                    return TranslationError.InvalidFunctionParameter;
+                context.composite_addresses[parameter_index] = .{
+                    .root = .{ .interface = variable },
+                    .root_type = pointee,
+                    .pointee_type = pointee,
+                    .indices = &.{},
+                };
+            } else {
+                try bindInlineResource(context, parameter_index, argument, pointee);
+            }
+        },
+        else => {
+            const value = try context.resolveValue(argument_id);
+            if (context.module.typeOf(value) != try context.translateType(type_id))
+                return TranslationError.InvalidFunctionParameter;
+            try context.setValue(parameter.operands[1], value);
+        },
+    }
+}
+
+fn translateInlineLeafCall(context: *Context, block: ir.id.BlockId, operands: []const u32, return_type: ir.id.TypeId, leaf: InlineLeaf) anyerror!void {
+    if (operands.len - 3 != leaf.parameters.len or try context.translateType(operands[0]) != return_type)
+        return TranslationError.InvalidFunctionParameter;
+
+    const saved = try context.scratch.alloc(InlineBinding, leaf.binding_indices.len);
+    defer context.scratch.free(saved);
+    for (leaf.binding_indices, saved) |index, *binding| {
+        inline for (@typeInfo(InlineBinding).@"struct".field_names) |field_name| {
+            @field(binding, field_name) = @field(context, field_name)[index];
+            @field(context, field_name)[index] = null;
+        }
+    }
+    defer {
+        for (leaf.binding_indices, saved) |index, binding| {
+            inline for (@typeInfo(InlineBinding).@"struct".field_names) |field_name|
+                @field(context, field_name)[index] = @field(binding, field_name);
+        }
+    }
+    const source = context.builder.source;
+    defer context.builder.source = source;
+
+    for (leaf.parameters, operands[3..]) |parameter, argument|
+        try bindInlineArgument(context, parameter, argument);
+
+    var result: ?ir.id.ValueId = null;
+    for (leaf.instructions) |instruction| {
+        context.builder.source = try context.instructionSource(instruction);
+        switch (instruction.opcode) {
+            .nop, .line, .no_line, .return_ => {},
+            .return_value => {
+                const value = try context.resolveValue(instruction.operands[0]);
+                if (context.module.typeOf(value) != return_type)
+                    return TranslationError.InvalidInstruction;
+                result = value;
+            },
+            else => try translateInstruction(context, block, instruction),
+        }
+    }
+    if (result) |value|
+        try context.setValue(operands[1], value);
+}
+
 fn declareFunctions(context: *Context, entry_point: EntryPoint, entry_name: []const u8) !void {
+    var private_variables: std.ArrayList(u32) = .empty;
+    defer private_variables.deinit(context.scratch);
+    for (context.variable_defs, 0..) |optional_variable, index| {
+        const variable = optional_variable orelse continue;
+        if (variable.operands[2] == @backingInt(spirv.StorageClass.private))
+            try private_variables.append(context.scratch, @intCast(index));
+    }
+    const invocation_state = try context.scratch.dupe(u32, private_variables.items);
+
     var iterator = context.parser.iterator();
     while (try iterator.next()) |instruction| {
         if (instruction.opcode != .function)
@@ -1851,7 +2448,7 @@ fn declareFunctions(context: *Context, entry_point: EntryPoint, entry_name: []co
         if (!context.reachable_functions[index])
             continue;
 
-        if (context.functions[index] != null)
+        if (context.function_lowerings[index] != null)
             return TranslationError.DuplicateId;
 
         const function_type = try functionTypeDefinition(context, instruction.operands[3]);
@@ -1859,7 +2456,19 @@ fn declareFunctions(context: *Context, entry_point: EntryPoint, entry_name: []co
             return TranslationError.InvalidFunctionType;
 
         const source_return_type = try context.translateType(instruction.operands[0]);
-        const source_return = context.module.types.get(source_return_type) orelse return TranslationError.InvalidId;
+        const source_return = (context.module.types.get(source_return_type) orelse return TranslationError.InvalidId).*;
+
+        if (spv_function != entry_point.function_id) {
+            if (try collectInlineLeaf(context, spv_function, function_type)) |leaf| {
+                context.function_lowerings[index] = .{
+                    .source_return_type = source_return_type,
+                    .lowered_return_type = source_return_type,
+                    .pointer_parameters = &.{},
+                    .inline_leaf = leaf,
+                };
+                continue;
+            }
+        }
 
         var pointer_parameters: std.ArrayList(PointerParameter) = .empty;
         defer pointer_parameters.deinit(context.scratch);
@@ -1867,7 +2476,7 @@ fn declareFunctions(context: *Context, entry_point: EntryPoint, entry_name: []co
         var return_members: std.ArrayList(ir.id.TypeId) = .empty;
         defer return_members.deinit(context.scratch);
 
-        if (source_return.* != .void)
+        if (source_return != .void)
             try return_members.append(context.scratch, source_return_type);
 
         for (function_type.operands[2..], 0..) |parameter_type_id, parameter_index| {
@@ -1876,6 +2485,10 @@ fn declareFunctions(context: *Context, entry_point: EntryPoint, entry_name: []co
                 continue;
 
             try expectOperandCount(parameter_type.operands, 3);
+            // A Private pointer formal may alias a global directly; only the
+            // identity-preserving expansion can lower that signature safely.
+            if (parameter_type.operands[1] == @backingInt(spirv.StorageClass.private))
+                return TranslationError.UnsupportedPrivateCrossFunction;
             if (parameter_type.operands[1] != @backingInt(spirv.StorageClass.function))
                 continue;
 
@@ -1893,7 +2506,13 @@ fn declareFunctions(context: *Context, entry_point: EntryPoint, entry_name: []co
         if (spv_function == entry_point.function_id and pointer_parameters.items.len != 0)
             return TranslationError.InvalidFunctionType;
 
-        const lowered_return_type = if (pointer_parameters.items.len == 0)
+        // Ordinary helpers receive the invocation's current Private values and
+        // return updated values. Only the entry point runs their initializers.
+        const function_state: []const u32 = if (spv_function == entry_point.function_id) &.{} else invocation_state;
+        for (function_state) |variable|
+            try return_members.append(context.scratch, try context.translateType(try variablePointeeType(context, variable)));
+
+        const lowered_return_type = if (pointer_parameters.items.len == 0 and function_state.len == 0)
             source_return_type
         else
             try context.builder.internType(.{ .structure = .{
@@ -1910,6 +2529,7 @@ fn declareFunctions(context: *Context, entry_point: EntryPoint, entry_name: []co
             .source_return_type = source_return_type,
             .lowered_return_type = lowered_return_type,
             .pointer_parameters = try context.scratch.dupe(PointerParameter, pointer_parameters.items),
+            .private_variables = function_state,
         };
 
         if (spv_function == entry_point.function_id)
@@ -1925,13 +2545,16 @@ fn translateFunctions(context: *Context) !void {
     while (try iterator.next()) |instruction| {
         if (instruction.opcode == .function) {
             try expectOperandCount(instruction.operands, 4);
-            if (context.reachable_functions[try context.idIndex(instruction.operands[1])])
+            const index = try context.idIndex(instruction.operands[1]);
+            if (context.reachable_functions[index] and context.function_lowerings[index].?.inline_leaf == null)
                 try translateFunction(context, instruction.operands[1]);
         }
     }
 }
 
 fn translateFunction(context: *Context, spv_function: u32) !void {
+    context.builder.source = null;
+    defer context.builder.source = null;
     const function_instruction = try findFunction(context.parser, spv_function);
     try expectOperandCount(function_instruction.operands, 4);
     const function_type = try functionTypeDefinition(context, function_instruction.operands[3]);
@@ -2022,6 +2645,19 @@ fn collectFunctionLocals(context: *Context, spv_function: u32) !void {
     }
     if (parameter_index + 2 != function_type.operands.len)
         return TranslationError.InvalidFunctionParameter;
+
+    const lowering = context.function_lowerings[try context.idIndex(spv_function)].?;
+    for (lowering.private_variables) |variable| {
+        const index = try context.idIndex(variable);
+        const local_type = try context.translateType(try variablePointeeType(context, variable));
+        const initial_value = try context.builder.addFunctionParameter(function, local_type, context.nameOf(variable));
+        context.local_indices[index] = context.locals.items.len;
+        try context.locals.append(context.scratch, .{
+            .spv_id = variable,
+            .type = local_type,
+            .initial_value = initial_value,
+        });
+    }
 
     active = false;
     var iterator = context.parser.iterator();
@@ -2153,6 +2789,13 @@ fn predeclareFunction(context: *Context, spv_function: u32, function: ir.id.Func
 }
 
 fn translateFunctionInstructions(context: *Context, spv_function: u32) !void {
+    translateFunctionInstructionsImpl(context, spv_function) catch |err| {
+        context.reportError(null, err);
+        return err;
+    };
+}
+
+fn translateFunctionInstructionsImpl(context: *Context, spv_function: u32) !void {
     var active = false;
     var current_label: ?u32 = null;
     var current_block: ?ir.id.BlockId = null;
@@ -2167,6 +2810,7 @@ fn translateFunctionInstructions(context: *Context, spv_function: u32) !void {
         if (!active)
             continue;
 
+        context.builder.source = try context.instructionSource(instruction);
         switch (instruction.opcode) {
             .label => {
                 try expectOperandCount(instruction.operands, 1);
@@ -2282,11 +2926,67 @@ fn translateCopyMemory(context: *Context, block: ir.id.BlockId, operands: []cons
     try storePointerValue(context, block, operands[0], value);
 }
 
+fn validateMemoryAccessOperands(operands: []const u32, first: usize) TranslationError!void {
+    var cursor = first;
+    if (cursor < operands.len)
+        try parseCopyMemoryAccess(operands, &cursor);
+    if (cursor != operands.len)
+        return TranslationError.InvalidInstruction;
+}
+
+fn copyPointerAddress(context: *Context, destination: usize, source_id: u32, pointee: u32) !void {
+    inline for (@typeInfo(InlineBinding).@"struct".field_names) |field_name| {
+        if (@field(context, field_name)[destination] != null)
+            return TranslationError.DuplicateId;
+    }
+    const source = try context.idIndex(source_id);
+    if (try context.localIndex(source_id)) |local_index| {
+        if (context.locals.items[local_index].type != try context.translateType(pointee))
+            return TranslationError.InvalidInstruction;
+        context.local_indices[destination] = local_index;
+        context.function_parameter_pointees[destination] = pointee;
+    } else if (try context.bufferAddress(source_id)) |address| {
+        if (address.pointee_type != pointee)
+            return TranslationError.InvalidInstruction;
+        context.buffer_addresses[destination] = address;
+    } else if (try context.pushConstantAddress(source_id)) |address| {
+        if (address.pointee_type != pointee)
+            return TranslationError.InvalidInstruction;
+        context.push_constant_addresses[destination] = address;
+    } else if (try context.workgroupAddress(source_id)) |address| {
+        if (address.pointee_type != pointee)
+            return TranslationError.InvalidInstruction;
+        context.workgroup_addresses[destination] = address;
+    } else if (try context.compositeAddress(source_id)) |address| {
+        if (address.pointee_type != pointee)
+            return TranslationError.InvalidInstruction;
+        context.composite_addresses[destination] = address;
+    } else if (findInterfaceBlock(context, source_id)) |interface_block| {
+        if (interface_block.structure_id != pointee)
+            return TranslationError.InvalidInstruction;
+        var alias = interface_block;
+        alias.source_variable = interface_block.source_variable orelse interface_block.variable;
+        alias.variable = @intCast(destination);
+        try context.interface_blocks.append(context.scratch, alias);
+    } else if (context.interfaces[source]) |variable| {
+        if (context.module.interface_variables.get(variable).?.type != try context.translateType(pointee))
+            return TranslationError.InvalidInstruction;
+        context.composite_addresses[destination] = .{
+            .root = .{ .interface = variable },
+            .root_type = pointee,
+            .pointee_type = pointee,
+            .indices = &.{},
+        };
+    } else {
+        try bindInlineResource(context, destination, source, pointee);
+    }
+}
+
 fn parseCopyMemoryAccess(operands: []const u32, cursor: *usize) TranslationError!void {
     const mask = operands[cursor.*];
     cursor.* += 1;
 
-    if (mask & ~@as(u32, 0x6) != 0)
+    if (mask & ~@as(u32, 0x7) != 0)
         return TranslationError.UnsupportedMemoryAccess;
 
     if (mask & 0x2 != 0) {
@@ -2343,17 +3043,7 @@ fn copyMemoryPointeeType(context: *Context, pointer: u32, writable: bool) !u32 {
         return TranslationError.UnsupportedOpcode;
     }
 
-    const pointee_type = memory_type.?;
-    const ty = context.module.types.get(try context.translateType(pointee_type)) orelse return TranslationError.InvalidId;
-
-    switch (ty.*) {
-        .integer,
-        .floating,
-        .vector,
-        .matrix,
-        => return pointee_type,
-        else => return TranslationError.UnsupportedType,
-    }
+    return memory_type.?;
 }
 
 fn validateCopyMemoryValueType(module: *const ir.module.Module, type_id: ir.id.TypeId) TranslationError!void {
@@ -2387,16 +3077,7 @@ fn loadPointerValue(context: *Context, block: ir.id.BlockId, pointer: u32, resul
         if (result_type != try context.translateType(address.pointee_type))
             return TranslationError.InvalidInstruction;
 
-        const result = if (address.matrix_layout) |layout|
-            try translatePushConstantMatrixLoad(context, block, address, layout, name)
-        else if (address.vector_stride) |stride|
-            try translatePushConstantStridedVectorLoad(context, block, address, stride, name)
-        else
-            (try context.builder.appendInstruction(block, result_type, .{
-                .load_push_constant = .{ .byte_offset = try pushConstantByteOffset(context, address) },
-            }, name)).?;
-
-        return result;
+        return translatePushConstantLoad(context, block, address, name);
     } else if (try context.bufferAddress(pointer)) |address| {
         if (result_type != try context.translateType(address.pointee_type))
             return TranslationError.InvalidInstruction;
@@ -2407,6 +3088,22 @@ fn loadPointerValue(context: *Context, block: ir.id.BlockId, pointer: u32, resul
             return TranslationError.InvalidInstruction;
 
         return translateWorkgroupLoad(context, block, address, name);
+    } else if (findInterfaceBlock(context, pointer)) |interface_block| {
+        if (result_type != try context.translateType(interface_block.structure_id))
+            return TranslationError.InvalidInstruction;
+
+        const structure = context.type_defs[try context.idIndex(interface_block.structure_id)].?;
+        const members = try context.scratch.alloc(ir.id.ValueId, structure.operands.len - 1);
+        for (members, 0..) |*member, index| {
+            const binding = try interfaceBlockMemberBinding(context, interface_block, @intCast(index));
+            const variable = context.module.interface_variables.get(binding).?;
+            member.* = (try context.builder.appendInstruction(block, variable.type, .{
+                .load_interface = .{ .variable = binding },
+            }, null)).?;
+        }
+        return (try context.builder.appendInstruction(block, result_type, .{
+            .composite_construct = .{ .elements = members },
+        }, name)).?;
     } else if (try context.compositeAddress(pointer)) |address| {
         const composite = switch (address.root) {
             .local => |local_index| context.current_locals[local_index] orelse return TranslationError.InvalidInstruction,
@@ -2443,31 +3140,35 @@ fn storePointerValue(context: *Context, block: ir.id.BlockId, pointer: u32, valu
         if (context.module.typeOf(value) != try context.translateType(address.pointee_type))
             return TranslationError.InvalidInstruction;
 
-        if (address.matrix_layout) |layout| {
-            try translateBufferMatrixStore(context, block, address, layout, value);
-        } else if (address.vector_stride) |stride| {
-            try translateBufferStridedVectorStore(context, block, address, stride, value);
-        } else {
-            _ = try context.builder.appendInstruction(block, null, .{
-                .store_buffer = .{
-                    .resource = address.resource,
-                    .descriptor_index = address.descriptor_index,
-                    .byte_offset = try bufferByteOffset(context, address),
-                    .value = value,
-                },
-            }, null);
-        }
+        try translateBufferStore(context, block, address, value);
     } else if (try context.workgroupAddress(pointer)) |address| {
         if (context.module.typeOf(value) != try context.translateType(address.pointee_type))
             return TranslationError.InvalidInstruction;
 
-        _ = try context.builder.appendInstruction(block, null, .{
-            .store_workgroup = .{
-                .variable = address.variable,
-                .byte_offset = try workgroupByteOffset(context, address),
-                .value = value,
-            },
-        }, null);
+        try translateWorkgroupStore(context, block, address, value);
+    } else if (findInterfaceBlock(context, pointer)) |interface_block| {
+        if (interface_block.direction != .output)
+            return unsupportedStoreDestination(context, pointer);
+        if (context.module.typeOf(value) != try context.translateType(interface_block.structure_id))
+            return TranslationError.InvalidInstruction;
+
+        const structure = context.type_defs[try context.idIndex(interface_block.structure_id)].?;
+        for (structure.operands[1..], 0..) |_, index| {
+            const binding = try interfaceBlockMemberBinding(context, interface_block, @intCast(index));
+            const variable = context.module.interface_variables.get(binding).?;
+            const member = (try context.builder.appendInstruction(block, variable.type, .{
+                .composite_extract = .{ .composite = value, .indices = &.{
+                    @as(u32, @intCast(index)),
+                } },
+            }, null)).?;
+
+            _ = try context.builder.appendInstruction(block, null, .{
+                .store_interface = .{
+                    .variable = binding,
+                    .value = member,
+                },
+            }, null);
+        }
     } else if (try context.compositeAddress(pointer)) |address| {
         if (context.module.typeOf(value) != try context.translateType(address.pointee_type))
             return TranslationError.InvalidInstruction;
@@ -2507,6 +3208,13 @@ fn storePointerValue(context: *Context, block: ir.id.BlockId, pointer: u32, valu
 }
 
 fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Parser.Instruction) !void {
+    translateInstructionImpl(context, block, instruction) catch |err| {
+        context.reportError(instruction, err);
+        return err;
+    };
+}
+
+fn translateInstructionImpl(context: *Context, block: ir.id.BlockId, instruction: Parser.Instruction) !void {
     const operands = instruction.operands;
     switch (instruction.opcode) {
         .undef => {
@@ -2519,6 +3227,12 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
         .copy_object => {
             try expectOperandCount(operands, 3);
             const result_index = try context.idIndex(operands[1]);
+            const definition = context.type_defs[try context.idIndex(operands[0])] orelse return TranslationError.MissingDefinition;
+            if (definition.opcode == .type_pointer) {
+                try expectOperandCount(definition.operands, 3);
+                try copyPointerAddress(context, result_index, operands[2], definition.operands[2]);
+                return;
+            }
 
             if (try context.sampledImage(operands[2])) |sampled_image| {
                 const image = context.module.resources.get(sampled_image.image) orelse return TranslationError.InvalidId;
@@ -2551,6 +3265,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
         .load => {
             if (operands.len < 3)
                 return TranslationError.InvalidInstruction;
+            try validateMemoryAccessOperands(operands, 3);
 
             if (try context.sampledImage(operands[2])) |sampled_image| {
                 const result_type_definition = context.type_defs[try context.idIndex(operands[0])] orelse return TranslationError.MissingDefinition;
@@ -2593,6 +3308,7 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
         .store => {
             if (operands.len < 2)
                 return TranslationError.InvalidInstruction;
+            try validateMemoryAccessOperands(operands, 2);
 
             const value = try context.resolveValue(operands[1]);
 
@@ -3051,8 +3767,8 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
 
         .i_add_carry, .i_sub_borrow => try translateCarryBorrow(context, block, instruction.opcode, operands),
 
-        .u_mul_extended,
-        .s_mul_extended,
+        .u_mul_extended, .s_mul_extended => try translateCoreMultiplyExtendedSignedness(context, block, instruction.opcode, operands),
+
         .f_rem,
         .dot,
         => {
@@ -3069,6 +3785,24 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             try context.setValue(operands[1], result);
         },
 
+        .shift_left_logical,
+        .shift_right_logical,
+        .shift_right_arithmetic,
+        => {
+            try expectOperandCount(operands, 4);
+
+            const result_type = try context.translateType(operands[0]);
+            const result = (try context.builder.appendInstruction(block, result_type, .{
+                .binary = .{
+                    .opcode = translateBinaryOpcode(instruction.opcode),
+                    .lhs = try coerceIntegerSignedness(context, block, try context.resolveValue(operands[2]), result_type),
+                    .rhs = try context.resolveValue(operands[3]),
+                },
+            }, context.nameOf(operands[1]))).?;
+
+            try context.setValue(operands[1], result);
+        },
+
         .i_add,
         .i_sub,
         .i_mul,
@@ -3076,14 +3810,12 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
         .s_div,
         .u_mod,
         .s_mod,
+        .s_rem,
         .f_add,
         .f_sub,
         .f_mul,
         .f_div,
         .f_mod,
-        .shift_left_logical,
-        .shift_right_logical,
-        .shift_right_arithmetic,
         .bitwise_and,
         .bitwise_or,
         .bitwise_xor,
@@ -3184,25 +3916,25 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             try context.setValue(operands[1], result);
         },
 
+        .s_convert,
+        .u_convert,
+        .f_convert,
         .convert_f_to_s,
         .convert_f_to_u,
         .convert_s_to_f,
         .convert_u_to_f,
+        .quantize_to_f16,
         => {
             try expectOperandCount(operands, 3);
 
-            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
-                .convert = .{
-                    .opcode = switch (instruction.opcode) {
-                        .convert_f_to_s => .float_to_signed,
-                        .convert_f_to_u => .float_to_unsigned,
-                        .convert_s_to_f => .signed_to_float,
-                        .convert_u_to_f => .unsigned_to_float,
-                        else => unreachable,
-                    },
-                    .operand = try context.resolveValue(operands[2]),
-                },
-            }, context.nameOf(operands[1]))).?;
+            const result = try coreConversionLower(
+                context,
+                block,
+                instruction.opcode,
+                try context.translateType(operands[0]),
+                try context.resolveValue(operands[2]),
+                context.nameOf(operands[1]),
+            );
 
             try context.setValue(operands[1], result);
         },
@@ -3221,14 +3953,30 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
             if (operands.len < 2)
                 return TranslationError.InvalidInstruction;
 
-            const elements = try context.scratch.alloc(ir.id.ValueId, operands.len - 2);
+            const result_type = try context.translateType(operands[0]);
+            const result_is_vector = (context.module.types.get(result_type) orelse return TranslationError.InvalidId).* == .vector;
+            var elements: std.ArrayList(ir.id.ValueId) = .empty;
+            for (operands[2..]) |element_id| {
+                const element = try context.resolveValue(element_id);
+                const element_info = context.module.types.get(context.module.typeOf(element).?) orelse return TranslationError.InvalidId;
+                if (result_is_vector and element_info.* == .vector) {
+                    for (0..element_info.vector.length) |component| {
+                        const extracted = (try context.builder.appendInstruction(block, element_info.vector.element_type, .{
+                            .composite_extract = .{
+                                .composite = element,
+                                .indices = try context.scratch.dupe(u32, &.{@intCast(component)}),
+                            },
+                        }, null)).?;
+                        try elements.append(context.scratch, extracted);
+                    }
+                } else {
+                    try elements.append(context.scratch, element);
+                }
+            }
 
-            for (operands[2..], elements) |element_id, *element|
-                element.* = try context.resolveValue(element_id);
-
-            const result = (try context.builder.appendInstruction(block, try context.translateType(operands[0]), .{
+            const result = (try context.builder.appendInstruction(block, result_type, .{
                 .composite_construct = .{
-                    .elements = elements,
+                    .elements = elements.items,
                 },
             }, context.nameOf(operands[1]))).?;
 
@@ -3272,8 +4020,12 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                 return TranslationError.InvalidInstruction;
 
             const lowering = context.function_lowerings[try context.idIndex(operands[2])] orelse return TranslationError.MissingFunction;
-            const arguments = try context.scratch.alloc(ir.id.ValueId, operands.len - 3);
-            for (operands[3..], arguments, 0..) |argument, *translated, parameter_index| {
+            if (lowering.inline_leaf) |leaf|
+                return translateInlineLeafCall(context, block, operands, lowering.source_return_type, leaf);
+
+            const parameter_count = operands.len - 3;
+            const arguments = try context.scratch.alloc(ir.id.ValueId, parameter_count + lowering.private_variables.len);
+            for (operands[3..], arguments[0..parameter_count], 0..) |argument, *translated, parameter_index| {
                 var pointer_parameter = false;
                 for (lowering.pointer_parameters) |pointer| {
                     if (pointer.parameter_index == parameter_index) {
@@ -3287,20 +4039,26 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                     try context.resolveValue(argument);
             }
 
-            const source_return = context.module.types.get(lowering.source_return_type) orelse return TranslationError.InvalidId;
-            const result = try context.builder.appendInstruction(block, if (lowering.pointer_parameters.len != 0 or source_return.* != .void) lowering.lowered_return_type else null, .{
+            for (lowering.private_variables, arguments[parameter_count..]) |variable, *argument| {
+                const local_index = (try context.localIndex(variable)) orelse return TranslationError.UnsupportedPrivateCrossFunction;
+                argument.* = context.current_locals[local_index] orelse return TranslationError.InvalidInstruction;
+            }
+
+            const source_return = (context.module.types.get(lowering.source_return_type) orelse return TranslationError.InvalidId).*;
+            const returns_state = lowering.pointer_parameters.len != 0 or lowering.private_variables.len != 0;
+            const result = try context.builder.appendInstruction(block, if (returns_state or source_return != .void) lowering.lowered_return_type else null, .{
                 .call = .{
                     .function = try context.function(operands[2]),
                     .arguments = arguments,
                 },
-            }, if (lowering.pointer_parameters.len == 0) context.nameOf(operands[1]) else null);
+            }, if (!returns_state) context.nameOf(operands[1]) else null);
 
-            if (lowering.pointer_parameters.len == 0) {
+            if (!returns_state) {
                 if (result) |value|
                     try context.setValue(operands[1], value);
             } else {
                 const bundle = result orelse return TranslationError.InvalidInstruction;
-                if (source_return.* != .void) {
+                if (source_return != .void) {
                     const source_result = (try context.builder.appendInstruction(block, lowering.source_return_type, .{
                         .composite_extract = .{ .composite = bundle, .indices = &.{0} },
                     }, context.nameOf(operands[1]))).?;
@@ -3312,19 +4070,21 @@ fn translateInstruction(context: *Context, block: ir.id.BlockId, instruction: Pa
                     }, null)).?;
                     try storeFunctionLvalue(context, block, operands[3 + pointer.parameter_index], output);
                 }
+                const private_member_base = @intFromBool(source_return != .void) + lowering.pointer_parameters.len;
+                for (lowering.private_variables, 0..) |variable, index| {
+                    const local_index = (try context.localIndex(variable)) orelse return TranslationError.UnsupportedPrivateCrossFunction;
+                    const member: u32 = @intCast(private_member_base + index);
+                    const output = (try context.builder.appendInstruction(block, context.locals.items[local_index].type, .{
+                        .composite_extract = .{ .composite = bundle, .indices = &.{member} },
+                    }, null)).?;
+                    context.current_locals[local_index] = output;
+                }
             }
         },
 
         .array_length => try translateArrayLength(context, block, operands),
 
-        else => {
-            if (std.enums.tagName(spirv.Opcode, instruction.opcode)) |opcode| {
-                std.log.scoped(.spirv_translator).err("unsupported opcode: '{s}'", .{opcode});
-            } else {
-                std.log.scoped(.spirv_translator).err("unsupported opcode: {d}", .{instruction.opcode});
-            }
-            return TranslationError.UnsupportedOpcode;
-        },
+        else => return TranslationError.UnsupportedOpcode,
     }
 }
 
@@ -3358,6 +4118,43 @@ fn translateBooleanReduction(context: *Context, block: ir.id.BlockId, opcode: sp
             }, if (index + 1 == vector.vector.length) context.nameOf(operands[1]) else null)).?;
     }
     try context.setValue(operands[1], reduced);
+}
+
+fn translateCoreMultiplyExtendedSignedness(context: *Context, block: ir.id.BlockId, opcode: spirv.Opcode, operands: []const u32) !void {
+    try expectOperandCount(operands, 4);
+    const result_type = try context.translateType(operands[0]);
+    const result = context.module.types.get(result_type) orelse return TranslationError.InvalidId;
+    if (result.* != .structure or result.structure.members.len != 2 or
+        result.structure.members[0] != result.structure.members[1])
+        return TranslationError.InvalidInstruction;
+    const member_type = result.structure.members[0];
+
+    const operation_type = try coreConversionIntegerType(context, member_type, if (opcode == .s_mul_extended) .signed else .unsigned);
+    const operation_result_type = try context.builder.internType(.{ .structure = .{ .members = &.{ operation_type, operation_type } } });
+    const product = (try context.builder.appendInstruction(block, operation_result_type, .{
+        .binary = .{
+            .opcode = translateBinaryOpcode(opcode),
+            .lhs = try coerceIntegerSignedness(context, block, try context.resolveValue(operands[2]), operation_type),
+            .rhs = try coerceIntegerSignedness(context, block, try context.resolveValue(operands[3]), operation_type),
+        },
+    }, if (operation_result_type == result_type) context.nameOf(operands[1]) else null)).?;
+
+    if (operation_result_type == result_type) {
+        try context.setValue(operands[1], product);
+        return;
+    }
+
+    var members: [2]ir.id.ValueId = undefined;
+    for (&members, 0..) |*member, index| {
+        const extracted = (try context.builder.appendInstruction(block, operation_type, .{
+            .composite_extract = .{ .composite = product, .indices = &.{@intCast(index)} },
+        }, null)).?;
+        member.* = try coerceIntegerSignedness(context, block, extracted, member_type);
+    }
+    const declared_product = (try context.builder.appendInstruction(block, result_type, .{
+        .composite_construct = .{ .elements = &members },
+    }, context.nameOf(operands[1]))).?;
+    try context.setValue(operands[1], declared_product);
 }
 
 fn translateCarryBorrow(context: *Context, block: ir.id.BlockId, opcode: spirv.Opcode, operands: []const u32) !void {
@@ -3455,6 +4252,20 @@ fn translateExtendedInstruction(context: *Context, block: ir.id.BlockId, operand
         try storePointerValue(context, block, operands[5], parts.whole);
         try context.setValue(operands[1], parts.fraction);
 
+        return;
+    }
+
+    if (set == .glsl_std_450 and operands[3] == @backingInt(glsl_std_450.Opcode.frexp)) {
+        if (operands.len != 6)
+            return TranslationError.InvalidInstruction;
+
+        const operand = try context.resolveValue(operands[4]);
+        if (context.module.typeOf(operand) != try context.translateType(operands[0]))
+            return TranslationError.InvalidInstruction;
+
+        const parts = try glsl_std_450.emitFrexp(&emitter, operand, context.nameOf(operands[1]));
+        try storePointerValue(context, block, operands[5], parts.exponent);
+        try context.setValue(operands[1], parts.fraction);
         return;
     }
 
@@ -3928,31 +4739,7 @@ fn translateCompositeAccessChain(context: *Context, operands: []const u32) !void
             return TranslationError.InvalidInstruction;
 
         const member_type = structure.operands[member + 1];
-        const key = (@as(u64, operands[2]) << 32) | member;
-
-        const binding = context.member_bindings.get(key) orelse binding: {
-            for (context.member_interfaces.items) |info| {
-                if (info.structure_id != interface_block.structure_id or info.member != member)
-                    continue;
-
-                const decoration = info.decoration;
-
-                if (decoration.location != null and decoration.builtin != null)
-                    return TranslationError.InvalidInstruction;
-
-                const semantic: ir.module.InterfaceSemantic = if (decoration.builtin) |builtin|
-                    .{ .builtin = try translateBuiltin(std.enums.fromInt(spirv.Builtin, builtin) orelse return TranslationError.UnsupportedOpcode) }
-                else if (decoration.location) |location|
-                    .{ .location = .{ .location = location, .component = decoration.component, .index = decoration.index } }
-                else
-                    return TranslationError.UnsupportedOpcode;
-
-                const variable = try context.builder.addInterfaceVariable(try context.translateType(member_type), interface_block.direction, semantic, null);
-                try context.member_bindings.put(context.scratch, key, variable);
-                break :binding variable;
-            }
-            return TranslationError.UnsupportedOpcode;
-        };
+        const binding = try interfaceBlockMemberBinding(context, interface_block, member);
 
         member_address = .{ .root = .{ .interface = binding }, .root_type = member_type, .pointee_type = member_type, .indices = &.{} };
         first_index = 4;
@@ -4300,6 +5087,167 @@ fn translateArrayLength(context: *Context, block: ir.id.BlockId, operands: []con
     try context.setValue(operands[1], result);
 }
 
+fn coreConversionScalarType(context: *const Context, type_id: ir.id.TypeId) !ir.id.TypeId {
+    const ty = context.module.types.get(type_id) orelse return TranslationError.InvalidId;
+    return switch (ty.*) {
+        .vector => |vector| vector.element_type,
+        else => type_id,
+    };
+}
+
+fn coreConversionTypeWithScalar(context: *Context, shape_type: ir.id.TypeId, scalar_type: ir.id.TypeId) !ir.id.TypeId {
+    const ty = context.module.types.get(shape_type) orelse return TranslationError.InvalidId;
+    return switch (ty.*) {
+        .vector => |vector| context.builder.internType(.{ .vector = .{ .element_type = scalar_type, .length = vector.length } }),
+        else => scalar_type,
+    };
+}
+
+fn coreConversionIntegerType(context: *Context, type_id: ir.id.TypeId, signedness: ir.types.Signedness) !ir.id.TypeId {
+    const scalar_type = try coreConversionScalarType(context, type_id);
+    const scalar = context.module.types.get(scalar_type) orelse return TranslationError.InvalidId;
+    const integer = switch (scalar.*) {
+        .integer => |integer| integer,
+        else => return TranslationError.InvalidInstruction,
+    };
+    const converted_scalar = try context.builder.internType(.{ .integer = .{ .bits = integer.bits, .signedness = signedness } });
+    return coreConversionTypeWithScalar(context, type_id, converted_scalar);
+}
+
+fn coreConversionLower(
+    context: *Context,
+    block: ir.id.BlockId,
+    opcode: spirv.Opcode,
+    result_type: ir.id.TypeId,
+    operand: ir.id.ValueId,
+    name: ?[]const u8,
+) !ir.id.ValueId {
+    if (opcode == .quantize_to_f16)
+        return coreConversionQuantizeToF16(context, block, result_type, operand, name);
+
+    const convert_opcode: ir.instruction.ConvertOpcode = switch (opcode) {
+        .s_convert => .signed_convert,
+        .u_convert => .unsigned_convert,
+        .f_convert => .float_convert,
+        .convert_f_to_s => .float_to_signed,
+        .convert_f_to_u => .float_to_unsigned,
+        .convert_s_to_f => .signed_to_float,
+        .convert_u_to_f => .unsigned_to_float,
+        else => unreachable,
+    };
+    var converted_operand = operand;
+    var converted_type = result_type;
+    switch (opcode) {
+        .convert_s_to_f, .convert_u_to_f => {
+            const operand_type = context.module.typeOf(operand) orelse return TranslationError.InvalidId;
+            const integer_type = try coreConversionIntegerType(context, operand_type, if (opcode == .convert_s_to_f) .signed else .unsigned);
+            if (integer_type != operand_type)
+                converted_operand = (try context.builder.appendInstruction(block, integer_type, .{ .bitcast = operand }, null)).?;
+        },
+        .convert_f_to_s, .convert_f_to_u => {
+            converted_type = try coreConversionIntegerType(context, result_type, if (opcode == .convert_f_to_s) .signed else .unsigned);
+        },
+        else => {},
+    }
+
+    const converted = (try context.builder.appendInstruction(block, converted_type, .{
+        .convert = .{ .opcode = convert_opcode, .operand = converted_operand },
+    }, if (converted_type == result_type) name else null)).?;
+    if (converted_type == result_type)
+        return converted;
+    return (try context.builder.appendInstruction(block, result_type, .{ .bitcast = converted }, name)).?;
+}
+
+fn coreConversionIntegerSplat(context: *Context, type_id: ir.id.TypeId, bits: u32) !ir.id.ValueId {
+    const scalar_type = try coreConversionScalarType(context, type_id);
+    const scalar = try context.builder.internConstant(scalar_type, .{ .integer_bits = bits });
+    if (scalar_type == type_id)
+        return scalar;
+
+    const vector = context.module.types.get(type_id).?.vector;
+    const elements = try context.scratch.alloc(ir.id.ConstantId, vector.length);
+    @memset(elements, context.module.values.get(scalar).?.definition.constant);
+    return context.builder.internConstant(type_id, .{ .composite = elements });
+}
+
+fn coreConversionQuantizeToF16(
+    context: *Context,
+    block: ir.id.BlockId,
+    result_type: ir.id.TypeId,
+    operand: ir.id.ValueId,
+    name: ?[]const u8,
+) !ir.id.ValueId {
+    if (context.module.typeOf(operand) != result_type)
+        return TranslationError.InvalidInstruction;
+    const scalar_type = try coreConversionScalarType(context, result_type);
+    const scalar = context.module.types.get(scalar_type) orelse return TranslationError.InvalidId;
+    switch (scalar.*) {
+        .floating => |floating| if (floating.bits != 32) return TranslationError.InvalidInstruction,
+        else => return TranslationError.InvalidInstruction,
+    }
+
+    const half_scalar = try context.builder.internType(.{ .floating = .{ .bits = 16 } });
+    const half_type = try coreConversionTypeWithScalar(context, result_type, half_scalar);
+    const half = (try context.builder.appendInstruction(block, half_type, .{
+        .convert = .{
+            .opcode = .float_convert,
+            .operand = operand,
+        },
+    }, null)).?;
+
+    const rounded = (try context.builder.appendInstruction(block, result_type, .{
+        .convert = .{
+            .opcode = .float_convert,
+            .operand = half,
+        },
+    }, null)).?;
+
+    const integer_scalar = try context.builder.internType(.{ .integer = .{ .bits = 32, .signedness = .unsigned } });
+    const integer_type = try coreConversionTypeWithScalar(context, result_type, integer_scalar);
+    const boolean_scalar = try context.builder.internType(.boolean);
+    const condition_type = try coreConversionTypeWithScalar(context, result_type, boolean_scalar);
+    const magnitude_mask = try coreConversionIntegerSplat(context, integer_type, 0x7fffffff);
+    const sign_mask = try coreConversionIntegerSplat(context, integer_type, 0x80000000);
+    const half_min_normal = try coreConversionIntegerSplat(context, integer_type, 0x38800000);
+    const rounded_bits = (try context.builder.appendInstruction(block, integer_type, .{ .bitcast = rounded }, null)).?;
+
+    const magnitude = (try context.builder.appendInstruction(block, integer_type, .{
+        .binary = .{
+            .opcode = .bitwise_and,
+            .lhs = rounded_bits,
+            .rhs = magnitude_mask,
+        },
+    }, null)).?;
+
+    const flush = (try context.builder.appendInstruction(block, condition_type, .{
+        .compare = .{
+            .opcode = .unsigned_less,
+            .lhs = magnitude,
+            .rhs = half_min_normal,
+        },
+    }, null)).?;
+
+    const signed_zero = (try context.builder.appendInstruction(block, integer_type, .{
+        .binary = .{
+            .opcode = .bitwise_and,
+            .lhs = rounded_bits,
+            .rhs = sign_mask,
+        },
+    }, null)).?;
+
+    const result_bits = (try context.builder.appendInstruction(block, integer_type, .{
+        .select = .{
+            .condition = flush,
+            .true_value = signed_zero,
+            .false_value = rounded_bits,
+        },
+    }, null)).?;
+
+    return (try context.builder.appendInstruction(block, result_type, .{
+        .bitcast = result_bits,
+    }, name)).?;
+}
+
 fn unsigned32Type(context: *Context) !ir.id.TypeId {
     return context.builder.internType(.{ .integer = .{ .bits = 32, .signedness = .unsigned } });
 }
@@ -4346,16 +5294,19 @@ fn unsignedOffsetValue(context: *Context, block: ir.id.BlockId, spv_id: u32) !ir
         .integer => |integer| integer,
         else => return TranslationError.UnsupportedType,
     };
-    if (integer.bits != 32)
-        return TranslationError.UnsupportedType;
-    if (integer.signedness == .unsigned)
+    switch (integer.bits) {
+        8, 16, 32, 64 => {},
+        else => return TranslationError.UnsupportedType,
+    }
+    if (integer.bits == 32 and integer.signedness == .unsigned)
         return value;
     if (constantIntegerBits(context, value)) |bits|
         return context.builder.internConstant(try unsigned32Type(context), .{ .integer_bits = bits });
 
-    return (try context.builder.appendInstruction(block, try unsigned32Type(context), .{
-        .bitcast = value,
-    }, null)).?;
+    return (try context.builder.appendInstruction(block, try unsigned32Type(context), if (integer.bits == 32)
+        .{ .bitcast = value }
+    else
+        .{ .convert = .{ .opcode = .unsigned_convert, .operand = value } }, null)).?;
 }
 
 const MatrixTypeInfo = struct {
@@ -4430,6 +5381,61 @@ fn vectorTypeInfo(context: *Context, spv_type: u32) !VectorTypeInfo {
     };
 }
 
+fn translateWorkgroupStore(context: *Context, block: ir.id.BlockId, address: WorkgroupAddress, value: ir.id.ValueId) anyerror!void {
+    const definition = context.type_defs[try context.idIndex(address.pointee_type)] orelse return TranslationError.MissingDefinition;
+    switch (definition.opcode) {
+        .type_struct => {
+            var member_offset: u32 = 0;
+            for (definition.operands[1..], 0..) |member_type, index| {
+                const member = (try context.builder.appendInstruction(block, try context.translateType(member_type), .{
+                    .composite_extract = .{
+                        .composite = value,
+                        .indices = &.{@intCast(index)},
+                    },
+                }, null)).?;
+
+                var member_address = address;
+                member_address.byte_offset = try addConstantByteOffset(context, block, address.byte_offset, member_offset);
+                member_address.pointee_type = member_type;
+
+                try translateWorkgroupStore(context, block, member_address, member);
+                member_offset = std.math.add(u32, member_offset, try workgroupTypeSize(context, member_type)) catch return TranslationError.UnsupportedType;
+            }
+        },
+        .type_array => {
+            try expectOperandCount(definition.operands, 3);
+            const length = try constantIndex(context, definition.operands[2]);
+            const element_type = definition.operands[1];
+            const stride = try workgroupTypeSize(context, element_type);
+
+            for (0..length) |index| {
+                const element = (try context.builder.appendInstruction(block, try context.translateType(element_type), .{
+                    .composite_extract = .{
+                        .composite = value,
+                        .indices = &.{@intCast(index)},
+                    },
+                }, null)).?;
+
+                var element_address = address;
+                const relative_offset = std.math.mul(u32, @intCast(index), stride) catch return TranslationError.UnsupportedType;
+
+                element_address.byte_offset = try addConstantByteOffset(context, block, address.byte_offset, relative_offset);
+                element_address.pointee_type = element_type;
+
+                try translateWorkgroupStore(context, block, element_address, element);
+            }
+        },
+        .type_runtime_array => return TranslationError.UnsupportedType,
+        else => _ = try context.builder.appendInstruction(block, null, .{
+            .store_workgroup = .{
+                .variable = address.variable,
+                .byte_offset = try workgroupByteOffset(context, address),
+                .value = value,
+            },
+        }, null),
+    }
+}
+
 fn translateWorkgroupLoad(context: *Context, block: ir.id.BlockId, address: WorkgroupAddress, name: ?[]const u8) anyerror!ir.id.ValueId {
     const type_definition = context.type_defs[try context.idIndex(address.pointee_type)] orelse return TranslationError.MissingDefinition;
     const elements = switch (type_definition.opcode) {
@@ -4471,6 +5477,111 @@ fn translateWorkgroupLoad(context: *Context, block: ir.id.BlockId, address: Work
         }, name)).?,
     };
 
+    return (try context.builder.appendInstruction(block, try context.translateType(address.pointee_type), .{
+        .composite_construct = .{ .elements = elements },
+    }, name)).?;
+}
+
+fn translateBufferStore(context: *Context, block: ir.id.BlockId, address: BufferAddress, value: ir.id.ValueId) anyerror!void {
+    const type_index = try context.idIndex(address.pointee_type);
+    const definition = context.type_defs[type_index] orelse return TranslationError.MissingDefinition;
+    switch (definition.opcode) {
+        .type_struct => {
+            for (definition.operands[1..], 0..) |member_type, index| {
+                const member = (try context.builder.appendInstruction(block, try context.translateType(member_type), .{
+                    .composite_extract = .{
+                        .composite = value,
+                        .indices = &.{@intCast(index)},
+                    },
+                }, null)).?;
+                var member_address = address;
+                member_address.byte_offset = try addConstantByteOffset(context, block, address.byte_offset, try findMemberOffset(context, address.pointee_type, @intCast(index)));
+                member_address.pointee_type = member_type;
+                member_address.matrix_layout = try findMemberMatrixLayout(context, address.pointee_type, @intCast(index));
+                member_address.vector_stride = null;
+                try translateBufferStore(context, block, member_address, member);
+            }
+        },
+        .type_array => {
+            try expectOperandCount(definition.operands, 3);
+            const length = try constantIndex(context, definition.operands[2]);
+            const element_type = definition.operands[1];
+            const stride = context.decorations[type_index].array_stride orelse return TranslationError.InvalidInstruction;
+            for (0..length) |index| {
+                const element = (try context.builder.appendInstruction(block, try context.translateType(element_type), .{
+                    .composite_extract = .{
+                        .composite = value,
+                        .indices = &.{@intCast(index)},
+                    },
+                }, null)).?;
+                var element_address = address;
+                const relative_offset = std.math.mul(u32, @intCast(index), stride) catch return TranslationError.InvalidInstruction;
+                element_address.byte_offset = try addConstantByteOffset(context, block, address.byte_offset, relative_offset);
+                element_address.pointee_type = element_type;
+                try translateBufferStore(context, block, element_address, element);
+            }
+        },
+        .type_runtime_array => return TranslationError.UnsupportedType,
+        else => {
+            if (address.matrix_layout) |layout|
+                return translateBufferMatrixStore(context, block, address, layout, value);
+            if (address.vector_stride) |stride|
+                return translateBufferStridedVectorStore(context, block, address, stride, value);
+            _ = try context.builder.appendInstruction(block, null, .{
+                .store_buffer = .{
+                    .resource = address.resource,
+                    .descriptor_index = address.descriptor_index,
+                    .byte_offset = try bufferByteOffset(context, address),
+                    .value = value,
+                },
+            }, null);
+        },
+    }
+}
+
+fn translatePushConstantLoad(context: *Context, block: ir.id.BlockId, address: PushConstantAddress, name: ?[]const u8) anyerror!ir.id.ValueId {
+    const type_index = try context.idIndex(address.pointee_type);
+    const definition = context.type_defs[type_index] orelse return TranslationError.MissingDefinition;
+    const elements = switch (definition.opcode) {
+        .type_struct => blk: {
+            const members = try context.scratch.alloc(ir.id.ValueId, definition.operands.len - 1);
+            for (definition.operands[1..], members, 0..) |member_type, *member, index| {
+                var member_address = address;
+                member_address.byte_offset = try addConstantByteOffset(context, block, address.byte_offset, try findMemberOffset(context, address.pointee_type, @intCast(index)));
+                member_address.pointee_type = member_type;
+                member_address.matrix_layout = try findMemberMatrixLayout(context, address.pointee_type, @intCast(index));
+                member_address.vector_stride = null;
+                member.* = try translatePushConstantLoad(context, block, member_address, null);
+            }
+            break :blk members;
+        },
+        .type_array => blk: {
+            try expectOperandCount(definition.operands, 3);
+            const length = try constantIndex(context, definition.operands[2]);
+            const stride = context.decorations[type_index].array_stride orelse return TranslationError.InvalidInstruction;
+            const items = try context.scratch.alloc(ir.id.ValueId, length);
+            for (items, 0..) |*item, index| {
+                const relative_offset = std.math.mul(u32, @intCast(index), stride) catch return TranslationError.InvalidInstruction;
+                var element_address = address;
+                element_address.byte_offset = try addConstantByteOffset(context, block, address.byte_offset, relative_offset);
+                element_address.pointee_type = definition.operands[1];
+                item.* = try translatePushConstantLoad(context, block, element_address, null);
+            }
+            break :blk items;
+        },
+        .type_runtime_array => return TranslationError.UnsupportedType,
+        else => {
+            if (address.matrix_layout) |layout|
+                return translatePushConstantMatrixLoad(context, block, address, layout, name);
+
+            if (address.vector_stride) |stride|
+                return translatePushConstantStridedVectorLoad(context, block, address, stride, name);
+
+            return (try context.builder.appendInstruction(block, try context.translateType(address.pointee_type), .{
+                .load_push_constant = .{ .byte_offset = try pushConstantByteOffset(context, address) },
+            }, name)).?;
+        },
+    };
     return (try context.builder.appendInstruction(block, try context.translateType(address.pointee_type), .{
         .composite_construct = .{ .elements = elements },
     }, name)).?;
@@ -4816,13 +5927,13 @@ fn findMemberOffset(context: *const Context, structure_id: u32, member: u32) !u3
 
 fn loweredReturnValue(context: *Context, spv_function: u32, label: u32, source_value: ?ir.id.ValueId) !?ir.id.ValueId {
     const lowering = context.function_lowerings[try context.idIndex(spv_function)] orelse return TranslationError.MissingFunction;
-    if (lowering.pointer_parameters.len == 0)
+    if (lowering.pointer_parameters.len == 0 and lowering.private_variables.len == 0)
         return source_value;
 
-    const source_return = context.module.types.get(lowering.source_return_type) orelse return TranslationError.InvalidId;
-    const values = try context.scratch.alloc(ir.id.ValueId, lowering.pointer_parameters.len + @intFromBool(source_return.* != .void));
+    const source_return = (context.module.types.get(lowering.source_return_type) orelse return TranslationError.InvalidId).*;
+    const values = try context.scratch.alloc(ir.id.ValueId, lowering.pointer_parameters.len + lowering.private_variables.len + @intFromBool(source_return != .void));
     var output_index: usize = 0;
-    if (source_return.* != .void) {
+    if (source_return != .void) {
         values[0] = source_value orelse return TranslationError.InvalidInstruction;
         output_index = 1;
     } else if (source_value != null) {
@@ -4837,6 +5948,11 @@ fn loweredReturnValue(context: *Context, spv_function: u32, label: u32, source_v
         values[output_index] = context.block_local_outputs[try context.blockLocalIndex(label, local_index)] orelse return TranslationError.InvalidInstruction;
         output_index += 1;
     }
+    for (lowering.private_variables) |variable| {
+        const local_index = (try context.localIndex(variable)) orelse return TranslationError.UnsupportedPrivateCrossFunction;
+        values[output_index] = context.block_local_outputs[try context.blockLocalIndex(label, local_index)] orelse return TranslationError.InvalidInstruction;
+        output_index += 1;
+    }
     if (output_index != values.len)
         return TranslationError.InvalidFunctionParameter;
 
@@ -4846,6 +5962,13 @@ fn loweredReturnValue(context: *Context, spv_function: u32, label: u32, source_v
 }
 
 fn translateFunctionControlFlow(context: *Context, spv_function: u32) !void {
+    translateFunctionControlFlowImpl(context, spv_function) catch |err| {
+        context.reportError(null, err);
+        return err;
+    };
+}
+
+fn translateFunctionControlFlowImpl(context: *Context, spv_function: u32) !void {
     var active = false;
     var current_label: ?u32 = null;
     var iterator = context.parser.iterator();
@@ -4858,6 +5981,7 @@ fn translateFunctionControlFlow(context: *Context, spv_function: u32) !void {
         if (!active)
             continue;
 
+        context.builder.source = try context.instructionSource(instruction);
         const operands = instruction.operands;
         switch (instruction.opcode) {
             .label => {
@@ -5121,6 +6245,7 @@ fn translateBinaryOpcode(opcode: spirv.Opcode) ir.instruction.BinaryOpcode {
         .s_div => .signed_divide,
         .u_mod => .unsigned_modulo,
         .s_mod => .signed_modulo,
+        .s_rem => .signed_remainder,
         .f_add => .float_add,
         .f_sub => .float_subtract,
         .f_mul => .float_multiply,
@@ -6704,11 +7829,13 @@ test "SPIR-V: unsupported GLSL extended instruction reports its own error" {
         \\OpExecutionMode %main LocalSize 1 1 1
         \\%void = OpTypeVoid
         \\%float = OpTypeFloat 32
+        \\%uint = OpTypeInt 32 0
+        \\%v2float = OpTypeVector %float 2
         \\%fn_void = OpTypeFunction %void
-        \\%one = OpConstant %float 1
+        \\%one = OpConstant %uint 1
         \\%main = OpFunction %void None %fn_void
         \\    %entry = OpLabel
-        \\    %result = OpExtInst %float %glsl NMin %one %one
+        \\    %result = OpExtInst %v2float %glsl UnpackHalf2x16 %one
         \\    OpReturn
         \\OpFunctionEnd
     ;
@@ -7335,7 +8462,8 @@ test "SPIR-V: reject Private memory with helper functions" {
         defer std.testing.allocator.free(assembly);
         const words = try assembleSpirv(std.testing.allocator, assembly);
         defer std.testing.allocator.free(words);
-        try std.testing.expectError(TranslationError.UnsupportedPrivateCrossFunction, translate(std.testing.allocator, words, .{ .entry_point = "main" }));
+        var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+        defer module.deinit();
     }
 }
 
@@ -7609,7 +8737,7 @@ test "SPIR-V: OpCopyMemory validates memory access operands and pointee types" {
         .{ .operation = "OpCopyMemory %target %source Nontemporal" },
         .{ .operation = "OpCopyMemory %target %source Aligned 4" },
         .{ .operation = "OpCopyMemory %target %source Aligned|Nontemporal 16" },
-        .{ .operation = "OpCopyMemory %target %source Volatile", .expected = error.UnsupportedMemoryAccess },
+        .{ .operation = "OpCopyMemory %target %source Volatile" },
         .{ .operation = "OpCopyMemory %target %source Aligned 0", .expected = error.InvalidInstruction },
         .{ .operation = "OpCopyMemory %target %source Aligned 3", .expected = error.InvalidInstruction },
         .{ .operation = "OpCopyMemory %wrong_type %source", .expected = error.InvalidInstruction },

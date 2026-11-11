@@ -39,7 +39,7 @@ pub const IndexBuffer = struct {
     index_type: vk.IndexType,
 };
 
-pub const InterpolationType = enum { smooth, flat, noperspective };
+pub const InterpolationType = @import("shader_ir").ir.module.Interpolation;
 
 pub const PackedVertexOutput = struct {
     word: u32,

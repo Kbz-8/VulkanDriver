@@ -132,7 +132,7 @@ pub fn run(allocator: std.mem.Allocator, module: *const module_ir.Module, functi
         const value = module.values.entries.items[index] orelse return error.InvalidValue;
 
         if (span.components == 0)
-            return error.InvalidValue;
+            continue;
 
         if (span.base != .invalid_register) {
             if (@as(usize, @backingInt(span.base)) + span.components > first_free)

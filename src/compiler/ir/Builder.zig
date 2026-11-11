@@ -8,6 +8,7 @@ const module_ir = @import("module.zig");
 const Self = @This();
 
 module: *module_ir.Module,
+source: ?inst_ir.SourceLocation = null,
 
 pub fn init(module: *module_ir.Module) Self {
     return .{ .module = module };
@@ -121,6 +122,7 @@ pub fn appendInstruction(self: *Self, block_id: ids.BlockId, result_type: ?ids.T
         .parent_block = block_id,
         .result = null,
         .operation = owned_operation,
+        .source = self.source,
     });
     errdefer _ = self.module.instructions.remove(instruction_id);
 

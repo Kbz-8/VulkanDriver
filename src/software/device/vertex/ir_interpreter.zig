@@ -177,7 +177,7 @@ pub fn run(data: RunData) VkError!void {
             const work_index = wave_base + lane;
             const invocation_index = if (invocation_indices) |items| items[work_index] else work_index;
             const output = &draw_call.vertices[(instance_index * vertex_count) + invocation_index];
-            try collectOutputsLane(&slot.runtime, &shader.program, lane, output);
+            try collectOutputsLane(&slot.runtime, &shader.program, lane, pipeline, output);
         }
         if (comptime base.config.soft_profile)
             output_ns += Renderer.profileElapsedNs(output_timer, io);
@@ -250,7 +250,7 @@ fn populateInputsLane(runtime: *Runtime, program: *const Program, lane: usize, p
     }
 }
 
-fn collectOutputsLane(runtime: *const Runtime, program: *const Program, lane: usize, output: *Renderer.Vertex) VkError!void {
+fn collectOutputsLane(runtime: *const Runtime, program: *const Program, lane: usize, pipeline: *const SoftPipeline, output: *Renderer.Vertex) VkError!void {
     for (program.interfaces, 0..) |optional_binding, index| {
         const binding = optional_binding orelse continue;
 
@@ -274,16 +274,16 @@ fn collectOutputsLane(runtime: *const Runtime, program: *const Program, lane: us
             .location => {
                 if (!binding.validLocation()) return VkError.ValidationFailed;
 
-                const interpolation_type: Renderer.InterpolationType = switch (binding.span.kind) {
-                    .signed_integer, .unsigned_integer, .boolean => .flat,
-                    .floating => .smooth,
-                    .mixed => return VkError.InvalidPipelineDrv,
-                };
                 for (values[0..binding.span.components], binding.words) |value, word| {
+                    const interpolation = pipeline.fragment_interpolation[word.location][word.component];
                     output.packed_outputs[word.location][word.component] = .{
                         .word = value,
-                        .interpolation_type = interpolation_type,
-                        .centroid = false,
+                        .interpolation_type = switch (binding.span.kind) {
+                            .signed_integer, .unsigned_integer, .boolean => .flat,
+                            .floating => interpolation.interpolation_type,
+                            .mixed => return VkError.InvalidPipelineDrv,
+                        },
+                        .centroid = interpolation.centroid,
                     };
                 }
             },

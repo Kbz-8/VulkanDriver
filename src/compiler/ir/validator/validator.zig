@@ -263,7 +263,11 @@ fn validateBlock(module: *const module_ir.Module, function_id: ids.FunctionId, b
                 return ValidationError.WrongDefinition;
         }
 
-        try validateOperation(module, function_id, instruction);
+        validateOperation(module, function_id, instruction) catch |err| {
+            if (instruction.source) |source|
+                source.reportError("IR validation", err);
+            return err;
+        };
     }
 
     const terminator = block.terminator orelse return ValidationError.MissingTerminator;
@@ -508,6 +512,34 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             const result = result_type orelse return ValidationError.WrongResultPresence;
 
             switch (op.opcode) {
+                .signed_convert, .unsigned_convert => {
+                    const operand_shape = conversionIntegerShape(module, operand_type) orelse return ValidationError.WrongOperandType;
+                    const result_shape = conversionIntegerShape(module, result) orelse return ValidationError.WrongResultType;
+                    if (operand_shape.components != result_shape.components)
+                        return ValidationError.WrongResultType;
+                    switch (operand_shape.bits) {
+                        8, 16, 32, 64 => {},
+                        else => return ValidationError.WrongOperandType,
+                    }
+                    switch (result_shape.bits) {
+                        8, 16, 32, 64 => {},
+                        else => return ValidationError.WrongResultType,
+                    }
+                },
+                .float_convert => {
+                    const operand_shape = floatShape(module, operand_type) orelse return ValidationError.WrongOperandType;
+                    const result_shape = floatShape(module, result) orelse return ValidationError.WrongResultType;
+                    if (operand_shape.components != result_shape.components)
+                        return ValidationError.WrongResultType;
+                    switch (operand_shape.bits) {
+                        16, 32, 64 => {},
+                        else => return ValidationError.WrongOperandType,
+                    }
+                    switch (result_shape.bits) {
+                        16, 32, 64 => {},
+                        else => return ValidationError.WrongResultType,
+                    }
+                },
                 .signed_to_float, .unsigned_to_float => {
                     const operand_shape = conversionIntegerShape(module, operand_type) orelse return ValidationError.WrongOperandType;
                     const expected_signedness: type_ir.Signedness = if (op.opcode == .signed_to_float) .signed else .unsigned;

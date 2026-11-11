@@ -60,6 +60,7 @@ const BinaryInt = enum {
     signed_max,
     signed_min,
     signed_modulo,
+    signed_remainder,
     subtract,
     unsigned_divide,
     unsigned_max,
@@ -736,6 +737,7 @@ fn applyGroupEdge(self: *Self, program: *const Program, edge_index: u32, mask: L
 
     const copies = program.copies[edge.first_copy..end];
     for (copies) |item| {
+        if (item.components == 0) continue;
         const scratch_base: usize = @backingInt(item.scratch_base);
         try self.validateRegisterRange(item.source, item.components);
         const scratch_end = std.math.add(usize, scratch_base, item.components) catch return RuntimeError.InvalidBytecode;
@@ -745,6 +747,7 @@ fn applyGroupEdge(self: *Self, program: *const Program, edge_index: u32, mask: L
             self.storeScratchVectorMasked(scratch_base + component, self.loadSlotVector(@fromBackingInt(@intCast(@backingInt(item.source) + component))), mask);
     }
     for (copies) |item| {
+        if (item.components == 0) continue;
         const scratch_base: usize = @backingInt(item.scratch_base);
         try self.validateRegisterRange(item.destination, item.components);
         for (0..item.components) |component|
@@ -902,6 +905,7 @@ fn groupCompareFloat(self: *Self, instruction: bc.Instruction, comptime operatio
 }
 
 fn groupCopy(self: *Self, instruction: bc.Instruction, mask: LaneMask) RuntimeError!void {
+    if (instruction.components == 0) return;
     try self.validateRegisterRange(instruction.a, instruction.components);
     try self.validateRegisterRange(instruction.b, instruction.components);
     for (0..instruction.components) |component|
@@ -950,17 +954,17 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
             self.pcs[self.current_lane] = try self.applyEdge(program, if (low32(self.registers.at(@backingInt(instruction.a)).*) != 0) branch.true_edge else branch.false_edge);
         },
         .ceil => try self.unaryFloat(instruction, .ceil),
-        .compare_equal => self.compareInt(instruction, .equal),
-        .compare_not_equal => self.compareInt(instruction, .not_equal),
+        .compare_equal => try self.compareInt(instruction, .equal),
+        .compare_not_equal => try self.compareInt(instruction, .not_equal),
         .compare_ordered_float_equal => try self.compareFloat(instruction, .ordered_equal),
         .compare_ordered_float_less => try self.compareFloat(instruction, .ordered_less),
         .compare_ordered_float_less_equal => try self.compareFloat(instruction, .ordered_less_equal),
         .compare_ordered_float_not_equal => try self.compareFloat(instruction, .ordered_not_equal),
-        .compare_signed_less => self.compareInt(instruction, .signed_less),
+        .compare_signed_less => try self.compareInt(instruction, .signed_less),
         .compare_unordered_float_equal => try self.compareFloat(instruction, .unordered_equal),
         .compare_unordered_float_less => try self.compareFloat(instruction, .unordered_less),
         .compare_unordered_float_not_equal => try self.compareFloat(instruction, .unordered_not_equal),
-        .compare_unsigned_less => self.compareInt(instruction, .unsigned_less),
+        .compare_unsigned_less => try self.compareInt(instruction, .unsigned_less),
         .control_barrier => return .barrier,
         .copy => self.copy(instruction),
         .cos => try self.unaryFloat(instruction, .cos),
@@ -984,6 +988,7 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .find_u_msb => try self.findBit(instruction, .find_u_msb),
         .float_absolute => try self.unaryFloat(instruction, .absolute),
         .float_add => try self.binaryFloat(instruction, .add),
+        .float_convert => try self.floatConvert(instruction),
         .float_divide => try self.binaryFloat(instruction, .divide),
         .float_max => try self.binaryFloat(instruction, .max),
         .float_min => try self.binaryFloat(instruction, .min),
@@ -1033,10 +1038,12 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .round => try self.unaryFloat(instruction, .round),
         .select => try self.select(instruction),
         .shift_left => try self.binaryInt(instruction, .shift_left),
+        .signed_convert => try self.integerConvert(instruction, true),
         .signed_divide => try self.binaryInt(instruction, .signed_divide),
         .signed_max => try self.binaryInt(instruction, .signed_max),
         .signed_min => try self.binaryInt(instruction, .signed_min),
         .signed_modulo => try self.binaryInt(instruction, .signed_modulo),
+        .signed_remainder => try self.binaryInt(instruction, .signed_remainder),
         .signed_multiply_extended => try self.extendedInt(instruction, .signed_multiply),
         .signed_to_float => try self.intToFloat(instruction, true),
         .sin => try self.unaryFloat(instruction, .sin),
@@ -1047,6 +1054,7 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .tan => try self.unaryFloat(instruction, .tan),
         .tanh => try self.unaryFloat(instruction, .tanh),
         .trunc => try self.unaryFloat(instruction, .trunc),
+        .unsigned_convert => try self.integerConvert(instruction, false),
         .unsigned_divide => try self.binaryInt(instruction, .unsigned_divide),
         .unsigned_max => try self.binaryInt(instruction, .unsigned_max),
         .unsigned_min => try self.binaryInt(instruction, .unsigned_min),
@@ -1091,13 +1099,20 @@ fn copy(self: *Self, instruction: bc.Instruction) void {
 }
 
 fn unaryInt(self: *Self, instruction: bc.Instruction, comptime operation: UnaryInt) RuntimeError!void {
-    try self.validateRegisterRange(instruction.a, instruction.components);
-    try self.validateRegisterRange(instruction.b, instruction.components);
+    switch (instruction.scalar_bits) {
+        inline 8, 16, 32, 64 => |bits| try self.unaryIntTyped(@Int(.unsigned, bits), instruction, operation),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn unaryIntTyped(self: *Self, comptime Unsigned: type, instruction: bc.Instruction, comptime operation: UnaryInt) RuntimeError!void {
+    const Signed = @Int(.signed, @bitSizeOf(Unsigned));
+    try self.validateUnaryInstruction(instruction);
 
     for (0..instruction.components) |component| {
-        const value = low32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
-        const result: u32 = switch (operation) {
-            .absolute => @abs(@as(i32, @bitCast(value))),
+        const value: Unsigned = @truncate(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        const result: Unsigned = switch (operation) {
+            .absolute => @abs(@as(Signed, @bitCast(value))),
             .bit_count => @popCount(value),
             .bit_reverse => @bitReverse(value),
             .bitwise_not => ~value,
@@ -1277,6 +1292,58 @@ fn classifyFloatBits(comptime Float: type, bits: anytype, comptime classificatio
     };
 }
 
+fn integerConvert(self: *Self, instruction: bc.Instruction, comptime signed: bool) RuntimeError!void {
+    try self.validateUnaryInstruction(instruction);
+    switch (instruction.scalar_bits) {
+        inline 8, 16, 32, 64 => |dst_bits| switch (if (instruction.immediate == 0) @as(u32, 32) else instruction.immediate) {
+            inline 8, 16, 32, 64 => |src_bits| {
+                const Source = @Int(.unsigned, src_bits);
+                const SignedSource = @Int(.signed, src_bits);
+                const Destination = @Int(.unsigned, dst_bits);
+                for (0..instruction.components) |component| {
+                    const source: Source = @truncate(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+                    const extended: Slot = if (signed) @bitCast(@as(i64, @as(SignedSource, @bitCast(source)))) else source;
+                    self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = @as(Destination, @truncate(extended));
+                }
+            },
+
+            else => return RuntimeError.InvalidBytecode,
+        },
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn floatConvert(self: *Self, instruction: bc.Instruction) RuntimeError!void {
+    try self.validateUnaryInstruction(instruction);
+    switch (instruction.scalar_bits) {
+        inline 16, 32, 64 => |dst_bits| switch (if (instruction.immediate == 0) @as(u32, 32) else instruction.immediate) {
+            inline 16, 32, 64 => |src_bits| {
+                const Source = switch (src_bits) {
+                    16 => f16,
+                    32 => f32,
+                    64 => f64,
+                    else => unreachable,
+                };
+                const Destination = switch (dst_bits) {
+                    16 => f16,
+                    32 => f32,
+                    64 => f64,
+                    else => unreachable,
+                };
+                const DestinationBits = @Int(.unsigned, dst_bits);
+                for (0..instruction.components) |component| {
+                    const source = readFloat(Source, self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+                    const converted: Destination = @floatCast(source);
+                    self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = @as(DestinationBits, @bitCast(converted));
+                }
+            },
+
+            else => return RuntimeError.InvalidBytecode,
+        },
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
 fn floatFromInteger(comptime Float: type, comptime Unsigned: type, value: Slot, comptime signed: bool) Float {
     const bits: Unsigned = @truncate(value);
     const Signed = @Int(.signed, @bitSizeOf(Unsigned));
@@ -1339,46 +1406,65 @@ fn floatToIntTyped(self: *Self, comptime Float: type, instruction: bc.Instructio
 }
 
 fn binaryInt(self: *Self, instruction: bc.Instruction, comptime operation: BinaryInt) RuntimeError!void {
-    for (0..instruction.components) |component| {
-        const lhs = low32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
-        const rhs = low32(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
+    switch (instruction.scalar_bits) {
+        inline 8, 16, 32, 64 => |bits| try self.binaryIntTyped(@Int(.unsigned, bits), instruction, operation),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
 
-        const result: u32 = switch (operation) {
+fn binaryIntTyped(self: *Self, comptime Unsigned: type, instruction: bc.Instruction, comptime operation: BinaryInt) RuntimeError!void {
+    const bits = @bitSizeOf(Unsigned);
+    const Signed = @Int(.signed, bits);
+    if (instruction.components == 0 or instruction.d != .invalid_register)
+        return RuntimeError.InvalidBytecode;
+    try self.validateRegisterRange(instruction.a, instruction.components);
+    try self.validateRegisterRange(instruction.b, instruction.components);
+    try self.validateRegisterRange(instruction.c, instruction.components);
+
+    for (0..instruction.components) |component| {
+        const lhs: Unsigned = @truncate(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        const rhs_slot = self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*;
+        const rhs: Unsigned = @truncate(rhs_slot);
+
+        const result: Unsigned = switch (operation) {
             .add => lhs +% rhs,
-            .arithmetic_shift_right => if (rhs >= 32) return RuntimeError.ShiftOutOfRange else @bitCast(@as(i32, @bitCast(lhs)) >> @intCast(rhs)),
+            .arithmetic_shift_right => if (rhs_slot >= bits) return RuntimeError.ShiftOutOfRange else @bitCast(@as(Signed, @bitCast(lhs)) >> @intCast(rhs_slot)),
             .bitwise_and => lhs & rhs,
             .bitwise_or => lhs | rhs,
             .bitwise_xor => lhs ^ rhs,
             .logical_and => @intFromBool(lhs != 0 and rhs != 0),
             .logical_or => @intFromBool(lhs != 0 or rhs != 0),
-            .logical_shift_right => if (rhs >= 32) return RuntimeError.ShiftOutOfRange else lhs >> @intCast(rhs),
+            .logical_shift_right => if (rhs_slot >= bits) return RuntimeError.ShiftOutOfRange else lhs >> @intCast(rhs_slot),
             .multiply => lhs *% rhs,
-            .shift_left => if (rhs >= 32) return RuntimeError.ShiftOutOfRange else lhs << @intCast(rhs),
+            .shift_left => if (rhs_slot >= bits) return RuntimeError.ShiftOutOfRange else lhs << @intCast(rhs_slot),
             .signed_divide => blk: {
-                const signed_lhs: i32 = @bitCast(lhs);
-                const signed_rhs: i32 = @bitCast(rhs);
+                const signed_lhs: Signed = @bitCast(lhs);
+                const signed_rhs: Signed = @bitCast(rhs);
 
                 if (signed_rhs == 0)
                     return RuntimeError.DivisionByZero;
 
-                if (signed_lhs == std.math.minInt(i32) and signed_rhs == -1)
+                if (signed_lhs == std.math.minInt(Signed) and signed_rhs == -1)
                     return RuntimeError.IntegerOverflow;
 
                 break :blk @bitCast(@divTrunc(signed_lhs, signed_rhs));
             },
-            .signed_max => @bitCast(@max(@as(i32, @bitCast(lhs)), @as(i32, @bitCast(rhs)))),
-            .signed_min => @bitCast(@min(@as(i32, @bitCast(lhs)), @as(i32, @bitCast(rhs)))),
-            .signed_modulo => blk: {
-                const signed_lhs: i32 = @bitCast(lhs);
-                const signed_rhs: i32 = @bitCast(rhs);
+            .signed_max => @bitCast(@max(@as(Signed, @bitCast(lhs)), @as(Signed, @bitCast(rhs)))),
+            .signed_min => @bitCast(@min(@as(Signed, @bitCast(lhs)), @as(Signed, @bitCast(rhs)))),
+            .signed_modulo, .signed_remainder => blk: {
+                const signed_lhs: Signed = @bitCast(lhs);
+                const signed_rhs: Signed = @bitCast(rhs);
 
                 if (signed_rhs == 0)
                     return RuntimeError.DivisionByZero;
 
-                if (signed_lhs == std.math.minInt(i32) and signed_rhs == -1)
+                if (signed_lhs == std.math.minInt(Signed) and signed_rhs == -1)
                     break :blk 0;
 
-                break :blk @bitCast(@mod(signed_lhs, signed_rhs));
+                const remainder = @rem(signed_lhs, signed_rhs);
+                // SMod takes the divisor's sign; SRem takes the dividend's.
+                break :blk @bitCast(if (operation == .signed_modulo and remainder != 0 and
+                    (remainder < 0) != (signed_rhs < 0)) remainder +% signed_rhs else remainder);
             },
             .subtract => lhs -% rhs,
             .unsigned_divide => if (rhs == 0) return RuntimeError.DivisionByZero else lhs / rhs,
@@ -1391,6 +1477,17 @@ fn binaryInt(self: *Self, instruction: bc.Instruction, comptime operation: Binar
 }
 
 fn extendedInt(self: *Self, instruction: bc.Instruction, comptime operation: ExtendedInt) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        inline 8, 16, 32, 64 => |bits| try self.extendedIntTyped(@Int(.unsigned, bits), instruction, operation),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn extendedIntTyped(self: *Self, comptime Unsigned: type, instruction: bc.Instruction, comptime operation: ExtendedInt) RuntimeError!void {
+    const bits = @bitSizeOf(Unsigned);
+    const Signed = @Int(.signed, bits);
+    const WideUnsigned = @Int(.unsigned, bits * 2);
+    const WideSigned = @Int(.signed, bits * 2);
     if (instruction.components == 0 or instruction.d != .invalid_register)
         return RuntimeError.InvalidBytecode;
 
@@ -1399,22 +1496,19 @@ fn extendedInt(self: *Self, instruction: bc.Instruction, comptime operation: Ext
     try self.validateRegisterRange(instruction.b, instruction.components);
     try self.validateRegisterRange(instruction.c, instruction.components);
 
+    // Stage both result halves before writing, including when register spans alias.
+    var products: [std.math.maxInt(u8)]WideUnsigned = undefined;
     for (0..instruction.components) |component| {
-        const lhs = low32(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
-        const rhs = low32(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
-        const low, const high = switch (operation) {
-            .signed_multiply => blk: {
-                const product = @as(i64, @as(i32, @bitCast(lhs))) * @as(i64, @as(i32, @bitCast(rhs)));
-                const bits: u64 = @bitCast(product);
-                break :blk .{ @as(u32, @truncate(bits)), @as(u32, @truncate(bits >> 32)) };
-            },
-            .unsigned_multiply => blk: {
-                const product = @as(u64, lhs) * @as(u64, rhs);
-                break :blk .{ @as(u32, @truncate(product)), @as(u32, @truncate(product >> 32)) };
-            },
+        const lhs: Unsigned = @truncate(self.registers.at(@as(usize, @backingInt(instruction.b)) + component).*);
+        const rhs: Unsigned = @truncate(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
+        products[component] = switch (operation) {
+            .signed_multiply => @bitCast(@as(WideSigned, @as(Signed, @bitCast(lhs))) * @as(WideSigned, @as(Signed, @bitCast(rhs)))),
+            .unsigned_multiply => @as(WideUnsigned, lhs) * @as(WideUnsigned, rhs),
         };
-        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = low;
-        self.registers.at(@as(usize, @backingInt(instruction.a)) + instruction.components + component).* = high;
+    }
+    for (products[0..instruction.components], 0..) |product, component| {
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = @as(Unsigned, @truncate(product));
+        self.registers.at(@as(usize, @backingInt(instruction.a)) + instruction.components + component).* = @as(Unsigned, @truncate(product >> bits));
     }
 }
 
@@ -1425,6 +1519,15 @@ fn binaryFloat(self: *Self, instruction: bc.Instruction, comptime operation: Bin
         64 => try self.binaryFloatTyped(f64, instruction, operation),
         else => return RuntimeError.InvalidBytecode,
     }
+}
+
+fn ldexpExponent(value: Slot, scalar_bits: u32) RuntimeError!i32 {
+    const exponent: i64 = switch (if (scalar_bits == 0) @as(u32, 32) else scalar_bits) {
+        inline 8, 16, 32, 64 => |bits| @as(@Int(.signed, bits), @bitCast(@as(@Int(.unsigned, bits), @truncate(value)))),
+        else => return RuntimeError.InvalidBytecode,
+    };
+    // Wider exponents must saturate, not wrap, when passed to the i32 math API.
+    return @intCast(std.math.clamp(exponent, std.math.minInt(i32), std.math.maxInt(i32)));
 }
 
 fn binaryFloatTyped(self: *Self, comptime Float: type, instruction: bc.Instruction, comptime operation: BinaryFloat) RuntimeError!void {
@@ -1444,9 +1547,9 @@ fn binaryFloatTyped(self: *Self, comptime Float: type, instruction: bc.Instructi
             .atan2 => std.math.atan2(lhs, rhs),
             .divide => lhs / rhs,
             .ldexp => blk: {
+                const exponent = try ldexpExponent(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*, instruction.immediate);
                 if (lhs == 0)
                     break :blk lhs;
-                const exponent = readI32(self.registers.at(@as(usize, @backingInt(instruction.c)) + component).*);
                 break :blk std.math.ldexp(lhs, exponent);
             },
             .max => if (lhs < rhs) rhs else lhs,
@@ -1519,16 +1622,29 @@ fn dotTyped(self: *Self, comptime Float: type, instruction: bc.Instruction) Runt
     self.registers.at(@backingInt(instruction.a)).* = writeFloat(Float, sum);
 }
 
-fn compareInt(self: *Self, instruction: bc.Instruction, comptime operation: CompareInt) void {
+fn compareInt(self: *Self, instruction: bc.Instruction, comptime operation: CompareInt) RuntimeError!void {
+    switch (instruction.scalar_bits) {
+        inline 8, 16, 32, 64 => |bits| try self.compareIntTyped(@Int(.unsigned, bits), instruction, operation),
+        else => return RuntimeError.InvalidBytecode,
+    }
+}
+
+fn compareIntTyped(self: *Self, comptime Unsigned: type, instruction: bc.Instruction, comptime operation: CompareInt) RuntimeError!void {
+    const Signed = @Int(.signed, @bitSizeOf(Unsigned));
+    if (instruction.components == 0 or instruction.d != .invalid_register)
+        return RuntimeError.InvalidBytecode;
+    try self.validateRegisterRange(instruction.a, instruction.components);
+    try self.validateRegisterRange(instruction.b, instruction.components);
+    try self.validateRegisterRange(instruction.c, instruction.components);
     for (0..instruction.components) |component| {
-        const lhs = low32(self.registers.at(@backingInt(instruction.b) + component).*);
-        const rhs = low32(self.registers.at(@backingInt(instruction.c) + component).*);
+        const lhs: Unsigned = @truncate(self.registers.at(@backingInt(instruction.b) + component).*);
+        const rhs: Unsigned = @truncate(self.registers.at(@backingInt(instruction.c) + component).*);
 
         self.registers.at(@backingInt(instruction.a) + component).* = @intFromBool(switch (operation) {
             .equal => lhs == rhs,
             .not_equal => lhs != rhs,
             .unsigned_less => lhs < rhs,
-            .signed_less => @as(i32, @bitCast(lhs)) < @as(i32, @bitCast(rhs)),
+            .signed_less => @as(Signed, @bitCast(lhs)) < @as(Signed, @bitCast(rhs)),
         });
     }
 }
@@ -2265,21 +2381,17 @@ fn mapBufferTexel(view: *const SoftBufferView, x: i32) RuntimeError!?[]u8 {
 }
 
 fn loadWorkgroup(self: *Self, program: *const Program, optional_memory: ?[]u8, instruction: bc.Instruction) RuntimeError!void {
+    if (instruction.components == 0) return;
     try self.validateRegisterSpan(instruction);
     const bytes = try self.workgroupRange(program, optional_memory, instruction);
-    for (0..instruction.components) |component| {
-        const offset = component * @sizeOf(u32);
-        self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = std.mem.readInt(u32, bytes[offset..][0..@sizeOf(u32)], .little);
-    }
+    try self.loadWords(instruction, bytes);
 }
 
 fn storeWorkgroup(self: *const Self, program: *const Program, optional_memory: ?[]u8, instruction: bc.Instruction) RuntimeError!void {
+    if (instruction.components == 0) return;
     try self.validateRegisterSpan(instruction);
     const bytes = try self.workgroupRange(program, optional_memory, instruction);
-    for (0..instruction.components) |component| {
-        const offset = component * @sizeOf(u32);
-        std.mem.writeInt(u32, bytes[offset..][0..@sizeOf(u32)], low32(self.registers.at(@as(usize, @backingInt(instruction.a)) + component).*), .little);
-    }
+    try self.storeWords(instruction, bytes);
 }
 
 fn workgroupRange(self: *const Self, program: *const Program, optional_memory: ?[]u8, instruction: bc.Instruction) RuntimeError![]u8 {
@@ -2291,7 +2403,7 @@ fn workgroupRange(self: *const Self, program: *const Program, optional_memory: ?
     const variable = ids.WorkgroupVariableId.fromIndex(instruction.immediate);
     const binding = program.workgroupBinding(variable) orelse return RuntimeError.InvalidBytecode;
     const relative_offset: usize = low32(self.registers.at(@backingInt(instruction.b)).*);
-    const byte_count = std.math.mul(usize, instruction.components, @sizeOf(u32)) catch return RuntimeError.BufferOutOfBounds;
+    const byte_count = std.math.mul(usize, instruction.components, try scalarByteSize(instruction)) catch return RuntimeError.BufferOutOfBounds;
     const relative_end = std.math.add(usize, relative_offset, byte_count) catch return RuntimeError.BufferOutOfBounds;
 
     if (relative_end > @as(usize, binding.byte_size))

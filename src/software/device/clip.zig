@@ -167,7 +167,11 @@ fn interpolateVertexForClipping(a: *const Vertex, b: *const Vertex, t: f32) Vert
             else blk: {
                 const value_a: f32 = @bitCast(out_a.word);
                 const value_b: f32 = @bitCast(out_b.word);
-                break :blk @as(u32, @bitCast(value_a + ((value_b - value_a) * t)));
+                const weight = if (out_a.interpolation_type == .noperspective)
+                    (t * b.position[3]) / result.position[3]
+                else
+                    t;
+                break :blk @as(u32, @bitCast(value_a + ((value_b - value_a) * weight)));
             };
             result.packed_outputs[location][component] = .{
                 .word = word,

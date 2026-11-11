@@ -107,8 +107,16 @@ pub const Builtin = enum {
     workgroup_size,
 };
 
+pub const Interpolation = enum { smooth, flat, noperspective };
+
 pub const InterfaceSemantic = union(enum) {
-    location: struct { location: u32, component: u8 = 0, index: u8 = 0 },
+    location: struct {
+        location: u32,
+        component: u8 = 0,
+        index: u8 = 0,
+        interpolation: Interpolation = .smooth,
+        centroid: bool = false,
+    },
     builtin: Builtin,
 };
 

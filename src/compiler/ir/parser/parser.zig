@@ -94,11 +94,33 @@ const Parser = struct {
                 const index = try self.parseUnsigned(u8, .number);
                 try self.expectDiscard(.right_paren);
 
+                var interpolation: module_ir.Interpolation = .smooth;
+                var centroid = false;
+                while (try self.consume(.comma)) {
+                    const option = (try self.expect(.identifier)).text;
+                    try self.expectDiscard(.left_paren);
+                    const value = (try self.expect(.identifier)).text;
+
+                    if (std.mem.eql(u8, option, "interpolation")) {
+                        interpolation = std.meta.stringToEnum(module_ir.Interpolation, value) orelse return Error.InvalidSemantic;
+                    } else if (std.mem.eql(u8, option, "centroid")) {
+                        centroid = if (std.mem.eql(u8, value, "true"))
+                            true
+                        else if (std.mem.eql(u8, value, "false"))
+                            false
+                        else
+                            return Error.InvalidSemantic;
+                    } else return Error.InvalidSemantic;
+                    try self.expectDiscard(.right_paren);
+                }
+
                 break :blk .{
                     .location = .{
                         .location = location,
                         .component = component,
                         .index = index,
+                        .interpolation = interpolation,
+                        .centroid = centroid,
                     },
                 };
             } else if (std.mem.eql(u8, semantic_name, "builtin")) blk: {

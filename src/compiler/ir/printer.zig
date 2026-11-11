@@ -27,7 +27,13 @@ pub fn write(module: *const module_ir.Module, writer: *std.Io.Writer) std.Io.Wri
         try writer.print(" = {t}[", .{variable.direction});
 
         switch (variable.semantic) {
-            .location => |location| try writer.print("location({d}), component({d}), index({d})", .{ location.location, location.component, location.index }),
+            .location => |location| {
+                try writer.print("location({d}), component({d}), index({d})", .{ location.location, location.component, location.index });
+                if (location.interpolation != .smooth)
+                    try writer.print(", interpolation({t})", .{location.interpolation});
+                if (location.centroid)
+                    try writer.writeAll(", centroid(true)");
+            },
             .builtin => |builtin| try writer.print("builtin({t})", .{builtin}),
         }
 

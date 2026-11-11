@@ -89,6 +89,7 @@ pub fn lower(
         else => return error.UnsupportedType,
     }
 
+    const components: usize = if (result.* == .vector) result.vector.length else 1;
     const unsigned_type = try builder.internType(.{ .integer = .{ .bits = bits, .signedness = .unsigned } });
     const unsigned_offset = try emit.unsignedRange(offset);
     const unsigned_count = try emit.unsignedRange(count);
@@ -132,8 +133,6 @@ pub fn lower(
         try builder.internType(.{ .integer = .{ .bits = bits, .signedness = .signed } })
     else
         unsigned_type;
-
-    const components: usize = if (result.* == .vector) result.vector.length else 1;
 
     var elements: [4]ir.id.ValueId = undefined;
     for (elements[0..components], 0..) |*element, index| {

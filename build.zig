@@ -119,6 +119,8 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const arch = if (target.query.cpu_arch) |arch| arch else builtin.cpu.arch;
+
     const vulkan_headers = b.dependency("vulkan_headers", .{});
     const vulkan_utility_libraries = b.dependency("vulkan_utility_libraries", .{});
     const vulkan = b.dependency("vulkan_zig", .{ .registry = vulkan_headers.path("registry/vk.xml") }).module("vulkan-zig");
@@ -145,7 +147,12 @@ pub fn build(b: *std.Build) !void {
         .options = options,
     };
 
-    const use_llvm = b.option(bool, "use-llvm", "LLVM build") orelse (optimize != .debug);
+    const should_use_llvm = optimize != .debug or switch (target.result.os.tag) {
+        .linux => if (arch.isX86()) false else true,
+        else => true,
+    };
+
+    const use_llvm = b.option(bool, "use-llvm", "LLVM build") orelse should_use_llvm;
 
     const target_contexts = TargetContexts{
         .native = createTargetContext(b, optimize, shared_dependencies, .{

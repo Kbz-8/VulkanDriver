@@ -243,9 +243,6 @@ const Lowerer = struct {
             const variable = entry orelse continue;
             const byte_size = try typeByteSize(module, variable.type);
 
-            if (byte_size == 0)
-                return CompileError.UnsupportedType;
-
             if (workgroup_memory_size > std.math.maxInt(u32) or byte_size > std.math.maxInt(u32))
                 return CompileError.TooMuchWorkgroupMemory;
 
@@ -390,21 +387,18 @@ const Lowerer = struct {
             },
             .array => |array| blk: {
                 const element = try self.shape(array.element_type);
-                const length = std.math.cast(u8, array.length) orelse return CompileError.UnsupportedType;
-                components = std.math.mul(u8, element.components, length) catch return CompileError.UnsupportedType;
-                if (components == 0) return CompileError.UnsupportedType;
+                components = if (element.components == 0) 0 else std.math.mul(u8, element.components, std.math.cast(u8, array.length) orelse return CompileError.UnsupportedType) catch return CompileError.UnsupportedType;
                 break :blk element.kind;
             },
             .structure => |structure| blk: {
-                if (structure.members.len == 0)
-                    return CompileError.UnsupportedType;
-
-                const first = try self.shape(structure.members[0]);
-                components = first.components;
-                var aggregate_kind = first.kind;
-                for (structure.members[1..]) |member_type| {
+                components = 0;
+                var aggregate_kind: bc.ValueKind = .mixed;
+                for (structure.members) |member_type| {
                     const member = try self.shape(member_type);
-                    if (member.kind != aggregate_kind)
+                    if (member.components == 0) continue;
+                    if (components == 0)
+                        aggregate_kind = member.kind
+                    else if (member.kind != aggregate_kind)
                         aggregate_kind = .mixed;
                     components = std.math.add(u8, components, member.components) catch return CompileError.UnsupportedType;
                 }
@@ -417,6 +411,7 @@ const Lowerer = struct {
 
     fn allocate(self: *Lowerer, type_id: ids.TypeId) !bc.Span {
         const layout = try self.shape(type_id);
+        if (layout.components == 0) return layout;
         const components = layout.components;
         const kind = layout.kind;
         const end = std.math.add(usize, self.register_count, components) catch return CompileError.TooManyRegisters;
@@ -440,6 +435,7 @@ const Lowerer = struct {
 
     fn initializeConstant(self: *Lowerer, destination: bc.Span, constant_id: ids.ConstantId) !void {
         const constant = self.module.constants.get(constant_id) orelse return CompileError.InvalidConstant;
+        if (destination.components == 0) return;
         switch (constant.value) {
             .boolean => |value| {
                 if (destination.components != 1 or destination.kind != .boolean)
@@ -460,6 +456,7 @@ const Lowerer = struct {
                 for (elements) |element| {
                     const child = self.module.constants.get(element) orelse return CompileError.InvalidConstant;
                     var layout = try self.shape(child.type);
+                    if (layout.components == 0) continue;
                     if ((destination.kind != .mixed and layout.kind != destination.kind) or component + layout.components > destination.components)
                         return CompileError.InvalidConstant;
                     layout.base = try offset(destination.base, component);
@@ -472,12 +469,23 @@ const Lowerer = struct {
     }
 
     fn lowerInstruction(self: *Lowerer, instruction: *const inst_ir.Instruction) !void {
+        self.lowerInstructionInner(instruction) catch |err| {
+            if (instruction.source) |source|
+                source.reportError("software lowering", err);
+            return err;
+        };
+    }
+
+    fn lowerInstructionInner(self: *Lowerer, instruction: *const inst_ir.Instruction) !void {
         const result = if (instruction.result) |id| try self.span(id) else null;
+        if (result) |dst| {
+            if (dst.components == 0) return;
+        }
         switch (instruction.operation) {
             .unary => |op| {
                 const dst = result orelse return CompileError.InvalidOperation;
                 const src = try self.span(op.operand);
-                const bits = if (src.kind == .floating) try self.valueScalarBits(op.operand) else 32;
+                const bits = try self.valueScalarBits(op.operand);
 
                 if (op.opcode == .is_inf or op.opcode == .is_nan) {
                     if (dst.kind != .boolean or src.kind != .floating or dst.components != src.components)
@@ -535,14 +543,14 @@ const Lowerer = struct {
                     .fwidth => if (dst.kind == .floating and self.module.stage == .fragment) .fwidth else return CompileError.InvalidOperation,
                     .fwidth_coarse => if (dst.kind == .floating and self.module.stage == .fragment) .fwidth_coarse else return CompileError.InvalidOperation,
                     .fwidth_fine => if (dst.kind == .floating and self.module.stage == .fragment) .fwidth_fine else return CompileError.InvalidOperation,
-                    .integer_absolute => if (dst.kind == .signed_integer) .integer_absolute else return CompileError.InvalidOperation,
+                    .integer_absolute => if (isIntegerKind(dst.kind)) .integer_absolute else return CompileError.InvalidOperation,
 
                     .inverse_sqrt => if (dst.kind == .floating) .inverse_sqrt else return CompileError.InvalidOperation,
                     .log => if (dst.kind == .floating) .log else return CompileError.InvalidOperation,
                     .log2 => if (dst.kind == .floating) .log2 else return CompileError.InvalidOperation,
                     .logical_not => if (dst.kind == .boolean) .logical_not else return CompileError.InvalidOperation,
                     .negate => switch (dst.kind) {
-                        .signed_integer => .negate_i32,
+                        .signed_integer, .unsigned_integer => .negate_i32,
                         .floating => .negate_f32,
                         else => return CompileError.InvalidOperation,
                     },
@@ -571,7 +579,7 @@ const Lowerer = struct {
                     return;
                 }
                 const opcode = try binaryOpcode(op.opcode, dst.kind);
-                const bits = if (dst.kind == .floating) try self.valueScalarBits(op.lhs) else 32;
+                const bits = try self.valueScalarBits(op.lhs);
 
                 if (op.opcode == .dot) {
                     if (dst.kind != .floating or dst.components != 1 or lhs.kind != .floating or
@@ -585,12 +593,17 @@ const Lowerer = struct {
                     const result_components = std.math.mul(u8, lhs.components, 2) catch return CompileError.InvalidOperation;
                     if (!lhs.sameShape(rhs) or lhs.kind != dst.kind or dst.components != result_components)
                         return CompileError.InvalidOperation;
-                    try self.emit(opcode, lhs.components, dst.base, lhs.base, rhs.base, .invalid_register, 0);
+                    try self.emitTyped(opcode, lhs.components, dst.base, lhs.base, rhs.base, .invalid_register, 0, bits);
                     return;
                 }
 
                 switch (op.opcode) {
-                    .ldexp => try self.emitTyped(opcode, dst.components, dst.base, lhs.base, rhs.base, .invalid_register, 0, bits),
+                    .ldexp => {
+                        if (!dst.sameShape(lhs) or !isIntegerKind(rhs.kind) or dst.components != rhs.components)
+                            return CompileError.InvalidOperation;
+                        const exponent_bits = try self.valueScalarBits(op.rhs);
+                        try self.emitTyped(opcode, dst.components, dst.base, lhs.base, rhs.base, .invalid_register, exponent_bits, bits);
+                    },
                     .shift_left,
                     .logical_shift_right,
                     .arithmetic_shift_right,
@@ -616,7 +629,7 @@ const Lowerer = struct {
                     return CompileError.InvalidOperation;
 
                 const opcode = try ternaryOpcode(op.opcode, dst.kind);
-                const bits = if (dst.kind == .floating) try self.valueScalarBits(op.first) else 32;
+                const bits = try self.valueScalarBits(op.first);
                 try self.emitTyped(opcode, dst.components, dst.base, first.base, second.base, third.base, 0, bits);
             },
             .compare => |op| {
@@ -624,10 +637,10 @@ const Lowerer = struct {
                 const lhs = try self.span(op.lhs);
                 const rhs = try self.span(op.rhs);
 
-                //if (dst.kind != .boolean or dst.components != 1 or lhs.components != 1 or !lhs.sameShape(rhs))
-                //    return CompileError.UnsupportedOperation;
+                if (dst.kind != .boolean or dst.components != lhs.components or !lhs.sameShape(rhs))
+                    return CompileError.InvalidOperation;
 
-                const bits = if (lhs.kind == .floating) try self.valueScalarBits(op.lhs) else 32;
+                const bits = try self.valueScalarBits(op.lhs);
                 try self.emitTyped(try compareOpcode(op.opcode, lhs.kind), dst.components, dst.base, lhs.base, rhs.base, .invalid_register, 0, bits);
             },
             .select => |op| {
@@ -662,11 +675,18 @@ const Lowerer = struct {
                 const opcode: bc.Opcode = switch (op.opcode) {
                     .float_to_signed => if (dst.kind == .signed_integer and src.kind == .floating) .float_to_signed else return CompileError.InvalidOperation,
                     .float_to_unsigned => if (dst.kind == .unsigned_integer and src.kind == .floating) .float_to_unsigned else return CompileError.InvalidOperation,
-                    .signed_to_float => if (dst.kind == .floating and src.kind == .signed_integer) .signed_to_float else return CompileError.InvalidOperation,
-                    .unsigned_to_float => if (dst.kind == .floating and src.kind == .unsigned_integer) .unsigned_to_float else return CompileError.InvalidOperation,
+                    .signed_to_float => if (dst.kind == .floating and isIntegerKind(src.kind)) .signed_to_float else return CompileError.InvalidOperation,
+                    .unsigned_to_float => if (dst.kind == .floating and isIntegerKind(src.kind)) .unsigned_to_float else return CompileError.InvalidOperation,
+                    .signed_convert => if (isIntegerKind(dst.kind) and isIntegerKind(src.kind)) .signed_convert else return CompileError.InvalidOperation,
+                    .unsigned_convert => if (isIntegerKind(dst.kind) and isIntegerKind(src.kind)) .unsigned_convert else return CompileError.InvalidOperation,
+                    .float_convert => if (dst.kind == .floating and src.kind == .floating) .float_convert else return CompileError.InvalidOperation,
                 };
                 const src_bits = try self.valueScalarBits(op.operand);
                 const dst_bits = try self.valueScalarBits(instruction.result.?);
+                if (op.opcode == .signed_convert or op.opcode == .unsigned_convert or op.opcode == .float_convert) {
+                    try self.emitTyped(opcode, dst.components, dst.base, src.base, .invalid_register, .invalid_register, src_bits, dst_bits);
+                    return;
+                }
                 const float_bits = if (src.kind == .floating) src_bits else dst_bits;
                 const integer_bits = if (src.kind == .floating) dst_bits else src_bits;
                 try self.emitTyped(opcode, dst.components, dst.base, src.base, .invalid_register, .invalid_register, integer_bits, float_bits);
@@ -677,6 +697,7 @@ const Lowerer = struct {
                 var component: usize = 0;
                 for (op.elements) |id| {
                     const src = try self.span(id);
+                    if (src.components == 0) continue;
                     if ((dst.kind != .mixed and src.kind != dst.kind) or component + src.components > dst.components)
                         return CompileError.InvalidOperation;
                     try self.emit(.copy, src.components, try offset(dst.base, component), src.base, .invalid_register, .invalid_register, 0);
@@ -767,6 +788,7 @@ const Lowerer = struct {
                     return CompileError.InvalidOperation;
 
                 const src = try self.span(op.value);
+                if (src.components == 0) return;
                 const byte_offset = try self.bufferOffset(op.byte_offset);
                 const descriptor_index, const resource = try self.bufferAccess(op.resource, op.descriptor_index, true);
                 const bits = try scalarBits(self.module, self.module.typeOf(op.value) orelse return CompileError.InvalidValue);
@@ -776,16 +798,19 @@ const Lowerer = struct {
                 const dst = result orelse return CompileError.InvalidOperation;
                 const byte_offset = try self.bufferOffset(op.byte_offset);
                 _ = try self.workgroupVariable(op.variable);
-                try self.emit(.load_workgroup, dst.components, dst.base, byte_offset, .invalid_register, .invalid_register, @backingInt(op.variable));
+                const bits = try self.valueScalarBits(instruction.result.?);
+                try self.emitTyped(.load_workgroup, dst.components, dst.base, byte_offset, .invalid_register, .invalid_register, @backingInt(op.variable), bits);
             },
             .store_workgroup => |op| {
                 if (result != null)
                     return CompileError.InvalidOperation;
 
                 const src = try self.span(op.value);
+                if (src.components == 0) return;
                 const byte_offset = try self.bufferOffset(op.byte_offset);
                 _ = try self.workgroupVariable(op.variable);
-                try self.emit(.store_workgroup, src.components, src.base, byte_offset, .invalid_register, .invalid_register, @backingInt(op.variable));
+                const bits = try self.valueScalarBits(op.value);
+                try self.emitTyped(.store_workgroup, src.components, src.base, byte_offset, .invalid_register, .invalid_register, @backingInt(op.variable), bits);
             },
             .image_read => |op| try self.lowerImageRead(result orelse return CompileError.InvalidOperation, op.resource, op.coordinate, null, null, op.sample, op.dimension, op.arrayed, false),
             .image_query_lod => |op| {
@@ -1259,7 +1284,7 @@ const Lowerer = struct {
             if (!source.sameShape(destination))
                 return CompileError.InvalidControlFlow;
 
-            if (source.base == destination.base)
+            if (source.components == 0 or source.base == destination.base)
                 continue;
 
             try self.copies.append(self.allocator, .{
@@ -1300,6 +1325,7 @@ const Lowerer = struct {
     }
 
     fn emitTyped(self: *Lowerer, opcode: bc.Opcode, components: u16, a: bc.Register, b: bc.Register, c: bc.Register, d: bc.Register, immediate: u32, scalar_bits: u8) !void {
+        if (opcode == .copy and components == 0) return;
         if (self.code.items.len >= std.math.maxInt(u32))
             return CompileError.TooManyInstructions;
         try self.code.append(self.allocator, .{ .opcode = opcode, .components = std.math.cast(u8, components) orelse return CompileError.UnsupportedType, .scalar_bits = scalar_bits, .a = a, .b = b, .c = c, .d = d, .immediate = immediate });
@@ -1457,8 +1483,14 @@ fn typeByteSize(module: *const module_ir.Module, type_id: ids.TypeId) !usize {
     const ty = module.types.get(type_id) orelse return CompileError.UnsupportedType;
     return switch (ty.*) {
         .boolean => 4,
-        .integer => |integer| if (integer.bits == 32) 4 else CompileError.UnsupportedType,
-        .floating => |floating| if (floating.bits == 32) 4 else CompileError.UnsupportedType,
+        .integer => |integer| switch (integer.bits) {
+            8, 16, 32, 64 => integer.bits / 8,
+            else => CompileError.UnsupportedType,
+        },
+        .floating => |floating| switch (floating.bits) {
+            16, 32, 64 => floating.bits / 8,
+            else => CompileError.UnsupportedType,
+        },
         .vector => |vector| std.math.mul(usize, try typeByteSize(module, vector.element_type), vector.length) catch return CompileError.TooMuchWorkgroupMemory,
         .matrix => |matrix| std.math.mul(usize, try typeByteSize(module, matrix.element_type), matrix.column_count) catch return CompileError.TooMuchWorkgroupMemory,
         .array => |array| std.math.mul(usize, try typeByteSize(module, array.element_type), array.length) catch return CompileError.TooMuchWorkgroupMemory,
@@ -1474,7 +1506,7 @@ fn typeByteSize(module: *const module_ir.Module, type_id: ids.TypeId) !usize {
 
 fn binaryOpcode(op: inst_ir.BinaryOpcode, kind: bc.ValueKind) !bc.Opcode {
     return switch (op) {
-        .arithmetic_shift_right => if (kind == .signed_integer) .arithmetic_shift_right else CompileError.InvalidOperation,
+        .arithmetic_shift_right => if (isIntegerKind(kind)) .arithmetic_shift_right else CompileError.InvalidOperation,
         .atan2 => if (kind == .floating) .atan2 else CompileError.InvalidOperation,
         .bitwise_and => if (kind == .signed_integer or kind == .unsigned_integer) .bitwise_and else CompileError.InvalidOperation,
         .bitwise_or => if (kind == .signed_integer or kind == .unsigned_integer) .bitwise_or else CompileError.InvalidOperation,
@@ -1497,16 +1529,17 @@ fn binaryOpcode(op: inst_ir.BinaryOpcode, kind: bc.ValueKind) !bc.Opcode {
         .logical_shift_right => if (kind == .signed_integer or kind == .unsigned_integer) .logical_shift_right else CompileError.InvalidOperation,
         .pow => if (kind == .floating) .pow else CompileError.InvalidOperation,
         .shift_left => if (kind == .signed_integer or kind == .unsigned_integer) .shift_left else CompileError.InvalidOperation,
-        .signed_divide => if (kind == .signed_integer) .signed_divide else CompileError.InvalidOperation,
+        .signed_divide => if (isIntegerKind(kind)) .signed_divide else CompileError.InvalidOperation,
         .signed_max => .signed_max,
         .signed_min => .signed_min,
-        .signed_modulo => if (kind == .signed_integer) .signed_modulo else CompileError.InvalidOperation,
-        .signed_multiply_extended => if (kind == .signed_integer) .signed_multiply_extended else CompileError.InvalidOperation,
-        .unsigned_divide => if (kind == .unsigned_integer) .unsigned_divide else CompileError.InvalidOperation,
+        .signed_modulo => if (isIntegerKind(kind)) .signed_modulo else CompileError.InvalidOperation,
+        .signed_remainder => if (isIntegerKind(kind)) .signed_remainder else CompileError.InvalidOperation,
+        .signed_multiply_extended => if (isIntegerKind(kind)) .signed_multiply_extended else CompileError.InvalidOperation,
+        .unsigned_divide => if (isIntegerKind(kind)) .unsigned_divide else CompileError.InvalidOperation,
         .unsigned_max => .unsigned_max,
         .unsigned_min => .unsigned_min,
-        .unsigned_modulo => if (kind == .unsigned_integer) .unsigned_modulo else CompileError.InvalidOperation,
-        .unsigned_multiply_extended => if (kind == .unsigned_integer) .unsigned_multiply_extended else CompileError.InvalidOperation,
+        .unsigned_modulo => if (isIntegerKind(kind)) .unsigned_modulo else CompileError.InvalidOperation,
+        .unsigned_multiply_extended => if (isIntegerKind(kind)) .unsigned_multiply_extended else CompileError.InvalidOperation,
         .vector_extract_dynamic => .vector_extract_dynamic,
     };
 }
@@ -1538,8 +1571,8 @@ fn compareOpcode(op: inst_ir.CompareOpcode, kind: bc.ValueKind) !bc.Opcode {
     return switch (op) {
         .equal => if (kind == .signed_integer or kind == .unsigned_integer or kind == .boolean) .compare_equal else CompileError.InvalidOperation,
         .not_equal => if (kind == .signed_integer or kind == .unsigned_integer or kind == .boolean) .compare_not_equal else CompileError.InvalidOperation,
-        .unsigned_less => if (kind == .unsigned_integer) .compare_unsigned_less else CompileError.InvalidOperation,
-        .signed_less => if (kind == .signed_integer) .compare_signed_less else CompileError.InvalidOperation,
+        .unsigned_less => if (isIntegerKind(kind)) .compare_unsigned_less else CompileError.InvalidOperation,
+        .signed_less => if (isIntegerKind(kind)) .compare_signed_less else CompileError.InvalidOperation,
         .ordered_float_equal => if (kind == .floating) .compare_ordered_float_equal else CompileError.InvalidOperation,
         .unordered_float_equal => if (kind == .floating) .compare_unordered_float_equal else CompileError.InvalidOperation,
         .ordered_float_not_equal => if (kind == .floating) .compare_ordered_float_not_equal else CompileError.InvalidOperation,

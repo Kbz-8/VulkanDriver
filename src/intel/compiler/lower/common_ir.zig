@@ -419,6 +419,13 @@ const LoweringState = struct {
     }
 
     fn lowerInstruction(self: *LoweringState, block_id: ids.BlockId, source_instruction: shader_ir.instruction.Instruction) Error!void {
+        self.lowerInstructionInner(block_id, source_instruction) catch |err| {
+            if (source_instruction.source) |source_location| source_location.reportError("Intel lowering", err);
+            return err;
+        };
+    }
+
+    fn lowerInstructionInner(self: *LoweringState, block_id: ids.BlockId, source_instruction: shader_ir.instruction.Instruction) Error!void {
         switch (source_instruction.operation) {
             .unary => |operation| try self.lowerUnary(block_id, source_instruction.result, operation),
             .binary => |operation| try self.lowerBinary(block_id, source_instruction.result, operation),
@@ -666,6 +673,7 @@ const LoweringState = struct {
 
             .unsigned_modulo,
             .signed_modulo,
+            .signed_remainder,
             .float_divide,
             .float_modulo,
             .logical_and,
