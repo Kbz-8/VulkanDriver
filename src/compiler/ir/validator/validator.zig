@@ -713,16 +713,19 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             if (!isUnsignedInteger(module, try operandType(module, function_id, op.byte_offset)))
                 return ValidationError.WrongOperandType;
             const result = result_type orelse return ValidationError.WrongResultPresence;
-            if (!isBufferAccessibleType(module, result))
+
+            if (!isWorkgroupAccessibleType(module, result))
                 return ValidationError.WrongResultType;
         },
         .store_workgroup => |op| {
             if (result_type != null)
                 return ValidationError.WrongResultPresence;
             _ = module.workgroup_variables.get(op.variable) orelse return ValidationError.InvalidValue;
+
             if (!isUnsignedInteger(module, try operandType(module, function_id, op.byte_offset)))
                 return ValidationError.WrongOperandType;
-            if (!isBufferAccessibleType(module, try operandType(module, function_id, op.value)))
+
+            if (!isWorkgroupAccessibleType(module, try operandType(module, function_id, op.value)))
                 return ValidationError.WrongOperandType;
         },
         .image_read => |op| {
@@ -731,10 +734,12 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
             if (op.sample) |sample| {
                 if (op.dimension != .two_d)
                     return ValidationError.InvalidInstruction;
+
                 const sample_type = module.types.get(try operandType(module, function_id, sample)) orelse return ValidationError.InvalidType;
                 if (sample_type.* != .integer or sample_type.integer.bits != 32)
                     return ValidationError.WrongOperandType;
             }
+
             if (result_type == null)
                 return ValidationError.WrongResultPresence;
         },
@@ -1296,6 +1301,10 @@ fn booleanComponentCount(module: *const module_ir.Module, type_id: ids.TypeId) ?
         .vector => |vector| if (isBoolean(module, vector.element_type)) vector.length else null,
         else => null,
     };
+}
+
+fn isWorkgroupAccessibleType(module: *const module_ir.Module, type_id: ids.TypeId) bool {
+    return isBufferAccessibleType(module, type_id) or booleanComponentCount(module, type_id) != null;
 }
 
 fn isBufferAccessibleType(module: *const module_ir.Module, type_id: ids.TypeId) bool {

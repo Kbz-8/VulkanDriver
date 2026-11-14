@@ -4752,7 +4752,7 @@ fn translateWorkgroupAccessChain(context: *Context, block: ir.id.BlockId, operan
                 }
                 current_type = type_definition.operands[member + 1];
             },
-            .type_array, .type_vector => {
+            .type_array, .type_vector, .type_matrix => {
                 try expectOperandCount(type_definition.operands, 3);
                 const element_type = type_definition.operands[1];
                 const stride = try workgroupTypeSize(context, element_type);
@@ -5921,7 +5921,7 @@ fn workgroupTypeSize(context: *Context, spv_type: u32) !u32 {
                 else => return TranslationError.UnsupportedType,
             };
         },
-        .type_vector => blk: {
+        .type_vector, .type_matrix => blk: {
             try expectOperandCount(ty.operands, 3);
             const element_size = try workgroupTypeSize(context, ty.operands[1]);
             break :blk std.math.mul(u32, element_size, ty.operands[2]) catch return TranslationError.UnsupportedType;
