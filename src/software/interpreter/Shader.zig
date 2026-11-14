@@ -122,6 +122,8 @@ fn hasCompatibleInterface(program: *const Program, stage: ir.module.Stage) bool 
                         (binding.span.kind != .signed_integer and binding.span.kind != .unsigned_integer)) return false,
                     .frag_depth => if (binding.direction != .output or binding.span.kind != .floating or binding.span.components != 1)
                         return false,
+                    .sample_mask => if (binding.span.components != 1 or (binding.span.kind != .signed_integer and binding.span.kind != .unsigned_integer))
+                        return false,
                     else => return false,
                 },
             },

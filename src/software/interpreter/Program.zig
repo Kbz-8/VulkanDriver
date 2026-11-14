@@ -873,7 +873,12 @@ const Lowerer = struct {
                     try scalarBits(self.module, self.module.typeOf(op.lod).?) != 32)
                     return CompileError.InvalidOperation;
 
-                _ = try self.sampledImage(op.resource);
+                if (op.resource.index() >= self.resources.len)
+                    return CompileError.InvalidOperation;
+
+                const resource = self.resources[op.resource.index()] orelse return CompileError.InvalidOperation;
+                if (resource.kind != .sampled_image and resource.kind != .storage_image)
+                    return CompileError.InvalidOperation;
 
                 const access = try u32Index(self.image_accesses.items.len);
 

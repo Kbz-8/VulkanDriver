@@ -1812,7 +1812,12 @@ fn imageSizeQueryLod(self: *Self, program: *const Program, resource_images: []co
     try self.validateRegisterRange(instruction.a, instruction.components);
     try self.validateRegisterRange(instruction.b, 1);
 
-    const view = try sampledImage(program, resource_images, access.resource);
+    const binding = program.resourceBinding(access.resource) orelse return RuntimeError.InvalidResource;
+    const view = switch (binding.kind) {
+        .sampled_image => try sampledImage(program, resource_images, access.resource),
+        .storage_image => try resourceImage(program, resource_images, @backingInt(access.resource)),
+        else => return RuntimeError.InvalidResource,
+    };
     const image: *const SoftImage = @alignCast(@fieldParentPtr("interface", view.interface.image));
     const range = view.interface.subresource_range;
 

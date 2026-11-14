@@ -511,6 +511,7 @@ fn rasterizeTransformedPoint(
                         position,
                         point_coord,
                         sample.id,
+                        sample.coverage,
                         true,
                         inputs,
                         fragment.constantQuadHelpers(&fragment_worker, position, inputs),

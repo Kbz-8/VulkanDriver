@@ -97,9 +97,10 @@ pub inline fn shaderInvocation(
     position: zm.F32x4,
     point_coord: ?@Vector(2, f32),
     sample_id: ?u32,
+    coverage_mask: vk.SampleMask,
     front_face: bool,
     inputs: FragmentInputs,
     derivative_inputs: ?DerivativeInputs,
 ) RuntimeError!InvocationResult {
-    return backend.shaderInvocation(worker, position, point_coord, sample_id, front_face, inputs, derivative_inputs);
+    return backend.shaderInvocation(worker, position, point_coord, sample_id, coverage_mask, front_face, inputs, derivative_inputs);
 }

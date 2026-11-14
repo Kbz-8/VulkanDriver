@@ -1,4 +1,5 @@
 const std = @import("std");
+const vk = @import("vulkan");
 const base = @import("base");
 const shader_types = @import("../../shader_types.zig");
 const shader_ir = @import("shader_ir");
@@ -141,6 +142,7 @@ pub const WaveInvocation = struct {
     position: base.zm.F32x4,
     inputs: common.FragmentInputs,
     sample_id: u32 = 0,
+    sample_mask: vk.SampleMask = 1,
 };
 
 pub const WaveResult = struct {
@@ -148,6 +150,8 @@ pub const WaveResult = struct {
     output_components: [shader_types.max_output_locations]u4,
     depths: @Vector(Runtime.lane_count, f32),
     depth_mask: Runtime.LaneMask,
+    sample_masks: @Vector(Runtime.lane_count, u32),
+    sample_mask_written: bool,
     returned_mask: Runtime.LaneMask,
     discarded_mask: Runtime.LaneMask,
 
@@ -168,6 +172,10 @@ pub const WaveResult = struct {
         if ((self.depth_mask & bit) != 0) {
             const depth_lanes: [Runtime.lane_count]f32 = @bitCast(self.depths);
             result.depth = depth_lanes[lane];
+        }
+        if (self.sample_mask_written) {
+            const sample_masks: [Runtime.lane_count]u32 = @bitCast(self.sample_masks);
+            result.sample_mask = sample_masks[lane];
         }
         return result;
     }
@@ -215,6 +223,14 @@ pub fn shaderWaveMasked(worker: *Worker, invocations: *const [Runtime.lane_count
                 result.depths = @bitCast(depth_lanes);
             }
 
+            if (single.sample_mask_written) {
+                var sample_masks: [Runtime.lane_count]u32 = @bitCast(result.sample_masks);
+                const single_sample_masks: [Runtime.lane_count]u32 = @bitCast(single.sample_masks);
+                sample_masks[lane] = single_sample_masks[lane];
+                result.sample_masks = @bitCast(sample_masks);
+                result.sample_mask_written = true;
+            }
+
             result.depth_mask |= single.depth_mask;
             result.returned_mask |= single.returned_mask;
             result.discarded_mask |= single.discarded_mask;
@@ -237,10 +253,14 @@ pub fn shaderWaveMasked(worker: *Worker, invocations: *const [Runtime.lane_count
         return RuntimeError.InvalidShader;
 
     const input_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
+    const pipeline_mask = if (state.pipeline.?.interface.mode.graphics.multisample.sample_mask) |words|
+        words[0]
+    else
+        std.math.maxInt(vk.SampleMask);
     for (0..Runtime.lane_count) |lane| {
         const bit = @as(Runtime.LaneMask, 1) << @intCast(lane);
         if ((execution_mask & bit) != 0)
-            try writeInputsLane(program, runtime, lane, invocations[lane].position, invocations[lane].inputs, invocations[lane].sample_id);
+            try writeInputsLane(program, runtime, lane, invocations[lane].position, invocations[lane].inputs, invocations[lane].sample_id, invocations[lane].sample_mask & pipeline_mask);
     }
     if (comptime base.config.soft_profile)
         worker.input_ns += Renderer.profileElapsedNs(input_timer, worker.io);
@@ -276,6 +296,8 @@ pub fn shaderWaveMasked(worker: *Worker, invocations: *const [Runtime.lane_count
         .output_components = results.output_components,
         .depths = results.depths,
         .depth_mask = results.depth_mask & mask,
+        .sample_masks = results.sample_masks,
+        .sample_mask_written = results.sample_mask_written,
         .returned_mask = outcome.returned_mask & mask,
         .discarded_mask = outcome.discarded_mask & mask,
     };
@@ -286,6 +308,7 @@ pub fn shaderInvocation(
     position: base.zm.F32x4,
     point_coord: ?@Vector(2, f32),
     sample_id: ?u32,
+    coverage_mask: vk.SampleMask,
     front_face: bool,
     inputs: common.FragmentInputs,
     derivative_inputs: ?common.DerivativeInputs,
@@ -305,7 +328,7 @@ pub fn shaderInvocation(
         lane = helpers.quad_lane;
 
         for (invocations[0..4], quad_inputs, quad_positions) |*invocation, helper_inputs, helper_position|
-            invocation.* = .{ .position = helper_position, .inputs = helper_inputs, .sample_id = sample_id orelse 0 };
+            invocation.* = .{ .position = helper_position, .inputs = helper_inputs, .sample_id = sample_id orelse 0, .sample_mask = 0 };
 
         execution_mask = 0b1111;
     }
@@ -314,6 +337,7 @@ pub fn shaderInvocation(
         .position = position,
         .inputs = inputs,
         .sample_id = sample_id orelse 0,
+        .sample_mask = coverage_mask,
     };
 
     const observable_mask = @as(Runtime.LaneMask, 1) << lane;
@@ -335,6 +359,7 @@ fn writeInputsLane(
     position: base.zm.F32x4,
     inputs: common.FragmentInputs,
     sample_id: u32,
+    sample_mask: vk.SampleMask,
 ) RuntimeError!void {
     for (program.interfaces, 0..) |optional_binding, index| {
         const binding = optional_binding orelse continue;
@@ -363,6 +388,11 @@ fn writeInputsLane(
                         return RuntimeError.InvalidShader;
                     values[0] = sample_id;
                 },
+                .sample_mask => {
+                    if ((binding.span.kind != .signed_integer and binding.span.kind != .unsigned_integer) or values.len != 1)
+                        return RuntimeError.InvalidShader;
+                    values[0] = sample_mask;
+                },
                 else => return RuntimeError.InvalidShader,
             },
         }
@@ -375,6 +405,8 @@ const WaveOutputs = struct {
     output_components: [shader_types.max_output_locations]u4 = @splat(0),
     depths: @Vector(Runtime.lane_count, f32) = @splat(0.0),
     depth_mask: Runtime.LaneMask = 0,
+    sample_masks: @Vector(Runtime.lane_count, u32) = @splat(0),
+    sample_mask_written: bool = false,
 };
 
 fn readOutputsWave(program: *const Program, runtime: *const Runtime) RuntimeError!WaveOutputs {
@@ -401,6 +433,12 @@ fn readOutputsWave(program: *const Program, runtime: *const Runtime) RuntimeErro
                         return RuntimeError.InvalidShader;
                     result.depths = @bitCast(runtime.readOutputVector(program, variable, 0) catch |err| return mapError(err));
                     result.depth_mask = Runtime.full_lane_mask;
+                },
+                .sample_mask => {
+                    if ((binding.span.kind != .signed_integer and binding.span.kind != .unsigned_integer) or binding.span.components != 1)
+                        return RuntimeError.InvalidShader;
+                    result.sample_masks = runtime.readOutputVector(program, variable, 0) catch |err| return mapError(err);
+                    result.sample_mask_written = true;
                 },
                 else => return RuntimeError.InvalidShader,
             },

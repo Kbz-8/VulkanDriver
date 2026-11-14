@@ -119,6 +119,19 @@ pub fn validate(module: *const module_ir.Module) Error!void {
         const variable = entry orelse continue;
         if (!module.types.isLive(variable.type))
             return Error.InvalidType;
+
+        if (variable.semantic == .builtin and variable.semantic.builtin == .sample_mask) {
+            if (module.stage != .fragment)
+                return Error.InvalidInstruction;
+
+            const ty = module.types.get(variable.type).?;
+            if (ty.* != .array)
+                return Error.InvalidType;
+
+            const word_type = module.types.get(ty.array.element_type) orelse return Error.InvalidType;
+            if (word_type.* != .integer or word_type.integer.bits != 32)
+                return Error.InvalidType;
+        }
     }
 
     for (module.resources.entries.items) |entry| {
@@ -727,7 +740,7 @@ fn validateOperation(module: *const module_ir.Module, function_id: ids.FunctionI
         },
         .image_size_query_lod => |op| {
             const resource = module.resources.get(op.resource) orelse return ValidationError.InvalidValue;
-            if (resource.kind != .sampled_image)
+            if (resource.kind != .sampled_image and resource.kind != .storage_image)
                 return ValidationError.WrongResourceKind;
 
             try validateImageShape(op.dimension, op.arrayed);

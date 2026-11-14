@@ -282,6 +282,7 @@ pub fn rasterizeTriangleInRect(
                         zm.f32x4(p[0], p[1], depth_z, frag_w),
                         null,
                         sample.id,
+                        sample.coverage,
                         triangle.front_face,
                         inputs,
                         derivative_inputs,
@@ -422,6 +423,7 @@ fn rasterizeTriangleInRectWave(
                 invocations[lane] = .{
                     .position = zm.f32x4(@as(f32, @floatFromInt(lane_x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, depths[lane], frag_w),
                     .inputs = fragmentInputs(triangle, weights, weights),
+                    .sample_mask = 1,
                 };
             }
             if (comptime base.config.soft_profile)
@@ -433,7 +435,7 @@ fn rasterizeTriangleInRectWave(
             };
 
             const target_output_timer = if (comptime base.config.soft_profile) std.Io.Timestamp.now(worker.io, .real) else undefined;
-            if (state.opaque_single_sample_output) {
+            if (state.opaque_single_sample_output and !wave.sample_mask_written) {
                 var output_depths = depths;
                 const shader_depths: [lane_count]f32 = @bitCast(wave.depths);
                 for (0..lane_count) |lane| {
@@ -548,6 +550,7 @@ fn rasterizeTriangleInRectQuads(state: *const FillState, worker: *fragment.Worke
                     invocations[quad_index * 4 + quad_lane] = .{
                         .position = quad.positions[quad_lane],
                         .inputs = fragmentInputs(triangle, weights, weights),
+                        .sample_mask = if ((quad.mask & (@as(u4, 1) << @intCast(quad_lane))) != 0) 1 else 0,
                     };
                 }
 

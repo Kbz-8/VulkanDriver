@@ -3483,11 +3483,15 @@ fn translateInstructionImpl(context: *Context, block: ir.id.BlockId, instruction
             const image_info = try imageTypeInfo(context, image_type);
             const image = context.module.resources.get(resource) orelse return TranslationError.InvalidId;
 
-            if (image.kind != .sampled_image or image_info.dimension == .buffer or image_info.input_attachment)
+            if ((image.kind != .sampled_image and image.kind != .storage_image) or image_info.dimension == .buffer or image_info.input_attachment)
                 return TranslationError.UnsupportedOpcode;
 
-            if (explicit_lod == image_info.multisampled)
+            if (image.kind == .sampled_image) {
+                if (explicit_lod == image_info.multisampled)
+                    return TranslationError.InvalidInstruction;
+            } else if (explicit_lod) {
                 return TranslationError.InvalidInstruction;
+            }
 
             const lod = if (explicit_lod)
                 try context.resolveValue(operands[3])
@@ -6274,6 +6278,7 @@ fn translateBuiltin(builtin: spirv.Builtin) TranslationError!ir.module.Builtin {
         .point_size => .point_size,
         .position => .position,
         .sample_id => .sample_id,
+        .sample_mask => .sample_mask,
         .vertex_index => .vertex_index,
         .workgroup_id => .workgroup_id,
         .workgroup_size => .workgroup_size,

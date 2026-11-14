@@ -102,6 +102,7 @@ pub const Builtin = enum {
     point_size,
     position,
     sample_id,
+    sample_mask,
     vertex_index,
     workgroup_id,
     workgroup_size,
