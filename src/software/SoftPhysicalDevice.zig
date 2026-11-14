@@ -25,6 +25,7 @@ fn castExtension(comptime ext: vk.ApiInfo) vk.ExtensionProperties {
 pub const extensions = [_]vk.ExtensionProperties{
     castExtension(vk.extensions.khr_device_group),
     castExtension(vk.extensions.khr_swapchain),
+    castExtension(vk.extensions.ext_host_query_reset),
 };
 
 // Device name should always be the same so avoid reprocessing it multiple times
@@ -186,6 +187,7 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
         .flags = .{ .device_local = true },
     };
 
+    interface.host_query_reset = true;
     interface.features = .{
         .robust_buffer_access = .true,
         .shader_float_64 = .true,

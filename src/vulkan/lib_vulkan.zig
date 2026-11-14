@@ -288,6 +288,8 @@ const device_pfn_map = block: {
         functionMapEntryPoint("vkResetDescriptorPool"),
         functionMapEntryPoint("vkResetEvent"),
         functionMapEntryPoint("vkResetFences"),
+        functionMapEntryPoint("vkResetQueryPool"),
+        functionMapEntryPoint("vkResetQueryPoolEXT"),
         functionMapEntryPoint("vkSetEvent"),
         functionMapEntryPoint("vkUnmapMemory"),
         functionMapEntryPoint("vkUpdateDescriptorSets"),
@@ -313,6 +315,8 @@ const device_entry_point_requirements = std.StaticStringMap(DeviceEntryPointRequ
     .{ "vkCmdDispatchBaseKHR", DeviceEntryPointRequirement{ .device_extension = vk.extensions.khr_device_group } },
     .{ "vkCmdSetDeviceMaskKHR", DeviceEntryPointRequirement{ .device_extension = vk.extensions.khr_device_group } },
     .{ "vkGetDeviceGroupPeerMemoryFeaturesKHR", DeviceEntryPointRequirement{ .device_extension = vk.extensions.khr_device_group } },
+
+    .{ "vkResetQueryPoolEXT", DeviceEntryPointRequirement{ .device_extension = vk.extensions.ext_host_query_reset } },
 
     .{ "vkGetBufferDeviceAddressEXT", DeviceEntryPointRequirement.unsupported_extension },
     .{ "vkGetBufferDeviceAddressKHR", DeviceEntryPointRequirement.unsupported_extension },
@@ -570,7 +574,7 @@ pub export fn apeGetPhysicalDeviceFeatures2KHR(p_physical_device: vk.PhysicalDev
     if (features.s_type != .physical_device_features_2) return;
 
     const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
-    features.features = physical_device.features;
+    physical_device.getFeatures2(features);
 }
 
 pub export fn apeGetPhysicalDeviceImageFormatProperties(
@@ -1657,6 +1661,19 @@ pub export fn apeGetQueryPoolResults(
     const bytes = @as([*]u8, @ptrCast(data))[0..size];
     pool.writeResults(first, count, bytes, stride, flags) catch |err| return toVkResult(err);
     return .success;
+}
+
+pub export fn apeResetQueryPool(p_device: vk.Device, p_pool: vk.QueryPool, first: u32, count: u32) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkResetQueryPool);
+    defer entryPointEndLogTrace();
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
+    const pool = NonDispatchable(QueryPool).fromHandleObject(p_pool) catch |err| return errorLogger(err);
+    pool.reset(first, count) catch |err| return errorLogger(err);
+}
+
+pub export fn apeResetQueryPoolEXT(p_device: vk.Device, p_pool: vk.QueryPool, first: u32, count: u32) callconv(vk.vulkan_call_conv) void {
+    apeResetQueryPool(p_device, p_pool, first, count);
 }
 
 pub export fn apeGetRenderAreaGranularity(p_device: vk.Device, p_pass: vk.RenderPass, granularity: *vk.Extent2D) callconv(vk.vulkan_call_conv) void {

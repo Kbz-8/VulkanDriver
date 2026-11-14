@@ -14,6 +14,7 @@ pub const ObjectType: vk.ObjectType = .physical_device;
 props: vk.PhysicalDeviceProperties,
 mem_props: vk.PhysicalDeviceMemoryProperties,
 features: vk.PhysicalDeviceFeatures,
+host_query_reset: bool = false,
 queue_family_props: std.ArrayList(vk.QueueFamilyProperties),
 instance: *Instance,
 dispatch_table: *const DispatchTable,
@@ -65,6 +66,21 @@ pub inline fn createDevice(self: *Self, allocator: std.mem.Allocator, infos: *co
     return try self.dispatch_table.createDevice(self, allocator, infos);
 }
 
+pub fn getFeatures2(self: *const Self, features: *vk.PhysicalDeviceFeatures2KHR) void {
+    features.features = self.features;
+
+    var next: ?*vk.BaseOutStructure = @ptrCast(@alignCast(features.p_next));
+    while (next) |node| : (next = node.p_next) {
+        switch (node.s_type) {
+            .physical_device_host_query_reset_features => {
+                const host_query_reset: *vk.PhysicalDeviceHostQueryResetFeatures = @ptrCast(node);
+                host_query_reset.host_query_reset = if (self.host_query_reset) .true else .false;
+            },
+            else => {},
+        }
+    }
+}
+
 pub fn validateCreateInfo(self: *const Self, allocator: std.mem.Allocator, info: *const vk.DeviceCreateInfo) VkError!void {
     if (info.enabled_layer_count != 0) {
         const names = info.pp_enabled_layer_names orelse return VkError.LayerNotPresent;
@@ -94,10 +110,31 @@ pub fn validateCreateInfo(self: *const Self, allocator: std.mem.Allocator, info:
     }
 
     if (info.p_enabled_features) |requested_features| {
-        inline for (@typeInfo(vk.PhysicalDeviceFeatures).@"struct".field_names) |field_name| {
-            if (@field(requested_features, field_name) == .true and @field(self.features, field_name) == .false) {
-                return VkError.FeatureNotPresent;
-            }
+        try self.validateFeatures(requested_features);
+    }
+
+    var next: ?*const vk.BaseInStructure = @ptrCast(@alignCast(info.p_next));
+    while (next) |node| : (next = node.p_next) {
+        switch (node.s_type) {
+            .physical_device_features_2 => {
+                const requested: *const vk.PhysicalDeviceFeatures2KHR = @ptrCast(node);
+                try self.validateFeatures(&requested.features);
+            },
+            .physical_device_host_query_reset_features => {
+                const requested: *const vk.PhysicalDeviceHostQueryResetFeatures = @ptrCast(node);
+                if (requested.host_query_reset == .true and !self.host_query_reset) {
+                    return VkError.FeatureNotPresent;
+                }
+            },
+            else => {},
+        }
+    }
+}
+
+fn validateFeatures(self: *const Self, requested_features: *const vk.PhysicalDeviceFeatures) VkError!void {
+    inline for (@typeInfo(vk.PhysicalDeviceFeatures).@"struct".field_names) |field_name| {
+        if (@field(requested_features, field_name) == .true and @field(self.features, field_name) == .false) {
+            return VkError.FeatureNotPresent;
         }
     }
 }

@@ -49,6 +49,7 @@ host_allocator: VulkanAllocator,
 device_allocator: if (config.device_debug_allocator) std.heap.DebugAllocator(.{}) else DeviceAllocator,
 enabled_khr_swapchain: bool,
 enabled_khr_device_group: bool,
+enabled_ext_host_query_reset: bool,
 
 dispatch_table: *const DispatchTable,
 vtable: *const VTable,
@@ -92,12 +93,16 @@ pub fn isExtensionEnabled(self: *const Self, extension: vk.ApiInfo) bool {
     if (std.mem.eql(u8, extension.name, vk.extensions.khr_device_group.name)) {
         return self.enabled_khr_device_group;
     }
+    if (std.mem.eql(u8, extension.name, vk.extensions.ext_host_query_reset.name)) {
+        return self.enabled_ext_host_query_reset;
+    }
     return false;
 }
 
 pub fn init(allocator: std.mem.Allocator, instance: *Instance, physical_device: *const PhysicalDevice, info: *const vk.DeviceCreateInfo) VkError!Self {
     var enabled_khr_swapchain = false;
     var enabled_khr_device_group = false;
+    var enabled_ext_host_query_reset = false;
     if (info.pp_enabled_extension_names) |names| {
         for (0..info.enabled_extension_count) |i| {
             const name = std.mem.span(names[i]);
@@ -105,6 +110,8 @@ pub fn init(allocator: std.mem.Allocator, instance: *Instance, physical_device: 
                 enabled_khr_swapchain = true;
             } else if (std.mem.eql(u8, name, vk.extensions.khr_device_group.name)) {
                 enabled_khr_device_group = true;
+            } else if (std.mem.eql(u8, name, vk.extensions.ext_host_query_reset.name)) {
+                enabled_ext_host_query_reset = true;
             }
         }
     }
@@ -116,6 +123,7 @@ pub fn init(allocator: std.mem.Allocator, instance: *Instance, physical_device: 
         .host_allocator = VulkanAllocator.from(allocator).cloneWithScope(.object),
         .enabled_khr_swapchain = enabled_khr_swapchain,
         .enabled_khr_device_group = enabled_khr_device_group,
+        .enabled_ext_host_query_reset = enabled_ext_host_query_reset,
         .device_allocator = if (config.device_debug_allocator) .init else .{},
         .dispatch_table = undefined,
         .vtable = undefined,
