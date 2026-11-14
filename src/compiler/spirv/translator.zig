@@ -1918,9 +1918,12 @@ fn translateResources(context: *Context) !void {
                     context.sampled_images[spv_index] = sampled_images[0];
                 continue;
             }
-            if (pointee.opcode != .type_image and pointee.opcode != .type_sampler)
+
+            if (element.opcode != .type_image and element.opcode != .type_sampler)
                 continue;
-            const resource_type = try context.translateType(pointee_id);
+
+            const element_type_id = if (array) |array_type| array_type.operands[1] else pointee_id;
+            const resource_type = try context.translateType(element_type_id);
             const type_data = context.module.types.get(resource_type) orelse return TranslationError.InvalidId;
             const handle = switch (type_data.*) {
                 .resource_handle => |handle| handle,
@@ -1929,13 +1932,28 @@ fn translateResources(context: *Context) !void {
             if (!isImageResourceKind(handle.kind) and handle.kind != .sampler)
                 continue;
 
-            const resource = try context.builder.addResource(
-                resource_type,
-                handle.kind,
-                variable_decoration.descriptor_set orelse return TranslationError.InvalidInstruction,
-                variable_decoration.binding orelse return TranslationError.InvalidInstruction,
-                context.nameOf(@intCast(spv_index)),
-            );
+            const set = variable_decoration.descriptor_set orelse return TranslationError.InvalidInstruction;
+            const binding = variable_decoration.binding orelse return TranslationError.InvalidInstruction;
+            const name = context.nameOf(@intCast(spv_index));
+            if (array) |array_type| {
+                const count: usize = try constantIndex(context, array_type.operands[2]);
+                if (count == 0)
+                    return TranslationError.InvalidInstruction;
+
+                const resources = try context.scratch.alloc(ir.id.ResourceId, count);
+
+                for (resources, 0..) |*resource, array_element| {
+                    resource.* = try context.builder.addResourceArrayElement(resource_type, handle.kind, set, binding, @intCast(array_element), if (array_element == 0) name else null);
+                }
+
+                context.descriptor_arrays[spv_index] = .{
+                    .resources = resources,
+                    .element_type = element_type_id,
+                };
+                continue;
+            }
+
+            const resource = try context.builder.addResource(resource_type, handle.kind, set, binding, name);
             context.resources[spv_index] = resource;
             if (isImageResourceKind(handle.kind)) {
                 context.image_resources[spv_index] = resource;
@@ -4503,6 +4521,40 @@ fn translateAccessChain(context: *Context, block: ir.id.BlockId, operands: []con
             return TranslationError.InvalidInstruction;
         const index_value = try context.resolveValue(operands[3]);
         const index_definition = context.module.values.get(index_value) orelse return TranslationError.InvalidId;
+        const resource = context.module.resources.get(descriptor_array.resources[0]) orelse return TranslationError.InvalidId;
+
+        if (isImageResourceKind(resource.kind) or resource.kind == .sampler) {
+            try expectOperandCount(operands, 4);
+            if (index_definition.definition != .constant) {
+                std.log.scoped(.spirv_translator).warn("dynamic image or sampler descriptor array indexing is unsupported for %{d}", .{operands[2]});
+                return TranslationError.UnsupportedOpcode;
+            }
+
+            const array_element: usize = try constantIndex(context, operands[3]);
+            if (array_element >= descriptor_array.resources.len)
+                return TranslationError.InvalidInstruction;
+
+            const pointer = context.type_defs[try context.idIndex(operands[0])] orelse return TranslationError.MissingDefinition;
+            if (pointer.opcode != .type_pointer)
+                return TranslationError.InvalidInstruction;
+
+            try expectOperandCount(pointer.operands, 3);
+            if (pointer.operands[1] != @backingInt(spirv.StorageClass.uniform_constant) or pointer.operands[2] != descriptor_array.element_type)
+                return TranslationError.InvalidInstruction;
+
+            const result_index = try context.idIndex(operands[1]);
+            if (context.resources[result_index] != null)
+                return TranslationError.DuplicateId;
+
+            const selected_resource = descriptor_array.resources[array_element];
+            context.resources[result_index] = selected_resource;
+            if (isImageResourceKind(resource.kind)) {
+                context.image_resources[result_index] = selected_resource;
+                context.image_types[result_index] = descriptor_array.element_type;
+            }
+            return;
+        }
+
         if (index_definition.definition == .constant) {
             const array_element: usize = try constantIndex(context, operands[3]);
             if (array_element >= descriptor_array.resources.len)
