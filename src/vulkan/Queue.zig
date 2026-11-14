@@ -37,7 +37,6 @@ pub const SubmitInfo = struct {
     wait_semaphores: std.ArrayList(*BinarySemaphore),
     command_buffers: std.ArrayList(*CommandBuffer),
     signal_semaphores: std.ArrayList(*BinarySemaphore),
-    // TODO: complete
 
     fn initBlob(allocator: std.mem.Allocator, infos: []const vk.SubmitInfo) VkError!std.ArrayList(SubmitInfo) {
         var self = std.ArrayList(SubmitInfo).initCapacity(allocator, infos.len) catch return VkError.OutOfHostMemory;

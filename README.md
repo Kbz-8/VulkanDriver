@@ -124,6 +124,7 @@ Assume thou that functions lacking in this array are, for now, not intended to b
 | vkCreateImage                                    | ✅ Implemented |
 | vkCreateImageView                                | ✅ Implemented |
 | vkCreateInstance                                 | ✅ Implemented |
+| vkCreateMetalSurfaceEXT                          | ✅ Implemented |
 | vkCreatePipelineCache                            | ✅ Implemented |
 | vkCreatePipelineLayout                           | ✅ Implemented |
 | vkCreateQueryPool                                | ✅ Implemented |
@@ -331,6 +332,7 @@ Assume thou that functions lacking in this array are, for now, not intended to b
 | vkCreateImage                                    | ✅ Implemented |
 | vkCreateImageView                                | ⚙️ WIP         |
 | vkCreateInstance                                 | ✅ Implemented |
+| vkCreateMetalSurfaceEXT                          | ✅ Implemented |
 | vkCreatePipelineCache                            | ⚙️ WIP         |
 | vkCreatePipelineLayout                           | ⚙️ WIP         |
 | vkCreateQueryPool                                | ⚙️ WIP         |
@@ -536,6 +538,7 @@ Assume thou that functions lacking in this array are, for now, not intended to b
 | vkCreateImage                                    | ✅ Implemented |
 | vkCreateImageView                                | ⚙️ WIP         |
 | vkCreateInstance                                 | ✅ Implemented |
+| vkCreateMetalSurfaceEXT                          | ✅ Implemented |
 | vkCreatePipelineCache                            | ⚙️ WIP         |
 | vkCreatePipelineLayout                           | ⚙️ WIP         |
 | vkCreateQueryPool                                | ⚙️ WIP         |

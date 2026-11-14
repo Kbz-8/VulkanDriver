@@ -240,7 +240,9 @@ pub fn create(allocator: std.mem.Allocator, instance: *base.Instance) VkError!*S
                 }
             }
 
-            break :blk command_allocator.dupe(u8, lib.physical_device_default_name) catch return VkError.OutOfHostMemory;
+            var cpu_name_buffer: [8192]u8 = undefined;
+            const cpu_name = cpuName(instance.io(), &cpu_name_buffer) orelse lib.physical_device_default_name;
+            break :blk command_allocator.dupe(u8, cpu_name) catch return VkError.OutOfHostMemory;
         };
         defer command_allocator.free(name);
 
@@ -908,6 +910,36 @@ fn checkFormatUsage(usage: vk.ImageUsageFlags, features: vk.FormatFeatureFlags) 
 
 pub fn getSurfaceSupportKHR(_: *Interface, _: u32, _: *SurfaceKHR) VkError!bool {
     return true;
+}
+
+fn cpuName(io: std.Io, buffer: []u8) ?[]const u8 {
+    switch (builtin.os.tag) {
+        .macos, .ios, .freebsd => {
+            var len = buffer.len;
+            const key = if (builtin.os.tag == .freebsd) "hw.model" else "machdep.cpu.brand_string";
+            if (std.c.sysctlbyname(key, buffer.ptr, &len, null, 0) == 0) {
+                const name = std.mem.trim(u8, buffer[0..len], " \t\r\n\x00");
+                if (name.len != 0)
+                    return name;
+            }
+        },
+        .linux => {
+            const info = std.Io.Dir.cwd().readFile(io, "/proc/cpuinfo", buffer) catch return null;
+            var lines = std.mem.splitScalar(u8, info, '\n');
+            while (lines.next()) |line| {
+                const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+                const key = std.mem.trim(u8, line[0..colon], " \t");
+                if (std.mem.eql(u8, key, "model name") or std.mem.eql(u8, key, "Hardware") or std.mem.eql(u8, key, "cpu model")) {
+                    const name = std.mem.trim(u8, line[colon + 1 ..], " \t\r");
+
+                    if (name.len != 0)
+                        return name;
+                }
+            }
+        },
+        else => {},
+    }
+    return null;
 }
 
 const CpuidRegs = packed struct {

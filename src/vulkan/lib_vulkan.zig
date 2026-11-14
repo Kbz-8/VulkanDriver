@@ -57,9 +57,15 @@ const has_x11 = switch (builtin.os.tag) {
     else => false,
 };
 
+const has_metal = switch (builtin.os.tag) {
+    .macos, .ios => true,
+    else => false,
+};
+
 pub const WaylandSurfaceKHR = if (has_wayland) @import("wsi/WaylandSurfaceKHR.zig") else null;
 pub const XlibSurfaceKHR = if (has_x11) @import("wsi/XlibSurfaceKHR.zig") else null;
 pub const XcbSurfaceKHR = if (has_x11) @import("wsi/XcbSurfaceKHR.zig") else null;
+pub const MetalSurfaceEXT = if (has_metal) @import("wsi/MetalSurfaceEXT.zig") else null;
 
 inline fn entryPointBeginLogTrace(comptime scope: @EnumLiteral()) void {
     std.log.scoped(scope).debug("Calling {s}...", .{@tagName(scope)});
@@ -109,6 +115,7 @@ const instance_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComptime(.{
     functionMapEntryPoint("vkCreateWaylandSurfaceKHR"),
     functionMapEntryPoint("vkCreateXlibSurfaceKHR"),
     functionMapEntryPoint("vkCreateXcbSurfaceKHR"),
+    functionMapEntryPoint("vkCreateMetalSurfaceEXT"),
     functionMapEntryPoint("vkDestroyInstance"),
     functionMapEntryPoint("vkDestroySurfaceKHR"),
     functionMapEntryPoint("vkEnumeratePhysicalDeviceGroups"),
@@ -2441,6 +2448,24 @@ pub export fn apeCreateXcbSurfaceKHR(p_instance: vk.Instance, info: *const vk.Xc
         const allocator = VulkanAllocator.init(callbacks, .object).allocator();
         const instance = Dispatchable(Instance).fromHandleObject(p_instance) catch |err| return toVkResult(err);
         const surface = XcbSurfaceKHR.create(instance, allocator, info) catch |err| return toVkResult(err);
+        p_surface.* = wrapNonDispatchable(SurfaceKHR, allocator, surface, vk.SurfaceKHR) catch |err| return toVkResult(err);
+        return .success;
+    } else {
+        return .error_unknown;
+    }
+}
+
+pub export fn apeCreateMetalSurfaceEXT(p_instance: vk.Instance, info: *const vk.MetalSurfaceCreateInfoEXT, callbacks: ?*const vk.AllocationCallbacks, p_surface: *vk.SurfaceKHR) callconv(vk.vulkan_call_conv) vk.Result {
+    if (comptime has_metal) {
+        entryPointBeginLogTrace(.vkCreateMetalSurfaceEXT);
+        defer entryPointEndLogTrace();
+
+        if (info.s_type != .metal_surface_create_info_ext)
+            return .error_validation_failed;
+
+        const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+        const instance = Dispatchable(Instance).fromHandleObject(p_instance) catch |err| return toVkResult(err);
+        const surface = MetalSurfaceEXT.create(instance, allocator, info) catch |err| return toVkResult(err);
         p_surface.* = wrapNonDispatchable(SurfaceKHR, allocator, surface, vk.SurfaceKHR) catch |err| return toVkResult(err);
         return .success;
     } else {

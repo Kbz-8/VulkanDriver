@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const vk = @import("vulkan");
 const base = @import("base");
 const SoftPhysicalDevice = @import("SoftPhysicalDevice.zig");
@@ -24,13 +25,18 @@ fn castExtension(comptime ext: vk.ApiInfo) vk.ExtensionProperties {
     return props;
 }
 
-pub const extensions = [_]vk.ExtensionProperties{
+const base_extensions = [_]vk.ExtensionProperties{
     castExtension(vk.extensions.khr_device_group_creation),
     castExtension(vk.extensions.khr_get_physical_device_properties_2),
     castExtension(vk.extensions.khr_surface),
     castExtension(vk.extensions.khr_wayland_surface),
     castExtension(vk.extensions.khr_xlib_surface),
     castExtension(vk.extensions.khr_xcb_surface),
+};
+
+pub const extensions = switch (builtin.os.tag) {
+    .macos, .ios => base_extensions ++ [_]vk.ExtensionProperties{castExtension(vk.extensions.ext_metal_surface)},
+    else => base_extensions,
 };
 
 pub fn create(allocator: std.mem.Allocator, infos: *const vk.InstanceCreateInfo) VkError!*Interface {

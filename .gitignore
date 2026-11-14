@@ -16,3 +16,4 @@ scripts/__pycache__/
 *.spv
 *_table_dump.txt
 vgcore.*
+.DS_Store
