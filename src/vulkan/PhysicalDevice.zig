@@ -104,6 +104,7 @@ pub fn validateCreateInfo(self: *const Self, allocator: std.mem.Allocator, info:
         for (0..info.enabled_extension_count) |i| {
             const name = utils.boundedName(names[i], vk.MAX_EXTENSION_NAME_SIZE) orelse return VkError.ExtensionNotPresent;
             if (!utils.isSupportedExtension(name, supported_extensions[0..written_count])) {
+                std.log.scoped(.PhysicalDevice).err("Unsupported extension {s}", .{name});
                 return VkError.ExtensionNotPresent;
             }
         }

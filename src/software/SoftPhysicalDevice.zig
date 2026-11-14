@@ -26,6 +26,7 @@ pub const extensions = [_]vk.ExtensionProperties{
     castExtension(vk.extensions.khr_device_group),
     castExtension(vk.extensions.khr_swapchain),
     castExtension(vk.extensions.ext_host_query_reset),
+    castExtension(vk.extensions.ext_pipeline_creation_cache_control),
 };
 
 // Device name should always be the same so avoid reprocessing it multiple times

@@ -23,6 +23,7 @@ const BindingLayout = struct {
 };
 
 owner: *Device,
+host_allocator: VulkanAllocator,
 
 /// Memory containing actual binding layouts array and immutable samplers array
 heap: []u8,
@@ -128,6 +129,7 @@ pub fn init(device: *Device, allocator: std.mem.Allocator, info: *const vk.Descr
 
     return .{
         .owner = device,
+        .host_allocator = VulkanAllocator.from(allocator).clone(),
         .heap = heap,
         .bindings = bindings,
         .dynamic_offset_count = dynamic_offset_count,
@@ -160,7 +162,8 @@ pub inline fn destroy(self: *Self, allocator: std.mem.Allocator) void {
     self.unref(allocator);
 }
 
-pub inline fn drop(self: *Self, allocator: std.mem.Allocator) void {
+pub inline fn drop(self: *Self, _: std.mem.Allocator) void {
+    const allocator = self.host_allocator.allocator();
     allocator.free(self.heap);
     self.vtable.destroy(self, allocator);
 }

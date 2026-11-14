@@ -419,8 +419,6 @@ pub export fn apeEnumerateInstanceExtensionProperties(p_layer_name: ?[*:0]const 
     return .success;
 }
 
-/// Vulkan 1.0 implementations may expose this loader-facing query and report
-/// version 1.0. The CTS requires a callable platform entry point.
 pub export fn apeEnumerateInstanceVersion(version: *u32) callconv(vk.vulkan_call_conv) vk.Result {
     entryPointBeginLogTrace(.vkEnumerateInstanceVersion);
     defer entryPointEndLogTrace();
@@ -773,13 +771,27 @@ pub export fn apeAllocateDescriptorSets(p_device: vk.Device, info: *const vk.Des
         return .error_validation_failed;
     }
 
+    const sets = p_sets[0..info.descriptor_set_count];
+    @memset(sets, .null_handle);
+
     const pool = NonDispatchable(DescriptorPool).fromHandleObject(info.descriptor_pool) catch |err| return toVkResult(err);
+    const initial_set_count = pool.sets.items.len;
+    var success = false;
+    defer if (!success) {
+        while (pool.sets.items.len > initial_set_count) {
+            const set = pool.sets.items[pool.sets.items.len - 1];
+            pool.freeDescriptorSet(set) catch @panic("Failed to roll back descriptor set allocation");
+        }
+        @memset(sets, .null_handle);
+    };
+
     for (0..info.descriptor_set_count) |i| {
         const layout = NonDispatchable(DescriptorSetLayout).fromHandleObject(info.p_set_layouts[i]) catch |err| return toVkResult(err);
         const set = pool.allocateDescriptorSet(layout) catch |err| return toVkResult(err);
         p_sets[i] = set.toVkHandle(vk.DescriptorSet);
     }
 
+    success = true;
     return .success;
 }
 
