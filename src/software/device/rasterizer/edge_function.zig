@@ -424,6 +424,7 @@ fn rasterizeTriangleInRectWave(
                     .position = zm.f32x4(@as(f32, @floatFromInt(lane_x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, depths[lane], frag_w),
                     .inputs = fragmentInputs(triangle, weights, weights),
                     .sample_mask = 1,
+                    .front_face = triangle.front_face,
                 };
             }
             if (comptime base.config.soft_profile)
@@ -551,6 +552,7 @@ fn rasterizeTriangleInRectQuads(state: *const FillState, worker: *fragment.Worke
                         .position = quad.positions[quad_lane],
                         .inputs = fragmentInputs(triangle, weights, weights),
                         .sample_mask = if ((quad.mask & (@as(u4, 1) << @intCast(quad_lane))) != 0) 1 else 0,
+                        .front_face = triangle.front_face,
                     };
                 }
 

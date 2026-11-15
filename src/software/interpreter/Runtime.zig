@@ -1442,11 +1442,8 @@ fn binaryIntTyped(self: *Self, comptime Unsigned: type, instruction: bc.Instruct
                 const signed_lhs: Signed = @bitCast(lhs);
                 const signed_rhs: Signed = @bitCast(rhs);
 
-                if (signed_rhs == 0)
-                    return RuntimeError.DivisionByZero;
-
-                if (signed_lhs == std.math.minInt(Signed) and signed_rhs == -1)
-                    return RuntimeError.IntegerOverflow;
+                if (signed_rhs == 0 or (signed_lhs == std.math.minInt(Signed) and signed_rhs == -1))
+                    break :blk 0;
 
                 break :blk @bitCast(@divTrunc(signed_lhs, signed_rhs));
             },
@@ -1456,10 +1453,7 @@ fn binaryIntTyped(self: *Self, comptime Unsigned: type, instruction: bc.Instruct
                 const signed_lhs: Signed = @bitCast(lhs);
                 const signed_rhs: Signed = @bitCast(rhs);
 
-                if (signed_rhs == 0)
-                    return RuntimeError.DivisionByZero;
-
-                if (signed_lhs == std.math.minInt(Signed) and signed_rhs == -1)
+                if (signed_rhs == 0 or (signed_lhs == std.math.minInt(Signed) and signed_rhs == -1))
                     break :blk 0;
 
                 const remainder = @rem(signed_lhs, signed_rhs);
@@ -1468,10 +1462,10 @@ fn binaryIntTyped(self: *Self, comptime Unsigned: type, instruction: bc.Instruct
                     (remainder < 0) != (signed_rhs < 0)) remainder +% signed_rhs else remainder);
             },
             .subtract => lhs -% rhs,
-            .unsigned_divide => if (rhs == 0) return RuntimeError.DivisionByZero else lhs / rhs,
+            .unsigned_divide => if (rhs == 0) 0 else lhs / rhs,
             .unsigned_max => @max(lhs, rhs),
             .unsigned_min => @min(lhs, rhs),
-            .unsigned_modulo => if (rhs == 0) return RuntimeError.DivisionByZero else lhs % rhs,
+            .unsigned_modulo => if (rhs == 0) 0 else lhs % rhs,
         };
         self.registers.at(@as(usize, @backingInt(instruction.a)) + component).* = result;
     }

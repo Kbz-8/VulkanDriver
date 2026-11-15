@@ -453,6 +453,7 @@ fn clipTransformAndRasterizePoint(
         color_attachment_access,
         depth_attachment_access,
         stencil_attachment_access,
+        true,
     );
 }
 
@@ -462,6 +463,7 @@ fn rasterizeTransformedPoint(
     color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
     stencil_attachment_access: ?*common.RenderTargetAccess,
+    front_face: bool,
 ) VkError!void {
     const point_size = vertex.point_size;
     const min_x: i32 = @intFromFloat(@ceil(vertex.position[0] - (point_size / 2.0) - 0.5));
@@ -512,9 +514,9 @@ fn rasterizeTransformedPoint(
                         point_coord,
                         sample.id,
                         sample.coverage,
-                        true,
+                        front_face,
                         inputs,
-                        fragment.constantQuadHelpers(&fragment_worker, position, inputs),
+                        fragment.pointQuadHelpers(&fragment_worker, position, inputs, .{ point_min_x, point_min_y }, point_size),
                     ) catch |err| {
                         if (err == error.Killed)
                             continue;
@@ -535,7 +537,7 @@ fn rasterizeTransformedPoint(
                     color_attachment_access,
                     depth_attachment_access,
                     stencil_attachment_access,
-                    true,
+                    front_face,
                     @intCast(px),
                     @intCast(py),
                     fragment_result.depth orelse vertex.position[2],
@@ -574,6 +576,7 @@ fn clipTransformAndRasterizeLine(
             color_attachment_access,
             depth_attachment_access,
             stencil_attachment_access,
+            true,
         );
     } else {
         try bresenham.drawLine(
@@ -583,6 +586,7 @@ fn clipTransformAndRasterizeLine(
             color_attachment_access,
             depth_attachment_access,
             stencil_attachment_access,
+            true,
         );
     }
 }
@@ -711,14 +715,14 @@ fn rasterizeTriangle(
     switch (pipeline_data.rasterization.polygon_mode) {
         .fill => try edge_function.drawTriangle(allocator, draw_call, v0, v1, v2, provoking_vertex, color_attachment_access, depth_attachment_access, stencil_attachment_access, front_face),
         .line => {
-            try bresenham.drawLine(draw_call, v0, v1, color_attachment_access, depth_attachment_access, stencil_attachment_access);
-            try bresenham.drawLine(draw_call, v1, v2, color_attachment_access, depth_attachment_access, stencil_attachment_access);
-            try bresenham.drawLine(draw_call, v2, v0, color_attachment_access, depth_attachment_access, stencil_attachment_access);
+            try bresenham.drawLine(draw_call, v0, v1, color_attachment_access, depth_attachment_access, stencil_attachment_access, front_face);
+            try bresenham.drawLine(draw_call, v1, v2, color_attachment_access, depth_attachment_access, stencil_attachment_access, front_face);
+            try bresenham.drawLine(draw_call, v2, v0, color_attachment_access, depth_attachment_access, stencil_attachment_access, front_face);
         },
         .point => {
-            try rasterizeTransformedPoint(draw_call, v0, color_attachment_access, depth_attachment_access, stencil_attachment_access);
-            try rasterizeTransformedPoint(draw_call, v1, color_attachment_access, depth_attachment_access, stencil_attachment_access);
-            try rasterizeTransformedPoint(draw_call, v2, color_attachment_access, depth_attachment_access, stencil_attachment_access);
+            try rasterizeTransformedPoint(draw_call, v0, color_attachment_access, depth_attachment_access, stencil_attachment_access, front_face);
+            try rasterizeTransformedPoint(draw_call, v1, color_attachment_access, depth_attachment_access, stencil_attachment_access, front_face);
+            try rasterizeTransformedPoint(draw_call, v2, color_attachment_access, depth_attachment_access, stencil_attachment_access, front_face);
         },
         else => base.unsupported("polygon mode {any}", .{pipeline_data.rasterization.polygon_mode}),
     }

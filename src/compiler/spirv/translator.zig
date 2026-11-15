@@ -6270,6 +6270,8 @@ fn translateBuiltin(builtin: spirv.Builtin) TranslationError!ir.module.Builtin {
         .device_index => .device_index,
         .frag_coord => .frag_coord,
         .frag_depth => .frag_depth,
+        .front_facing => .front_facing,
+        .point_coord => .point_coord,
         .global_invocation_id => .global_invocation_id,
         .instance_index => .instance_index,
         .local_invocation_id => .local_invocation_id,
@@ -7877,7 +7879,7 @@ test "SPIR-V: extended instruction imports are classified before use" {
     );
 }
 
-test "SPIR-V: unsupported GLSL extended instruction reports its own error" {
+test "SPIR-V: translates GLSL half unpacking" {
     const assembly =
         \\OpCapability Shader
         \\%glsl = OpExtInstImport "GLSL.std.450"
@@ -7898,10 +7900,9 @@ test "SPIR-V: unsupported GLSL extended instruction reports its own error" {
     ;
     const words = try assembleSpirv(std.testing.allocator, assembly);
     defer std.testing.allocator.free(words);
-    try std.testing.expectError(
-        TranslationError.UnsupportedExtendedInstruction,
-        translate(std.testing.allocator, words, .{ .entry_point = "main" }),
-    );
+    var module = try translate(std.testing.allocator, words, .{ .entry_point = "main" });
+    defer module.deinit();
+    try ir.validator.validate(&module);
 }
 
 test "SPIR-V: translates common GLSL extended floating instructions" {

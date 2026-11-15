@@ -28,6 +28,7 @@ pub const FragmentInputs = rasterizer.FragmentInputs;
 pub const DerivativeInputs = struct {
     quad_inputs: ?[4]FragmentInputs = null,
     quad_positions: ?[4]zm.F32x4 = null,
+    quad_point_coords: ?[4]@Vector(2, f32) = null,
     quad_lane: u2 = 0,
 };
 
@@ -53,6 +54,19 @@ pub fn constantQuadHelpers(worker: *const Worker, position: zm.F32x4, inputs: Fr
     if (worker.program.uses_derivatives)
         return .{ .quad_inputs = @splat(inputs), .quad_positions = quadPositions(position), .quad_lane = quadLane(position) };
     return null;
+}
+
+pub fn pointQuadHelpers(worker: *const Worker, position: zm.F32x4, inputs: FragmentInputs, point_min: @Vector(2, f32), point_size: f32) ?DerivativeInputs {
+    var helpers = constantQuadHelpers(worker, position, inputs) orelse return null;
+    var point_coords: [4]@Vector(2, f32) = undefined;
+    for (&point_coords, helpers.quad_positions.?) |*point_coord, helper_position| {
+        point_coord.* = .{
+            (helper_position[0] - point_min[0]) / point_size,
+            (helper_position[1] - point_min[1]) / point_size,
+        };
+    }
+    helpers.quad_point_coords = point_coords;
+    return helpers;
 }
 
 pub fn usesSampleId(program: *const Program) bool {

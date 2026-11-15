@@ -38,7 +38,9 @@ pub const InterfaceBinding = struct {
             .location => |location| location,
             else => return false,
         };
-        if (location.index != 0 or self.span.kind == .mixed or self.words.len != self.span.components or self.words.len == 0)
+        if (location.index != 0 or self.words.len != self.span.components or self.words.len == 0)
+            return false;
+        if (self.span.kind == .mixed and location.interpolation != .flat)
             return false;
         for (self.words) |word| {
             if (word.location >= shader_types.max_output_locations or word.component >= 4)
@@ -495,6 +497,13 @@ const Lowerer = struct {
                     return;
                 }
 
+                if (op.opcode == .bit_count or op.opcode == .bit_reverse) {
+                    if (!isIntegerKind(dst.kind) or !isIntegerKind(src.kind) or dst.components != src.components or try self.valueScalarBits(instruction.result.?) != bits)
+                        return CompileError.InvalidOperation;
+                    try self.emitTyped(if (op.opcode == .bit_count) .bit_count else .bit_reverse, dst.components, dst.base, src.base, .invalid_register, .invalid_register, 0, bits);
+                    return;
+                }
+
                 if (op.opcode == .find_lsb or op.opcode == .find_s_msb or op.opcode == .find_u_msb) {
                     if (!isIntegerKind(dst.kind) or !isIntegerKind(src.kind) or dst.components != src.components or
                         try self.valueScalarBits(instruction.result.?) != 32)
@@ -637,10 +646,12 @@ const Lowerer = struct {
                 const lhs = try self.span(op.lhs);
                 const rhs = try self.span(op.rhs);
 
-                if (dst.kind != .boolean or dst.components != lhs.components or !lhs.sameShape(rhs))
+                const bits = try self.valueScalarBits(op.lhs);
+                const same_integer_shape = isIntegerKind(lhs.kind) and isIntegerKind(rhs.kind) and lhs.components == rhs.components and bits == try self.valueScalarBits(op.rhs);
+
+                if (dst.kind != .boolean or dst.components != lhs.components or (!lhs.sameShape(rhs) and !same_integer_shape))
                     return CompileError.InvalidOperation;
 
-                const bits = try self.valueScalarBits(op.lhs);
                 try self.emitTyped(try compareOpcode(op.opcode, lhs.kind), dst.components, dst.base, lhs.base, rhs.base, .invalid_register, 0, bits);
             },
             .select => |op| {

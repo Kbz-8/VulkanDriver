@@ -143,6 +143,8 @@ pub const WaveInvocation = struct {
     inputs: common.FragmentInputs,
     sample_id: u32 = 0,
     sample_mask: vk.SampleMask = 1,
+    front_face: bool = true,
+    point_coord: @Vector(2, f32) = @splat(0.0),
 };
 
 pub const WaveResult = struct {
@@ -260,7 +262,7 @@ pub fn shaderWaveMasked(worker: *Worker, invocations: *const [Runtime.lane_count
     for (0..Runtime.lane_count) |lane| {
         const bit = @as(Runtime.LaneMask, 1) << @intCast(lane);
         if ((execution_mask & bit) != 0)
-            try writeInputsLane(program, runtime, lane, invocations[lane].position, invocations[lane].inputs, invocations[lane].sample_id, invocations[lane].sample_mask & pipeline_mask);
+            try writeInputsLane(program, runtime, lane, invocations[lane].position, invocations[lane].inputs, invocations[lane].sample_id, invocations[lane].sample_mask & pipeline_mask, invocations[lane].front_face, invocations[lane].point_coord);
     }
     if (comptime base.config.soft_profile)
         worker.input_ns += Renderer.profileElapsedNs(input_timer, worker.io);
@@ -314,9 +316,6 @@ pub fn shaderInvocation(
     inputs: common.FragmentInputs,
     derivative_inputs: ?common.DerivativeInputs,
 ) RuntimeError!common.InvocationResult {
-    _ = point_coord;
-    _ = front_face;
-
     var invocations: [Runtime.lane_count]WaveInvocation = undefined;
     var lane: u2 = 0;
     var execution_mask: Runtime.LaneMask = 1;
@@ -325,11 +324,20 @@ pub fn shaderInvocation(
         const helpers = derivative_inputs orelse return RuntimeError.InvalidShader;
         const quad_inputs = helpers.quad_inputs orelse return RuntimeError.InvalidShader;
         const quad_positions = helpers.quad_positions orelse return RuntimeError.InvalidShader;
+        if (point_coord != null and helpers.quad_point_coords == null)
+            return RuntimeError.InvalidShader;
 
         lane = helpers.quad_lane;
 
-        for (invocations[0..4], quad_inputs, quad_positions) |*invocation, helper_inputs, helper_position|
-            invocation.* = .{ .position = helper_position, .inputs = helper_inputs, .sample_id = sample_id orelse 0, .sample_mask = 0 };
+        for (invocations[0..4], quad_inputs, quad_positions, 0..) |*invocation, helper_inputs, helper_position, helper_lane|
+            invocation.* = .{
+                .position = helper_position,
+                .inputs = helper_inputs,
+                .sample_id = sample_id orelse 0,
+                .sample_mask = 0,
+                .front_face = front_face,
+                .point_coord = if (helpers.quad_point_coords) |coords| coords[helper_lane] else @splat(0.0),
+            };
 
         execution_mask = 0b1111;
     }
@@ -339,6 +347,8 @@ pub fn shaderInvocation(
         .inputs = inputs,
         .sample_id = sample_id orelse 0,
         .sample_mask = coverage_mask,
+        .front_face = front_face,
+        .point_coord = point_coord orelse @splat(0.0),
     };
 
     const observable_mask = @as(Runtime.LaneMask, 1) << lane;
@@ -361,6 +371,8 @@ fn writeInputsLane(
     inputs: common.FragmentInputs,
     sample_id: u32,
     sample_mask: vk.SampleMask,
+    front_face: bool,
+    point_coord: @Vector(2, f32),
 ) RuntimeError!void {
     for (program.interfaces, 0..) |optional_binding, index| {
         const binding = optional_binding orelse continue;
@@ -383,6 +395,17 @@ fn writeInputsLane(
 
                     inline for (0..4) |component|
                         values[component] = @bitCast(position[component]);
+                },
+                .front_facing => {
+                    if (binding.span.kind != .boolean or values.len != 1)
+                        return RuntimeError.InvalidShader;
+                    values[0] = @intFromBool(front_face);
+                },
+                .point_coord => {
+                    if (binding.span.kind != .floating or values.len != 2)
+                        return RuntimeError.InvalidShader;
+                    inline for (0..2) |component|
+                        values[component] = @bitCast(point_coord[component]);
                 },
                 .sample_id => {
                     if ((binding.span.kind != .signed_integer and binding.span.kind != .unsigned_integer) or values.len != 1)

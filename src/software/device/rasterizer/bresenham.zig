@@ -31,6 +31,7 @@ const RunData = struct {
     depth_attachment_access: ?*common.RenderTargetAccess,
     stencil_attachment_access: ?*common.RenderTargetAccess,
     has_fragment_shader: bool,
+    front_face: bool,
 };
 
 pub fn drawLine(
@@ -40,8 +41,9 @@ pub fn drawLine(
     color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
     stencil_attachment_access: ?*common.RenderTargetAccess,
+    front_face: bool,
 ) VkError!void {
-    try drawLineWithEndpointMode(draw_call, v0, v1, color_attachment_access, depth_attachment_access, stencil_attachment_access, false);
+    try drawLineWithEndpointMode(draw_call, v0, v1, color_attachment_access, depth_attachment_access, stencil_attachment_access, false, front_face);
 }
 
 pub fn drawLineIncludingEndpoint(
@@ -51,8 +53,9 @@ pub fn drawLineIncludingEndpoint(
     color_attachment_access: []const ?common.RenderTargetAccess,
     depth_attachment_access: ?*common.RenderTargetAccess,
     stencil_attachment_access: ?*common.RenderTargetAccess,
+    front_face: bool,
 ) VkError!void {
-    try drawLineWithEndpointMode(draw_call, v0, v1, color_attachment_access, depth_attachment_access, stencil_attachment_access, true);
+    try drawLineWithEndpointMode(draw_call, v0, v1, color_attachment_access, depth_attachment_access, stencil_attachment_access, true, front_face);
 }
 
 fn drawLineWithEndpointMode(
@@ -63,6 +66,7 @@ fn drawLineWithEndpointMode(
     depth_attachment_access: ?*common.RenderTargetAccess,
     stencil_attachment_access: ?*common.RenderTargetAccess,
     include_last_endpoint: bool,
+    front_face: bool,
 ) VkError!void {
     if (depth_attachment_access != null) {
         try drawLineBresenham(
@@ -73,6 +77,7 @@ fn drawLineWithEndpointMode(
             depth_attachment_access,
             stencil_attachment_access,
             include_last_endpoint,
+            front_face,
         );
         return;
     }
@@ -85,6 +90,7 @@ fn drawLineWithEndpointMode(
         depth_attachment_access,
         stencil_attachment_access,
         include_last_endpoint,
+        front_face,
     );
 }
 
@@ -96,6 +102,7 @@ fn drawLineBresenham(
     depth_attachment_access: ?*common.RenderTargetAccess,
     stencil_attachment_access: ?*common.RenderTargetAccess,
     include_last_endpoint: bool,
+    front_face: bool,
 ) VkError!void {
     const io = draw_call.renderer.device.interface.io();
 
@@ -166,6 +173,7 @@ fn drawLineBresenham(
             .depth_attachment_access = depth_attachment_access,
             .stencil_attachment_access = stencil_attachment_access,
             .has_fragment_shader = fragment_stage != null,
+            .front_face = front_face,
         };
 
         draw_call.rasterizer_wait_group.async(io, runWrapper, .{run_data});
@@ -182,6 +190,7 @@ fn drawLineDiamond(
     depth_attachment_access: ?*common.RenderTargetAccess,
     stencil_attachment_access: ?*common.RenderTargetAccess,
     include_last_endpoint: bool,
+    front_face: bool,
 ) VkError!void {
     const pipeline = draw_call.renderer.state.pipeline orelse return;
     const fragment_stage = pipeline.stages.getPtr(.fragment);
@@ -226,7 +235,7 @@ fn drawLineDiamond(
                         null,
                         sample.id,
                         sample.coverage,
-                        true,
+                        front_face,
                         common.interpolateLineOutputs(v0, v1, v0, t),
                         lineQuadHelpers(&fragment_worker, v0, v1, v0, t, zm.f32x4(@as(f32, @floatFromInt(x)) + sample.position.x, @as(f32, @floatFromInt(y)) + sample.position.y, z, frag_w)),
                     ) catch |err| {
@@ -249,7 +258,7 @@ fn drawLineDiamond(
                     color_attachment_access,
                     depth_attachment_access,
                     stencil_attachment_access,
-                    true,
+                    front_face,
                     @intCast(x),
                     @intCast(y),
                     fragment_result.depth orelse z,
@@ -472,7 +481,7 @@ inline fn run(data: RunData) !void {
                     null,
                     sample.id,
                     sample.coverage,
-                    true,
+                    data.front_face,
                     common.interpolateLineOutputs(data.start_vertex, data.end_vertex, data.provoking_vertex, t),
                     lineQuadHelpers(&fragment_worker, data.start_vertex, data.end_vertex, data.provoking_vertex, t, zm.f32x4(@as(f32, @floatFromInt(pixel_x)) + sample.position.x, @as(f32, @floatFromInt(pixel_y)) + sample.position.y, z, frag_w)),
                 ) catch |err| {
@@ -496,7 +505,7 @@ inline fn run(data: RunData) !void {
                 data.color_attachment_access,
                 data.depth_attachment_access,
                 data.stencil_attachment_access,
-                true,
+                data.front_face,
                 @intCast(pixel_x),
                 @intCast(pixel_y),
                 fragment_result.depth orelse z,

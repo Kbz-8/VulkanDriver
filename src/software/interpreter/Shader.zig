@@ -82,7 +82,7 @@ fn hasCompatibleInterface(program: *const Program, stage: ir.module.Stage) bool 
     var has_position = false;
     for (program.interfaces) |optional_binding| {
         const binding = optional_binding orelse continue;
-        if (binding.span.kind == .mixed)
+        if (binding.span.kind == .mixed and binding.semantic != .location)
             return false;
         switch (binding.semantic) {
             .location => {
@@ -117,6 +117,10 @@ fn hasCompatibleInterface(program: *const Program, stage: ir.module.Stage) bool 
                 },
                 .fragment => switch (builtin) {
                     .frag_coord => if (binding.direction != .input or binding.span.kind != .floating or binding.span.components != 4)
+                        return false,
+                    .front_facing => if (binding.direction != .input or binding.span.kind != .boolean or binding.span.components != 1)
+                        return false,
+                    .point_coord => if (binding.direction != .input or binding.span.kind != .floating or binding.span.components != 2)
                         return false,
                     .sample_id => if (binding.direction != .input or binding.span.components != 1 or
                         (binding.span.kind != .signed_integer and binding.span.kind != .unsigned_integer)) return false,

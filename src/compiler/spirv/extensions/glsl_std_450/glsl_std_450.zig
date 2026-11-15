@@ -3,6 +3,7 @@ const ir = @import("../../../ir/ir.zig");
 const ext = @import("../types.zig");
 const vector_helper = @import("../../vector.zig");
 const matrix_helper = @import("../../matrix.zig");
+const packing = @import("packing.zig");
 
 pub const Opcode = enum(u32) {
     acos = 17,
@@ -104,6 +105,7 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
         .cosh => translateUnary(emitter, invocation, .cosh),
         .cross => translateCross(emitter, invocation),
         .degrees => translateAngleScale(emitter, invocation, 180.0 / std.math.pi),
+        .determinant => translateDeterminant(emitter, invocation),
         .distance => translateDistance(emitter, invocation),
         .exp => translateUnary(emitter, invocation, .exp),
         .exp2 => translateUnary(emitter, invocation, .exp2),
@@ -131,6 +133,12 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
         .n_max => translateNMinMax(emitter, invocation, .float_max),
         .n_min => translateNMinMax(emitter, invocation, .float_min),
         .normalize => translateNormalize(emitter, invocation),
+        .pack_double2x32 => packing.lower(emitter, invocation, .double2x32, true),
+        .pack_half2x16 => packing.lower(emitter, invocation, .half2x16, true),
+        .pack_snorm2x16 => packing.lower(emitter, invocation, .snorm2x16, true),
+        .pack_snorm4x8 => packing.lower(emitter, invocation, .snorm4x8, true),
+        .pack_unorm2x16 => packing.lower(emitter, invocation, .unorm2x16, true),
+        .pack_unorm4x8 => packing.lower(emitter, invocation, .unorm4x8, true),
         .pow => translateBinary(emitter, invocation, .pow),
         .radians => translateAngleScale(emitter, invocation, std.math.pi / 180.0),
         .reflect => translateReflect(emitter, invocation),
@@ -153,6 +161,12 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
         .u_clamp => translateClamp(emitter, invocation, .unsigned_max, .unsigned_min),
         .u_max => translateBinary(emitter, invocation, .unsigned_max),
         .u_min => translateBinary(emitter, invocation, .unsigned_min),
+        .unpack_double2x32 => packing.lower(emitter, invocation, .double2x32, false),
+        .unpack_half2x16 => packing.lower(emitter, invocation, .half2x16, false),
+        .unpack_snorm2x16 => packing.lower(emitter, invocation, .snorm2x16, false),
+        .unpack_snorm4x8 => packing.lower(emitter, invocation, .snorm4x8, false),
+        .unpack_unorm2x16 => packing.lower(emitter, invocation, .unorm2x16, false),
+        .unpack_unorm4x8 => packing.lower(emitter, invocation, .unorm4x8, false),
         .ldexp => translateBinary(emitter, invocation, .ldexp),
 
         else => {
@@ -160,6 +174,13 @@ pub fn translate(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.Value
             return error.UnsupportedExtendedInstruction;
         },
     };
+}
+
+fn translateDeterminant(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {
+    if (invocation.operands.len != 1)
+        return error.InvalidInstruction;
+
+    return matrix_helper.determinant(emitter.builder, emitter.block, invocation.result_type, invocation.operands[0], invocation.result_name);
 }
 
 fn translateMatrixInverse(emitter: *ext.Emitter, invocation: ext.Invocation) !ir.id.ValueId {

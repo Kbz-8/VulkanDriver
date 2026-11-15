@@ -257,7 +257,7 @@ fn collectOutputsLane(runtime: *const Runtime, program: *const Program, lane: us
 
         if (binding.direction != .output)
             continue;
-        if (binding.span.kind == .mixed)
+        if (binding.span.kind == .mixed and binding.semantic != .location)
             return VkError.InvalidPipelineDrv;
 
         const variable = ir.id.InterfaceVariableId.fromIndex(index);
@@ -280,9 +280,8 @@ fn collectOutputsLane(runtime: *const Runtime, program: *const Program, lane: us
                     output.packed_outputs[word.location][word.component] = .{
                         .word = value,
                         .interpolation_type = switch (binding.span.kind) {
-                            .signed_integer, .unsigned_integer, .boolean => .flat,
+                            .signed_integer, .unsigned_integer, .boolean, .mixed => .flat,
                             .floating => interpolation.interpolation_type,
-                            .mixed => return VkError.InvalidPipelineDrv,
                         },
                         .centroid = interpolation.centroid,
                     };
