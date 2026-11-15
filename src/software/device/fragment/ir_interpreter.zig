@@ -272,6 +272,7 @@ pub fn shaderWaveMasked(worker: *Worker, invocations: *const [Runtime.lane_count
         .resource_images = resources.images,
         .resource_samplers = resources.samplers,
         .push_constants = state.push_constant_blob[0..],
+        .robust_buffer_access = state.pipeline.?.interface.owner.enabled_robust_buffer_access,
     }) catch |err| return mapError(err);
 
     if (comptime base.config.soft_profile) {

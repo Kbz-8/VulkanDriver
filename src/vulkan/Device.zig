@@ -50,6 +50,7 @@ device_allocator: if (config.device_debug_allocator) std.heap.DebugAllocator(.{}
 enabled_khr_swapchain: bool,
 enabled_khr_device_group: bool,
 enabled_ext_host_query_reset: bool,
+enabled_robust_buffer_access: bool,
 
 dispatch_table: *const DispatchTable,
 vtable: *const VTable,
@@ -103,6 +104,18 @@ pub fn init(allocator: std.mem.Allocator, instance: *Instance, physical_device: 
     var enabled_khr_swapchain = false;
     var enabled_khr_device_group = false;
     var enabled_ext_host_query_reset = false;
+    var enabled_robust_buffer_access = if (info.p_enabled_features) |features| features.robust_buffer_access == .true else false;
+    var next: ?*const vk.BaseInStructure = @ptrCast(@alignCast(info.p_next));
+    while (next) |node| : (next = node.p_next) {
+        switch (node.s_type) {
+            .physical_device_features_2 => {
+                const features: *const vk.PhysicalDeviceFeatures2KHR = @ptrCast(node);
+                enabled_robust_buffer_access = features.features.robust_buffer_access == .true;
+            },
+            else => {},
+        }
+    }
+
     if (info.pp_enabled_extension_names) |names| {
         for (0..info.enabled_extension_count) |i| {
             const name = std.mem.span(names[i]);
@@ -124,6 +137,7 @@ pub fn init(allocator: std.mem.Allocator, instance: *Instance, physical_device: 
         .enabled_khr_swapchain = enabled_khr_swapchain,
         .enabled_khr_device_group = enabled_khr_device_group,
         .enabled_ext_host_query_reset = enabled_ext_host_query_reset,
+        .enabled_robust_buffer_access = enabled_robust_buffer_access,
         .device_allocator = if (config.device_debug_allocator) .init else .{},
         .dispatch_table = undefined,
         .vtable = undefined,

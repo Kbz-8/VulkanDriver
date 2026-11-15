@@ -155,6 +155,7 @@ pub fn run(data: RunData) VkError!void {
             .resource_images = resource_images,
             .resource_samplers = resource_samplers,
             .push_constants = draw_call.renderer.state.push_constant_blob[0..],
+            .robust_buffer_access = pipeline.interface.owner.enabled_robust_buffer_access,
         }) catch return VkError.Unknown;
         if (outcome.barrier_mask != 0)
             return VkError.Unknown;

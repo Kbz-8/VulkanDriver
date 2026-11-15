@@ -204,6 +204,7 @@ pub const RunOptions = struct {
     resource_texel_buffers: []const ?*SoftBufferView = &.{},
     resource_samplers: []const ?*SoftSampler = &.{},
     workgroup_memory: ?[]u8 = null,
+    robust_buffer_access: bool = false,
 };
 
 const Self = @This();
@@ -710,7 +711,7 @@ fn executeVectorGroup(self: *Self, program: *const Program, options: RunOptions,
                 return null;
             for (0..lane_count) |lane_index| {
                 self.selectLane(@intCast(lane_index));
-                try self.loadBuffer(program, options.resource_buffers, instruction);
+                try self.loadBuffer(program, options.resource_buffers, instruction, options.robust_buffer_access);
             }
         },
         .load_push_constant => {
@@ -1022,7 +1023,7 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .is_nan => try self.classifyFloat(instruction, .nan),
         .jump_edge => self.pcs[self.current_lane] = try self.applyEdge(program, instruction.immediate),
         .ldexp => try self.binaryFloat(instruction, .ldexp),
-        .load_buffer => try self.loadBuffer(program, options.resource_buffers, instruction),
+        .load_buffer => try self.loadBuffer(program, options.resource_buffers, instruction, options.robust_buffer_access),
         .load_push_constant => try self.loadPushConstant(options.push_constants, instruction),
         .load_workgroup => try self.loadWorkgroup(program, options.workgroup_memory, instruction),
         .log => try self.unaryFloat(instruction, .log),
@@ -1049,7 +1050,7 @@ fn executeInstruction(self: *Self, program: *const Program, options: RunOptions,
         .sin => try self.unaryFloat(instruction, .sin),
         .sinh => try self.unaryFloat(instruction, .sinh),
         .sqrt => try self.unaryFloat(instruction, .sqrt),
-        .store_buffer => if (self.isObservable()) try self.storeBuffer(program, options.resource_buffers, instruction),
+        .store_buffer => if (self.isObservable()) try self.storeBuffer(program, options.resource_buffers, instruction, options.robust_buffer_access),
         .store_workgroup => if (self.isObservable()) try self.storeWorkgroup(program, options.workgroup_memory, instruction),
         .tan => try self.unaryFloat(instruction, .tan),
         .tanh => try self.unaryFloat(instruction, .tanh),
@@ -1696,12 +1697,37 @@ fn select(self: *Self, instruction: bc.Instruction) RuntimeError!void {
     }
 }
 
-fn loadBuffer(self: *Self, program: *const Program, resource_buffers: []const ?[]u8, instruction: bc.Instruction) RuntimeError!void {
+fn loadBuffer(self: *Self, program: *const Program, resource_buffers: []const ?[]u8, instruction: bc.Instruction, robust: bool) RuntimeError!void {
     try self.validateRegisterSpan(instruction);
     const resource = try self.selectBufferResource(program, instruction);
     const buffer = try resourceBuffer(program, resource_buffers, resource);
-    const bytes = try self.bufferRange(buffer, instruction);
+    const bytes = self.bufferRange(buffer, instruction) catch |err| {
+        if (!robust or err != RuntimeError.BufferOutOfBounds)
+            return err;
+
+        switch (instruction.scalar_bits) {
+            inline 8, 16, 32, 64 => |bits| self.loadBufferRobust(@Int(.unsigned, bits), instruction, buffer),
+            else => return RuntimeError.InvalidBytecode,
+        }
+        return;
+    };
     try self.loadWords(instruction, bytes);
+}
+
+fn loadBufferRobust(self: *Self, comptime Int: type, instruction: bc.Instruction, buffer: []const u8) void {
+    const byte_offset: usize = low32(self.registers.at(@backingInt(instruction.b)).*);
+    for (0..instruction.components) |component| {
+        const destination = self.registers.at(@as(usize, @backingInt(instruction.a)) + component);
+        const offset = std.math.add(usize, byte_offset, component * @sizeOf(Int)) catch {
+            destination.* = 0;
+            continue;
+        };
+
+        destination.* = if (offset <= buffer.len and @sizeOf(Int) <= buffer.len - offset)
+            std.mem.readInt(Int, buffer[offset..][0..@sizeOf(Int)], .little)
+        else
+            0;
+    }
 }
 
 fn loadPushConstant(self: *Self, push_constants: []const u8, instruction: bc.Instruction) RuntimeError!void {
@@ -1751,12 +1777,32 @@ fn scalarByteSize(instruction: bc.Instruction) RuntimeError!usize {
     };
 }
 
-fn storeBuffer(self: *const Self, program: *const Program, resource_buffers: []const ?[]u8, instruction: bc.Instruction) RuntimeError!void {
+fn storeBuffer(self: *const Self, program: *const Program, resource_buffers: []const ?[]u8, instruction: bc.Instruction, robust: bool) RuntimeError!void {
     try self.validateRegisterSpan(instruction);
     const resource = try self.selectBufferResource(program, instruction);
     const buffer = try resourceBuffer(program, resource_buffers, resource);
-    const bytes = try self.bufferRange(buffer, instruction);
+    const bytes = self.bufferRange(buffer, instruction) catch |err| {
+        if (!robust or err != RuntimeError.BufferOutOfBounds)
+            return err;
+
+        switch (instruction.scalar_bits) {
+            inline 8, 16, 32, 64 => |bits| self.storeBufferRobust(@Int(.unsigned, bits), instruction, buffer),
+            else => return RuntimeError.InvalidBytecode,
+        }
+        return;
+    };
     try self.storeWords(instruction, bytes);
+}
+
+fn storeBufferRobust(self: *const Self, comptime Int: type, instruction: bc.Instruction, buffer: []u8) void {
+    const byte_offset: usize = low32(self.registers.at(@backingInt(instruction.b)).*);
+    for (0..instruction.components) |component| {
+        const offset = std.math.add(usize, byte_offset, component * @sizeOf(Int)) catch continue;
+        if (offset > buffer.len or @sizeOf(Int) > buffer.len - offset)
+            continue;
+
+        std.mem.writeInt(Int, buffer[offset..][0..@sizeOf(Int)], @truncate(self.registers.at(@as(usize, @backingInt(instruction.a)) + component).*), .little);
+    }
 }
 
 fn imageViewLevels(view: *const SoftImageView) RuntimeError!u32 {
@@ -2361,6 +2407,7 @@ fn resourceTexelBuffer(program: *const Program, buffers: []const ?*SoftBufferVie
 fn mapBufferTexel(view: *const SoftBufferView, x: i32) RuntimeError!?[]u8 {
     if (x < 0)
         return null;
+
     const buffer: *SoftBuffer = @alignCast(@fieldParentPtr("interface", view.interface.buffer));
     const memory = buffer.interface.memory orelse return RuntimeError.ResourceNotBound;
 
@@ -2386,14 +2433,18 @@ fn mapBufferTexel(view: *const SoftBufferView, x: i32) RuntimeError!?[]u8 {
 }
 
 fn loadWorkgroup(self: *Self, program: *const Program, optional_memory: ?[]u8, instruction: bc.Instruction) RuntimeError!void {
-    if (instruction.components == 0) return;
+    if (instruction.components == 0)
+        return;
+
     try self.validateRegisterSpan(instruction);
     const bytes = try self.workgroupRange(program, optional_memory, instruction);
     try self.loadWords(instruction, bytes);
 }
 
 fn storeWorkgroup(self: *const Self, program: *const Program, optional_memory: ?[]u8, instruction: bc.Instruction) RuntimeError!void {
-    if (instruction.components == 0) return;
+    if (instruction.components == 0)
+        return;
+
     try self.validateRegisterSpan(instruction);
     const bytes = try self.workgroupRange(program, optional_memory, instruction);
     try self.storeWords(instruction, bytes);
@@ -2457,8 +2508,10 @@ fn memoryRange(self: *const Self, memory_len: usize, instruction: bc.Instruction
     const byte_offset: usize = low32(self.registers.at(@backingInt(instruction.b)).*);
     const byte_count = std.math.mul(usize, instruction.components, try scalarByteSize(instruction)) catch return RuntimeError.BufferOutOfBounds;
     const end = std.math.add(usize, byte_offset, byte_count) catch return RuntimeError.BufferOutOfBounds;
+
     if (end > memory_len)
         return RuntimeError.BufferOutOfBounds;
+
     return .{ byte_offset, end };
 }
 

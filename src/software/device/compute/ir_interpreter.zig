@@ -33,6 +33,7 @@ pub const Context = struct {
     resource_images: []?*SoftImageView,
     resource_samplers: []?*SoftSampler,
     push_constants: []const u8,
+    robust_buffer_access: bool,
 
     pub fn deinit(self: *Context, allocator: std.mem.Allocator) void {
         allocator.free(self.resource_buffers);
@@ -112,6 +113,7 @@ pub fn prepare(allocator: std.mem.Allocator, shader: *Shader, state: *const Pipe
         .resource_images = resource_images,
         .resource_samplers = resource_samplers,
         .push_constants = state.push_constant_blob[0..],
+        .robust_buffer_access = state.pipeline.?.interface.owner.enabled_robust_buffer_access,
     };
 }
 
@@ -221,6 +223,7 @@ fn runOptions(context: Context, memory: []u8) Runtime.RunOptions {
         .resource_samplers = context.resource_samplers,
         .push_constants = context.push_constants,
         .workgroup_memory = memory,
+        .robust_buffer_access = context.robust_buffer_access,
     };
 }
 
