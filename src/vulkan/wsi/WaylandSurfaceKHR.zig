@@ -2,7 +2,8 @@ const std = @import("std");
 const vk = @import("vulkan");
 
 const lib = @import("../lib.zig");
-const gbm = @import("clients/gbm.zig");
+const drm = lib.drm;
+const drm_client = @import("clients/drm.zig");
 const wayland = @import("clients/wayland.zig");
 const PresentImage = @import("PresentImage.zig");
 
@@ -14,12 +15,9 @@ pub const Interface = @import("SurfaceKHR.zig");
 
 const WaylandImage = struct {
     buffer: *wayland.wl_buffer,
-    dma_buf: gbm.Buffer,
+    dma_buf: drm_client.Buffer,
     staging: []u8,
     image: *PresentImage,
-    width: u32,
-    height: u32,
-    row_size: usize,
 };
 
 fn wlRegistryHandleGlobal(data: ?*anyopaque, registry: ?*wayland.wl_registry, name: u32, interface: [*c]const u8, version: u32) callconv(.c) void {
@@ -50,7 +48,7 @@ const wl_registry_listener: wayland.wl_registry_listener = .{
 
 fn linuxDmabufHandleFormat(data: ?*anyopaque, _: ?*wayland.zwp_linux_dmabuf_v1, format: u32) callconv(.c) void {
     const self: *Self = @ptrCast(@alignCast(data orelse return));
-    if (format != gbm.drm_format_argb8888)
+    if (format != @backingInt(drm.Format.argb8888))
         return;
 
     self.supports_argb8888 = true;
@@ -60,13 +58,13 @@ fn linuxDmabufHandleFormat(data: ?*anyopaque, _: ?*wayland.zwp_linux_dmabuf_v1, 
 
 fn linuxDmabufHandleModifier(data: ?*anyopaque, _: ?*wayland.zwp_linux_dmabuf_v1, format: u32, modifier_hi: u32, modifier_lo: u32) callconv(.c) void {
     const self: *Self = @ptrCast(@alignCast(data orelse return));
-    if (format != gbm.drm_format_argb8888)
+    if (format != @backingInt(drm.Format.argb8888))
         return;
 
     const modifier = (@as(u64, modifier_hi) << 32) | modifier_lo;
     switch (modifier) {
-        gbm.drm_format_modifier_linear => self.supports_linear_modifier = true,
-        gbm.drm_format_modifier_invalid => self.supports_implicit_modifier = true,
+        @backingInt(drm.FormatModifier.None.linear) => self.supports_linear_modifier = true,
+        @backingInt(drm.FormatModifier.None.invalid) => self.supports_implicit_modifier = true,
         else => {},
     }
 }
@@ -116,7 +114,7 @@ supports_argb8888: bool,
 supports_linear_modifier: bool,
 supports_implicit_modifier: bool,
 protocol_failed: bool,
-gbm_device: ?gbm.Device,
+drm_card: ?drm.Card,
 image_map: std.AutoHashMapUnmanaged(*PresentImage, *WaylandImage),
 
 pub fn create(instance: *Instance, allocator: std.mem.Allocator, info: *const vk.WaylandSurfaceCreateInfoKHR) VkError!*Interface {
@@ -125,8 +123,6 @@ pub fn create(instance: *Instance, allocator: std.mem.Allocator, info: *const vk
 
     try wayland.load();
     errdefer wayland.unload();
-    try gbm.load();
-    errdefer gbm.unload();
 
     var interface = try Interface.init(instance, allocator);
     interface.vtable = &.{
@@ -152,7 +148,7 @@ pub fn create(instance: *Instance, allocator: std.mem.Allocator, info: *const vk
         .supports_linear_modifier = false,
         .supports_implicit_modifier = false,
         .protocol_failed = false,
-        .gbm_device = null,
+        .drm_card = null,
         .image_map = .empty,
     };
     errdefer if (self.dmabuf) |dmabuf| wayland.zwpLinuxDmabufV1Destroy(dmabuf);
@@ -187,17 +183,16 @@ pub fn destroy(interface: *Interface, allocator: std.mem.Allocator) void {
 
     var image_iterator = self.image_map.valueIterator();
     while (image_iterator.next()) |wl_image|
-        destroyWaylandImage(allocator, wl_image.*);
+        destroyWaylandImage(self, allocator, wl_image.*);
     self.image_map.deinit(allocator);
 
-    if (self.gbm_device) |*device|
-        device.deinit();
+    if (self.drm_card) |card|
+        card.close(interface.owner.io());
     if (self.dmabuf) |dmabuf|
         wayland.zwpLinuxDmabufV1Destroy(dmabuf);
     wayland.wl_event_queue_destroy(self.event_queue);
 
     allocator.destroy(self);
-    gbm.unload();
     wayland.unload();
 }
 
@@ -230,40 +225,40 @@ pub fn attachImage(interface: *Interface, allocator: std.mem.Allocator, image: *
     const staging = allocator.alloc(u8, staging_size) catch return VkError.OutOfHostMemory;
     errdefer allocator.free(staging);
 
-    if (self.gbm_device == null)
-        self.gbm_device = try gbm.Device.open();
-    const device = &(self.gbm_device orelse unreachable);
+    const io = interface.owner.io();
+    if (self.drm_card == null)
+        self.drm_card = try drm_client.openCard(io);
+    const card = self.drm_card orelse unreachable;
 
-    var dma_buf = try device.createBuffer(width, height);
-    errdefer dma_buf.deinit();
+    var dma_buf = try drm_client.Buffer.create(card, io, width, height);
+    errdefer dma_buf.deinit(card, io);
 
-    const protocol_modifier: u64 = if (dma_buf.modifier == gbm.drm_format_modifier_linear and self.supports_linear_modifier)
-        gbm.drm_format_modifier_linear
+    const protocol_modifier: u64 = if (self.supports_linear_modifier)
+        @backingInt(drm.FormatModifier.None.linear)
     else if (self.supports_implicit_modifier)
-        gbm.drm_format_modifier_invalid
+        @backingInt(drm.FormatModifier.None.invalid)
     else
         return VkError.FormatNotSupported;
 
-    const fd = try dma_buf.exportFd();
-    defer _ = std.c.close(fd);
+    const fd = dma_buf.file.handle;
 
     const dmabuf = self.dmabuf orelse return VkError.InitializationFailed;
     const params = wayland.zwpLinuxDmabufV1CreateParams(dmabuf) orelse return VkError.OutOfHostMemory;
     defer wayland.zwpLinuxBufferParamsV1Destroy(params);
 
     var creation_result: BufferCreationResult = .{};
+    errdefer if (creation_result.buffer) |buffer| wayland.wlBufferDestroy(buffer);
     if (wayland.zwpLinuxBufferParamsV1AddListener(params, &linux_buffer_params_listener, &creation_result) != 0)
         return VkError.InitializationFailed;
 
-    wayland.zwpLinuxBufferParamsV1Add(params, fd, 0, 0, dma_buf.stride, protocol_modifier);
-    wayland.zwpLinuxBufferParamsV1Create(params, @intCast(width), @intCast(height), gbm.drm_format_argb8888, 0);
+    wayland.zwpLinuxBufferParamsV1Add(params, fd, 0, 0, dma_buf.dumb.stride, protocol_modifier);
+    wayland.zwpLinuxBufferParamsV1Create(params, @intCast(width), @intCast(height), @backingInt(drm.Format.argb8888), 0);
     if (wayland.wl_display_roundtrip_queue(self.display, self.event_queue) < 0)
         return VkError.SurfaceLostKhr;
     if (creation_result.failed)
         return VkError.FormatNotSupported;
 
     const buffer = creation_result.buffer orelse return VkError.Unknown;
-    errdefer wayland.wlBufferDestroy(buffer);
     wayland.wlProxyAssignQueue(buffer, self.event_queue);
 
     wl_image.* = .{
@@ -271,9 +266,6 @@ pub fn attachImage(interface: *Interface, allocator: std.mem.Allocator, image: *
         .dma_buf = dma_buf,
         .staging = staging,
         .image = image,
-        .width = width,
-        .height = height,
-        .row_size = row_size,
     };
 
     if (wayland.wlBufferAddListener(buffer, &wl_buffer_listener, wl_image) != 0)
@@ -285,7 +277,7 @@ pub fn attachImage(interface: *Interface, allocator: std.mem.Allocator, image: *
 pub fn detachImage(interface: *Interface, allocator: std.mem.Allocator, image: *PresentImage) VkError!void {
     const self: *Self = @alignCast(@fieldParentPtr("interface", interface));
     const entry = self.image_map.fetchRemove(image) orelse return;
-    destroyWaylandImage(allocator, entry.value);
+    destroyWaylandImage(self, allocator, entry.value);
 }
 
 pub fn waitForImage(interface: *Interface, timeout: u64) VkError!void {
@@ -361,22 +353,25 @@ pub fn presentImage(interface: *Interface, _: std.mem.Allocator, image: *Present
         .layer_count = 1,
     });
 
-    {
-        const mapping = try wl_image.dma_buf.mapWrite();
-        defer wl_image.dma_buf.unmap(mapping);
+    for (std.mem.bytesAsSlice([4]u8, wl_image.staging)) |*pixel|
+        pixel[3] = 0xff;
 
-        for (0..wl_image.height) |row| {
-            const source_offset = row * wl_image.row_size;
-            const destination_offset = row * mapping.stride;
-            @memcpy(
-                mapping.data[destination_offset..][0..wl_image.row_size],
-                wl_image.staging[source_offset..][0..wl_image.row_size],
-            );
-        }
+    const dma_buf = &wl_image.dma_buf;
+    const io = interface.owner.io();
+    const row_size = @as(usize, dma_buf.dumb.width) * 4;
+    try dma_buf.beginWrite(io);
+    for (0..dma_buf.dumb.height) |row| {
+        const source_offset = row * row_size;
+        const destination_offset = row * dma_buf.dumb.stride;
+        @memcpy(
+            dma_buf.data[destination_offset..][0..row_size],
+            wl_image.staging[source_offset..][0..row_size],
+        );
     }
+    try dma_buf.endWrite(io);
 
     wayland.wlSurfaceAttach(self.surface, wl_image.buffer, 0, 0);
-    wayland.wlSurfaceDamage(self.surface, 0, 0, @intCast(wl_image.width), @intCast(wl_image.height));
+    wayland.wlSurfaceDamage(self.surface, 0, 0, @intCast(dma_buf.dumb.width), @intCast(dma_buf.dumb.height));
     wayland.wlSurfaceCommit(self.surface);
     _ = wayland.wl_display_flush(self.display);
 }
@@ -390,9 +385,9 @@ fn hasAvailableImage(self: *const Self) bool {
     return false;
 }
 
-fn destroyWaylandImage(allocator: std.mem.Allocator, wl_image: *WaylandImage) void {
+fn destroyWaylandImage(self: *Self, allocator: std.mem.Allocator, wl_image: *WaylandImage) void {
     wayland.wlBufferDestroy(wl_image.buffer);
-    wl_image.dma_buf.deinit();
+    wl_image.dma_buf.deinit(self.drm_card orelse unreachable, self.interface.owner.io());
     allocator.free(wl_image.staging);
     allocator.destroy(wl_image);
 }
