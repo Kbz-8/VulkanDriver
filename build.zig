@@ -396,9 +396,9 @@ fn addCTS(
 
     const cts_exe_path = cts.path(b.fmt("deqp-vk-{s}", .{
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
-            .linux => "linux.x86_64",
-            .windows => "windows.exe",
+            .linux => if (arch.isX86()) "linux.x86_64" else "linux.aarch64",
             .macos => if (arch.isX86()) "macos.x86_64" else "macos.aarch64",
+            .windows => if (arch.isX86()) "windows.x86.exe" else "windows.aarch64.exe",
             else => return error.NoCTSForPlatform,
         },
     }));
@@ -482,9 +482,9 @@ fn addMultithreadedCTS(
 
     const cts_exe_path = cts.path(b.fmt("deqp-vk-{s}", .{
         switch (if (target.query.os_tag) |tag| tag else builtin.target.os.tag) {
-            .linux => "linux.x86_64",
-            .windows => "windows.exe",
+            .linux => if (arch.isX86()) "linux.x86_64" else "linux.aarch64",
             .macos => if (arch.isX86()) "macos.x86_64" else "macos.aarch64",
+            .windows => if (arch.isX86()) "windows.x86.exe" else "windows.aarch64.exe",
             else => return error.NoCTSForPlatform,
         },
     }));
