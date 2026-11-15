@@ -138,6 +138,7 @@ const physical_device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComp
     functionMapEntryPoint("vkGetPhysicalDeviceMemoryProperties2KHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceProperties"),
     functionMapEntryPoint("vkGetPhysicalDeviceProperties2KHR"),
+    functionMapEntryPoint("vkGetPhysicalDevicePresentRectanglesKHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceQueueFamilyProperties"),
     functionMapEntryPoint("vkGetPhysicalDeviceQueueFamilyProperties2KHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceSparseImageFormatProperties"),
@@ -2522,6 +2523,16 @@ pub export fn apeDestroySwapchainKHR(p_device: vk.Device, p_swapchain: vk.Swapch
     const allocator = VulkanAllocator.init(callbacks, .object).allocator();
     const non_dispatchable = NonDispatchable(SwapchainKHR).fromHandle(p_swapchain) catch |err| return errorLogger(err);
     non_dispatchable.intrusiveDestroy(allocator);
+}
+
+pub export fn apeGetPhysicalDevicePresentRectanglesKHR(p_physical_device: vk.PhysicalDevice, p_surface: vk.SurfaceKHR, count: *u32, p_rects: ?[*]vk.Rect2D) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkGetPhysicalDevicePresentRectanglesKHR);
+    defer entryPointEndLogTrace();
+
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
+    const surface = NonDispatchable(SurfaceKHR).fromHandleObject(p_surface) catch |err| return toVkResult(err);
+    physical_device.getPresentRectanglesKHR(surface, count, p_rects) catch |err| return toVkResult(err);
+    return .success;
 }
 
 pub export fn apeGetPhysicalDeviceSurfaceCapabilitiesKHR(p_physical_device: vk.PhysicalDevice, p_surface: vk.SurfaceKHR, capabilities: *vk.SurfaceCapabilitiesKHR) callconv(vk.vulkan_call_conv) vk.Result {

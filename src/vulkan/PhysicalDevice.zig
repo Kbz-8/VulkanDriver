@@ -200,6 +200,24 @@ pub fn getSurfaceCapabilitiesKHR(_: *Self, surface: *SurfaceKHR, capabilities: *
     capabilities.* = try surface.getCapabilities();
 }
 
+pub fn getPresentRectanglesKHR(self: *Self, surface: *SurfaceKHR, count: *u32, p_rects: ?[*]vk.Rect2D) VkError!void {
+    if (p_rects) |rects| {
+        if (count.* == 0)
+            return VkError.Incomplete;
+
+        var capabilities: vk.SurfaceCapabilitiesKHR = undefined;
+        try self.getSurfaceCapabilitiesKHR(surface, &capabilities);
+        rects[0] = .{
+            .offset = .{ .x = 0, .y = 0 },
+            .extent = if (capabilities.current_extent.width == std.math.maxInt(u32))
+                capabilities.max_image_extent
+            else
+                capabilities.current_extent,
+        };
+    }
+    count.* = 1;
+}
+
 pub fn getSurfaceFormatsKHR(_: *Self, _: *SurfaceKHR, count: *u32, p_formats: ?[*]vk.SurfaceFormatKHR) VkError!void {
     const surface_formats = SurfaceKHR.getFormats();
     if (p_formats) |formats| {
