@@ -226,7 +226,51 @@ Assume thou that functions lacking in this array are, for now, not intended to b
 
 </details>
 
-[Here](https://vulkan-driver.kbz8.me/cts/soft/) shalt thou find a most meticulous account of the Vulkan 1.0 conformance trials, set forth for thy scrutiny.
+#### Vulkan 1.1 specification
+
+<details>
+    <summary>
+        The present standing of thy Vulkan 1.1 specification's implementation
+    </summary>
+
+\
+⚠️ Implemented, yet perchance not fully tested nor proven conformant, but rather working in a manner most general to thee and thine.\
+This array recordeth the core functions added in Vulkan 1.1; a working KHR variant alone doth not mark its core counterpart as implemented.
+
+| Name                                            | Status         |
+| ----------------------------------------------- | -------------- |
+| vkBindBufferMemory2                             | ✅ Implemented |
+| vkBindImageMemory2                              | ✅ Implemented |
+| vkCmdDispatchBase                               | ✅ Implemented |
+| vkCmdSetDeviceMask                              | ✅ Implemented |
+| vkCreateDescriptorUpdateTemplate                | ✅ Implemented |
+| vkCreateSamplerYcbcrConversion                  | ⚙️ WIP         |
+| vkDestroyDescriptorUpdateTemplate               | ✅ Implemented |
+| vkDestroySamplerYcbcrConversion                 | ⚙️ WIP         |
+| vkEnumerateInstanceVersion                      | ✅ Implemented |
+| vkEnumeratePhysicalDeviceGroups                 | ✅ Implemented |
+| vkGetBufferMemoryRequirements2                  | ✅ Implemented |
+| vkGetDescriptorSetLayoutSupport                 | ⚙️ WIP         |
+| vkGetDeviceGroupPeerMemoryFeatures              | ✅ Implemented |
+| vkGetDeviceQueue2                               | ✅ Implemented |
+| vkGetImageMemoryRequirements2                   | ✅ Implemented |
+| vkGetImageSparseMemoryRequirements2             | ❎ Unsupported |
+| vkGetPhysicalDeviceExternalBufferProperties     | ⚙️ WIP         |
+| vkGetPhysicalDeviceExternalFenceProperties      | ⚙️ WIP         |
+| vkGetPhysicalDeviceExternalSemaphoreProperties  | ⚙️ WIP         |
+| vkGetPhysicalDeviceFeatures2                    | ✅ Implemented |
+| vkGetPhysicalDeviceFormatProperties2            | ✅ Implemented |
+| vkGetPhysicalDeviceImageFormatProperties2       | ✅ Implemented |
+| vkGetPhysicalDeviceMemoryProperties2            | ✅ Implemented |
+| vkGetPhysicalDeviceProperties2                  | ✅ Implemented |
+| vkGetPhysicalDeviceQueueFamilyProperties2       | ✅ Implemented |
+| vkGetPhysicalDeviceSparseImageFormatProperties2 | ❎ Unsupported |
+| vkTrimCommandPool                               | ⚙️ WIP         |
+| vkUpdateDescriptorSetWithTemplate               | ✅ Implemented |
+
+</details>
+
+[Here](https://vulkan-driver.kbz8.me/cts/soft/) shalt thou find a most meticulous account of the Vulkan conformance trials, set forth for thy scrutiny.
 
 ## Phi [Xeon Phi KNC] <a href="https://git.kbz8.me/kbz_8/VulkanDriver/actions?workflows=Phi.yml"><img src="https://git.kbz8.me/kbz_8/VulkanDriver/badges/workflows/Phi.yml/badge.svg"></a>
 

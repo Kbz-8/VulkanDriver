@@ -362,7 +362,7 @@ pub fn beginRenderPass(interface: *Interface, render_pass: *base.RenderPass, fra
 
                 const clearWrapper = struct {
                     fn clear(pixel: vk.ClearValue, format: vk.Format, dst: *SoftImage, view_format: vk.Format, range: vk.ImageSubresourceRange, area: ?vk.Rect2D) void {
-                        blitter.clear(pixel, format, dst, view_format, range, area) catch @panic("blitter failed in a thread");
+                        blitter.clear(pixel, format, dst, view_format, range, area) catch std.log.scoped(.BeginRenderPass).err("blitter failed in a thread", .{});
                     }
                 }.clear;
 

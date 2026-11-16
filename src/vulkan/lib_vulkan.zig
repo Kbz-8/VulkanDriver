@@ -30,6 +30,7 @@ pub const CommandPool = @import("CommandPool.zig");
 pub const DescriptorPool = @import("DescriptorPool.zig");
 pub const DescriptorSet = @import("DescriptorSet.zig");
 pub const DescriptorSetLayout = @import("DescriptorSetLayout.zig");
+pub const DescriptorUpdateTemplate = @import("DescriptorUpdateTemplate.zig");
 pub const DeviceMemory = @import("DeviceMemory.zig");
 pub const Event = @import("Event.zig");
 pub const Fence = @import("Fence.zig");
@@ -129,19 +130,26 @@ const physical_device_pfn_map = std.StaticStringMap(vk.PfnVoidFunction).initComp
     functionMapEntryPoint("vkEnumerateDeviceExtensionProperties"),
     functionMapEntryPoint("vkEnumerateDeviceLayerProperties"),
     functionMapEntryPoint("vkGetPhysicalDeviceFeatures"),
+    functionMapEntryPoint("vkGetPhysicalDeviceFeatures2"),
     functionMapEntryPoint("vkGetPhysicalDeviceFeatures2KHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceFormatProperties"),
+    functionMapEntryPoint("vkGetPhysicalDeviceFormatProperties2"),
     functionMapEntryPoint("vkGetPhysicalDeviceFormatProperties2KHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceImageFormatProperties"),
+    functionMapEntryPoint("vkGetPhysicalDeviceImageFormatProperties2"),
     functionMapEntryPoint("vkGetPhysicalDeviceImageFormatProperties2KHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceMemoryProperties"),
+    functionMapEntryPoint("vkGetPhysicalDeviceMemoryProperties2"),
     functionMapEntryPoint("vkGetPhysicalDeviceMemoryProperties2KHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceProperties"),
+    functionMapEntryPoint("vkGetPhysicalDeviceProperties2"),
     functionMapEntryPoint("vkGetPhysicalDeviceProperties2KHR"),
     functionMapEntryPoint("vkGetPhysicalDevicePresentRectanglesKHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceQueueFamilyProperties"),
+    functionMapEntryPoint("vkGetPhysicalDeviceQueueFamilyProperties2"),
     functionMapEntryPoint("vkGetPhysicalDeviceQueueFamilyProperties2KHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceSparseImageFormatProperties"),
+    functionMapEntryPoint("vkGetPhysicalDeviceSparseImageFormatProperties2"),
     functionMapEntryPoint("vkGetPhysicalDeviceSparseImageFormatProperties2KHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceSurfaceCapabilitiesKHR"),
     functionMapEntryPoint("vkGetPhysicalDeviceSurfaceFormatsKHR"),
@@ -162,7 +170,9 @@ const device_pfn_map = block: {
         functionMapEntryPoint("vkAllocateMemory"),
         functionMapEntryPoint("vkBeginCommandBuffer"),
         functionMapEntryPoint("vkBindBufferMemory"),
+        functionMapEntryPoint("vkBindBufferMemory2"),
         functionMapEntryPoint("vkBindImageMemory"),
+        functionMapEntryPoint("vkBindImageMemory2"),
         functionMapEntryPoint("vkCmdBeginQuery"),
         functionMapEntryPoint("vkCmdBeginRenderPass"),
         functionMapEntryPoint("vkCmdBindDescriptorSets"),
@@ -217,6 +227,8 @@ const device_pfn_map = block: {
         functionMapEntryPoint("vkCreateComputePipelines"),
         functionMapEntryPoint("vkCreateDescriptorPool"),
         functionMapEntryPoint("vkCreateDescriptorSetLayout"),
+        functionMapEntryPoint("vkCreateDescriptorUpdateTemplate"),
+        functionMapEntryPoint("vkCreateDescriptorUpdateTemplateKHR"),
         functionMapEntryPoint("vkCreateEvent"),
         functionMapEntryPoint("vkCreateFence"),
         functionMapEntryPoint("vkCreateFramebuffer"),
@@ -236,6 +248,8 @@ const device_pfn_map = block: {
         functionMapEntryPoint("vkDestroyCommandPool"),
         functionMapEntryPoint("vkDestroyDescriptorPool"),
         functionMapEntryPoint("vkDestroyDescriptorSetLayout"),
+        functionMapEntryPoint("vkDestroyDescriptorUpdateTemplate"),
+        functionMapEntryPoint("vkDestroyDescriptorUpdateTemplateKHR"),
         functionMapEntryPoint("vkDestroyDevice"),
         functionMapEntryPoint("vkDestroyEvent"),
         functionMapEntryPoint("vkDestroyFence"),
@@ -258,6 +272,7 @@ const device_pfn_map = block: {
         functionMapEntryPoint("vkFreeDescriptorSets"),
         functionMapEntryPoint("vkFreeMemory"),
         functionMapEntryPoint("vkGetBufferMemoryRequirements"),
+        functionMapEntryPoint("vkGetBufferMemoryRequirements2"),
         functionMapEntryPoint("vkGetBufferDeviceAddress"),
         functionMapEntryPoint("vkGetBufferDeviceAddressEXT"),
         functionMapEntryPoint("vkGetBufferDeviceAddressKHR"),
@@ -268,10 +283,13 @@ const device_pfn_map = block: {
         functionMapEntryPoint("vkGetDeviceGroupSurfacePresentModesKHR"),
         functionMapEntryPoint("vkGetDeviceProcAddr"),
         functionMapEntryPoint("vkGetDeviceQueue"),
+        functionMapEntryPoint("vkGetDeviceQueue2"),
         functionMapEntryPoint("vkGetEventStatus"),
         functionMapEntryPoint("vkGetFenceStatus"),
         functionMapEntryPoint("vkGetImageMemoryRequirements"),
+        functionMapEntryPoint("vkGetImageMemoryRequirements2"),
         functionMapEntryPoint("vkGetImageSparseMemoryRequirements"),
+        functionMapEntryPoint("vkGetImageSparseMemoryRequirements2"),
         functionMapEntryPoint("vkGetImageSubresourceLayout"),
         functionMapEntryPoint("vkGetPipelineCacheData"),
         functionMapEntryPoint("vkGetQueryPoolResults"),
@@ -294,6 +312,8 @@ const device_pfn_map = block: {
         functionMapEntryPoint("vkSetEvent"),
         functionMapEntryPoint("vkUnmapMemory"),
         functionMapEntryPoint("vkUpdateDescriptorSets"),
+        functionMapEntryPoint("vkUpdateDescriptorSetWithTemplate"),
+        functionMapEntryPoint("vkUpdateDescriptorSetWithTemplateKHR"),
         functionMapEntryPoint("vkWaitForFences"),
     });
 };
@@ -336,7 +356,9 @@ pub export fn ape_icdNegotiateLoaderICDInterfaceVersion(p_version: *u32) callcon
 pub export fn vk_icdGetInstanceProcAddr(p_instance: ?vk.Instance, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
     defer entryPointEndLogTrace();
 
-    if (p_name == null) return null;
+    if (p_name == null)
+        return null;
+
     const name = std.mem.span(p_name.?);
 
     if (icd_pfn_map.get(name)) |pfn| return pfn;
@@ -359,14 +381,21 @@ pub export fn ape_icdGetPhysicalDeviceProcAddr(_: vk.Instance, p_name: ?[*:0]con
 pub export fn vkGetInstanceProcAddr(p_instance: ?vk.Instance, p_name: ?[*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction {
     defer entryPointEndLogTrace();
 
-    if (p_name == null) return null;
+    if (p_name == null)
+        return null;
+
     const name = std.mem.span(p_name.?);
 
-    if (global_pfn_map.get(name)) |pfn| return pfn;
+    if (global_pfn_map.get(name)) |pfn|
+        return pfn;
+
     if (p_instance != null) {
-        if (instance_pfn_map.get(name)) |pfn| return pfn;
-        if (physical_device_pfn_map.get(name)) |pfn| return pfn;
-        if (device_pfn_map.get(name)) |pfn| return pfn;
+        if (instance_pfn_map.get(name)) |pfn|
+            return pfn;
+        if (physical_device_pfn_map.get(name)) |pfn|
+            return pfn;
+        if (device_pfn_map.get(name)) |pfn|
+            return pfn;
     }
     return null;
 }
@@ -378,6 +407,7 @@ pub export fn apeCreateInstance(info: *const vk.InstanceCreateInfo, callbacks: ?
     if (info.s_type != .instance_create_info) {
         return .error_validation_failed;
     }
+
     const allocator = VulkanAllocator.init(callbacks, .instance).allocator();
     Instance.validateCreateInfo(info) catch |err| return toVkResult(err);
 
@@ -541,39 +571,23 @@ pub export fn apeEnumerateDeviceExtensionProperties(p_physical_device: vk.Physic
 }
 
 pub export fn apeGetPhysicalDeviceFormatProperties(p_physical_device: vk.PhysicalDevice, format: vk.Format, properties: *vk.FormatProperties) callconv(vk.vulkan_call_conv) void {
-    entryPointBeginLogTrace(.vkGetPhysicalDeviceFormatProperties);
-    defer entryPointEndLogTrace();
-
-    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
-    properties.* = physical_device.getFormatProperties(format) catch |err| return errorLogger(err);
+    var properties2: vk.FormatProperties2 = .{ .format_properties = std.mem.zeroes(vk.FormatProperties) };
+    @call(.always_inline, apeGetPhysicalDeviceFormatProperties2, .{ p_physical_device, format, &properties2 });
+    properties.* = properties2.format_properties;
 }
 
 pub export fn apeGetPhysicalDeviceFormatProperties2KHR(p_physical_device: vk.PhysicalDevice, format: vk.Format, properties: *vk.FormatProperties2KHR) callconv(vk.vulkan_call_conv) void {
-    entryPointBeginLogTrace(.vkGetPhysicalDeviceFormatProperties2KHR);
-    defer entryPointEndLogTrace();
-
-    if (properties.s_type != .format_properties_2) return;
-
-    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
-    properties.format_properties = physical_device.getFormatProperties(format) catch |err| return errorLogger(err);
+    return @call(.always_inline, apeGetPhysicalDeviceFormatProperties2, .{ p_physical_device, format, properties });
 }
 
 pub export fn apeGetPhysicalDeviceFeatures(p_physical_device: vk.PhysicalDevice, features: *vk.PhysicalDeviceFeatures) callconv(vk.vulkan_call_conv) void {
-    entryPointBeginLogTrace(.vkGetPhysicalDeviceFeatures);
-    defer entryPointEndLogTrace();
-
-    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
-    features.* = physical_device.features;
+    var features2: vk.PhysicalDeviceFeatures2 = .{ .features = .{} };
+    @call(.always_inline, apeGetPhysicalDeviceFeatures2, .{ p_physical_device, &features2 });
+    features.* = features2.features;
 }
 
 pub export fn apeGetPhysicalDeviceFeatures2KHR(p_physical_device: vk.PhysicalDevice, features: *vk.PhysicalDeviceFeatures2KHR) callconv(vk.vulkan_call_conv) void {
-    entryPointBeginLogTrace(.vkGetPhysicalDeviceFeatures2KHR);
-    defer entryPointEndLogTrace();
-
-    if (features.s_type != .physical_device_features_2) return;
-
-    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
-    physical_device.getFeatures2(features);
+    return @call(.always_inline, apeGetPhysicalDeviceFeatures2, .{ p_physical_device, features });
 }
 
 pub export fn apeGetPhysicalDeviceImageFormatProperties(
@@ -585,20 +599,170 @@ pub export fn apeGetPhysicalDeviceImageFormatProperties(
     flags: vk.ImageCreateFlags,
     properties: *vk.ImageFormatProperties,
 ) callconv(vk.vulkan_call_conv) vk.Result {
-    entryPointBeginLogTrace(.vkGetPhysicalDeviceImageFormatProperties);
-    defer entryPointEndLogTrace();
+    const info: vk.PhysicalDeviceImageFormatInfo2 = .{
+        .format = format,
+        .type = image_type,
+        .tiling = tiling,
+        .usage = usage,
+        .flags = flags,
+    };
 
-    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
-    properties.* = physical_device.getImageFormatProperties(format, image_type, tiling, usage, flags) catch |err| return toVkResult(err);
-    return .success;
+    var properties2: vk.ImageFormatProperties2 = .{ .image_format_properties = undefined };
+    const result = @call(.always_inline, apeGetPhysicalDeviceImageFormatProperties2, .{ p_physical_device, &info, &properties2 });
+    if (result == .success)
+        properties.* = properties2.image_format_properties;
+
+    return result;
 }
 
-pub export fn apeGetPhysicalDeviceImageFormatProperties2KHR(p_physical_device: vk.PhysicalDevice, format_info: *vk.PhysicalDeviceImageFormatInfo2KHR, properties: *vk.ImageFormatProperties2KHR) callconv(vk.vulkan_call_conv) vk.Result {
-    entryPointBeginLogTrace(.vkGetPhysicalDeviceImageFormatProperties2KHR);
+pub export fn apeGetPhysicalDeviceImageFormatProperties2KHR(p_physical_device: vk.PhysicalDevice, format_info: *const vk.PhysicalDeviceImageFormatInfo2KHR, properties: *vk.ImageFormatProperties2KHR) callconv(vk.vulkan_call_conv) vk.Result {
+    return @call(.always_inline, apeGetPhysicalDeviceImageFormatProperties2, .{ p_physical_device, format_info, properties });
+}
+
+pub export fn apeGetPhysicalDeviceProperties(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceProperties) callconv(vk.vulkan_call_conv) void {
+    var properties2: vk.PhysicalDeviceProperties2 = .{ .properties = std.mem.zeroes(vk.PhysicalDeviceProperties) };
+    @call(.always_inline, apeGetPhysicalDeviceProperties2, .{ p_physical_device, &properties2 });
+    properties.* = properties2.properties;
+}
+
+pub export fn apeGetPhysicalDeviceProperties2KHR(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceProperties2KHR) callconv(vk.vulkan_call_conv) void {
+    return @call(.always_inline, apeGetPhysicalDeviceProperties2, .{ p_physical_device, properties });
+}
+
+pub export fn apeGetPhysicalDeviceMemoryProperties(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceMemoryProperties) callconv(vk.vulkan_call_conv) void {
+    var properties2: vk.PhysicalDeviceMemoryProperties2 = .{ .memory_properties = std.mem.zeroes(vk.PhysicalDeviceMemoryProperties) };
+    @call(.always_inline, apeGetPhysicalDeviceMemoryProperties2, .{ p_physical_device, &properties2 });
+    properties.* = properties2.memory_properties;
+}
+
+pub export fn apeGetPhysicalDeviceMemoryProperties2KHR(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceMemoryProperties2KHR) callconv(vk.vulkan_call_conv) void {
+    return @call(.always_inline, apeGetPhysicalDeviceMemoryProperties2, .{ p_physical_device, properties });
+}
+
+pub export fn apeGetPhysicalDeviceQueueFamilyProperties(p_physical_device: vk.PhysicalDevice, count: *u32, properties: ?[*]vk.QueueFamilyProperties) callconv(vk.vulkan_call_conv) void {
+    const props = properties orelse return @call(.always_inline, apeGetPhysicalDeviceQueueFamilyProperties2, .{ p_physical_device, count, null });
+    var available: u32 = 0;
+    @call(.always_inline, apeGetPhysicalDeviceQueueFamilyProperties2, .{ p_physical_device, &available, null });
+    count.* = @min(count.*, available);
+
+    const allocator = lib.fallback_host_allocator;
+    const properties2 = allocator.alloc(vk.QueueFamilyProperties2, count.*) catch return errorLogger(VkError.OutOfHostMemory);
+    defer allocator.free(properties2);
+
+    for (properties2) |*props2|
+        props2.* = .{ .queue_family_properties = undefined };
+
+    @call(.always_inline, apeGetPhysicalDeviceQueueFamilyProperties2, .{ p_physical_device, count, properties2.ptr });
+    for (props[0..count.*], properties2[0..count.*]) |*prop, prop2| prop.* = prop2.queue_family_properties;
+}
+
+pub export fn apeGetPhysicalDeviceQueueFamilyProperties2KHR(p_physical_device: vk.PhysicalDevice, count: *u32, properties: ?[*]vk.QueueFamilyProperties2KHR) callconv(vk.vulkan_call_conv) void {
+    return @call(.always_inline, apeGetPhysicalDeviceQueueFamilyProperties2, .{ p_physical_device, count, properties });
+}
+
+pub export fn apeGetPhysicalDeviceSparseImageFormatProperties(
+    p_physical_device: vk.PhysicalDevice,
+    format: vk.Format,
+    image_type: vk.ImageType,
+    samples: vk.SampleCountFlags,
+    usage: vk.ImageUsageFlags,
+    tiling: vk.ImageTiling,
+    count: *u32,
+    properties: ?[*]vk.SparseImageFormatProperties,
+) callconv(vk.vulkan_call_conv) void {
+    const info: vk.PhysicalDeviceSparseImageFormatInfo2 = .{
+        .format = format,
+        .type = image_type,
+        .samples = samples,
+        .usage = usage,
+        .tiling = tiling,
+    };
+
+    const props = properties orelse return @call(.always_inline, apeGetPhysicalDeviceSparseImageFormatProperties2, .{ p_physical_device, &info, count, null });
+    var available: u32 = 0;
+    @call(.always_inline, apeGetPhysicalDeviceSparseImageFormatProperties2, .{ p_physical_device, &info, &available, null });
+    count.* = @min(count.*, available);
+
+    const allocator = lib.fallback_host_allocator;
+    const properties2 = allocator.alloc(vk.SparseImageFormatProperties2, count.*) catch return errorLogger(VkError.OutOfHostMemory);
+    defer allocator.free(properties2);
+
+    for (properties2) |*props2|
+        props2.* = .{ .properties = undefined };
+
+    @call(.always_inline, apeGetPhysicalDeviceSparseImageFormatProperties2, .{ p_physical_device, &info, count, properties2.ptr });
+
+    for (props[0..count.*], properties2[0..count.*]) |*prop, prop2|
+        prop.* = prop2.properties;
+}
+
+pub export fn apeGetPhysicalDeviceSparseImageFormatProperties2KHR(
+    p_physical_device: vk.PhysicalDevice,
+    format_info: *const vk.PhysicalDeviceSparseImageFormatInfo2KHR,
+    count: *u32,
+    properties: ?[*]vk.SparseImageFormatProperties2KHR,
+) callconv(vk.vulkan_call_conv) void {
+    return @call(.always_inline, apeGetPhysicalDeviceSparseImageFormatProperties2, .{ p_physical_device, format_info, count, properties });
+}
+
+pub export fn apeGetPhysicalDeviceExternalBufferProperties(p_physical_device: vk.PhysicalDevice, info: *const vk.PhysicalDeviceExternalBufferInfo, properties: *vk.ExternalBufferProperties) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceExternalBufferProperties);
     defer entryPointEndLogTrace();
 
-    if (format_info.s_type != .physical_device_image_format_info_2) return .error_validation_failed;
-    if (properties.s_type != .image_format_properties_2) return .error_validation_failed;
+    _ = p_physical_device;
+    _ = info;
+    _ = properties;
+    notImplementedWarning();
+}
+
+pub export fn apeGetPhysicalDeviceExternalFenceProperties(p_physical_device: vk.PhysicalDevice, info: *const vk.PhysicalDeviceExternalFenceInfo, properties: *vk.ExternalFenceProperties) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceExternalFenceProperties);
+    defer entryPointEndLogTrace();
+
+    _ = p_physical_device;
+    _ = info;
+    _ = properties;
+    notImplementedWarning();
+}
+
+pub export fn apeGetPhysicalDeviceExternalSemaphoreProperties(p_physical_device: vk.PhysicalDevice, info: *const vk.PhysicalDeviceExternalSemaphoreInfo, properties: *vk.ExternalSemaphoreProperties) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceExternalSemaphoreProperties);
+    defer entryPointEndLogTrace();
+
+    _ = p_physical_device;
+    _ = info;
+    _ = properties;
+    notImplementedWarning();
+}
+
+pub export fn apeGetPhysicalDeviceFeatures2(p_physical_device: vk.PhysicalDevice, features: *vk.PhysicalDeviceFeatures2) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceFeatures2);
+    defer entryPointEndLogTrace();
+
+    if (features.s_type != .physical_device_features_2)
+        return;
+
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
+    physical_device.getFeatures2(features);
+}
+
+pub export fn apeGetPhysicalDeviceFormatProperties2(p_physical_device: vk.PhysicalDevice, format: vk.Format, properties: *vk.FormatProperties2) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceFormatProperties2);
+    defer entryPointEndLogTrace();
+
+    if (properties.s_type != .format_properties_2)
+        return;
+
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
+    properties.format_properties = physical_device.getFormatProperties(format) catch |err| return errorLogger(err);
+}
+
+pub export fn apeGetPhysicalDeviceImageFormatProperties2(p_physical_device: vk.PhysicalDevice, format_info: *const vk.PhysicalDeviceImageFormatInfo2, properties: *vk.ImageFormatProperties2) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceImageFormatProperties2);
+    defer entryPointEndLogTrace();
+
+    if (format_info.s_type != .physical_device_image_format_info_2 or properties.s_type != .image_format_properties_2)
+        return .error_validation_failed;
 
     const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
     properties.image_format_properties = physical_device.getImageFormatProperties(
@@ -611,104 +775,77 @@ pub export fn apeGetPhysicalDeviceImageFormatProperties2KHR(p_physical_device: v
     return .success;
 }
 
-pub export fn apeGetPhysicalDeviceProperties(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceProperties) callconv(vk.vulkan_call_conv) void {
-    entryPointBeginLogTrace(.vkGetPhysicalDeviceProperties);
+pub export fn apeGetPhysicalDeviceMemoryProperties2(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceMemoryProperties2) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceMemoryProperties2);
     defer entryPointEndLogTrace();
 
-    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
-    properties.* = physical_device.props;
-}
-
-pub export fn apeGetPhysicalDeviceProperties2KHR(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceProperties2KHR) callconv(vk.vulkan_call_conv) void {
-    entryPointBeginLogTrace(.vkGetPhysicalDeviceProperties2KHR);
-    defer entryPointEndLogTrace();
-
-    if (properties.s_type != .physical_device_properties_2) return;
-
-    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
-    properties.properties = physical_device.props;
-}
-
-pub export fn apeGetPhysicalDeviceMemoryProperties(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceMemoryProperties) callconv(vk.vulkan_call_conv) void {
-    entryPointBeginLogTrace(.vkGetPhysicalDeviceMemoryProperties);
-    defer entryPointEndLogTrace();
-
-    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
-    properties.* = physical_device.mem_props;
-}
-
-pub export fn apeGetPhysicalDeviceMemoryProperties2KHR(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceMemoryProperties2KHR) callconv(vk.vulkan_call_conv) void {
-    entryPointBeginLogTrace(.vkGetPhysicalDeviceMemoryProperties2KHR);
-    defer entryPointEndLogTrace();
-
-    if (properties.s_type != .physical_device_memory_properties_2) return;
+    if (properties.s_type != .physical_device_memory_properties_2)
+        return;
 
     const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
     properties.memory_properties = physical_device.mem_props;
 }
 
-pub export fn apeGetPhysicalDeviceQueueFamilyProperties(p_physical_device: vk.PhysicalDevice, count: *u32, properties: ?[*]vk.QueueFamilyProperties) callconv(vk.vulkan_call_conv) void {
-    entryPointBeginLogTrace(.vkGetPhysicalDeviceQueueFamilyProperties);
+pub export fn apeGetPhysicalDeviceProperties2(p_physical_device: vk.PhysicalDevice, properties: *vk.PhysicalDeviceProperties2) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceProperties2);
+    defer entryPointEndLogTrace();
+
+    if (properties.s_type != .physical_device_properties_2)
+        return;
+
+    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
+    properties.properties = physical_device.props;
+}
+
+pub export fn apeGetPhysicalDeviceQueueFamilyProperties2(p_physical_device: vk.PhysicalDevice, count: *u32, properties: ?[*]vk.QueueFamilyProperties2) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceQueueFamilyProperties2);
     defer entryPointEndLogTrace();
 
     const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
-    count.* = @intCast(physical_device.queue_family_props.items.len);
+    const available: u32 = @intCast(physical_device.queue_family_props.items.len);
+
     if (properties) |props| {
-        @memcpy(props[0..count.*], physical_device.queue_family_props.items[0..count.*]);
+        count.* = @min(count.*, available);
+        for (props[0..count.*], physical_device.queue_family_props.items[0..count.*]) |*prop, device_prop| {
+            if (prop.s_type != .queue_family_properties_2)
+                continue;
+            prop.queue_family_properties = device_prop;
+        }
+    } else {
+        count.* = available;
     }
 }
 
-pub export fn apeGetPhysicalDeviceQueueFamilyProperties2KHR(p_physical_device: vk.PhysicalDevice, count: *u32, properties: ?[*]vk.QueueFamilyProperties2KHR) callconv(vk.vulkan_call_conv) void {
-    entryPointBeginLogTrace(.vkGetPhysicalDeviceQueueFamilyProperties2KHR);
+pub export fn apeGetPhysicalDeviceSparseImageFormatProperties2(p_physical_device: vk.PhysicalDevice, format_info: *const vk.PhysicalDeviceSparseImageFormatInfo2, count: *u32, properties: ?[*]vk.SparseImageFormatProperties2) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetPhysicalDeviceSparseImageFormatProperties2);
     defer entryPointEndLogTrace();
+
+    if (format_info.s_type != .physical_device_sparse_image_format_info_2)
+        return;
 
     const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return errorLogger(err);
-    count.* = @intCast(physical_device.queue_family_props.items.len);
-    if (properties) |p_props| {
-        for (p_props[0..], physical_device.queue_family_props.items[0..], 0..count.*) |*props, device_props, _| {
-            if (props.s_type != .queue_family_properties_2) continue;
-            props.queue_family_properties = device_props;
-        }
+    const available = physical_device.getSparseImageFormatProperties2(format_info.format, format_info.type, format_info.samples, format_info.tiling, format_info.usage, null) catch |err| return errorLogger(err);
+
+    if (properties) |props| {
+        count.* = @min(count.*, available);
+        if (count.* == 0)
+            return;
+
+        const allocator = lib.fallback_host_allocator;
+        const properties2 = allocator.alloc(vk.SparseImageFormatProperties2, available) catch return errorLogger(VkError.OutOfHostMemory);
+        defer allocator.free(properties2);
+
+        for (properties2) |*prop|
+            prop.* = .{ .properties = undefined };
+
+        const written = physical_device.getSparseImageFormatProperties2(format_info.format, format_info.type, format_info.samples, format_info.tiling, format_info.usage, properties2.ptr) catch |err| return errorLogger(err);
+        count.* = @min(count.*, written);
+
+        for (props[0..count.*], properties2[0..count.*]) |*prop, prop2|
+            prop.properties = prop2.properties;
+    } else {
+        count.* = available;
     }
-}
-
-pub export fn apeGetPhysicalDeviceSparseImageFormatProperties(
-    p_physical_device: vk.PhysicalDevice,
-    format: vk.Format,
-    image_type: vk.ImageType,
-    samples: vk.SampleCountFlags,
-    usage: vk.ImageUsageFlags,
-    tiling: vk.ImageTiling,
-    count: *u32,
-    properties: ?[*]vk.SparseImageFormatProperties,
-) callconv(vk.vulkan_call_conv) vk.Result {
-    entryPointBeginLogTrace(.vkGetPhysicalDeviceSparseImageFormatProperties);
-    defer entryPointEndLogTrace();
-
-    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
-    count.* = physical_device.getSparseImageFormatProperties(format, image_type, samples, tiling, usage, properties) catch |err| return toVkResult(err);
-    return .success;
-}
-
-pub export fn apeGetPhysicalDeviceSparseImageFormatProperties2KHR(
-    p_physical_device: vk.PhysicalDevice,
-    format_info: *const vk.PhysicalDeviceSparseImageFormatInfo2KHR,
-    count: *u32,
-    properties: ?[*]vk.SparseImageFormatProperties2KHR,
-) callconv(vk.vulkan_call_conv) vk.Result {
-    entryPointBeginLogTrace(.vkGetPhysicalDeviceSparseImageFormatProperties2KHR);
-    defer entryPointEndLogTrace();
-
-    const physical_device = Dispatchable(PhysicalDevice).fromHandleObject(p_physical_device) catch |err| return toVkResult(err);
-    count.* = physical_device.getSparseImageFormatProperties2(
-        format_info.format,
-        format_info.type,
-        format_info.samples,
-        format_info.tiling,
-        format_info.usage,
-        properties,
-    ) catch |err| return toVkResult(err);
-    return .success;
 }
 
 // Queue functions ===========================================================================================================================================
@@ -815,33 +952,13 @@ pub export fn apeAllocateMemory(p_device: vk.Device, info: *const vk.MemoryAlloc
 }
 
 pub export fn apeBindBufferMemory(p_device: vk.Device, p_buffer: vk.Buffer, p_memory: vk.DeviceMemory, offset: vk.DeviceSize) callconv(vk.vulkan_call_conv) vk.Result {
-    entryPointBeginLogTrace(.vkBindBufferMemory);
-    defer entryPointEndLogTrace();
-
-    std.log.scoped(.vkBindBufferMemory).debug("Binding device memory 0x{X} to buffer 0x{X}", .{ @backingInt(p_memory), @backingInt(p_buffer) });
-
-    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
-
-    const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return toVkResult(err);
-    const memory = NonDispatchable(DeviceMemory).fromHandleObject(p_memory) catch |err| return toVkResult(err);
-
-    buffer.bindMemory(memory, offset) catch |err| return toVkResult(err);
-    return .success;
+    const info = [_]vk.BindBufferMemoryInfo{.{ .buffer = p_buffer, .memory = p_memory, .memory_offset = offset }};
+    return @call(.always_inline, apeBindBufferMemory2, .{ p_device, 1, &info });
 }
 
 pub export fn apeBindImageMemory(p_device: vk.Device, p_image: vk.Image, p_memory: vk.DeviceMemory, offset: vk.DeviceSize) callconv(vk.vulkan_call_conv) vk.Result {
-    entryPointBeginLogTrace(.vkBindImageMemory);
-    defer entryPointEndLogTrace();
-
-    std.log.scoped(.vkBindImageMemory).debug("Binding device memory 0x{X} to image 0x{X}", .{ @backingInt(p_memory), @backingInt(p_image) });
-
-    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
-
-    const image = NonDispatchable(Image).fromHandleObject(p_image) catch |err| return toVkResult(err);
-    const memory = NonDispatchable(DeviceMemory).fromHandleObject(p_memory) catch |err| return toVkResult(err);
-
-    image.bindMemory(memory, offset) catch |err| return toVkResult(err);
-    return .success;
+    const info = [_]vk.BindImageMemoryInfo{.{ .image = p_image, .memory = p_memory, .memory_offset = offset }};
+    return @call(.always_inline, apeBindImageMemory2, .{ p_device, 1, &info });
 }
 
 pub export fn apeCreateBuffer(p_device: vk.Device, info: *const vk.BufferCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_buffer: *vk.Buffer) callconv(vk.vulkan_call_conv) vk.Result {
@@ -1448,13 +1565,10 @@ pub export fn apeFreeMemory(p_device: vk.Device, p_memory: vk.DeviceMemory, call
 }
 
 pub export fn apeGetBufferMemoryRequirements(p_device: vk.Device, p_buffer: vk.Buffer, requirements: *vk.MemoryRequirements) callconv(vk.vulkan_call_conv) void {
-    entryPointBeginLogTrace(.vkGetBufferMemoryRequirements);
-    defer entryPointEndLogTrace();
-
-    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
-
-    const buffer = NonDispatchable(Buffer).fromHandleObject(p_buffer) catch |err| return errorLogger(err);
-    buffer.getMemoryRequirements(requirements);
+    const info: vk.BufferMemoryRequirementsInfo2 = .{ .buffer = p_buffer };
+    var requirements2: vk.MemoryRequirements2 = .{ .memory_requirements = std.mem.zeroes(vk.MemoryRequirements) };
+    @call(.always_inline, apeGetBufferMemoryRequirements2, .{ p_device, &info, &requirements2 });
+    requirements.* = requirements2.memory_requirements;
 }
 
 pub export fn apeGetBufferDeviceAddress(p_device: vk.Device, info: *const vk.BufferDeviceAddressInfo) callconv(vk.vulkan_call_conv) vk.DeviceAddress {
@@ -1518,7 +1632,7 @@ pub export fn apeGetDeviceGroupPeerMemoryFeaturesKHR(
     remote_device_index: u32,
     p_peer_memory_features: *vk.PeerMemoryFeatureFlags,
 ) callconv(vk.vulkan_call_conv) void {
-    apeGetDeviceGroupPeerMemoryFeatures(p_device, heap_index, local_device_index, remote_device_index, p_peer_memory_features);
+    return @call(.always_inline, apeGetDeviceGroupPeerMemoryFeatures, .{ p_device, heap_index, local_device_index, remote_device_index, p_peer_memory_features });
 }
 
 pub export fn apeGetDeviceGroupPresentCapabilitiesKHR(
@@ -1564,21 +1678,8 @@ pub export fn apeGetDeviceProcAddr(p_device: vk.Device, p_name: ?[*:0]const u8) 
 }
 
 pub export fn apeGetDeviceQueue(p_device: vk.Device, queue_family_index: u32, queue_index: u32, p_queue: *vk.Queue) callconv(vk.vulkan_call_conv) void {
-    entryPointBeginLogTrace(.vkGetDeviceQueue);
-    defer entryPointEndLogTrace();
-
-    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return errorLogger(err);
-    if (device.queues.get(queue_family_index)) |family| {
-        if (queue_index >= family.items.len) return;
-
-        const dispatchable_queue = family.items[queue_index];
-        const queue = dispatchable_queue.object;
-
-        // https://docs.vulkan.org/refpages/latest/refpages/source/vkGetDeviceQueue.html#VUID-vkGetDeviceQueue-flags-01841
-        if (queue.flags != @TypeOf(queue.flags){}) return;
-
-        p_queue.* = dispatchable_queue.toVkHandle(vk.Queue);
-    }
+    const info: vk.DeviceQueueInfo2 = .{ .queue_family_index = queue_family_index, .queue_index = queue_index };
+    return @call(.always_inline, apeGetDeviceQueue2, .{ p_device, &info, p_queue });
 }
 
 pub export fn apeGetEventStatus(p_device: vk.Device, p_event: vk.Event) callconv(vk.vulkan_call_conv) vk.Result {
@@ -1604,25 +1705,17 @@ pub export fn apeGetFenceStatus(p_device: vk.Device, p_fence: vk.Fence) callconv
 }
 
 pub export fn apeGetImageMemoryRequirements(p_device: vk.Device, p_image: vk.Image, requirements: *vk.MemoryRequirements) callconv(vk.vulkan_call_conv) void {
-    entryPointBeginLogTrace(.vkGetImageMemoryRequirements);
-    defer entryPointEndLogTrace();
-
-    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
-
-    const image = NonDispatchable(Image).fromHandleObject(p_image) catch |err| return errorLogger(err);
-    image.getMemoryRequirements(requirements) catch |err| return errorLogger(err);
+    const info: vk.ImageMemoryRequirementsInfo2 = .{ .image = p_image };
+    var requirements2: vk.MemoryRequirements2 = .{ .memory_requirements = std.mem.zeroes(vk.MemoryRequirements) };
+    @call(.always_inline, apeGetImageMemoryRequirements2, .{ p_device, &info, &requirements2 });
+    requirements.* = requirements2.memory_requirements;
 }
 
-pub export fn apeGetImageSparseMemoryRequirements(p_device: vk.Device, p_image: vk.Image, requirements: *vk.SparseImageMemoryRequirements) callconv(vk.vulkan_call_conv) void {
-    entryPointBeginLogTrace(.vkGetImageSparseMemoryRequirements);
-    defer entryPointEndLogTrace();
-
-    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
-    NonDispatchable(Image).checkHandleValidity(p_image) catch |err| return errorLogger(err);
-
-    lib.unsupported("sparse images are not supported", .{});
-
+pub export fn apeGetImageSparseMemoryRequirements(p_device: vk.Device, p_image: vk.Image, count: *u32, requirements: ?[*]vk.SparseImageMemoryRequirements) callconv(vk.vulkan_call_conv) void {
+    const info: vk.ImageSparseMemoryRequirementsInfo2 = .{ .image = p_image };
+    // Sparse images are unsupported
     _ = requirements;
+    return @call(.always_inline, apeGetImageSparseMemoryRequirements2, .{ p_device, &info, count, null });
 }
 
 pub export fn apeGetImageSubresourceLayout(p_device: vk.Device, p_image: vk.Image, subresource: *const vk.ImageSubresource, layout: *vk.SubresourceLayout) callconv(vk.vulkan_call_conv) void {
@@ -1837,6 +1930,221 @@ pub export fn apeWaitForFences(p_device: vk.Device, count: u32, p_fences: [*]con
 
     Fence.waitMany(device, fences, waitForAll, timeout) catch |err| return toVkResult(err);
     return .success;
+}
+
+pub export fn apeBindBufferMemory2(p_device: vk.Device, bind_info_count: u32, bind_infos: [*]const vk.BindBufferMemoryInfo) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkBindBufferMemory2);
+    defer entryPointEndLogTrace();
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
+    for (bind_infos[0..bind_info_count]) |info| {
+        if (info.s_type != .bind_buffer_memory_info)
+            return .error_validation_failed;
+
+        const buffer = NonDispatchable(Buffer).fromHandleObject(info.buffer) catch |err| return toVkResult(err);
+        const memory = NonDispatchable(DeviceMemory).fromHandleObject(info.memory) catch |err| return toVkResult(err);
+        buffer.bindMemory(memory, info.memory_offset) catch |err| return toVkResult(err);
+    }
+    return .success;
+}
+
+pub export fn apeBindImageMemory2(p_device: vk.Device, bind_info_count: u32, bind_infos: [*]const vk.BindImageMemoryInfo) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkBindImageMemory2);
+    defer entryPointEndLogTrace();
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return toVkResult(err);
+    for (bind_infos[0..bind_info_count]) |info| {
+        if (info.s_type != .bind_image_memory_info)
+            return .error_validation_failed;
+
+        const image = NonDispatchable(Image).fromHandleObject(info.image) catch |err| return toVkResult(err);
+        const memory = NonDispatchable(DeviceMemory).fromHandleObject(info.memory) catch |err| return toVkResult(err);
+        image.bindMemory(memory, info.memory_offset) catch |err| return toVkResult(err);
+    }
+    return .success;
+}
+
+pub export fn apeCreateDescriptorUpdateTemplate(p_device: vk.Device, info: *const vk.DescriptorUpdateTemplateCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_template: *vk.DescriptorUpdateTemplate) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkCreateDescriptorUpdateTemplate);
+    defer entryPointEndLogTrace();
+
+    p_template.* = .null_handle;
+    if (info.s_type != .descriptor_update_template_create_info)
+        return .error_validation_failed;
+
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return toVkResult(err);
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    const template = DescriptorUpdateTemplate.create(device, allocator, info) catch |err| return toVkResult(err);
+    p_template.* = wrapNonDispatchable(DescriptorUpdateTemplate, allocator, template, vk.DescriptorUpdateTemplate) catch |err| return toVkResult(err);
+
+    return .success;
+}
+
+pub export fn apeCreateDescriptorUpdateTemplateKHR(p_device: vk.Device, info: *const vk.DescriptorUpdateTemplateCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_template: *vk.DescriptorUpdateTemplate) callconv(vk.vulkan_call_conv) vk.Result {
+    return @call(.always_inline, apeCreateDescriptorUpdateTemplate, .{ p_device, info, callbacks, p_template });
+}
+
+pub export fn apeCreateSamplerYcbcrConversion(p_device: vk.Device, info: *const vk.SamplerYcbcrConversionCreateInfo, callbacks: ?*const vk.AllocationCallbacks, p_conversion: *vk.SamplerYcbcrConversion) callconv(vk.vulkan_call_conv) vk.Result {
+    entryPointBeginLogTrace(.vkCreateSamplerYcbcrConversion);
+    defer entryPointEndLogTrace();
+
+    _ = p_device;
+    _ = info;
+    _ = callbacks;
+    _ = p_conversion;
+    notImplementedWarning();
+    return .error_feature_not_present;
+}
+
+pub export fn apeDestroyDescriptorUpdateTemplate(p_device: vk.Device, p_template: vk.DescriptorUpdateTemplate, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkDestroyDescriptorUpdateTemplate);
+    defer entryPointEndLogTrace();
+
+    if (p_template == .null_handle)
+        return;
+
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return errorLogger(err);
+    const template = NonDispatchable(DescriptorUpdateTemplate).fromHandle(p_template) catch |err| return errorLogger(err);
+
+    if (template.object.owner != device)
+        return errorLogger(VkError.InvalidHandleDrv);
+
+    const allocator = VulkanAllocator.init(callbacks, .object).allocator();
+    template.intrusiveDestroy(allocator);
+}
+
+pub export fn apeDestroyDescriptorUpdateTemplateKHR(p_device: vk.Device, p_template: vk.DescriptorUpdateTemplate, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+    return @call(.always_inline, apeDestroyDescriptorUpdateTemplate, .{ p_device, p_template, callbacks });
+}
+
+pub export fn apeDestroySamplerYcbcrConversion(p_device: vk.Device, p_conversion: vk.SamplerYcbcrConversion, callbacks: ?*const vk.AllocationCallbacks) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkDestroySamplerYcbcrConversion);
+    defer entryPointEndLogTrace();
+
+    _ = p_device;
+    _ = p_conversion;
+    _ = callbacks;
+    notImplementedWarning();
+}
+
+fn fillMemoryDedicatedRequirements(p_next: ?*anyopaque) void {
+    var next: ?*vk.BaseOutStructure = @ptrCast(@alignCast(p_next));
+    while (next) |node| : (next = node.p_next) {
+        switch (node.s_type) {
+            .memory_dedicated_requirements => {
+                const dedicated: *vk.MemoryDedicatedRequirements = @ptrCast(node);
+                dedicated.prefers_dedicated_allocation = .false;
+                dedicated.requires_dedicated_allocation = .false;
+            },
+            else => {},
+        }
+    }
+}
+
+pub export fn apeGetBufferMemoryRequirements2(p_device: vk.Device, info: *const vk.BufferMemoryRequirementsInfo2, requirements: *vk.MemoryRequirements2) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetBufferMemoryRequirements2);
+    defer entryPointEndLogTrace();
+
+    if (info.s_type != .buffer_memory_requirements_info_2 or requirements.s_type != .memory_requirements_2)
+        return;
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
+    const buffer = NonDispatchable(Buffer).fromHandleObject(info.buffer) catch |err| return errorLogger(err);
+    buffer.getMemoryRequirements(&requirements.memory_requirements);
+    fillMemoryDedicatedRequirements(requirements.p_next);
+}
+
+pub export fn apeGetDescriptorSetLayoutSupport(p_device: vk.Device, info: *const vk.DescriptorSetLayoutCreateInfo, support: *vk.DescriptorSetLayoutSupport) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetDescriptorSetLayoutSupport);
+    defer entryPointEndLogTrace();
+
+    _ = p_device;
+    _ = info;
+    _ = support;
+    notImplementedWarning();
+}
+
+pub export fn apeGetDeviceQueue2(p_device: vk.Device, info: *const vk.DeviceQueueInfo2, p_queue: *vk.Queue) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetDeviceQueue2);
+    defer entryPointEndLogTrace();
+
+    // Vulkan permits a null output handle even though the zig binding uses a non-optional pointer type
+    const output: *?vk.Queue = @ptrCast(p_queue);
+    output.* = null;
+
+    if (info.s_type != .device_queue_info_2)
+        return;
+
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return errorLogger(err);
+    const family = device.queues.get(info.queue_family_index) orelse return;
+
+    var matching_index: u32 = 0;
+
+    for (family.items) |dispatchable_queue| {
+        if (dispatchable_queue.object.flags != info.flags)
+            continue;
+
+        if (matching_index == info.queue_index) {
+            output.* = dispatchable_queue.toVkHandle(vk.Queue);
+            return;
+        }
+
+        matching_index += 1;
+    }
+}
+
+pub export fn apeGetImageMemoryRequirements2(p_device: vk.Device, info: *const vk.ImageMemoryRequirementsInfo2, requirements: *vk.MemoryRequirements2) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetImageMemoryRequirements2);
+    defer entryPointEndLogTrace();
+
+    if (info.s_type != .image_memory_requirements_info_2 or requirements.s_type != .memory_requirements_2)
+        return;
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
+    const image = NonDispatchable(Image).fromHandleObject(info.image) catch |err| return errorLogger(err);
+    image.getMemoryRequirements(&requirements.memory_requirements) catch |err| return errorLogger(err);
+    fillMemoryDedicatedRequirements(requirements.p_next);
+}
+
+pub export fn apeGetImageSparseMemoryRequirements2(p_device: vk.Device, info: *const vk.ImageSparseMemoryRequirementsInfo2, count: *u32, requirements: ?[*]vk.SparseImageMemoryRequirements2) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkGetImageSparseMemoryRequirements2);
+    defer entryPointEndLogTrace();
+
+    if (info.s_type != .image_sparse_memory_requirements_info_2)
+        return;
+
+    Dispatchable(Device).checkHandleValidity(p_device) catch |err| return errorLogger(err);
+    NonDispatchable(Image).checkHandleValidity(info.image) catch |err| return errorLogger(err);
+
+    _ = requirements;
+    count.* = 0;
+}
+
+pub export fn apeTrimCommandPool(p_device: vk.Device, p_command_pool: vk.CommandPool, flags: vk.CommandPoolTrimFlags) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkTrimCommandPool);
+    defer entryPointEndLogTrace();
+
+    _ = p_device;
+    _ = p_command_pool;
+    _ = flags;
+    notImplementedWarning();
+}
+
+pub export fn apeUpdateDescriptorSetWithTemplate(p_device: vk.Device, p_descriptor_set: vk.DescriptorSet, p_template: vk.DescriptorUpdateTemplate, data: *const anyopaque) callconv(vk.vulkan_call_conv) void {
+    entryPointBeginLogTrace(.vkUpdateDescriptorSetWithTemplate);
+    defer entryPointEndLogTrace();
+
+    const device = Dispatchable(Device).fromHandleObject(p_device) catch |err| return errorLogger(err);
+    const template = NonDispatchable(DescriptorUpdateTemplate).fromHandleObject(p_template) catch |err| return errorLogger(err);
+
+    if (template.owner != device)
+        return errorLogger(VkError.InvalidHandleDrv);
+
+    template.update(p_descriptor_set, data) catch |err| return errorLogger(err);
+}
+
+pub export fn apeUpdateDescriptorSetWithTemplateKHR(p_device: vk.Device, p_descriptor_set: vk.DescriptorSet, p_template: vk.DescriptorUpdateTemplate, data: *const anyopaque) callconv(vk.vulkan_call_conv) void {
+    return @call(.always_inline, apeUpdateDescriptorSetWithTemplate, .{ p_device, p_descriptor_set, p_template, data });
 }
 
 // Command Buffer functions ===================================================================================================================================

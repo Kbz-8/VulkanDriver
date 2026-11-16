@@ -35,6 +35,7 @@ pub const CommandPool = @import("CommandPool.zig");
 pub const DescriptorPool = @import("DescriptorPool.zig");
 pub const DescriptorSet = @import("DescriptorSet.zig");
 pub const DescriptorSetLayout = @import("DescriptorSetLayout.zig");
+pub const DescriptorUpdateTemplate = @import("DescriptorUpdateTemplate.zig");
 pub const DeviceMemory = @import("DeviceMemory.zig");
 pub const Event = @import("Event.zig");
 pub const Fence = @import("Fence.zig");
